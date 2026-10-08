@@ -6,6 +6,7 @@ import os
 from typing import Callable
 
 from meo.runtime.headless_probe import require_headless
+from meo.runtime.http_transport import create_http_server
 from meo.service.core import AgentServiceCore
 from meo.service.backend_adapter import AgentBackendAdapter
 
@@ -47,6 +48,17 @@ def parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Validate the runtime import boundary and optional backend construction, then exit",
     )
+    p.add_argument(
+        "--host",
+        default=os.environ.get("MEO_AI_SERVICE_HOST", "127.0.0.1"),
+        help="Loopback bind address; non-loopback addresses are rejected",
+    )
+    p.add_argument(
+        "--port",
+        type=int,
+        default=int(os.environ.get("MEO_AI_SERVICE_PORT", "8765")),
+        help="AgentService loopback HTTP port",
+    )
     return p
 
 
@@ -66,9 +78,16 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Meo AgentService backend ready: {type(service.backend).__name__}")
         return 0
 
-    raise SystemExit(
-        "transport server is intentionally not enabled yet; run --self-check while Phase B transport is extracted"
-    )
+    server = create_http_server(service, host=args.host, port=args.port)
+    host, port = server.server_address[:2]
+    print(f"Meo AgentService listening on http://{host}:{port}")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+    return 0
 
 
 if __name__ == "__main__":
