@@ -35,6 +35,8 @@ private:
     void consumeLegacy();
     void ensureServiceConversation(const std::function<void()> &then);
     void sendService(const QString &text);
+    void reconnectServiceStream();
+    void attachServiceStream(QNetworkReply *reply);
     void consumeService();
     void submitServiceCancel();
     void postServiceAction(const QUrl &url, const QByteArray &body, const std::function<void(QNetworkReply *)> &onSuccess);
@@ -52,4 +54,6 @@ private:
     bool m_done = false;
     bool m_serviceMode = false;
     bool m_cancelPending = false;
+    int m_lastEventSeq = 0;
+    int m_reconnectAttempts = 0;
 };
