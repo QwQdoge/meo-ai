@@ -23,6 +23,7 @@ class LegacyChatInterfaceAdapter:
     def __init__(self, interface) -> None:
         self.interface = interface
         self._conversations: Dict[str, int] = {}
+        self._ambiguous_conversations: set[str] = set()
         self._hydrate_conversations()
 
     @property
@@ -34,14 +35,27 @@ class LegacyChatInterfaceAdapter:
         return chats if isinstance(chats, dict) else {}
 
     def _hydrate_conversations(self) -> None:
+        discovered: Dict[str, int] = {}
+        ambiguous: set[str] = set()
         for chat_id, chat in self._workspace_chats().items():
             if not isinstance(chat, dict):
                 continue
             conversation_id = chat.get("meo_conversation_id")
-            if isinstance(conversation_id, str) and conversation_id.startswith("meo:"):
-                self._conversations[conversation_id] = chat_id
+            if not isinstance(conversation_id, str) or not conversation_id.startswith("meo:"):
+                continue
+            previous = discovered.get(conversation_id)
+            if previous is not None and previous != chat_id:
+                ambiguous.add(conversation_id)
+                discovered.pop(conversation_id, None)
+                continue
+            if conversation_id not in ambiguous:
+                discovered[conversation_id] = chat_id
+        self._conversations = discovered
+        self._ambiguous_conversations = ambiguous
 
     def _remember_conversation(self, conversation_id: str, chat_id: int) -> None:
+        if conversation_id in self._ambiguous_conversations:
+            raise ValueError("ambiguous conversation ownership")
         self._conversations[conversation_id] = chat_id
         chats = self._workspace_chats()
         chat = chats.get(chat_id)
@@ -70,12 +84,17 @@ class LegacyChatInterfaceAdapter:
 
     def conversation_exists(self, conversation_id: str) -> bool:
         self._hydrate_conversations()
+        if conversation_id in self._ambiguous_conversations:
+            return False
         chat_id = self._conversations.get(conversation_id)
         return chat_id is not None and chat_id in self._workspace_chats()
 
     def attach_existing_session(self, conversation_id: str) -> int:
         if not isinstance(conversation_id, str) or not conversation_id.startswith("meo:"):
             raise ValueError("legacy compatibility session must use a meo: key")
+        self._hydrate_conversations()
+        if conversation_id in self._ambiguous_conversations:
+            raise ValueError("ambiguous conversation ownership")
         chat_id = self.interface.get_or_create_chat(conversation_id)
         self._remember_conversation(conversation_id, chat_id)
         return chat_id
