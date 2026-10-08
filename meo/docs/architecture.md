@@ -109,7 +109,7 @@ Cancellation 仍然**不是 rollback**。已经提交给外部 owner 的操作�
 
 ### Conversation persistence
 
-Meo-owned inherited chats带 `meo_conversation_id` metadata。重复 metadata 会被视为 ambiguous，adapter 不猜 ownership。
+Meo-owned inherited chats 带 `meo_conversation_id` metadata。重复 metadata 会被视为 ambiguous，adapter 不猜 ownership。
 
 AgentService 提供 presentation-safe history：只暴露 `user` / `assistant` 文本。不会把 `Console`、`Command`、`File`、`Folder`、tool internals 或 prompt-only `<context>` retrieval data 重放进 QML。
 
@@ -206,7 +206,7 @@ Phase C 仍有这些缺口：
 
 - desktop provider 与 Router core 尚未分离；
 - Router core 尚未 extraction 到 `meo-ai`；
--真实 Plasma SystemTool calls 和 owner read-back 尚需 live acceptance；
+- 真实 Plasma SystemTool calls 和 owner read-back 尚需 live acceptance；
 - capability schema 以后还可增加 range/enum/pattern 提示，但 Router runtime validation 永远是 authority。
 
 ## 分阶段验收
