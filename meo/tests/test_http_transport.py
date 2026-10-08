@@ -1,6 +1,7 @@
 import json
 import threading
 import unittest
+import urllib.error
 import urllib.request
 
 from meo.runtime.http_transport import create_http_server
@@ -98,12 +99,8 @@ class HttpTransportTests(unittest.TestCase):
 
     def json_request(self, method, path, body=None):
         data = None if body is None else json.dumps(body).encode()
-        request = urllib.request.Request(
-            self.base + path,
-            data=data,
-            method=method,
-            headers={"Content-Type": "application/json"} if data is not None else {},
-        )
+        headers = {"Content-Type": "application/json"} if method == "POST" else {}
+        request = urllib.request.Request(self.base + path, data=data, method=method, headers=headers)
         with urllib.request.urlopen(request, timeout=2) as response:
             return response.status, json.loads(response.read())
 
@@ -201,6 +198,27 @@ class HttpTransportTests(unittest.TestCase):
         self.assertTrue(self.backend.handles[0].cancel.is_set())
         _, state = self.json_request("GET", f"/v1/requests/{request_id}")
         self.assertEqual(state["state"], "cancelled")
+
+    def test_browser_origin_is_rejected(self):
+        request = urllib.request.Request(
+            self.base + "/v1/models",
+            method="GET",
+            headers={"Origin": "https://evil.example"},
+        )
+        with self.assertRaises(urllib.error.HTTPError) as raised:
+            urllib.request.urlopen(request, timeout=2)
+        self.assertEqual(raised.exception.code, 403)
+
+    def test_non_json_post_is_rejected(self):
+        request = urllib.request.Request(
+            self.base + "/v1/conversations",
+            data=b"{}",
+            method="POST",
+            headers={"Content-Type": "text/plain"},
+        )
+        with self.assertRaises(urllib.error.HTTPError) as raised:
+            urllib.request.urlopen(request, timeout=2)
+        self.assertEqual(raised.exception.code, 415)
 
     def test_non_loopback_bind_is_rejected(self):
         with self.assertRaises(ValueError):
