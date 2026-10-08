@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Callable
+from typing import Any
 
 from meo.system.system_tool import (
     CapabilityDescriptor,
@@ -58,6 +58,24 @@ class NewelleSystemToolAdapter:
             f"effect={descriptor.effect.value}, maturity={descriptor.maturity.value}. "
             "Arguments and execution are validated by the System AI Router."
         )
+
+    @staticmethod
+    def _confirmation_text(descriptor: CapabilityDescriptor, view: dict[str, Any]) -> str:
+        """Render trusted Router confirmation fields for the frontend.
+
+        The title comes from capability metadata; target/impact come from the
+        Router request view after typed argument validation. Model prose is not
+        used to construct this confirmation text.
+        """
+
+        lines = [descriptor.title]
+        target = view.get("target")
+        impact = view.get("impact")
+        if isinstance(target, str) and target.strip():
+            lines.append(f"Target: {target.strip()}")
+        if isinstance(impact, str) and impact.strip():
+            lines.append(f"Impact: {impact.strip()}")
+        return "\n".join(lines)
 
     @staticmethod
     def _model_output(descriptor: CapabilityDescriptor, view: dict[str, Any]) -> str:
@@ -119,7 +137,7 @@ class NewelleSystemToolAdapter:
 
             tool_result = ToolResult(
                 requires_interaction=True,
-                display_text=descriptor.title,
+                display_text=self._confirmation_text(descriptor, view),
             )
             tool_result.set_intreaction_options(
                 [
