@@ -10,6 +10,7 @@ class ModelInfo:
     label: str
     provider: str = ""
     selection_scope: str = "conversation"
+    selected: bool = False
 
 
 @dataclass(frozen=True)
