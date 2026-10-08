@@ -102,6 +102,18 @@ class LegacyChatInterfaceAdapterTests(unittest.TestCase):
         self.assertEqual(listed[0]["id"], conversation_id)
         self.assertEqual(listed[0]["legacy_chat_id"], chat_id)
 
+    def test_duplicate_conversation_metadata_is_not_guessed(self):
+        controller = FakeController()
+        controller.chats = {
+            11: {"name": "A", "meo_conversation_id": "meo:duplicate"},
+            12: {"name": "B", "meo_conversation_id": "meo:duplicate"},
+        }
+        adapter = LegacyChatInterfaceAdapter(FakeInterface(controller))
+        self.assertFalse(adapter.conversation_exists("meo:duplicate"))
+        self.assertNotIn("meo:duplicate", {item["id"] for item in adapter.list_conversations()})
+        with self.assertRaises(ValueError):
+            adapter.attach_existing_session("meo:duplicate")
+
     def test_unknown_conversation_is_rejected(self):
         adapter = LegacyChatInterfaceAdapter(FakeInterface())
         with self.assertRaises(ValueError):
