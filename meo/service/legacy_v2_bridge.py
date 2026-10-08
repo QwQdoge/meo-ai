@@ -73,11 +73,6 @@ class LegacyV2ToolBridge:
         return legacy_index
 
     def cancel(self, request: RequestLifecycle) -> None:
-        self.decisions.invalidate_for_request(request.request_id)
-        stale = [
-            decision_id
-            for decision_id, decision in self.decisions._decisions.items()
-            if decision.request_id == request.request_id
-        ]
-        for decision_id in stale:
+        decision_id = self.decisions.invalidate_for_request(request.request_id)
+        if decision_id is not None:
             self._legacy_indices.pop(decision_id, None)
