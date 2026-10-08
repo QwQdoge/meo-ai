@@ -7,7 +7,13 @@ import threading
 from typing import Dict
 from uuid import uuid4
 
-from meo.service.backend_adapter import BackendCallbacks, ConversationMessage, ModelInfo, SkillInfo
+from meo.service.backend_adapter import (
+    BackendCallbacks,
+    ConversationMessage,
+    McpServerInfo,
+    ModelInfo,
+    SkillInfo,
+)
 
 
 @dataclass
@@ -303,4 +309,28 @@ class LegacyChatInterfaceAdapter:
         manager.set_skill_enabled(skill_id, bool(enabled))
 
     def list_mcp_servers(self):
-        return []
+        get_integration = getattr(self.controller, "get_mcp_integration", None)
+        integration = get_integration() if callable(get_integration) else None
+        if integration is not None:
+            servers = getattr(integration, "mcp_servers", [])
+        else:
+            servers = getattr(self.controller, "mcp_servers_dict", [])
+        if not isinstance(servers, list):
+            return []
+
+        result = []
+        for index, server in enumerate(servers):
+            if isinstance(server, dict):
+                title = server.get("title")
+                catalog_id = server.get("catalog_id")
+                label = title.strip() if isinstance(title, str) and title.strip() else f"MCP server {index + 1}"
+                stable = catalog_id.strip() if isinstance(catalog_id, str) and catalog_id.strip() else str(index)
+            elif isinstance(server, str):
+                # Legacy string entries can contain private URLs. Keep them out of
+                # the frontend contract instead of using the raw URL as an ID/label.
+                label = f"MCP server {index + 1}"
+                stable = str(index)
+            else:
+                continue
+            result.append(McpServerInfo(f"mcp:{stable}", label, integration is not None))
+        return result
