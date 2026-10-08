@@ -89,6 +89,9 @@ class DbusNextRouterClient:
 
     def _run(self, coroutine):
         if self._closed:
+            close = getattr(coroutine, "close", None)
+            if callable(close):
+                close()
             raise RouterUnavailable("Router client is closed")
         future = asyncio.run_coroutine_threadsafe(coroutine, self._loop)
         try:
