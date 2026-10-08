@@ -5,7 +5,7 @@ import urllib.error
 import urllib.request
 
 from meo.runtime.http_transport import create_http_server
-from meo.service.backend_adapter import BackendCallbacks, McpServerInfo, ModelInfo, SkillInfo
+from meo.service.backend_adapter import BackendCallbacks, ConversationMessage, McpServerInfo, ModelInfo, SkillInfo
 from meo.service.core import AgentServiceCore
 
 
@@ -33,6 +33,14 @@ class FakeBackend:
 
     def conversation_exists(self, conversation_id):
         return conversation_id in self.conversations
+
+    def list_messages(self, conversation_id):
+        if conversation_id not in self.conversations:
+            raise ValueError("unknown conversation_id")
+        return [
+            ConversationMessage("user", "hello"),
+            ConversationMessage("assistant", "Hi from history"),
+        ]
 
     def send_message(self, conversation_id, text, callbacks: BackendCallbacks):
         handle = FakeHandle()
@@ -126,6 +134,22 @@ class HttpTransportTests(unittest.TestCase):
         )
         response = urllib.request.urlopen(request, timeout=3)
         return response.headers["X-Meo-Request-Id"], response
+
+    def test_conversation_history_is_structured_and_unknown_id_is_not_found(self):
+        cid = self.create_conversation()
+        status, history = self.json_request("GET", f"/v1/conversations/{cid}/messages")
+        self.assertEqual(status, 200)
+        self.assertEqual(history["conversation_id"], cid)
+        self.assertEqual(
+            history["messages"],
+            [
+                {"role": "user", "text": "hello"},
+                {"role": "assistant", "text": "Hi from history"},
+            ],
+        )
+        with self.assertRaises(urllib.error.HTTPError) as raised:
+            self.json_request("GET", "/v1/conversations/conversation:missing/messages")
+        self.assertEqual(raised.exception.code, 404)
 
     def test_catalogs_and_mutations_are_structured(self):
         cid = self.create_conversation()
