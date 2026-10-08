@@ -27,8 +27,8 @@ installs the built MeoUI module through its existing CMake install rules.
 
 Phase B now has a maintained loopback transport over `AgentServiceCore`. HTTP/SSE
 is an implementation detail; the stable semantics are conversation IDs,
-service-generated request IDs, service-generated decision IDs, typed events and
-explicit cancellation.
+service-generated request IDs, service-generated decision IDs, ordered events,
+explicit cancellation and request-stream reconnect.
 
 The transitional `meo.adapters.headless_newelle:create_backend` factory mirrors
 Newelle's existing headless controller initialization without importing
@@ -64,13 +64,23 @@ MEO_AI_SERVICE_ENDPOINT=http://127.0.0.1:8765 ./build/meo/meo-ai
 In AgentService mode the native client:
 
 - creates and persists a Meo conversation ID;
-- streams `message.delta` events;
+- streams ordered events carrying request-local `seq` values;
 - uses `request_id` and `decision_id` for tool choices;
 - can submit a tool decision while the model/tool SSE request remains open;
 - exposes a real Stop action that calls `CancelRequest` rather than merely
   disconnecting the stream;
+- queues an early Stop until the request ID is known;
 - treats an SSE disconnect as transport loss, not cancellation;
+- automatically reconnects a live request with
+  `/v1/requests/{requestId}/events?after={lastSeq}` and ignores duplicate
+  sequence numbers;
+- limits automatic reconnect attempts and does not loop on an expired journal;
 - rejects non-loopback service endpoints.
+
+The service keeps reconnect history in a bounded in-memory event journal. This
+supports frontend/network reconnect while the same AgentService process is
+alive; it is not durable execution across service restart. A stale reconnect
+cursor is rejected explicitly rather than silently skipping missing events.
 
 ### Installed service
 
