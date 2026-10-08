@@ -73,9 +73,25 @@ void AgentClient::choose(int index) {
 }
 
 void AgentClient::cancel() {
+    if (!m_serviceMode || !busy() || actionBusy()) return;
+    if (m_requestId.isEmpty()) {
+        m_cancelPending = true;
+        m_status = tr("Stopping…");
+        emit changed();
+        return;
+    }
+    submitServiceCancel();
+}
+
+void AgentClient::submitServiceCancel() {
     if (!m_serviceMode || !busy() || actionBusy() || m_requestId.isEmpty()) return;
+    m_cancelPending = false;
     QUrl base = validatedOrigin("MEO_AI_SERVICE_ENDPOINT");
-    if (!base.isValid()) return;
+    if (!base.isValid()) {
+        m_status = tr("MEO_AI_SERVICE_ENDPOINT must be a loopback HTTP origin.");
+        emit changed();
+        return;
+    }
     QUrl url = base;
     url.setPath(QString("/v1/requests/%1/cancel").arg(m_requestId));
     postServiceAction(url, QByteArray("{}"), [this](QNetworkReply *) {
@@ -96,6 +112,7 @@ void AgentClient::newChat() {
     m_conversationId.clear();
     m_requestId.clear();
     m_decisionId.clear();
+    m_cancelPending = false;
     QSettings().remove("serviceConversationId");
     ensureServiceConversation([this] {
         m_status = tr("Ready");
@@ -160,11 +177,19 @@ void AgentClient::sendService(const QString &text) {
     m_done = false;
     m_requestId.clear();
     m_decisionId.clear();
+    m_cancelPending = false;
     m_options.clear();
     m_status = tr("Receiving…");
     emit message("assistant", "");
     m_reply = m_network.post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
     emit changed();
+    connect(m_reply, &QNetworkReply::metaDataChanged, this, [this] {
+        if (!m_reply || !m_requestId.isEmpty()) return;
+        const auto header = m_reply->rawHeader("X-Meo-Request-Id");
+        if (header.isEmpty()) return;
+        m_requestId = QString::fromUtf8(header);
+        if (m_cancelPending) submitServiceCancel();
+    });
     connect(m_reply, &QNetworkReply::readyRead, this, &AgentClient::consumeService);
     connect(m_reply, &QNetworkReply::finished, this, [this] {
         consumeService();
@@ -174,6 +199,7 @@ void AgentClient::sendService(const QString &text) {
         } else if (!m_done) {
             m_status = tr("AgentService stream ended before a terminal request event.");
         }
+        m_cancelPending = false;
         m_reply->deleteLater();
         m_reply = nullptr;
         emit changed();
@@ -202,7 +228,8 @@ void AgentClient::consumeService() {
         const QString type = event.value("type").toString();
         if (type == "request.started") {
             m_requestId = event.value("request_id").toString();
-            m_status = tr("Receiving…");
+            m_status = m_cancelPending ? tr("Stopping…") : tr("Receiving…");
+            if (m_cancelPending) submitServiceCancel();
         } else if (type == "message.delta") {
             const auto content = event.value("delta").toString();
             if (!content.isEmpty()) emit delta(content);
@@ -210,19 +237,26 @@ void AgentClient::consumeService() {
             m_requestId = event.value("request_id").toString();
             m_decisionId = event.value("decision_id").toString();
             m_options = event.value("options").toArray().toVariantList();
-            m_status = tr("Tool needs your decision");
-            emit toolEvent(event.toVariantMap());
-            emit changed();
+            if (m_cancelPending) {
+                submitServiceCancel();
+            } else {
+                m_status = tr("Tool needs your decision");
+                emit toolEvent(event.toVariantMap());
+                emit changed();
+            }
         } else if (type == "request.completed") {
             m_done = true;
+            m_cancelPending = false;
             m_status = tr("Ready");
         } else if (type == "request.cancelled") {
             m_done = true;
+            m_cancelPending = false;
             m_options.clear();
             m_decisionId.clear();
             m_status = tr("Stopped");
         } else if (type == "request.failed") {
             m_done = true;
+            m_cancelPending = false;
             m_options.clear();
             m_decisionId.clear();
             m_status = event.value("error").toString(tr("Request failed"));
