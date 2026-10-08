@@ -32,6 +32,7 @@ jobs:
           test -f build/stage/usr/share/newelle/meo/system/system_tool.py
           test -f build/stage/usr/share/newelle/meo/system/dbus_router.py
           test -f build/stage/usr/share/newelle/meo/adapters/headless_newelle.py
+          test -f build/stage/usr/share/newelle/meo/adapters/system_tools.py
           test -f build/stage/usr/lib/systemd/user/meo-agent-service.service
           grep -F 'ExecStart=/usr/bin/meo-agent-service --host 127.0.0.1 --port 8765' build/stage/usr/lib/systemd/user/meo-agent-service.service
   native:
