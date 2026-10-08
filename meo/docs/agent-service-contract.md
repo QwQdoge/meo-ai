@@ -107,6 +107,8 @@ The broader semantic contract may add `request.stateChanged`, `message.started`,
 
 Events carry `request_id`; conversation-scoped events also carry `conversation_id`. Tool decisions carry a service-issued `decision_id` and stale, replayed or cross-request responses must be rejected.
 
+`tool.requested` may also carry bounded `display_text` presentation context. It exists so the frontend can explain what the user is deciding; for Router-backed system confirmation this contains trusted Router title/target/impact data. `display_text` is never decision authority and must not replace the service `decision_id` or an owning subsystem's fingerprint/confirmation contract.
+
 ## Tool pause semantics
 
 `tool.requested` is a pause, not approval. The service waits for an explicit matching decision. Closing the frontend, losing the transport, timing out, or receiving malformed input must never be interpreted as approval.
