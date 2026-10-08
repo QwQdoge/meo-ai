@@ -31,6 +31,20 @@ def this_module_factory_spec():
     return f"{__name__}:fake_factory"
 
 
+class FakeServer:
+    server_address = ("127.0.0.1", 8765)
+
+    def __init__(self):
+        self.served = False
+        self.closed = False
+
+    def serve_forever(self):
+        self.served = True
+
+    def server_close(self):
+        self.closed = True
+
+
 class HeadlessRuntimeTests(unittest.TestCase):
     def test_static_probe_detects_forbidden_prefixes(self):
         result = inspect_loaded_modules([
@@ -60,10 +74,13 @@ class HeadlessRuntimeTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 load_backend_factory(f"{module_name}:factory")
 
-    def test_normal_start_refuses_to_claim_transport_ready(self):
-        with self.assertRaises(SystemExit) as raised:
-            main(["--backend-factory", this_module_factory_spec()])
-        self.assertIn("transport server is intentionally not enabled yet", str(raised.exception))
+    def test_normal_start_runs_loopback_transport(self):
+        fake_server = FakeServer()
+        with mock.patch("meo.runtime.main.create_http_server", return_value=fake_server) as create:
+            self.assertEqual(main(["--backend-factory", this_module_factory_spec()]), 0)
+        create.assert_called_once()
+        self.assertTrue(fake_server.served)
+        self.assertTrue(fake_server.closed)
 
 
 if __name__ == "__main__":
