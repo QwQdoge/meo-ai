@@ -31,7 +31,7 @@ class FakeBackend:
         execution_handle["cancelled"] = True
 
     def list_models(self):
-        return [ModelInfo("m1", "Model 1", "local")]
+        return [ModelInfo("m1", "Model 1", "local", "profile")]
 
     def set_model(self, conversation_id, model_id):
         self.model = (conversation_id, model_id)
@@ -64,6 +64,8 @@ class BackendAdapterContractTests(unittest.TestCase):
 
     def test_metadata_types_are_small_and_ui_free(self):
         self.assertEqual(ModelInfo("m", "M").model_id, "m")
+        self.assertEqual(ModelInfo("m", "M").selection_scope, "conversation")
+        self.assertEqual(ModelInfo("m", "M", selection_scope="profile").selection_scope, "profile")
         self.assertTrue(SkillInfo("s", "S", True).enabled)
         self.assertFalse(McpServerInfo("x", "X", False).enabled)
 
