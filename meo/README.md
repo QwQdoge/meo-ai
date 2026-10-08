@@ -54,16 +54,26 @@ python3 -m meo.runtime.main \
   --port 8765
 ```
 
-The service refuses non-loopback binds. To make the native QML client use the
-new contract instead of the legacy Newelle API:
+The service refuses non-loopback binds. The native QML application now uses
+AgentService at `http://127.0.0.1:8765` by default when neither transport endpoint
+is configured. Override the service origin when needed:
 
 ```sh
 MEO_AI_SERVICE_ENDPOINT=http://127.0.0.1:8765 ./build/meo/meo-ai
 ```
 
+An explicitly configured `MEO_AI_ENDPOINT` selects the Phase A compatibility
+transport only when `MEO_AI_SERVICE_ENDPOINT` is absent. The app never retries a
+submitted AgentService request through the legacy transport because replaying a
+message could duplicate tool or system side effects.
+
 In AgentService mode the native client:
 
 - creates and persists a Meo conversation ID;
+- restores persisted user/assistant message history on startup while filtering
+  Newelle-internal console, command, file and folder records from the UI contract;
+- clears a stale persisted conversation ID when the service reports that it no
+  longer exists;
 - streams ordered events carrying request-local `seq` values;
 - uses `request_id` and `decision_id` for tool choices;
 - can submit a tool decision while the model/tool SSE request remains open;
@@ -171,9 +181,10 @@ commands or a second natural-language parser.
 
 ## Phase A compatibility preview
 
-If `MEO_AI_SERVICE_ENDPOINT` is unset, the native client keeps the Phase A path
-for now. Build/install **this fork's** Newelle engine, enable its API interface
-on `127.0.0.1:8080`, configure a nonempty API key and start:
+Phase A is now an explicit compatibility fallback rather than the default native
+path. To select it, set `MEO_AI_ENDPOINT` and leave `MEO_AI_SERVICE_ENDPOINT`
+unset. Build/install **this fork's** Newelle engine, enable its API interface on
+`127.0.0.1:8080`, configure a nonempty API key and start:
 
 ```sh
 MEO_AI_API_KEY=... \
@@ -183,7 +194,9 @@ MEO_AI_ENDPOINT=http://127.0.0.1:8080 \
 
 The legacy path still understands inherited `/models`, `/model`, `/tools`,
 `/skill`, `/list_chats`, `/resume` and `/option` commands. It remains only a
-compatibility path while Phase B reaches real-provider parity.
+compatibility path while Phase B reaches real-provider parity. A failed or
+interrupted AgentService request is never automatically replayed through this
+legacy endpoint.
 
 Do not put credentials in Git or prompt files. Upstream shell/MCP/extensions are
 not an OS sandbox. Use a dedicated test workspace with reviewed tools. Router,
