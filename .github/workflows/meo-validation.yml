@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: python3 -m compileall -q src meo/service meo/tools
+      - run: python3 -m compileall -q src meo/service meo/adapters meo/tools
       - run: python3 meo/tools/check_headless_imports.py
       - run: python3 -m unittest discover -s meo/tests -p 'test_*.py' -v
   native:
