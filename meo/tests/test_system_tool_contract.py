@@ -41,17 +41,17 @@ class FakeRouter:
         if capability_id == "org.meo.test.erase":
             return {
                 "requestId": "router:confirm",
-                "status": "awaiting_confirmation",
+                "state": "awaiting_confirmation",
                 "fingerprint": "abc123",
             }
-        return {"requestId": "router:done", "status": "completed", "result": {"percent": 30}}
+        return {"requestId": "router:done", "state": "completed", "message": "Volume is 30%"}
 
     def get_request(self, request_id):
-        return {"requestId": request_id, "status": "completed"}
+        return {"requestId": request_id, "state": "completed"}
 
     def decide_request(self, request_id, fingerprint, approve):
         self.decisions.append((request_id, fingerprint, approve))
-        return {"requestId": request_id, "status": "completed" if approve else "denied"}
+        return {"requestId": request_id, "state": "completed" if approve else "denied"}
 
 
 class SystemToolContractTests(unittest.TestCase):
@@ -93,6 +93,8 @@ class SystemToolContractTests(unittest.TestCase):
         self.assertEqual(router.submitted, [("org.meo.desktop.audio.setVolume", {"percent": 30})])
         with self.assertRaises(ValueError):
             SystemToolRequest("org.meo.desktop.audio.setVolume", {"percent": object()})
+        with self.assertRaises(ValueError):
+            SystemToolRequest("org.meo.desktop.audio.setVolume", {"percent": None})
 
     def test_bad_router_metadata_is_rejected(self):
         router = FakeRouter()
