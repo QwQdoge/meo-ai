@@ -62,6 +62,11 @@ class FakeController:
         self.skill_manager = FakeSkillManager()
         self.updated = 0
         self.chats = {}
+        self.mcp_servers_dict = [
+            {"title": "Project files", "catalog_id": "project-files", "url": "https://private.example/mcp", "bearer_token": "secret"},
+            "https://legacy-secret.example/mcp",
+        ]
+        self.mcp_integration = None
 
     def workspace_chats(self):
         return self.chats
@@ -71,6 +76,9 @@ class FakeController:
 
     def update_settings(self):
         self.updated += 1
+
+    def get_mcp_integration(self):
+        return self.mcp_integration
 
 
 class FakeInterface:
@@ -137,6 +145,25 @@ class LegacyCatalogTests(unittest.TestCase):
         self.assertTrue(skill.configured_enabled)
         self.assertEqual(skill.override_source, "mode")
         self.assertEqual(skill.selection_scope, "profile")
+
+    def test_mcp_metadata_is_structured_without_leaking_connection_secrets(self):
+        interface = FakeInterface()
+        adapter = LegacyChatInterfaceAdapter(interface)
+
+        configured = adapter.list_mcp_servers()
+        self.assertEqual([item.server_id for item in configured], ["mcp:project-files", "mcp:1"])
+        self.assertEqual([item.label for item in configured], ["Project files", "MCP server 2"])
+        self.assertEqual([item.enabled for item in configured], [False, False])
+        serialized = repr(configured)
+        self.assertNotIn("private.example", serialized)
+        self.assertNotIn("legacy-secret.example", serialized)
+        self.assertNotIn("secret", serialized)
+
+        interface.controller.mcp_integration = types.SimpleNamespace(
+            mcp_servers=interface.controller.mcp_servers_dict,
+        )
+        active = adapter.list_mcp_servers()
+        self.assertEqual([item.enabled for item in active], [True, True])
 
 
 if __name__ == "__main__":
