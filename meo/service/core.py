@@ -31,6 +31,49 @@ class AgentServiceCore:
         self._contexts: Dict[str, RequestContext] = {}
         self._execution_handles: Dict[str, object] = {}
 
+    def _require_backend(self) -> AgentBackendAdapter:
+        if self.backend is None:
+            raise RuntimeError("AgentServiceCore has no backend adapter")
+        return self.backend
+
+    def list_conversations(self) -> list[dict]:
+        return list(self._require_backend().list_conversations())
+
+    def create_conversation(self) -> str:
+        conversation_id = self._require_backend().create_conversation()
+        if not isinstance(conversation_id, str) or not conversation_id:
+            raise RuntimeError("backend returned an invalid conversation ID")
+        return conversation_id
+
+    def list_models(self) -> list[dict]:
+        return [
+            {"model_id": item.model_id, "label": item.label, "provider": item.provider}
+            for item in self._require_backend().list_models()
+        ]
+
+    def set_model(self, conversation_id: str, model_id: str) -> None:
+        backend = self._require_backend()
+        if not backend.conversation_exists(conversation_id):
+            raise ValueError("unknown conversation_id")
+        backend.set_model(conversation_id, model_id)
+
+    def list_skills(self) -> list[dict]:
+        return [
+            {"skill_id": item.skill_id, "label": item.label, "enabled": item.enabled}
+            for item in self._require_backend().list_skills()
+        ]
+
+    def set_skill_enabled(self, skill_id: str, enabled: bool) -> None:
+        if not isinstance(skill_id, str) or not skill_id:
+            raise ValueError("skill_id is required")
+        self._require_backend().set_skill_enabled(skill_id, bool(enabled))
+
+    def list_mcp_servers(self) -> list[dict]:
+        return [
+            {"server_id": item.server_id, "label": item.label, "enabled": item.enabled}
+            for item in self._require_backend().list_mcp_servers()
+        ]
+
     def start_request(self, conversation_id: str) -> RequestContext:
         if not isinstance(conversation_id, str) or not conversation_id.strip():
             raise ValueError("conversation_id is required")
@@ -47,9 +90,8 @@ class AgentServiceCore:
         callbacks: BackendCallbacks,
         on_started: Callable[[RequestContext], None] | None = None,
     ) -> RequestContext:
-        if self.backend is None:
-            raise RuntimeError("AgentServiceCore has no backend adapter")
-        if not self.backend.conversation_exists(conversation_id):
+        backend = self._require_backend()
+        if not backend.conversation_exists(conversation_id):
             raise ValueError("unknown conversation_id")
         if not isinstance(text, str) or not text.strip():
             raise ValueError("message text is required")
@@ -81,7 +123,7 @@ class AgentServiceCore:
             on_error=lambda error: dispatch(self._backend_error, request_id, error, callbacks),
         )
         try:
-            handle = self.backend.send_message(conversation_id, text, wrapped)
+            handle = backend.send_message(conversation_id, text, wrapped)
         except Exception as exc:
             self.fail_request(request_id, str(exc))
             raise
