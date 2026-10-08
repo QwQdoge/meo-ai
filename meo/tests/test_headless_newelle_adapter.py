@@ -1,8 +1,10 @@
 import ast
 import importlib
+import os
 from pathlib import Path
 import sys
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -37,6 +39,20 @@ class HeadlessNewelleAdapterTests(unittest.TestCase):
         self.assertNotIn("Gtk.", source)
         self.assertNotIn("Adw.", source)
         self.assertNotIn("WebKit", source)
+
+    def test_system_tools_are_explicit_opt_in(self):
+        module = importlib.import_module("meo.adapters.headless_newelle")
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertFalse(module._system_tools_enabled())
+        for value in ("1", "true", "YES", "on"):
+            with self.subTest(value=value), mock.patch.dict(
+                os.environ, {"MEO_AI_ENABLE_SYSTEM_TOOL": value}, clear=True
+            ):
+                self.assertTrue(module._system_tools_enabled())
+        with mock.patch.dict(
+            os.environ, {"MEO_AI_ENABLE_SYSTEM_TOOL": "0"}, clear=True
+        ):
+            self.assertFalse(module._system_tools_enabled())
 
 
 if __name__ == "__main__":
