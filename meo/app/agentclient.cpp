@@ -16,6 +16,7 @@ AgentClient::AgentClient(QObject *parent) : QObject(parent) {
     if (m_serviceMode) {
         m_conversationId = settings.value("serviceConversationId").toString();
         m_status = tr("Connect to the local Meo AgentService to start.");
+        m_metadataStatus = tr("Not loaded");
         if (!m_conversationId.isEmpty()) {
             QTimer::singleShot(0, this, [this] { loadServiceHistory(); });
         }
@@ -26,6 +27,7 @@ AgentClient::AgentClient(QObject *parent) : QObject(parent) {
             settings.setValue("sessionId", m_user);
         }
         m_status = tr("Connect to the fork's local Newelle API to start.");
+        m_metadataStatus = tr("AgentService metadata is unavailable in legacy mode.");
     }
 }
 
@@ -39,6 +41,72 @@ QUrl AgentClient::validatedOrigin(const QByteArray &variable, const QString &fal
         return {};
     }
     return base;
+}
+
+void AgentClient::refreshServiceMetadata() {
+    if (!m_serviceMode || m_metadataReply) return;
+    m_metadataStatus = tr("Refreshing…");
+    emit changed();
+    fetchServiceMetadataStep(0, false);
+}
+
+void AgentClient::fetchServiceMetadataStep(int step, bool hadError) {
+    static const QStringList paths{
+        QStringLiteral("/v1/agent-state"),
+        QStringLiteral("/v1/models"),
+        QStringLiteral("/v1/skills"),
+        QStringLiteral("/v1/mcp-servers"),
+    };
+    if (step >= paths.size()) {
+        if (!hadError) m_metadataStatus = tr("Ready");
+        emit changed();
+        return;
+    }
+
+    QUrl base = validatedOrigin("MEO_AI_SERVICE_ENDPOINT");
+    if (!base.isValid()) {
+        m_metadataStatus = tr("MEO_AI_SERVICE_ENDPOINT must be a loopback HTTP origin.");
+        emit changed();
+        return;
+    }
+    QUrl url = base;
+    url.setPath(paths.at(step));
+    QNetworkRequest request(url);
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
+    QNetworkReply *reply = m_network.get(request);
+    m_metadataReply = reply;
+    emit changed();
+
+    connect(reply, &QNetworkReply::finished, this, [this, reply, step, hadError] {
+        if (m_metadataReply != reply) {
+            reply->deleteLater();
+            return;
+        }
+        m_metadataReply = nullptr;
+        bool nextHadError = hadError;
+        const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        QJsonParseError parseError;
+        const auto document = QJsonDocument::fromJson(reply->readAll(), &parseError);
+        if (reply->error() != QNetworkReply::NoError || code != 200 ||
+            parseError.error != QJsonParseError::NoError || !document.isObject()) {
+            nextHadError = true;
+            m_metadataStatus = tr("Metadata refresh incomplete (HTTP %1).").arg(code);
+        } else {
+            const auto object = document.object();
+            if (step == 0) {
+                m_agentState = object.toVariantMap();
+            } else if (step == 1) {
+                m_models = object.value("models").toArray().toVariantList();
+            } else if (step == 2) {
+                m_skills = object.value("skills").toArray().toVariantList();
+            } else if (step == 3) {
+                m_mcpServers = object.value("mcp_servers").toArray().toVariantList();
+            }
+        }
+        reply->deleteLater();
+        emit changed();
+        fetchServiceMetadataStep(step + 1, nextHadError);
+    });
 }
 
 void AgentClient::send(const QString &text) {
