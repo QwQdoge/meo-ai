@@ -64,7 +64,14 @@ class AgentServiceCore:
 
     def list_skills(self) -> list[dict]:
         return [
-            {"skill_id": item.skill_id, "label": item.label, "enabled": item.enabled}
+            {
+                "skill_id": item.skill_id,
+                "label": item.label,
+                "enabled": item.enabled,
+                "configured_enabled": item.configured_enabled,
+                "selection_scope": item.selection_scope,
+                "override_source": item.override_source,
+            }
             for item in self._require_backend().list_skills()
         ]
 
@@ -106,9 +113,6 @@ class AgentServiceCore:
         if on_started is not None:
             on_started(context)
 
-        # Some backends start worker threads before returning their execution
-        # handle. Buffer callbacks until the handle is registered so an immediate
-        # tool decision or cancel can never observe a request without its handle.
         callback_lock = threading.Lock()
         callback_ready = False
         pending_callbacks: list[tuple[Callable, tuple]] = []
@@ -141,7 +145,6 @@ class AgentServiceCore:
         for function, args in queued:
             function(*args)
 
-        # A buffered completion/error callback may have made the request terminal.
         if self.requests.get(request_id).terminal:
             self._execution_handles.pop(request_id, None)
         return context
