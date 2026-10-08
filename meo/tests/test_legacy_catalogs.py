@@ -39,8 +39,15 @@ class FakeSkillManager:
     def __init__(self):
         self.skills = {"diagnostics": FakeSkill("diagnostics"), "git": FakeSkill("git")}
         self.enabled = {"diagnostics": True, "git": False}
+        self.mode_skill_overrides = {}
 
-    def is_skill_enabled(self, name):
+    def is_skill_enabled(self, name, apply_overrides=True):
+        if apply_overrides:
+            override = self.mode_skill_overrides.get(name)
+            if override == "enable":
+                return True
+            if override == "remove":
+                return False
         return self.enabled[name]
 
     def set_skill_enabled(self, name, enabled):
@@ -111,10 +118,25 @@ class LegacyCatalogTests(unittest.TestCase):
         self.assertEqual([skill.skill_id for skill in skills], ["diagnostics", "git"])
         self.assertTrue(skills[0].enabled)
         self.assertFalse(skills[1].enabled)
+        self.assertEqual({skill.selection_scope for skill in skills}, {"profile"})
+        self.assertTrue(skills[0].configured_enabled)
+        self.assertFalse(skills[1].configured_enabled)
         adapter.set_skill_enabled("git", True)
         self.assertTrue(adapter.controller.skill_manager.enabled["git"])
         with self.assertRaises(ValueError):
             adapter.set_skill_enabled("missing", True)
+
+    def test_mode_override_is_reported_separately_from_profile_preference(self):
+        adapter = LegacyChatInterfaceAdapter(FakeInterface())
+        manager = adapter.controller.skill_manager
+        manager.enabled["git"] = True
+        manager.mode_skill_overrides["git"] = "remove"
+
+        skill = next(item for item in adapter.list_skills() if item.skill_id == "git")
+        self.assertFalse(skill.enabled)
+        self.assertTrue(skill.configured_enabled)
+        self.assertEqual(skill.override_source, "mode")
+        self.assertEqual(skill.selection_scope, "profile")
 
 
 if __name__ == "__main__":
