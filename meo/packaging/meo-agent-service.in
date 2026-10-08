@@ -1,0 +1,19 @@
+#!@PYTHON@
+
+import os
+import sys
+
+pkgdatadir = '@pkgdatadir@'
+sys.path.insert(1, pkgdatadir)
+
+# Installed MeoArch packages use the extracted headless Newelle adapter by
+# default. Developers can override it for tests or later native backends.
+os.environ.setdefault(
+    'MEO_AI_BACKEND_FACTORY',
+    'meo.adapters.headless_newelle:create_backend',
+)
+
+from meo.runtime.main import main
+
+if __name__ == '__main__':
+    raise SystemExit(main())
