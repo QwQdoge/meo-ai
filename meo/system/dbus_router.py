@@ -175,14 +175,18 @@ class DbusNextRouterClient:
             raise RouterUnavailable("Router returned an invalid capability list")
         return value
 
-    async def _submit_request(self, capability_id: str, arguments: Mapping[str, Any]):
+    async def _submit_request(self, capability_id: str, encoded_arguments: Mapping[str, object]):
         interface = await self._get_interface()
         return self._unwrap(
-            await interface.call_submit_request(capability_id, self._variant_map(arguments))
+            await interface.call_submit_request(capability_id, dict(encoded_arguments))
         )
 
     def submit_request(self, capability_id: str, arguments: Mapping[str, Any]) -> Mapping[str, Any]:
-        value = self._run(self._submit_request(capability_id, arguments))
+        # Encode locally before entering the asynchronous D-Bus call. Structural
+        # caller mistakes remain ValueError; only bus/runtime failures are wrapped
+        # as RouterUnavailable by _run().
+        encoded_arguments = self._variant_map(arguments)
+        value = self._run(self._submit_request(capability_id, encoded_arguments))
         if not isinstance(value, dict):
             raise RouterUnavailable("Router returned an invalid request view")
         return value
