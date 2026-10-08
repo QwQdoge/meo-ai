@@ -156,7 +156,7 @@ MCP metadata 来自 Newelle `mcp_servers` / `mcp_servers_dict`。AgentService �
 
 ## 当前已实现：early Phase C SystemTool preview
 
-System control默认关闭。只有显式 `MEO_AI_ENABLE_SYSTEM_TOOL=1` 才安装 Newelle compatibility system tools。
+System control 默认关闭。只有显式 `MEO_AI_ENABLE_SYSTEM_TOOL=1` 才安装 Newelle compatibility system tools。
 
 `SystemTool`：
 
