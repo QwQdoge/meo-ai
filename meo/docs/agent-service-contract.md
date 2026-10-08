@@ -6,7 +6,7 @@ Status: Phase B contract. This document defines the stable frontend/runtime boun
 
 `Meo AI` is the Qt/QML frontend. `AgentService` owns the Newelle-derived agent runtime and runs as an unprivileged user service. The service does not gain OS authority from prompts, Skills, MCP descriptions, model output or frontend requests.
 
-The current implementation uses loopback HTTP/SSE as a transport, but HTTP is not the product contract. A later D-Bus or other local transport must preserve conversation identity, request identity, decision identity, event ordering and cancellation semantics.
+The current implementation uses loopback HTTP/SSE as a transport, but HTTP is not the product contract. A later D-Bus or other local transport must preserve conversation identity, request identity, decision identity, event ordering, reconnect semantics and cancellation semantics.
 
 `AgentServiceCore` consumes a narrow `AgentBackendAdapter`. The service layer and adapter contract must remain importable without GTK/Adwaita/WebKit or Newelle UI modules. A compatibility adapter may still wrap the current GTK-era Newelle controller during extraction; that adapter is the temporary seam, not part of the stable frontend contract.
 
@@ -39,6 +39,7 @@ The stable semantic surface is:
 - `ListConversations()`
 - `ResumeConversation(conversationId)`
 - `SendMessage(conversationId, text)` -> request id
+- `SubscribeRequestEvents(requestId, afterSequence)`
 - `CancelRequest(requestId)`
 - `GetRequest(requestId)`
 - `ChooseToolOption(requestId, decisionId, option)`
@@ -55,8 +56,9 @@ The Phase B HTTP implementation currently maps those semantics to:
 
 - `GET /v1/conversations`
 - `POST /v1/conversations`
-- `POST /v1/conversations/{conversationId}/messages` -> SSE event stream
+- `POST /v1/conversations/{conversationId}/messages` -> initial SSE event stream
 - `GET /v1/requests/{requestId}`
+- `GET /v1/requests/{requestId}/events?after={sequence}` -> reconnect SSE stream
 - `POST /v1/requests/{requestId}/cancel`
 - `POST /v1/requests/{requestId}/decisions/{decisionId}` with `{"option_index": N}`
 - `GET /v1/models`
@@ -84,7 +86,7 @@ Execution handles returned by the adapter are opaque to transports and frontends
 
 Backends may also begin producing callbacks before `send_message()` returns its execution handle. AgentService buffers those early callbacks until the handle is registered, so an immediate tool decision or cancellation can never observe a request without its backend handle.
 
-## Events
+## Events and reconnect
 
 The current stream emits:
 
@@ -94,6 +96,12 @@ The current stream emits:
 - `request.completed`
 - `request.cancelled`
 - `request.failed`
+
+Every emitted transport event receives a monotonically increasing request-local `seq`. A client should remember the highest sequence it has fully processed. If its stream disconnects while the same AgentService process is still alive, it may reconnect with `after=<last_seq>` and receive only later retained events.
+
+The in-memory event journal is deliberately bounded. A reconnect cursor older than retained history is rejected explicitly rather than silently skipping events. Cursor `0` means "start from the currently retained history". Terminal request journals are retained only for a bounded number of recent requests.
+
+This is reconnect support, not durable request execution. An AgentService process restart discards request event journals and must not silently replay an uncertain model/tool request. Durable conversation history remains a separate concern.
 
 The broader semantic contract may add `request.stateChanged`, `message.started`, `message.completed` and `tool.completed` without changing the request/decision model.
 
@@ -117,7 +125,7 @@ Skill text, model output and MCP descriptions remain untrusted input. Enabling a
 
 Conversation history is durable according to the inherited Newelle storage policy. Meo-owned conversations carry a `meo_conversation_id` metadata field so the compatibility adapter can rediscover them after service restart without taking ownership of unrelated Newelle chats.
 
-Request execution state is not automatically assumed durable. After a service crash/restart:
+Request execution state and event journals are not automatically assumed durable. After a service crash/restart:
 
 - completed conversation history remains listable/resumable;
 - any request whose execution outcome is uncertain must be surfaced as interrupted/failed, not silently replayed;
@@ -135,4 +143,4 @@ Phase B is accepted only when the runtime service can start and serve the contra
 
 CI statically checks `meo/service` for forbidden UI imports and dynamically checks the runtime import graph. Meson staged-install CI also verifies the launcher, runtime modules and user unit are installed to the expected paths. These gates do not prove that a real provider and every real tool can execute headlessly on a live MeoArch session; that remains a separate acceptance track.
 
-The full live acceptance suite must cover process start, real provider send/stream, tool pause/deny/approve, cancel in model wait, cancel while awaiting a tool decision, disconnect/reconnect, runtime crash/restart, conversation resume, invalid/stale decision IDs, systemd user-session start/restart and Plasma-session behavior.
+The full live acceptance suite must cover process start, real provider send/stream, tool pause/deny/approve, cancel in model wait, cancel while awaiting a tool decision, disconnect/reconnect using event sequences, runtime crash/restart, conversation resume, invalid/stale decision IDs, systemd user-session start/restart and Plasma-session behavior.
