@@ -21,12 +21,24 @@ class FakeController:
         self.cancelled.append(chat_id)
 
 
+class FakePendingResult:
+    def __init__(self, release):
+        self.release = release
+        self.cancelled = False
+
+    def cancel(self):
+        self.cancelled = True
+        self.release.set()
+
+
 class FakeInterface:
     def __init__(self, controller=None):
         self.controller = controller or FakeController()
         self._next_chat = max(self.controller.chats, default=10)
         self.pending = {}
+        self._pending_interactions = self.pending
         self.release = threading.Event()
+        self.last_pending_result = None
 
     def get_or_create_chat(self, user_id):
         for chat_id, record in self.controller.chats.items():
@@ -45,7 +57,8 @@ class FakeInterface:
             "interaction_id": "legacy-1",
             "options": [{"index": 0, "title": "Deny"}, {"index": 1, "title": "Approve"}],
         }
-        self.pending["legacy-1"] = None
+        self.last_pending_result = FakePendingResult(self.release)
+        self.pending["legacy-1"] = {"result": self.last_pending_result}
         if on_tool_event:
             on_tool_event(event)
         self.release.wait(timeout=2)
@@ -88,6 +101,26 @@ class LegacyChatInterfaceAdapterTests(unittest.TestCase):
         self.assertEqual(events[-1], ("done", None))
         adapter.cancel(handle)
         self.assertEqual(interface.controller.cancelled, [handle.chat_id])
+
+    def test_cancel_releases_pending_interaction_worker(self):
+        interface = FakeInterface()
+        adapter = LegacyChatInterfaceAdapter(interface)
+        conversation_id = adapter.create_conversation()
+        events = []
+        tool_ready = threading.Event()
+        handle = adapter.send_message(conversation_id, "hello", self.callbacks(events, tool_ready))
+        self.assertTrue(tool_ready.wait(timeout=1))
+        self.assertTrue(handle.thread.is_alive())
+
+        adapter.cancel(handle)
+        handle.thread.join(timeout=1)
+
+        self.assertFalse(handle.thread.is_alive())
+        self.assertIsNone(handle.pending_interaction_id)
+        self.assertEqual(interface.pending, {})
+        self.assertTrue(interface.last_pending_result.cancelled)
+        self.assertEqual(interface.controller.cancelled, [handle.chat_id])
+        self.assertEqual(events[-1], ("done", None))
 
     def test_conversation_mapping_survives_adapter_recreation(self):
         controller = FakeController()
