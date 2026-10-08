@@ -117,6 +117,22 @@ class AgentServiceCoreTests(unittest.TestCase):
         service.choose_tool_option(context.request_id, normalized["decision_id"], 1)
         self.assertEqual(backend.handle["choices"], [1])
 
+    def test_non_interactive_tool_result_is_forwarded_without_failing_request(self):
+        backend = FakeBackend(
+            tool_event={
+                "type": "tool_result",
+                "tool_name": "system_org_meo_desktop_audio_get_volume",
+                "display_text": "Read volume",
+            }
+        )
+        service = AgentServiceCore(backend)
+        events = []
+        context = service.send_message("conversation:1", "hello", self.callbacks(events))
+        normalized = next(payload for kind, payload in events if kind == "tool")
+        self.assertEqual(normalized["type"], "tool.completed")
+        self.assertEqual(normalized["conversation_id"], "conversation:1")
+        self.assertEqual(service.get_request(context.request_id).state, RequestState.RUNNING_MODEL)
+
     def test_synchronous_backend_completion_does_not_leave_stale_handle(self):
         backend = FakeBackend(complete_synchronously=True)
         service = AgentServiceCore(backend)
