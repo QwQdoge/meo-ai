@@ -45,7 +45,7 @@ python3 -m meo.runtime.main --self-check \
   --backend-factory meo.adapters.headless_newelle:create_backend
 ```
 
-Then start the service:
+Then start the service from the checkout:
 
 ```sh
 python3 -m meo.runtime.main \
@@ -69,11 +69,35 @@ In AgentService mode the native client:
 - can submit a tool decision while the model/tool SSE request remains open;
 - exposes a real Stop action that calls `CancelRequest` rather than merely
   disconnecting the stream;
+- treats an SSE disconnect as transport loss, not cancellation;
 - rejects non-loopback service endpoints.
+
+### Installed service
+
+The Meson install now also installs:
+
+- `meo-agent-service` in the install `bindir`;
+- the Phase B `meo/runtime`, `meo/service` and `meo/adapters` Python modules
+  beside the installed Newelle Python package;
+- `meo-agent-service.service` as a systemd user unit.
+
+The unit is installed but **not enabled automatically** by this repository. For
+development/live acceptance after installing the package:
+
+```sh
+systemctl --user daemon-reload
+systemctl --user start meo-agent-service.service
+systemctl --user status meo-agent-service.service
+```
+
+Only after live session validation should distro packaging decide whether to
+enable it by default. The service runs unprivileged with `NoNewPrivileges=yes`;
+future OS authority still belongs behind the typed System AI Router/capability
+policy rather than this process.
 
 A successful headless self-check means the backend could be constructed without
 loading the forbidden UI modules. It does **not** yet prove real provider
-inference, cooperative interruption of every tool, D-Bus/systemd activation or
+inference, cooperative interruption of every tool, session/systemd activation or
 Plasma integration; those remain on the live acceptance track.
 
 ## Phase A compatibility preview
