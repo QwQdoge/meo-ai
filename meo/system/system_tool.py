@@ -86,8 +86,9 @@ class SystemToolResult:
 class RouterClient(Protocol):
     """Typed client seam for org.meo.AIRouter1.
 
-    Implementations may use D-Bus later. This protocol intentionally exposes
-    SubmitRequest semantics only; the AI agent does not call Router SubmitText.
+    Implementations use one durable session-bus connection so Router caller
+    binding remains stable across SubmitRequest, GetRequest and DecideRequest.
+    The AI agent does not call Router SubmitText.
     """
 
     def list_capabilities(self) -> list[Mapping[str, Any]]: ...
@@ -131,7 +132,7 @@ class SystemTool:
         # The Router owns the exact typed schema and must reject mismatches.
         view = dict(self.router.submit_request(request.capability_id, dict(request.arguments)))
         request_id = _required_string(view, "requestId")
-        state = _required_string(view, "status")
+        state = _required_string(view, "state")
         return SystemToolResult(request_id, state, descriptor, view)
 
     def refresh(self, router_request_id: str) -> dict[str, Any]:
@@ -160,7 +161,8 @@ def _required_string(value: Mapping[str, Any], key: str) -> str:
 def _validate_transport_value(value: Any, *, depth: int = 0) -> None:
     if depth > 8:
         raise ValueError("arguments are nested too deeply")
-    if value is None or isinstance(value, (bool, int, float, str)):
+    # D-Bus a{sv} has no transport-neutral null value. Do not invent one here.
+    if isinstance(value, (bool, int, float, str)):
         return
     if isinstance(value, list):
         for item in value:
