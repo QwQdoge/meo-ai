@@ -32,6 +32,11 @@ if(BUILD_TESTING)
     target_link_libraries(meo-ai-early-cancel-test PRIVATE Qt6::Network Qt6::Test)
     add_test(NAME meo-ai.early-cancel COMMAND meo-ai-early-cancel-test)
 
+    qt_add_executable(meo-ai-service-recovery-test tests/service-recovery-test.cpp app/agentclient.cpp app/agentclient.h)
+    target_include_directories(meo-ai-service-recovery-test PRIVATE app)
+    target_link_libraries(meo-ai-service-recovery-test PRIVATE Qt6::Network Qt6::Test)
+    add_test(NAME meo-ai.service-recovery COMMAND meo-ai-service-recovery-test)
+
     add_test(NAME meo-ai.qml-smoke COMMAND meo-ai --smoke)
     set_tests_properties(meo-ai.qml-smoke PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QSG_RHI_BACKEND=software")
 endif()
