@@ -3,14 +3,13 @@ from __future__ import annotations
 import json
 import queue
 import threading
-from dataclasses import asdict
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import urlparse
 
 from meo.service.backend_adapter import BackendCallbacks
-from meo.service.core import AgentServiceCore
+from meo.service.core import AgentServiceCore, RequestContext
 from meo.service.request_state import RequestState
 
 
@@ -22,6 +21,9 @@ class RequestEventStream:
 
     def emit(self, event_type: str, **payload: Any) -> None:
         self._events.put({"type": event_type, **payload})
+
+    def emit_event(self, event: dict[str, Any]) -> None:
+        self._events.put(dict(event))
 
     def close(self) -> None:
         self._events.put(None)
@@ -37,7 +39,7 @@ class RequestEventStream:
 class AgentHttpTransport:
     """Semantic adapter from loopback HTTP/SSE to AgentServiceCore.
 
-    HTTP is an implementation detail for Phase B. Frontends must consume the
+    HTTP is an implementation detail for Phase B. Frontends consume the
     AgentService request/decision/event schema rather than Newelle v2 commands.
     """
 
@@ -60,7 +62,18 @@ class AgentHttpTransport:
         request_box: dict[str, str] = {}
 
         def request_id() -> str:
-            return request_box.get("id", "")
+            return request_box["id"]
+
+        def on_started(context: RequestContext) -> None:
+            request_box["id"] = context.request_id
+            with self._lock:
+                self._streams[context.request_id] = stream
+            stream.emit(
+                "request.started",
+                request_id=context.request_id,
+                conversation_id=conversation_id,
+                state=self.service.get_request(context.request_id).state.value,
+            )
 
         callbacks = BackendCallbacks(
             on_text_delta=lambda delta: stream.emit(
@@ -69,34 +82,16 @@ class AgentHttpTransport:
                 conversation_id=conversation_id,
                 delta=delta,
             ),
-            on_tool_event=lambda event: stream.emit(
-                "tool.requested",
-                request_id=request_id(),
-                conversation_id=conversation_id,
-                **event,
-            ),
+            # AgentServiceCore already normalizes this to tool.requested and
+            # issues the authoritative decision_id. Preserve it verbatim.
+            on_tool_event=lambda event: stream.emit_event(event),
             on_done=lambda: self._finish_stream(stream, request_id()),
             on_error=lambda error: self._fail_stream(stream, request_id(), error),
         )
-        context = self.service.send_message(conversation_id, text, callbacks)
-        request_box["id"] = context.request_id
-        with self._lock:
-            self._streams[context.request_id] = stream
-        stream.emit(
-            "request.started",
-            request_id=context.request_id,
-            conversation_id=conversation_id,
-            state=self.service.get_request(context.request_id).state.value,
-        )
+        context = self.service.send_message(conversation_id, text, callbacks, on_started=on_started)
         return context.request_id, stream
 
     def _finish_stream(self, stream: RequestEventStream, request_id: str) -> None:
-        if not request_id:
-            # A synchronous backend may call on_done before send_message returns.
-            # The request.started event will still be emitted after the request ID
-            # becomes available; keep the stream open until the caller finalizes it.
-            stream.emit("request.backendCompletedEarly")
-            return
         request = self.service.get_request(request_id)
         event_type = "request.cancelled" if request.state is RequestState.CANCELLED else "request.completed"
         stream.emit(event_type, request_id=request_id, state=request.state.value)
@@ -107,9 +102,8 @@ class AgentHttpTransport:
     def _fail_stream(self, stream: RequestEventStream, request_id: str, error: str) -> None:
         stream.emit("request.failed", request_id=request_id, error=error)
         stream.close()
-        if request_id:
-            with self._lock:
-                self._streams.pop(request_id, None)
+        with self._lock:
+            self._streams.pop(request_id, None)
 
     def choose_tool_option(self, request_id: str, decision_id: str, option_index: int) -> dict:
         legacy_index = self.service.choose_tool_option(request_id, decision_id, option_index)
@@ -227,7 +221,7 @@ class _Handler(BaseHTTPRequestHandler):
             if len(segments) == 4 and segments[:2] == ["v1", "requests"] and segments[3] == "cancel":
                 self._reply_json(HTTPStatus.OK, self.transport.cancel_request(segments[2]))
                 return
-            if len(segments) == 6 and segments[:2] == ["v1", "requests"] and segments[3] == "decisions":
+            if len(segments) == 5 and segments[:2] == ["v1", "requests"] and segments[3] == "decisions":
                 body = self._read_json()
                 option_index = body.get("option_index")
                 if not isinstance(option_index, int) or isinstance(option_index, bool):
