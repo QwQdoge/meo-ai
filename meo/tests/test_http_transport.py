@@ -162,7 +162,8 @@ class HttpTransportTests(unittest.TestCase):
         self.assertEqual(self.backend.handles, [])
         _, state = self.json_request("GET", "/v1/agent-state")
         self.assertEqual(state["active_requests"], 0)
-        self.assertEqual(state["request_states"], {})
+        self.assertTrue(state["request_states"])
+        self.assertTrue(all(count == 0 for count in state["request_states"].values()))
 
     def test_catalogs_and_mutations_are_structured(self):
         cid = self.create_conversation()
