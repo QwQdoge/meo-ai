@@ -1,0 +1,1 @@
+For recovery, collect facts, diagnose, propose a specific plan, obtain the owning repair service's confirmation, apply through its typed authority, then verify. Keep snapshots and rollback under the transaction service. A source check, offscreen test, or build does not prove a successful repair or live hardware behavior. Never report an unimplemented capability as available.

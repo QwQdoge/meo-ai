@@ -846,8 +846,10 @@ class APIInterface(ChatInterface):
 
     @staticmethod
     def _sse_chunk(completion_id, created, model_name,
-                   delta_content=None, role=None, finish_reason=None) -> str:
+                   delta_content=None, role=None, finish_reason=None, meo_event=None) -> str:
         delta: dict = {}
+        if meo_event is not None:
+            delta["meo_event"] = meo_event
         if role is not None:
             delta["role"] = role
         if delta_content is not None:
@@ -961,6 +963,8 @@ class APIInterface(ChatInterface):
                     yield _sse(completion_id, created, model_name, delta_content=data)
 
             elif kind == "tool":
+                # Additive structured event for native clients; legacy text remains.
+                yield _sse(completion_id, created, model_name, meo_event=data)
                 rendered = self._render_tool_event(data)
                 if rendered:
                     if log_on:

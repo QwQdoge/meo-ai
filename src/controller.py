@@ -2570,6 +2570,7 @@ class NewelleController(WorkspaceController):
         on_tool_start_callback: Callable[[str], None] = None,
         on_intermediate_message_callback: Callable[[str], None] = None,
         is_current: Callable[[], bool] | None = None,
+        extra_system_prompts: list[str] | None = None,
     ) -> str:
         """Run LLM with tool support integration.
 
@@ -2592,6 +2593,8 @@ class NewelleController(WorkspaceController):
             mode_name: Optional request-local Newelle Mode. It controls prompts,
                 tool exposure, and Skills without changing ``current-mode``.
             on_tool_start_callback: Called immediately before each tool executes.
+            extra_system_prompts: Trusted product behavior overlay, appended on every
+                inference turn including mode rebuilds. It grants no permissions.
             on_intermediate_message_callback: Called with assistant text emitted
                 before one or more tool calls are executed.
 
@@ -2769,9 +2772,9 @@ class NewelleController(WorkspaceController):
                                 prompt = request_history.pop(i)["Message"]
                                 break
 
-                request_system_prompt = system_prompt
+                request_system_prompt = list(system_prompt) + list(extra_system_prompts or ())
                 if final_synthesis_turn:
-                    request_system_prompt = list(system_prompt) + [
+                    request_system_prompt = request_system_prompt + [
                         "The maximum tool call limit has been reached. Do not call any "
                         "more tools; return the best final answer using the results already available."
                     ]
