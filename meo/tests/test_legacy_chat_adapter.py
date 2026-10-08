@@ -8,20 +8,32 @@ from meo.service.backend_adapter import BackendCallbacks
 class FakeController:
     def __init__(self):
         self.cancelled = []
+        self.chats = {}
+        self.saved = 0
+
+    def workspace_chats(self):
+        return self.chats
+
+    def save_chats(self):
+        self.saved += 1
 
     def stop_workspace_request(self, chat_id):
         self.cancelled.append(chat_id)
 
 
 class FakeInterface:
-    def __init__(self):
-        self.controller = FakeController()
-        self._next_chat = 10
+    def __init__(self, controller=None):
+        self.controller = controller or FakeController()
+        self._next_chat = max(self.controller.chats, default=10)
         self.pending = {}
         self.release = threading.Event()
 
     def get_or_create_chat(self, user_id):
+        for chat_id, record in self.controller.chats.items():
+            if record.get("meo_conversation_id") == user_id:
+                return chat_id
         self._next_chat += 1
+        self.controller.chats[self._next_chat] = {"name": f"Chat {self._next_chat}"}
         return self._next_chat
 
     def process_message(self, user_id, text, *, on_chunk=None, on_tool_event=None):
@@ -61,6 +73,10 @@ class LegacyChatInterfaceAdapterTests(unittest.TestCase):
         adapter = LegacyChatInterfaceAdapter(interface)
         conversation_id = adapter.create_conversation()
         self.assertTrue(adapter.conversation_exists(conversation_id))
+        self.assertEqual(
+            interface.controller.chats[adapter._conversations[conversation_id]]["meo_conversation_id"],
+            conversation_id,
+        )
         events = []
         tool_ready = threading.Event()
         handle = adapter.send_message(conversation_id, "hello", self.callbacks(events, tool_ready))
@@ -72,6 +88,19 @@ class LegacyChatInterfaceAdapterTests(unittest.TestCase):
         self.assertEqual(events[-1], ("done", None))
         adapter.cancel(handle)
         self.assertEqual(interface.controller.cancelled, [handle.chat_id])
+
+    def test_conversation_mapping_survives_adapter_recreation(self):
+        controller = FakeController()
+        first = LegacyChatInterfaceAdapter(FakeInterface(controller))
+        conversation_id = first.create_conversation()
+        chat_id = first._conversations[conversation_id]
+
+        second = LegacyChatInterfaceAdapter(FakeInterface(controller))
+        self.assertTrue(second.conversation_exists(conversation_id))
+        self.assertEqual(second._conversations[conversation_id], chat_id)
+        listed = second.list_conversations()
+        self.assertEqual(listed[0]["id"], conversation_id)
+        self.assertEqual(listed[0]["legacy_chat_id"], chat_id)
 
     def test_unknown_conversation_is_rejected(self):
         adapter = LegacyChatInterfaceAdapter(FakeInterface())
