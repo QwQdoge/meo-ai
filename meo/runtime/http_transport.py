@@ -28,6 +28,9 @@ class AgentHttpTransport:
         self._retained_terminal_journals = retained_terminal_journals
         self._lock = threading.Lock()
 
+    def get_agent_state(self) -> dict:
+        return self.service.get_agent_state()
+
     def list_conversations(self) -> list[dict]:
         return self.service.list_conversations()
 
@@ -261,6 +264,9 @@ class _Handler(BaseHTTPRequestHandler):
             return
         segments, query = self._route()
         try:
+            if segments == ["v1", "agent-state"] and not query:
+                self._reply_json(HTTPStatus.OK, self.transport.get_agent_state())
+                return
             if segments == ["v1", "conversations"] and not query:
                 self._reply_json(HTTPStatus.OK, {"conversations": self.transport.list_conversations()})
                 return
