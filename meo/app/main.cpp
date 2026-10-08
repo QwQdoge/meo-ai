@@ -4,6 +4,7 @@
 #include <QQmlContext>
 #include <QTimer>
 #include <QQuickWindow>
+#include <cstdio>
 int main(int argc, char **argv) {
     QGuiApplication app(argc, argv);
     app.setOrganizationName("MeoArch"); app.setApplicationName("MeoAI");
@@ -18,9 +19,14 @@ int main(int argc, char **argv) {
         qputenv("MEO_AI_SERVICE_ENDPOINT", "http://127.0.0.1:8765");
     }
 
+    AgentClient client;
+    if (app.arguments().contains("--print-transport")) {
+        std::puts(client.serviceMode() ? "service" : "legacy");
+        return 0;
+    }
+
     QQmlApplicationEngine engine;
     engine.addImportPath(QStringLiteral(MEOUI_IMPORT_PATH));
-    AgentClient client;
     engine.rootContext()->setContextProperty("agent", &client);
     engine.load(QUrl("qrc:/meo/app/qml/Main.qml"));
     if (engine.rootObjects().isEmpty()) return 1;
