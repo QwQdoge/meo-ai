@@ -35,13 +35,15 @@ class EventJournalTests(unittest.TestCase):
         journal.append({"type": "one"})
         journal.append({"type": "two"})
         journal.append({"type": "three"})
+        journal.append({"type": "four"})
         journal.close()
         # Cursor 0 means "give me the retained history". A stale non-zero
         # cursor claims the client already saw a specific earlier event, so a
         # retention gap must be explicit rather than silently skipping data.
-        self.assertEqual([event["type"] for event in journal.subscribe(0)], ["two", "three"])
+        self.assertEqual([event["type"] for event in journal.subscribe(0)], ["three", "four"])
         with self.assertRaises(JournalGapError):
             list(journal.subscribe(1))
+        self.assertEqual([event["type"] for event in journal.subscribe(2)], ["three", "four"])
 
     def test_invalid_cursor_rejected(self):
         journal = RequestEventJournal()
