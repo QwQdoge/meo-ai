@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict
+from typing import Callable, Dict
 
 from .backend_adapter import AgentBackendAdapter, BackendCallbacks
 from .legacy_v2_bridge import LegacyV2ToolBridge
@@ -44,6 +44,7 @@ class AgentServiceCore:
         conversation_id: str,
         text: str,
         callbacks: BackendCallbacks,
+        on_started: Callable[[RequestContext], None] | None = None,
     ) -> RequestContext:
         if self.backend is None:
             raise RuntimeError("AgentServiceCore has no backend adapter")
@@ -54,6 +55,8 @@ class AgentServiceCore:
 
         context = self.start_request(conversation_id)
         request_id = context.request_id
+        if on_started is not None:
+            on_started(context)
 
         wrapped = BackendCallbacks(
             on_text_delta=callbacks.on_text_delta,
