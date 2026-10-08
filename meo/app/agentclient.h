@@ -2,7 +2,9 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QObject>
+#include <QUrl>
 #include <QVariantList>
+#include <functional>
 
 class AgentClient : public QObject {
     Q_OBJECT
