@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+import time
 from typing import Any, Mapping, Protocol, runtime_checkable
 
 
@@ -22,6 +23,9 @@ class CapabilityMaturity(str, Enum):
     STABLE = "stable"
 
 
+TERMINAL_ROUTER_STATES = frozenset({"completed", "failed", "rejected", "denied", "expired"})
+
+
 @dataclass(frozen=True)
 class CapabilityDescriptor:
     capability_id: str
@@ -31,6 +35,7 @@ class CapabilityDescriptor:
     verification: CapabilityVerification
     maturity: CapabilityMaturity
     requires_confirmation: bool
+    argument_schema: dict[str, Any]
 
     @classmethod
     def from_router(cls, value: Mapping[str, Any]) -> "CapabilityDescriptor":
@@ -50,6 +55,10 @@ class CapabilityDescriptor:
         confirmation = value.get("requiresConfirmation")
         if not isinstance(confirmation, bool):
             raise ValueError("requiresConfirmation must be boolean")
+        schema = value.get("argumentSchema")
+        if not isinstance(schema, Mapping):
+            raise ValueError("argumentSchema must be an object")
+        normalized_schema = _validate_argument_schema(schema)
         return cls(
             capability_id=capability_id,
             title=title,
@@ -58,6 +67,7 @@ class CapabilityDescriptor:
             verification=verification,
             maturity=maturity,
             requires_confirmation=confirmation,
+            argument_schema=normalized_schema,
         )
 
 
@@ -76,7 +86,7 @@ class SystemToolRequest:
 
 @dataclass(frozen=True)
 class SystemToolResult:
-    router_request_id: str
+    router_request_id: str | None
     state: str
     capability: CapabilityDescriptor
     router_view: dict[str, Any]
@@ -131,14 +141,37 @@ class SystemTool:
         # Do not validate or coerce capability-specific argument types here.
         # The Router owns the exact typed schema and must reject mismatches.
         view = dict(self.router.submit_request(request.capability_id, dict(request.arguments)))
-        request_id = _required_string(view, "requestId")
         state = _required_string(view, "state")
+        request_id = view.get("requestId")
+        if request_id is not None and (not isinstance(request_id, str) or not request_id.strip()):
+            raise ValueError("Router returned an invalid requestId")
+        if request_id is None and state not in {"rejected", "failed"}:
+            raise ValueError("Router omitted requestId for a non-terminal rejection")
         return SystemToolResult(request_id, state, descriptor, view)
 
     def refresh(self, router_request_id: str) -> dict[str, Any]:
         if not isinstance(router_request_id, str) or not router_request_id:
             raise ValueError("router_request_id is required")
         return dict(self.router.get_request(router_request_id))
+
+    def wait_terminal(
+        self,
+        router_request_id: str,
+        *,
+        timeout: float = 35.0,
+        poll_interval: float = 0.1,
+    ) -> dict[str, Any]:
+        if timeout <= 0 or poll_interval <= 0:
+            raise ValueError("timeout and poll_interval must be positive")
+        deadline = time.monotonic() + timeout
+        while True:
+            view = self.refresh(router_request_id)
+            state = _required_string(view, "state")
+            if state in TERMINAL_ROUTER_STATES or state == "awaiting_confirmation":
+                return view
+            if time.monotonic() >= deadline:
+                raise TimeoutError("System AI Router request did not reach a terminal state")
+            time.sleep(poll_interval)
 
     def decide(self, router_request_id: str, fingerprint: str, approve: bool) -> dict[str, Any]:
         if not isinstance(router_request_id, str) or not router_request_id:
@@ -156,6 +189,34 @@ def _required_string(value: Mapping[str, Any], key: str) -> str:
     if not isinstance(item, str) or not item.strip():
         raise ValueError(f"{key} must be a non-empty string")
     return item
+
+
+def _validate_argument_schema(schema: Mapping[str, Any]) -> dict[str, Any]:
+    if schema.get("type") != "object":
+        raise ValueError("argumentSchema type must be object")
+    if schema.get("additionalProperties") is not False:
+        raise ValueError("argumentSchema must reject additional properties")
+    properties = schema.get("properties")
+    required = schema.get("required")
+    if not isinstance(properties, Mapping) or not isinstance(required, list):
+        raise ValueError("argumentSchema properties/required are invalid")
+    if any(not isinstance(name, str) or not name for name in required):
+        raise ValueError("argumentSchema required names must be non-empty strings")
+    if len(required) != len(set(required)) or set(required) != set(properties):
+        raise ValueError("argumentSchema properties must exactly match required arguments")
+    normalized_properties: dict[str, dict[str, Any]] = {}
+    allowed_types = {"string", "integer", "boolean", "number", "array", "object"}
+    for name, raw in properties.items():
+        if not isinstance(name, str) or not name or not isinstance(raw, Mapping):
+            raise ValueError("argumentSchema property is invalid")
+        property_schema = dict(raw)
+        if property_schema.get("type") not in allowed_types:
+            raise ValueError("argumentSchema property type is unsupported")
+        normalized_properties[name] = property_schema
+    result = dict(schema)
+    result["properties"] = normalized_properties
+    result["required"] = list(required)
+    return result
 
 
 def _validate_transport_value(value: Any, *, depth: int = 0) -> None:
