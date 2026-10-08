@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import threading
 from typing import Dict
 from uuid import uuid4
 
-from meo.service.backend_adapter import BackendCallbacks
+from meo.service.backend_adapter import BackendCallbacks, ModelInfo, SkillInfo
 
 
 @dataclass
@@ -31,6 +32,10 @@ class LegacyChatInterfaceAdapter:
     def __init__(self, interface) -> None:
         self.interface = interface
         self._conversations: Dict[str, int] = {}
+
+    @property
+    def controller(self):
+        return self.interface.controller
 
     def list_conversations(self):
         return [
@@ -102,20 +107,77 @@ class LegacyChatInterfaceAdapter:
         execution_handle.pending_interaction_id = None
 
     def cancel(self, execution_handle: LegacyExecutionHandle) -> None:
-        controller = self.interface.controller
-        controller.stop_workspace_request(execution_handle.chat_id)
+        self.controller.stop_workspace_request(execution_handle.chat_id)
 
     def list_models(self):
-        return []
+        """Return structured provider/model data using Newelle's existing handlers."""
+        from src.constants import AVAILABLE_LLMS
+
+        result = []
+        for provider_name, provider_info in AVAILABLE_LLMS.items():
+            try:
+                handler_class = provider_info["class"]
+                handler = handler_class(self.controller.settings, self.controller.handlers.directory)
+                models = list(handler.get_models_list()) if hasattr(handler, "get_models_list") else []
+            except Exception:
+                continue
+            provider_label = str(provider_info.get("title", provider_name))
+            for model in models:
+                if not model:
+                    continue
+                raw_id = str(model[0])
+                label = str(model[1] if len(model) > 1 else model[0])
+                result.append(ModelInfo(f"{provider_name}:{raw_id}", label, provider_label))
+        return result
 
     def set_model(self, conversation_id: str, model_id: str) -> None:
-        raise NotImplementedError("model switching is not exposed by the legacy adapter yet")
+        """Compatibility model switch.
+
+        Newelle's current provider/model selection is process/profile scoped, not
+        conversation-local. The AgentService API keeps the conversation argument so
+        the compatibility limitation is explicit and can later be removed.
+        """
+        from src.constants import AVAILABLE_LLMS
+
+        if not self.conversation_exists(conversation_id):
+            raise ValueError("unknown conversation_id")
+        if not isinstance(model_id, str) or not model_id.strip():
+            raise ValueError("model_id is required")
+
+        if ":" in model_id:
+            provider_name, raw_model_id = model_id.split(":", 1)
+        else:
+            provider_name = self.controller.newelle_settings.language_model
+            raw_model_id = model_id
+        if provider_name not in AVAILABLE_LLMS:
+            raise ValueError(f"unknown model provider: {provider_name}")
+        if not raw_model_id:
+            raise ValueError("model_id is required")
+
+        settings = self.controller.settings
+        settings.set_string("language-model", provider_name)
+        llm_settings = json.loads(settings.get_string("llm-settings"))
+        llm_settings.setdefault(provider_name, {})["model"] = raw_model_id
+        settings.set_string("llm-settings", json.dumps(llm_settings))
+        self.controller.update_settings()
 
     def list_skills(self):
-        return []
+        manager = getattr(self.controller, "skill_manager", None)
+        if manager is None:
+            return []
+        return [
+            SkillInfo(skill.name, skill.name, manager.is_skill_enabled(skill.name))
+            for skill in sorted(manager.skills.values(), key=lambda item: item.name.casefold())
+        ]
 
     def set_skill_enabled(self, skill_id: str, enabled: bool) -> None:
-        raise NotImplementedError("skill toggling is not exposed by the legacy adapter yet")
+        manager = getattr(self.controller, "skill_manager", None)
+        if manager is None or skill_id not in manager.skills:
+            raise ValueError(f"unknown skill_id: {skill_id}")
+        manager.set_skill_enabled(skill_id, bool(enabled))
 
     def list_mcp_servers(self):
+        # Newelle's MCP catalog/runtime is still coupled to extension/integration
+        # structures. Keep this empty rather than parsing presentation text or
+        # claiming a stable schema before the owning manager is identified.
         return []
