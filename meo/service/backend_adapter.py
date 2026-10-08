@@ -30,6 +30,12 @@ class McpServerInfo:
 
 
 @dataclass(frozen=True)
+class ConversationMessage:
+    role: str
+    text: str
+
+
+@dataclass(frozen=True)
 class BackendCallbacks:
     on_text_delta: Callable[[str], None]
     on_tool_event: Callable[[dict], None]
@@ -51,6 +57,8 @@ class AgentBackendAdapter(Protocol):
     def create_conversation(self) -> str: ...
 
     def conversation_exists(self, conversation_id: str) -> bool: ...
+
+    def list_messages(self, conversation_id: str) -> Iterable[ConversationMessage]: ...
 
     def send_message(
         self,
