@@ -117,7 +117,9 @@ Phase B continues to reuse upstream Newelle tool behavior while extracting the r
 
 Models and Skills are exposed as structured data from the owning Newelle managers/handlers rather than by parsing human-readable slash-command output.
 
-The current compatibility adapter exposes model selection using Newelle's provider/model settings and Skills through `SkillManager`. Newelle's authoritative structured MCP ownership API has not yet been identified, so the real compatibility adapter may return an empty MCP list. AgentService must not invent MCP state by scraping UI/presentation data merely to make this endpoint non-empty.
+Each model record carries `selection_scope`. `conversation` means switching that model is local to the addressed conversation. `profile` means the underlying backend stores the selection at profile/process scope and the frontend must not imply that only the current chat changes. The current Newelle compatibility adapter reports `profile` because Newelle's provider/model settings are shared. The conversation id is still required when setting a model so a stale/dead conversation cannot be used as a blind settings mutation channel.
+
+The current compatibility adapter exposes Skills through `SkillManager`. Newelle's authoritative structured MCP ownership API has not yet been identified, so the real compatibility adapter may return an empty MCP list. AgentService must not invent MCP state by scraping UI/presentation data merely to make this endpoint non-empty.
 
 Skill text, model output and MCP descriptions remain untrusted input. Enabling a Skill or MCP server never grants an OS capability by itself.
 
