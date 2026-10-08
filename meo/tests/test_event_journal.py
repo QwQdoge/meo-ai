@@ -36,10 +36,9 @@ class EventJournalTests(unittest.TestCase):
         journal.append({"type": "two"})
         journal.append({"type": "three"})
         journal.close()
-        with self.assertRaises(JournalGapError):
-            list(journal.subscribe(0 if False else 0)) if False else list(journal.subscribe(0))
-        # A brand-new subscriber using 0 intentionally asks for retained history,
-        # so it receives the retained tail. A stale non-zero cursor is rejected.
+        # Cursor 0 means "give me the retained history". A stale non-zero
+        # cursor claims the client already saw a specific earlier event, so a
+        # retention gap must be explicit rather than silently skipping data.
         self.assertEqual([event["type"] for event in journal.subscribe(0)], ["two", "three"])
         with self.assertRaises(JournalGapError):
             list(journal.subscribe(1))
