@@ -5,6 +5,8 @@
 #include <QNetworkProxy>
 #include <QNetworkRequest>
 #include <QSettings>
+#include <QTimer>
+#include <QUrlQuery>
 #include <QUuid>
 
 AgentClient::AgentClient(QObject *parent) : QObject(parent) {
@@ -113,6 +115,8 @@ void AgentClient::newChat() {
     m_requestId.clear();
     m_decisionId.clear();
     m_cancelPending = false;
+    m_lastEventSeq = 0;
+    m_reconnectAttempts = 0;
     QSettings().remove("serviceConversationId");
     ensureServiceConversation([this] {
         m_status = tr("Ready");
@@ -178,30 +182,89 @@ void AgentClient::sendService(const QString &text) {
     m_requestId.clear();
     m_decisionId.clear();
     m_cancelPending = false;
+    m_lastEventSeq = 0;
+    m_reconnectAttempts = 0;
     m_options.clear();
     m_status = tr("Receiving…");
     emit message("assistant", "");
-    m_reply = m_network.post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
+    attachServiceStream(m_network.post(request, QJsonDocument(body).toJson(QJsonDocument::Compact)));
+}
+
+void AgentClient::reconnectServiceStream() {
+    if (!m_serviceMode || m_done || m_reply || m_requestId.isEmpty()) return;
+    QUrl base = validatedOrigin("MEO_AI_SERVICE_ENDPOINT");
+    if (!base.isValid()) {
+        m_status = tr("MEO_AI_SERVICE_ENDPOINT must be a loopback HTTP origin.");
+        emit changed();
+        return;
+    }
+    QUrl url = base;
+    url.setPath(QString("/v1/requests/%1/events").arg(m_requestId));
+    QUrlQuery query;
+    query.addQueryItem("after", QString::number(m_lastEventSeq));
+    url.setQuery(query);
+    QNetworkRequest request(url);
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
+    m_status = tr("Reconnecting…");
+    attachServiceStream(m_network.get(request));
+}
+
+void AgentClient::attachServiceStream(QNetworkReply *reply) {
+    if (m_reply) {
+        reply->abort();
+        reply->deleteLater();
+        return;
+    }
+    m_reply = reply;
+    m_buffer.clear();
     emit changed();
-    connect(m_reply, &QNetworkReply::metaDataChanged, this, [this] {
-        if (!m_reply || !m_requestId.isEmpty()) return;
-        const auto header = m_reply->rawHeader("X-Meo-Request-Id");
+    connect(reply, &QNetworkReply::metaDataChanged, this, [this, reply] {
+        if (m_reply != reply || !m_requestId.isEmpty()) return;
+        const auto header = reply->rawHeader("X-Meo-Request-Id");
         if (header.isEmpty()) return;
         m_requestId = QString::fromUtf8(header);
         if (m_cancelPending) submitServiceCancel();
     });
-    connect(m_reply, &QNetworkReply::readyRead, this, &AgentClient::consumeService);
-    connect(m_reply, &QNetworkReply::finished, this, [this] {
+    connect(reply, &QNetworkReply::readyRead, this, &AgentClient::consumeService);
+    connect(reply, &QNetworkReply::finished, this, [this, reply] {
+        if (m_reply != reply) {
+            reply->deleteLater();
+            return;
+        }
         consumeService();
-        const int code = m_reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-        if (m_reply->error() != QNetworkReply::NoError || code != 200) {
+        const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        const auto networkError = reply->error();
+        reply->deleteLater();
+        m_reply = nullptr;
+
+        if (m_done) {
+            m_reconnectAttempts = 0;
+            emit changed();
+            return;
+        }
+
+        if (code == 409) {
+            m_status = tr("The request event history expired; check the request state before continuing.");
+            emit changed();
+            return;
+        }
+
+        const bool retryable = !m_requestId.isEmpty() &&
+            (code == 200 || code == 0 || code >= 500 || networkError == QNetworkReply::RemoteHostClosedError);
+        if (retryable && m_reconnectAttempts < 3) {
+            ++m_reconnectAttempts;
+            m_status = tr("Reconnecting…");
+            emit changed();
+            QTimer::singleShot(100, this, [this] { reconnectServiceStream(); });
+            return;
+        }
+
+        if (networkError != QNetworkReply::NoError || code != 200) {
             m_status = tr("Meo AgentService unavailable (HTTP %1).").arg(code);
-        } else if (!m_done) {
+        } else {
             m_status = tr("AgentService stream ended before a terminal request event.");
         }
         m_cancelPending = false;
-        m_reply->deleteLater();
-        m_reply = nullptr;
         emit changed();
     });
 }
@@ -225,6 +288,11 @@ void AgentClient::consumeService() {
             return;
         }
         const auto event = document.object();
+        const int sequence = event.value("seq").toInt();
+        if (sequence > 0) {
+            if (sequence <= m_lastEventSeq) continue;
+            m_lastEventSeq = sequence;
+        }
         const QString type = event.value("type").toString();
         if (type == "request.started") {
             m_requestId = event.value("request_id").toString();
