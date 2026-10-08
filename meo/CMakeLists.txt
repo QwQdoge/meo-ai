@@ -42,6 +42,24 @@ if(BUILD_TESTING)
     target_link_libraries(meo-ai-history-restore-test PRIVATE Qt6::Network Qt6::Test)
     add_test(NAME meo-ai.history-restore COMMAND meo-ai-history-restore-test)
 
+    add_test(
+        NAME meo-ai.default-transport
+        COMMAND ${CMAKE_COMMAND} -E env
+            --unset=MEO_AI_SERVICE_ENDPOINT
+            --unset=MEO_AI_ENDPOINT
+            $<TARGET_FILE:meo-ai> --print-transport
+    )
+    set_tests_properties(meo-ai.default-transport PROPERTIES PASS_REGULAR_EXPRESSION "service")
+
+    add_test(
+        NAME meo-ai.legacy-fallback-transport
+        COMMAND ${CMAKE_COMMAND} -E env
+            --unset=MEO_AI_SERVICE_ENDPOINT
+            MEO_AI_ENDPOINT=http://127.0.0.1:8080
+            $<TARGET_FILE:meo-ai> --print-transport
+    )
+    set_tests_properties(meo-ai.legacy-fallback-transport PROPERTIES PASS_REGULAR_EXPRESSION "legacy")
+
     add_test(NAME meo-ai.qml-smoke COMMAND meo-ai --smoke)
     set_tests_properties(meo-ai.qml-smoke PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QSG_RHI_BACKEND=software")
 endif()
