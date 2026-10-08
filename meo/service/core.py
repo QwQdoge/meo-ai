@@ -150,7 +150,16 @@ class AgentServiceCore:
         return context
 
     def _publish_backend_tool_event(self, request_id: str, event: dict, callbacks: BackendCallbacks) -> None:
-        callbacks.on_tool_event(self.publish_legacy_tool_request(request_id, event))
+        event_type = event.get("type")
+        request = self.requests.get(request_id)
+        if event_type == "tool_interaction":
+            normalized = self.publish_legacy_tool_request(request_id, event)
+        elif event_type == "tool_result":
+            normalized = self.tool_bridge.publish_result(request, event)
+            normalized["conversation_id"] = self.get_context(request_id).conversation_id
+        else:
+            raise ValueError(f"unsupported backend tool event: {event_type}")
+        callbacks.on_tool_event(normalized)
 
     def _backend_done(self, request_id: str, callbacks: BackendCallbacks) -> None:
         request = self.requests.get(request_id)
