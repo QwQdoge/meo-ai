@@ -45,6 +45,19 @@ class AgentServiceCore:
             raise RuntimeError("backend returned an invalid conversation ID")
         return conversation_id
 
+    def list_messages(self, conversation_id: str) -> list[dict]:
+        backend = self._require_backend()
+        if not backend.conversation_exists(conversation_id):
+            raise ValueError("unknown conversation_id")
+        messages = []
+        for item in backend.list_messages(conversation_id):
+            if item.role not in {"user", "assistant"}:
+                raise RuntimeError("backend returned an invalid conversation role")
+            if not isinstance(item.text, str):
+                raise RuntimeError("backend returned invalid conversation text")
+            messages.append({"role": item.role, "text": item.text})
+        return messages
+
     def list_models(self) -> list[dict]:
         return [
             {
