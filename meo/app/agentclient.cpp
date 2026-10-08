@@ -75,8 +75,9 @@ void AgentClient::choose(int index) {
 }
 
 void AgentClient::cancel() {
-    if (!m_serviceMode || !busy() || actionBusy()) return;
+    if (!m_serviceMode || actionBusy()) return;
     if (m_requestId.isEmpty()) {
+        if (!busy()) return;
         m_cancelPending = true;
         m_status = tr("Stopping…");
         emit changed();
@@ -86,7 +87,7 @@ void AgentClient::cancel() {
 }
 
 void AgentClient::submitServiceCancel() {
-    if (!m_serviceMode || !busy() || actionBusy() || m_requestId.isEmpty()) return;
+    if (!m_serviceMode || actionBusy() || m_requestId.isEmpty()) return;
     m_cancelPending = false;
     QUrl base = validatedOrigin("MEO_AI_SERVICE_ENDPOINT");
     if (!base.isValid()) {
@@ -243,9 +244,23 @@ void AgentClient::attachServiceStream(QNetworkReply *reply) {
             return;
         }
 
-        if (code == 409) {
-            m_status = tr("The request event history expired; check the request state before continuing.");
+        if (code == 404) {
+            m_requestId.clear();
+            m_decisionId.clear();
+            m_options.clear();
+            m_cancelPending = false;
+            m_reconnectAttempts = 0;
+            m_status = tr("The previous request no longer exists. You can start a new request.");
             emit changed();
+            return;
+        }
+
+        if (code == 409) {
+            m_options.clear();
+            m_decisionId.clear();
+            m_status = tr("Request event history was lost; stopping the request safely…");
+            emit changed();
+            submitServiceCancel();
             return;
         }
 
@@ -345,6 +360,12 @@ void AgentClient::postServiceAction(const QUrl &url, const QByteArray &body, con
         const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         if (reply->error() != QNetworkReply::NoError || code < 200 || code >= 300) {
             m_status = tr("AgentService action was rejected (HTTP %1).").arg(code);
+            if (code == 404) {
+                m_requestId.clear();
+                m_decisionId.clear();
+                m_options.clear();
+                m_cancelPending = false;
+            }
         } else {
             onSuccess(reply);
         }
