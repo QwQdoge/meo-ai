@@ -36,6 +36,14 @@ class AgentServiceCore:
             raise RuntimeError("AgentServiceCore has no backend adapter")
         return self.backend
 
+    def get_agent_state(self) -> dict:
+        """Return only service-owned state; do not infer provider health."""
+        return {
+            "ready": self.backend is not None,
+            "active_requests": self.requests.active_count(),
+            "request_states": self.requests.state_counts(),
+        }
+
     def list_conversations(self) -> list[dict]:
         return list(self._require_backend().list_conversations())
 
