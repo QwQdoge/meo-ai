@@ -11,7 +11,7 @@ class FakeSettings:
     def __init__(self):
         self.values = {
             "language-model": "local",
-            "llm-settings": json.dumps({"local": {"model": "old"}}),
+            "llm-settings": json.dumps({"local": {"model": "tiny"}}),
         }
 
     def get_string(self, key):
@@ -108,7 +108,10 @@ class LegacyCatalogTests(unittest.TestCase):
             self.assertEqual([model.model_id for model in models], ["local:tiny", "local:large"])
             self.assertEqual(models[0].label, "Tiny Model")
             self.assertEqual({model.selection_scope for model in models}, {"profile"})
+            self.assertEqual([model.model_id for model in models if model.selected], ["local:tiny"])
             adapter.set_model(conversation, "local:large")
+            refreshed = adapter.list_models()
+            self.assertEqual([model.model_id for model in refreshed if model.selected], ["local:large"])
         settings = adapter.controller.settings
         self.assertEqual(settings.get_string("language-model"), "local")
         self.assertEqual(json.loads(settings.get_string("llm-settings"))["local"]["model"], "large")
