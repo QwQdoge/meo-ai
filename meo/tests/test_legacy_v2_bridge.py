@@ -15,6 +15,7 @@ class LegacyV2ToolBridgeTests(unittest.TestCase):
             "type": "tool_interaction",
             "tool_name": "file",
             "interaction_id": "legacy-i1",
+            "display_text": "Review target before continuing",
             "options": [
                 {"index": 4, "title": "Deny"},
                 {"index": 9, "title": "Approve"},
@@ -30,6 +31,16 @@ class LegacyV2ToolBridgeTests(unittest.TestCase):
         self.assertTrue(normalized["decision_id"].startswith("decision:"))
         self.assertNotEqual(normalized["decision_id"], "legacy-i1")
         self.assertEqual(normalized["compatibility"]["interaction_id"], "legacy-i1")
+        self.assertEqual(normalized["display_text"], "Review target before continuing")
+
+    def test_display_text_is_bounded_and_never_decision_authority(self):
+        bridge = LegacyV2ToolBridge()
+        req = self.running_request()
+        event = self.event()
+        event["display_text"] = "x" * 5000
+        normalized = bridge.publish(req, event)
+        self.assertEqual(len(normalized["display_text"]), 4000)
+        self.assertTrue(normalized["decision_id"].startswith("decision:"))
 
     def test_resolve_maps_frontend_position_to_legacy_index(self):
         bridge = LegacyV2ToolBridge()
@@ -52,6 +63,14 @@ class LegacyV2ToolBridgeTests(unittest.TestCase):
         req = self.running_request()
         bad = self.event()
         bad["options"] = [{"index": True, "title": "Approve"}]
+        with self.assertRaises(ValueError):
+            bridge.publish(req, bad)
+
+    def test_non_string_display_text_is_rejected(self):
+        bridge = LegacyV2ToolBridge()
+        req = self.running_request()
+        bad = self.event()
+        bad["display_text"] = {"pretend": "trusted"}
         with self.assertRaises(ValueError):
             bridge.publish(req, bad)
 
