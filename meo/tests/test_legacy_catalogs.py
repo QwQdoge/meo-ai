@@ -54,6 +54,13 @@ class FakeController:
         self.newelle_settings = types.SimpleNamespace(language_model="local")
         self.skill_manager = FakeSkillManager()
         self.updated = 0
+        self.chats = {}
+
+    def workspace_chats(self):
+        return self.chats
+
+    def save_chats(self):
+        pass
 
     def update_settings(self):
         self.updated += 1
@@ -66,6 +73,7 @@ class FakeInterface:
 
     def get_or_create_chat(self, _user_id):
         self.chat += 1
+        self.controller.chats[self.chat] = {"name": f"Chat {self.chat}"}
         return self.chat
 
 
