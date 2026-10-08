@@ -34,13 +34,15 @@ private:
         create->deleteLater();
     }
 
-    static QTcpSocket *openToolWait(QTcpServer &server, AgentClient &client,
-                                    const QByteArray &conversationId,
-                                    const QByteArray &requestId,
-                                    const QByteArray &decisionId) {
+    static void openToolWait(QTcpServer &server, AgentClient &client,
+                             const QByteArray &conversationId,
+                             const QByteArray &requestId,
+                             const QByteArray &decisionId,
+                             QTcpSocket *&stream) {
         client.send("needs tool");
         QTRY_VERIFY(server.hasPendingConnections());
-        auto stream = server.nextPendingConnection();
+        stream = server.nextPendingConnection();
+        QVERIFY(stream != nullptr);
         readRequest(stream);
         stream->write("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\nX-Meo-Request-Id: "
                       + requestId + "\r\n\r\n");
@@ -53,7 +55,6 @@ private:
                       + "\",\"tool_name\":\"terminal\",\"options\":[{\"index\":0,\"title\":\"Deny\"},{\"index\":1,\"title\":\"Approve\"}]}\n\n");
         stream->flush();
         QTRY_COMPARE(client.options().size(), 2);
-        return stream;
     }
 
 private slots:
@@ -66,7 +67,9 @@ private slots:
 
         AgentClient client;
         createConversation(server, client, "meo:restart");
-        auto stream = openToolWait(server, client, "meo:restart", "req-old", "dec-old");
+        QTcpSocket *stream = nullptr;
+        openToolWait(server, client, "meo:restart", "req-old", "dec-old", stream);
+        QVERIFY(stream != nullptr);
         stream->disconnectFromHost();
 
         QTRY_VERIFY(server.hasPendingConnections());
@@ -104,7 +107,9 @@ private slots:
 
         AgentClient client;
         createConversation(server, client, "meo:gap");
-        auto stream = openToolWait(server, client, "meo:gap", "req-gap", "dec-gap");
+        QTcpSocket *stream = nullptr;
+        openToolWait(server, client, "meo:gap", "req-gap", "dec-gap", stream);
+        QVERIFY(stream != nullptr);
         stream->disconnectFromHost();
 
         QTRY_VERIFY(server.hasPendingConnections());
