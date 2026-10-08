@@ -17,7 +17,20 @@ ApplicationWindow {
     readonly property bool compact: width < 820 * scale
     readonly property bool wideSidebar: width >= 1120 * scale
     readonly property real pageMargin: Math.max(16 * scale, Math.min(32 * scale, width * 0.025))
+    readonly property string selectedModelLabel: {
+        for (let i = 0; i < agent.models.length; ++i) {
+            const model = agent.models[i]
+            if (model.selected === true)
+                return String(model.label || model.model_id || "")
+        }
+        return ""
+    }
     property string pendingToolDisplay: ""
+
+    Component.onCompleted: {
+        if (agent.serviceMode)
+            agent.refreshServiceMetadata()
+    }
 
     function submit(text) {
         const value = String(text).trim()
@@ -250,7 +263,9 @@ ApplicationWindow {
                             Text {
                                 id: modeLabel
                                 anchors.centerIn: parent
-                                text: agent.serviceMode ? qsTr("Local service") : qsTr("Legacy API")
+                                text: agent.serviceMode
+                                    ? (window.selectedModelLabel.length ? window.selectedModelLabel : qsTr("Local service"))
+                                    : qsTr("Legacy API")
                                 color: MeoTheme.contentOnSurfaceVariant
                                 font.pixelSize: MeoTheme.labelMedium.size * window.scale
                                 font.weight: Font.DemiBold
