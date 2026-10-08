@@ -347,7 +347,17 @@ class _Handler(BaseHTTPRequestHandler):
                 text = body.get("text")
                 if not isinstance(text, str) or not text.strip():
                     raise ValueError("text is required")
-                request_id, journal = self.transport.send_message(segments[2], text)
+                try:
+                    request_id, journal = self.transport.send_message(segments[2], text)
+                except ValueError as exc:
+                    if str(exc) == "unknown conversation_id":
+                        # This response is intentionally emitted before a request
+                        # ID or execution handle exists. A native client may use
+                        # this precise 404 to recreate a stale persisted
+                        # conversation once without risking duplicate execution.
+                        self._reply_error(HTTPStatus.NOT_FOUND, str(exc))
+                        return
+                    raise
                 self._write_event_stream(journal.subscribe(0), request_id)
                 return
             if len(segments) == 4 and segments[:2] == ["v1", "requests"] and segments[3] == "cancel":
