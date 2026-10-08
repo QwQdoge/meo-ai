@@ -23,13 +23,12 @@ python3 -m unittest discover -s meo/tests -p 'test_*.py' -v
 MeoUI is built as a dependency, not vendored. Installing this preview also
 installs the built MeoUI module through its existing CMake install rules.
 
-## Current runtime
+## Phase B AgentService
 
-Phase A still uses this fork's Newelle loopback v2 API and requires the GTK-era
-engine process. The QML client is not yet wired to the Phase B `AgentServiceCore`.
-Phase B now defines a UI-free backend adapter, request/decision identity,
-cancellation semantics, a compatibility bridge for legacy tool events, an
-executable runtime self-check and a CI import gate for `meo/service`.
+Phase B now has a maintained loopback transport over `AgentServiceCore`. HTTP/SSE
+is an implementation detail; the stable semantics are conversation IDs,
+service-generated request IDs, service-generated decision IDs, typed events and
+explicit cancellation.
 
 The transitional `meo.adapters.headless_newelle:create_backend` factory mirrors
 Newelle's existing headless controller initialization without importing
@@ -39,39 +38,60 @@ Gtk/Adw/WebKit or `src.ui*` module is pulled in later, construction fails instea
 of silently claiming to be headless.
 
 On a machine with the full Newelle runtime dependencies and GSettings schema,
-validate the current extraction with:
+first validate the extraction:
 
 ```sh
 python3 -m meo.runtime.main --self-check \
   --backend-factory meo.adapters.headless_newelle:create_backend
 ```
 
-A successful result means the backend could be constructed without loading the
-forbidden UI modules. It does **not** yet prove provider inference, tool
-cancellation, D-Bus/systemd activation or Plasma integration; those require the
-live acceptance track. Normal `meo-agent-service` serving remains intentionally
-disabled until a maintained transport is connected to `AgentServiceCore`.
+Then start the service:
 
-## Run the Phase A preview
+```sh
+python3 -m meo.runtime.main \
+  --backend-factory meo.adapters.headless_newelle:create_backend \
+  --host 127.0.0.1 \
+  --port 8765
+```
 
-1. Build/install **this fork's** Newelle engine using the upstream Meson/Flatpak
-   instructions and dependencies. Stock Newelle lacks the Meo overlay/events.
-2. In Newelle Interfaces enable the API interface on `127.0.0.1:8080`, configure
-   a nonempty API key, and select your existing local model/provider. Leave
-   the API `use_bang_for_commands` setting off. Keep GTK running for this phase.
-3. Import `meo/skills/system-diagnostics/SKILL.md` in Newelle Skills if desired;
-   this example is not enabled automatically.
-4. Start the native client with the same API key in `MEO_AI_API_KEY` and optional
-   `MEO_AI_ENDPOINT=http://127.0.0.1:8080`, then run `./build/meo/meo-ai`.
+The service refuses non-loopback binds. To make the native QML client use the
+new contract instead of the legacy Newelle API:
 
-Do not put credentials in Git or prompt files. Runtime connection keys belong
-in a local launch environment; the native client does not persist them.
-`/models`, `/model`, `/tools`, `/skill`, `/list_chats` and `/resume` are inherited
-commands. Restarting keeps the same API session; New chat uses the upstream
-`/new` command.
+```sh
+MEO_AI_SERVICE_ENDPOINT=http://127.0.0.1:8765 ./build/meo/meo-ai
+```
 
-This phase is not headless and the Phase A client still has no real request-local
-cancel endpoint. Disconnecting the UI does not stop work. Upstream shell/MCP/
-extensions are not an OS sandbox. Use a dedicated test workspace with reviewed
-tools. Actual provider, desktop and Repair integration require their own
-acceptance evidence.
+In AgentService mode the native client:
+
+- creates and persists a Meo conversation ID;
+- streams `message.delta` events;
+- uses `request_id` and `decision_id` for tool choices;
+- can submit a tool decision while the model/tool SSE request remains open;
+- exposes a real Stop action that calls `CancelRequest` rather than merely
+  disconnecting the stream;
+- rejects non-loopback service endpoints.
+
+A successful headless self-check means the backend could be constructed without
+loading the forbidden UI modules. It does **not** yet prove real provider
+inference, cooperative interruption of every tool, D-Bus/systemd activation or
+Plasma integration; those remain on the live acceptance track.
+
+## Phase A compatibility preview
+
+If `MEO_AI_SERVICE_ENDPOINT` is unset, the native client keeps the Phase A path
+for now. Build/install **this fork's** Newelle engine, enable its API interface
+on `127.0.0.1:8080`, configure a nonempty API key and start:
+
+```sh
+MEO_AI_API_KEY=... \
+MEO_AI_ENDPOINT=http://127.0.0.1:8080 \
+./build/meo/meo-ai
+```
+
+The legacy path still understands inherited `/models`, `/model`, `/tools`,
+`/skill`, `/list_chats`, `/resume` and `/option` commands. It remains only a
+compatibility path while Phase B reaches real-provider parity.
+
+Do not put credentials in Git or prompt files. Upstream shell/MCP/extensions are
+not an OS sandbox. Use a dedicated test workspace with reviewed tools. Router,
+Repair, package/ISO and privileged integration remain separate migration tracks.
