@@ -46,6 +46,13 @@ class LegacyV2ToolBridge:
             legacy_indices.append(legacy_index)
             normalized_options.append({"index": position, "title": title})
 
+        display_text = event.get("display_text", "")
+        if not isinstance(display_text, str):
+            raise ValueError("legacy tool display_text must be a string")
+        # Display context is untrusted presentation data for generic tools. Keep
+        # it bounded and separate from decision authority/fingerprints.
+        display_text = display_text[:4000]
+
         decision = self.decisions.issue(request, titles)
         self._legacy_indices[decision.decision_id] = tuple(legacy_indices)
         return {
@@ -53,6 +60,7 @@ class LegacyV2ToolBridge:
             "request_id": request.request_id,
             "decision_id": decision.decision_id,
             "tool_name": str(event.get("tool_name") or ""),
+            "display_text": display_text,
             "options": normalized_options,
             "compatibility": {
                 "source": "newelle-v2",
