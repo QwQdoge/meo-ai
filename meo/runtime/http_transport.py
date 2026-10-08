@@ -212,9 +212,15 @@ class _Handler(BaseHTTPRequestHandler):
                 self.send_header("Connection", "close")
                 self.send_header("X-Meo-Request-Id", request_id)
                 self.end_headers()
-                for event in stream:
-                    self.wfile.write(b"data: " + _json_bytes(event) + b"\n\n")
-                    self.wfile.flush()
+                try:
+                    for event in stream:
+                        self.wfile.write(b"data: " + _json_bytes(event) + b"\n\n")
+                        self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError):
+                    # Transport disconnect is not cancellation. The request keeps
+                    # running until it reaches a terminal state or an explicit
+                    # /cancel request is accepted.
+                    pass
                 self.close_connection = True
                 return
             if len(segments) == 4 and segments[:2] == ["v1", "requests"] and segments[3] == "cancel":
