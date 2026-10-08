@@ -58,6 +58,15 @@ flowchart TD
 
 当前 UI 不伪造尚未完成的 History/Skills/Settings 页面。只有已有 contract 的内容才进入正式交互。
 
+Native 应用的 transport 选择已经调整为：
+
+- 没有配置 endpoint 时默认使用 AgentService `http://127.0.0.1:8765`；
+- 显式 `MEO_AI_SERVICE_ENDPOINT` 时继续使用 AgentService，并覆盖默认 origin；
+- 只有在没有 service endpoint、同时显式设置 `MEO_AI_ENDPOINT` 时才进入 Phase A legacy compatibility transport；
+- 已经提交到 AgentService 的请求绝不因为连接错误而自动重放到 legacy transport，避免重复 tool/system side effects。
+
+这个“native 默认选择 AgentService”不等于发行版已经完成 service activation。systemd user unit 仍需目标机和 ISO/package 验收后才能决定默认启用策略。
+
 ## 当前已实现：AgentService Phase B foundation
 
 ### Service ownership
@@ -127,6 +136,8 @@ Skills 来自 `SkillManager`：
 
 MCP metadata 来自 Newelle `mcp_servers` / `mcp_servers_dict`。AgentService 只暴露 non-secret id、display label 和当前 integration 是否加载；不会把 raw URL、bearer token、custom headers、stdio env 等配置送到前端。
 
+`GetAgentState` 只报告 service 自己确定拥有的状态：backend 是否存在、active request 数量和 lifecycle state counts。它不把“backend object 已构造”包装成“provider/model 健康”。
+
 ### Current HTTP mapping
 
 当前 loopback preview transport 包括：
@@ -152,7 +163,7 @@ MCP metadata 来自 Newelle `mcp_servers` / `mcp_servers_dict`。AgentService �
 - unprivileged systemd user unit；
 - AgentService runtime / adapter / system modules。
 
-当前 unit 不由本仓库自动 enable。Native client 仍通过显式 AgentService endpoint 进入 service mode；在发行版有可靠 activation 前，不把 legacy path 静默删除。
+当前 unit 不由本仓库自动 enable。Native app 已默认指向 AgentService 的 loopback origin，但发行版尚未证明 service 会在需要时可靠 activation，因此这仍是 repo-side product default，不是完整 distro integration。
 
 ## 当前已实现：early Phase C SystemTool preview
 
@@ -197,10 +208,11 @@ Phase B 仍有这些真实缺口：
 - real model wait / real long-running tool cancellation 尚需 live acceptance；
 - memory API 尚未定义为稳定 frontend contract；
 - systemd user-session activation/restart、关闭 frontend 后 service survival 尚需目标机验收；
-- AgentService 尚未成为发行版默认 IPC path；
+- native app 已默认选择 AgentService，但发行版 package/ISO 尚未保证 service activation；
 - 最终 local IPC/authentication boundary 未定；loopback HTTP 不能当 system authorization；
 - MeoArch package / ISO 默认安装与 activation 尚未完成；
-- Account credential broker 尚未接入。
+- Account credential broker 尚未接入；
+- models / Skills / MCP / AgentState 已有 stable repo-side API，但完整原生管理 UI 尚未实现。
 
 Phase C 仍有这些缺口：
 
@@ -223,11 +235,12 @@ Phase C 仍有这些缺口：
 ## 下一步顺序
 
 1. 保持 PR #2 为单一 integration PR，不再为了阶段拆多个 PR。
-2. 先让 history restore、MCP metadata、AgentState 和 native tests 持续 green。
+2. 保持 history restore、MCP metadata、AgentState、默认 transport selection 和 native tests 持续 green。
 3. 做目标机 Phase B live acceptance，特别是真实 provider、cancel、service restart/survival。
-4. 设计可靠 installed-service activation / final local IPC boundary，再把 native client 默认切到 AgentService；legacy `/v2` 变成兼容 fallback。
-5. 再开始 desktop provider split / Router extraction。
-6. Router migration 完成后才推进 Repair extraction。
-7. 最后接 `meo-repo`、ISO、Account broker 和完整 UI parity。
+4. 设计可靠 installed-service activation / final local IPC boundary；只有这个门槛通过后，才让 package/ISO 默认启用 AgentService，并继续保留 legacy `/v2` 为显式兼容 fallback。
+5. 在不扩大 privilege boundary 的前提下补 models / Skills / MCP / AgentState 的原生管理 UI；memory contract 单独设计，不伪造。
+6. 再开始 desktop provider split / Router extraction。
+7. Router migration 完成后才推进 Repair extraction。
+8. 最后接 `meo-repo`、ISO、Account broker 和完整 UI parity。
 
 任何阶段都不能用 prompt/Skill/MCP 声明替代 typed capability policy，也不能把“CI mock 通过”描述成“真实 MeoArch/Plasma 已验收”。
