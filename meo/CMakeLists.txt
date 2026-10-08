@@ -26,6 +26,12 @@ if(BUILD_TESTING)
     target_include_directories(meo-ai-client-test PRIVATE app)
     target_link_libraries(meo-ai-client-test PRIVATE Qt6::Network Qt6::Test)
     add_test(NAME meo-ai.transport COMMAND meo-ai-client-test)
+
+    qt_add_executable(meo-ai-early-cancel-test tests/early-cancel-test.cpp app/agentclient.cpp app/agentclient.h)
+    target_include_directories(meo-ai-early-cancel-test PRIVATE app)
+    target_link_libraries(meo-ai-early-cancel-test PRIVATE Qt6::Network Qt6::Test)
+    add_test(NAME meo-ai.early-cancel COMMAND meo-ai-early-cancel-test)
+
     add_test(NAME meo-ai.qml-smoke COMMAND meo-ai --smoke)
     set_tests_properties(meo-ai.qml-smoke PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QSG_RHI_BACKEND=software")
 endif()
