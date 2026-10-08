@@ -23,10 +23,6 @@ class LegacyChatInterfaceAdapter:
     The caller injects an already-constructed ChatInterface-like object. This
     module does not import Newelle controller/UI modules itself, which keeps the
     AgentService boundary testable while GTK-era construction remains elsewhere.
-
-    Conversation IDs are persisted as additive metadata on Newelle chat records
-    created through this adapter. Existing arbitrary Newelle chats are not silently
-    adopted because that would make ownership ambiguous.
     """
 
     def __init__(self, interface) -> None:
@@ -38,47 +34,38 @@ class LegacyChatInterfaceAdapter:
     def controller(self):
         return self.interface.controller
 
-    def _workspace_chats(self):
-        getter = getattr(self.controller, "workspace_chats", None)
-        if callable(getter):
-            try:
-                return getter()
-            except Exception:
-                return {}
+    def _workspace_chats(self) -> dict:
         chats = getattr(self.controller, "chats", None)
         return chats if isinstance(chats, dict) else {}
 
     def _hydrate_conversations(self) -> None:
-        for chat_id, record in self._workspace_chats().items():
-            if not isinstance(record, dict):
+        for chat_id, chat in self._workspace_chats().items():
+            if not isinstance(chat, dict):
                 continue
-            conversation_id = record.get("meo_conversation_id")
+            conversation_id = chat.get("meo_conversation_id")
             if isinstance(conversation_id, str) and conversation_id.startswith("meo:"):
-                self._conversations.setdefault(conversation_id, chat_id)
+                self._conversations[conversation_id] = chat_id
 
     def _remember_conversation(self, conversation_id: str, chat_id: int) -> None:
         self._conversations[conversation_id] = chat_id
-        record = self._workspace_chats().get(chat_id)
-        if isinstance(record, dict):
-            record["meo_conversation_id"] = conversation_id
-            save = getattr(self.controller, "save_chats", None)
+        chats = self._workspace_chats()
+        chat = chats.get(chat_id)
+        if isinstance(chat, dict):
+            chat["meo_conversation_id"] = conversation_id
+            save = getattr(self.controller, "save_chat", None)
             if callable(save):
-                save()
+                try:
+                    save(chat_id)
+                except TypeError:
+                    save()
 
     def list_conversations(self):
         self._hydrate_conversations()
-        chats = self._workspace_chats()
-        result = []
-        for conversation_id, chat_id in sorted(self._conversations.items()):
-            record = chats.get(chat_id, {}) if isinstance(chats, dict) else {}
-            result.append(
-                {
-                    "id": conversation_id,
-                    "legacy_chat_id": chat_id,
-                    "title": str(record.get("name", "")) if isinstance(record, dict) else "",
-                }
-            )
-        return result
+        return [
+            {"id": conversation_id, "legacy_chat_id": chat_id}
+            for conversation_id, chat_id in sorted(self._conversations.items())
+            if chat_id in self._workspace_chats()
+        ]
 
     def create_conversation(self) -> str:
         conversation_id = f"meo:{uuid4()}"
@@ -166,15 +153,23 @@ class LegacyChatInterfaceAdapter:
                     continue
                 raw_id = str(model[0])
                 label = str(model[1] if len(model) > 1 else model[0])
-                result.append(ModelInfo(f"{provider_name}:{raw_id}", label, provider_label))
+                result.append(
+                    ModelInfo(
+                        f"{provider_name}:{raw_id}",
+                        label,
+                        provider_label,
+                        selection_scope="profile",
+                    )
+                )
         return result
 
     def set_model(self, conversation_id: str, model_id: str) -> None:
         """Compatibility model switch.
 
         Newelle's current provider/model selection is process/profile scoped, not
-        conversation-local. The AgentService API keeps the conversation argument so
-        the compatibility limitation is explicit and can later be removed.
+        conversation-local. AgentService still requires a valid conversation so a
+        stale UI cannot mutate settings through a dead conversation. Model metadata
+        exposes selection_scope=profile so frontends do not imply per-chat control.
         """
         from src.constants import AVAILABLE_LLMS
 
