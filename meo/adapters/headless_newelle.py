@@ -100,12 +100,49 @@ def _import_controller_class():
     return module.NewelleController
 
 
+def _system_tools_enabled() -> bool:
+    return os.environ.get("MEO_AI_ENABLE_SYSTEM_TOOL", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _install_system_tools(controller, backend) -> None:
+    """Install the Router-backed Newelle compatibility tools when explicitly enabled.
+
+    This is fail-closed: opting in requires both dbus-next and a reachable Router.
+    The ordinary AgentService chat path remains independent from Phase C.
+    """
+
+    if not _system_tools_enabled():
+        return
+
+    from meo.adapters.system_tools import NewelleSystemToolAdapter
+    from meo.system.dbus_router import DbusNextRouterClient
+    from meo.system.system_tool import SystemTool
+
+    router_client = DbusNextRouterClient()
+    adapter = NewelleSystemToolAdapter(SystemTool(router_client))
+    try:
+        adapter.install(controller)
+    except Exception:
+        router_client.close()
+        raise
+
+    # Keep both runtime objects alive for the same lifetime as the backend. The
+    # Router client intentionally preserves one D-Bus caller identity.
+    backend._meo_router_client = router_client
+    backend._meo_system_tool_adapter = adapter
+
+
 def create_backend():
     """Construct the current Newelle core without importing `src.main` or a window.
 
-    This is a Phase B extraction adapter, not the final architecture. It intentionally
-    mirrors upstream `run_headless()` initialization until those steps move into a
-    maintained UI-free Newelle core.
+    This is a Phase B/early-Phase-C extraction adapter, not the final architecture.
+    It intentionally mirrors upstream `run_headless()` initialization until those
+    steps move into a maintained UI-free Newelle core.
     """
 
     Controller = _import_controller_class()
@@ -130,5 +167,6 @@ def create_backend():
     interface.set_controller(controller)
     backend = LegacyChatInterfaceAdapter(interface)
     backend._meo_controller = controller  # keep the runtime owner alive explicitly
+    _install_system_tools(controller, backend)
     require_headless()
     return backend
