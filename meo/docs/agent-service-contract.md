@@ -119,6 +119,8 @@ Models and Skills are exposed as structured data from the owning Newelle manager
 
 Each model record carries `selection_scope`. `conversation` means switching that model is local to the addressed conversation. `profile` means the underlying backend stores the selection at profile/process scope and the frontend must not imply that only the current chat changes. The current Newelle compatibility adapter reports `profile` because Newelle's provider/model settings are shared. The conversation id is still required when setting a model so a stale/dead conversation cannot be used as a blind settings mutation channel.
 
+Each Skill record carries both `enabled` and `configured_enabled`. `configured_enabled` is the persisted profile preference controlled by `SetSkillEnabled`; `enabled` is the current effective state after request/runtime overlays are applied. The current Newelle compatibility adapter also reports `selection_scope: profile`. If an active Newelle Mode overrides the profile preference, `override_source` is `mode`, allowing the frontend to explain why the effective state differs from the saved setting instead of pretending the user's preference changed.
+
 The current compatibility adapter exposes Skills through `SkillManager`. Newelle's authoritative structured MCP ownership API has not yet been identified, so the real compatibility adapter may return an empty MCP list. AgentService must not invent MCP state by scraping UI/presentation data merely to make this endpoint non-empty.
 
 Skill text, model output and MCP descriptions remain untrusted input. Enabling a Skill or MCP server never grants an OS capability by itself.
@@ -126,6 +128,8 @@ Skill text, model output and MCP descriptions remain untrusted input. Enabling a
 ## Persistence and restart
 
 Conversation history is durable according to the inherited Newelle storage policy. Meo-owned conversations carry a `meo_conversation_id` metadata field so the compatibility adapter can rediscover them after service restart without taking ownership of unrelated Newelle chats.
+
+Conversation identity must be unambiguous. If more than one inherited chat carries the same `meo_conversation_id`, the compatibility adapter must not guess which record owns that identity. Ambiguous conversation IDs are excluded from listing/resume and rejected until the underlying metadata is repaired.
 
 Request execution state and event journals are not automatically assumed durable. After a service crash/restart:
 
