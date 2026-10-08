@@ -104,10 +104,28 @@ class HttpTransportTests(unittest.TestCase):
         with urllib.request.urlopen(request, timeout=2) as response:
             return response.status, json.loads(response.read())
 
+    def read_event(self, response):
+        while True:
+            line = response.readline()
+            if not line:
+                return None
+            if line.startswith(b"data: "):
+                return json.loads(line[6:])
+
     def create_conversation(self):
         status, body = self.json_request("POST", "/v1/conversations")
         self.assertEqual(status, 201)
         return body["conversation_id"]
+
+    def open_message_stream(self, conversation_id, text="test"):
+        request = urllib.request.Request(
+            self.base + f"/v1/conversations/{conversation_id}/messages",
+            data=json.dumps({"text": text}).encode(),
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        response = urllib.request.urlopen(request, timeout=3)
+        return response.headers["X-Meo-Request-Id"], response
 
     def test_catalogs_and_mutations_are_structured(self):
         cid = self.create_conversation()
@@ -133,24 +151,15 @@ class HttpTransportTests(unittest.TestCase):
 
     def test_message_tool_decision_and_completion(self):
         cid = self.create_conversation()
-        request = urllib.request.Request(
-            self.base + f"/v1/conversations/{cid}/messages",
-            data=json.dumps({"text": "test"}).encode(),
-            method="POST",
-            headers={"Content-Type": "application/json"},
-        )
-        response = urllib.request.urlopen(request, timeout=3)
-        request_id = response.headers["X-Meo-Request-Id"]
+        request_id, response = self.open_message_stream(cid)
         events = []
         decision = None
         while True:
-            line = response.readline()
-            if not line:
+            event = self.read_event(response)
+            if event is None:
                 break
-            if not line.startswith(b"data: "):
-                continue
-            event = json.loads(line[6:])
             events.append(event)
+            self.assertGreaterEqual(event["seq"], 1)
             if event["type"] == "tool.requested":
                 decision = event
                 status, accepted = self.json_request(
@@ -168,24 +177,54 @@ class HttpTransportTests(unittest.TestCase):
         self.assertEqual(events[-1]["type"], "request.completed")
         self.assertEqual(self.backend.handles[0].choice_index, 1)
 
+    def test_disconnect_then_reconnect_after_last_sequence(self):
+        cid = self.create_conversation()
+        request_id, response = self.open_message_stream(cid)
+        tool_event = None
+        while tool_event is None:
+            event = self.read_event(response)
+            self.assertIsNotNone(event)
+            if event["type"] == "tool.requested":
+                tool_event = event
+        last_seq = tool_event["seq"]
+        response.close()
+
+        reconnect = urllib.request.urlopen(
+            self.base + f"/v1/requests/{request_id}/events?after={last_seq}",
+            timeout=3,
+        )
+        status, accepted = self.json_request(
+            "POST",
+            f"/v1/requests/{request_id}/decisions/{tool_event['decision_id']}",
+            {"option_index": 1},
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(accepted["accepted"])
+
+        resumed = []
+        while True:
+            event = self.read_event(reconnect)
+            if event is None:
+                break
+            resumed.append(event)
+        reconnect.close()
+        self.assertTrue(resumed)
+        self.assertTrue(all(event["seq"] > last_seq for event in resumed))
+        self.assertEqual(resumed[-1]["type"], "request.completed")
+        self.assertTrue(any(event["type"] == "message.delta" for event in resumed))
+
+        _, state = self.json_request("GET", f"/v1/requests/{request_id}")
+        self.assertTrue(state["terminal"])
+        self.assertGreaterEqual(state["event_journal"]["latest_seq"], resumed[-1]["seq"])
+
     def test_cancel_request_uses_request_id_not_stream_disconnect(self):
         cid = self.create_conversation()
-        request = urllib.request.Request(
-            self.base + f"/v1/conversations/{cid}/messages",
-            data=json.dumps({"text": "test"}).encode(),
-            method="POST",
-            headers={"Content-Type": "application/json"},
-        )
-        response = urllib.request.urlopen(request, timeout=3)
-        request_id = response.headers["X-Meo-Request-Id"]
+        request_id, response = self.open_message_stream(cid)
         saw_tool = False
         while True:
-            line = response.readline()
-            if not line:
+            event = self.read_event(response)
+            if event is None:
                 break
-            if not line.startswith(b"data: "):
-                continue
-            event = json.loads(line[6:])
             if event["type"] == "tool.requested":
                 saw_tool = True
                 status, cancelled = self.json_request("POST", f"/v1/requests/{request_id}/cancel")
