@@ -103,6 +103,7 @@ class FakeRouter:
                 "fingerprint": "fingerprint-1",
                 "title": "Erase test data",
                 "target": arguments["target"],
+                "impact": "This cannot be undone",
             }
         self.refreshes["router-volume"] = [
             {"requestId": "router-volume", "state": "completed", "message": "Volume is 30%"}
@@ -173,12 +174,15 @@ class SystemToolsAdapterTests(unittest.TestCase):
             [("org.meo.desktop.audio.setVolume", {"percent": 30})],
         )
 
-    def test_confirmation_is_explicit_and_never_auto_approved(self):
+    def test_confirmation_is_explicit_and_shows_trusted_router_details(self):
         adapter, router = self.adapter()
         erase = adapter.build_tools()[1]
         result = erase.execute(target="demo")
         self.assertTrue(result.requires_interaction)
         self.assertEqual([option.title for option in result.interaction_options], ["Deny", "Approve"])
+        self.assertIn("Erase test data", result.display_text)
+        self.assertIn("Target: demo", result.display_text)
+        self.assertIn("Impact: This cannot be undone", result.display_text)
         self.assertEqual(router.decisions, [])
         self.assertIsNone(result.output)
 
