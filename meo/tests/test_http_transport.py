@@ -75,7 +75,7 @@ class FakeBackend:
         execution_handle.cancel.set()
 
     def list_models(self):
-        return [ModelInfo("local:tiny", "Tiny", "Local")]
+        return [ModelInfo("local:tiny", "Tiny", "Local", selected=True)]
 
     def set_model(self, conversation_id, model_id):
         self.model_changes.append((conversation_id, model_id))
@@ -170,6 +170,7 @@ class HttpTransportTests(unittest.TestCase):
         status, models = self.json_request("GET", "/v1/models")
         self.assertEqual(status, 200)
         self.assertEqual(models["models"][0]["model_id"], "local:tiny")
+        self.assertTrue(models["models"][0]["selected"])
 
         status, selected = self.json_request(
             "POST", f"/v1/conversations/{cid}/model", {"model_id": "local:tiny"}
