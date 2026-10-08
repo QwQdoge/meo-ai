@@ -45,7 +45,7 @@ class FakeInterface:
             if record.get("meo_conversation_id") == user_id:
                 return chat_id
         self._next_chat += 1
-        self.controller.chats[self._next_chat] = {"name": f"Chat {self._next_chat}"}
+        self.controller.chats[self._next_chat] = {"name": f"Chat {self._next_chat}", "chat": []}
         return self._next_chat
 
     def process_message(self, user_id, text, *, on_chunk=None, on_tool_event=None):
@@ -122,6 +122,29 @@ class LegacyChatInterfaceAdapterTests(unittest.TestCase):
         self.assertEqual(interface.controller.cancelled, [handle.chat_id])
         self.assertEqual(events[-1], ("done", None))
 
+    def test_history_only_exposes_visible_user_and_assistant_text(self):
+        controller = FakeController()
+        controller.chats = {
+            11: {
+                "name": "History",
+                "meo_conversation_id": "meo:history",
+                "chat": [
+                    {"User": "User", "Message": "<context>private retrieval context</context>\n\nHello"},
+                    {"User": "Console", "Message": "secret tool output"},
+                    {"User": "Command", "Message": "/tool something"},
+                    {"User": "Assistant", "Message": "Hi there"},
+                    {"User": "File", "Message": "/tmp/private.txt"},
+                    {"User": "Assistant", "Message": 123},
+                ],
+            }
+        }
+        adapter = LegacyChatInterfaceAdapter(FakeInterface(controller))
+        history = adapter.list_messages("meo:history")
+        self.assertEqual(
+            [(item.role, item.text) for item in history],
+            [("user", "Hello"), ("assistant", "Hi there")],
+        )
+
     def test_conversation_mapping_survives_adapter_recreation(self):
         controller = FakeController()
         first = LegacyChatInterfaceAdapter(FakeInterface(controller))
@@ -151,6 +174,8 @@ class LegacyChatInterfaceAdapterTests(unittest.TestCase):
         adapter = LegacyChatInterfaceAdapter(FakeInterface())
         with self.assertRaises(ValueError):
             adapter.send_message("meo:missing", "hello", self.callbacks([], threading.Event()))
+        with self.assertRaises(ValueError):
+            adapter.list_messages("meo:missing")
 
     def test_attach_requires_meo_session_key(self):
         adapter = LegacyChatInterfaceAdapter(FakeInterface())
