@@ -9,6 +9,7 @@ class ModelInfo:
     model_id: str
     label: str
     provider: str = ""
+    selection_scope: str = "conversation"
 
 
 @dataclass(frozen=True)
