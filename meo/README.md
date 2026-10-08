@@ -3,8 +3,8 @@
 Native C++/QML MeoUI client for the Newelle-derived agent engine. GPL-3.0;
 upstream Newelle attribution and license remain in the repository root.
 
-See [architecture](docs/architecture.md), [AgentService contract](docs/agent-service-contract.md)
-and [upstream policy](docs/upstream-policy.md).
+See [architecture](docs/architecture.md), [AgentService contract](docs/agent-service-contract.md),
+[SystemTool contract](docs/system-tool-contract.md) and [upstream policy](docs/upstream-policy.md).
 
 ## Build
 
@@ -89,6 +89,7 @@ The Meson install now also installs:
 - `meo-agent-service` in the install `bindir`;
 - the Phase B `meo/runtime`, `meo/service` and `meo/adapters` Python modules
   beside the installed Newelle Python package;
+- the Phase C `meo/system` Router client/contract modules;
 - `meo-agent-service.service` as a systemd user unit.
 
 The unit is installed but **not enabled automatically** by this repository. For
@@ -109,6 +110,49 @@ A successful headless self-check means the backend could be constructed without
 loading the forbidden UI modules. It does **not** yet prove real provider
 inference, cooperative interruption of every tool, session/systemd activation or
 Plasma integration; those remain on the live acceptance track.
+
+## Phase C SystemTool preview
+
+System control is present as an **explicit opt-in preview** and remains disabled
+by default. `meo-ai` does not embed desktop executors: it talks to the existing
+`org.meo.AIRouter1` service over one persistent user-session D-Bus connection so
+Router caller binding remains stable across submit/query/decision calls.
+
+The Router is the authoritative source of the currently executable capability
+list and each capability's `argumentSchema`. The Newelle compatibility adapter
+turns each listed capability into one fixed tool using that Router-owned schema;
+the model is not given a generic free-form capability ID field.
+
+To exercise this path locally, the session needs the updated Meo Router that
+publishes `argumentSchema`, and the Python runtime needs the `dbus-next` module.
+Then start AgentService with the opt-in flag:
+
+```sh
+MEO_AI_ENABLE_SYSTEM_TOOL=1 \
+python3 -m meo.runtime.main \
+  --backend-factory meo.adapters.headless_newelle:create_backend \
+  --host 127.0.0.1 \
+  --port 8765
+```
+
+When enabled:
+
+- `SubmitRequest(capabilityId, arguments)` is used; AI never delegates an action
+  back through Router `SubmitText()`;
+- capability IDs and parameter schemas come from `ListCapabilities()`;
+- reversible requests wait for the owning component to report a terminal result;
+- `awaiting_confirmation` becomes explicit Deny/Approve choices through the
+  existing AgentService tool-decision path;
+- approval uses the Router-issued request ID and fingerprint, and no model/Skill
+  output can auto-approve it;
+- Router rejections are surfaced as results rather than retried with guessed
+  arguments.
+
+The installed systemd unit intentionally does **not** set
+`MEO_AI_ENABLE_SYSTEM_TOOL=1` yet. Distro enablement waits for live D-Bus,
+provider, Plasma and cancellation acceptance. Missing Router/`dbus-next` while
+the preview is explicitly enabled fails closed instead of falling back to shell
+commands or a second natural-language parser.
 
 ## Phase A compatibility preview
 
