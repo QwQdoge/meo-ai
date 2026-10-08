@@ -38,11 +38,7 @@ class RequestEventStream:
 
 
 class AgentHttpTransport:
-    """Semantic adapter from loopback HTTP/SSE to AgentServiceCore.
-
-    HTTP is an implementation detail for Phase B. Frontends consume the
-    AgentService request/decision/event schema rather than Newelle v2 commands.
-    """
+    """Semantic adapter from loopback HTTP/SSE to AgentServiceCore."""
 
     def __init__(self, service: AgentServiceCore) -> None:
         if service.backend is None:
@@ -150,6 +146,16 @@ def _json_bytes(value: Any) -> bytes:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
 
 
+def _loopback_host_header(value: str | None) -> bool:
+    if not value:
+        return False
+    try:
+        parsed = urlparse("//" + value)
+    except ValueError:
+        return False
+    return parsed.hostname in {"127.0.0.1", "localhost", "::1"}
+
+
 class _Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = "MeoAgentService/0"
@@ -161,11 +167,24 @@ class _Handler(BaseHTTPRequestHandler):
     def log_message(self, _format: str, *_args) -> None:
         return
 
-    def _read_json(self) -> dict:
+    def _request_boundary_allowed(self) -> bool:
+        # Reject DNS-rebinding style Host values and browser-originated requests.
+        # Desktop clients do not send Origin. Browser application/json fetches
+        # would additionally require a CORS preflight, which this service never
+        # permits.
+        return _loopback_host_header(self.headers.get("Host")) and not self.headers.get("Origin")
+
+    def _post_content_type_allowed(self) -> bool:
+        content_type = self.headers.get("Content-Type", "")
+        return content_type.split(";", 1)[0].strip().lower() == "application/json"
+
+    def _read_json(self, *, allow_empty: bool = False) -> dict:
         try:
             length = int(self.headers.get("Content-Length", "0"))
         except ValueError as exc:
             raise ValueError("invalid Content-Length") from exc
+        if length == 0 and allow_empty:
+            return {}
         if length <= 0 or length > 1024 * 1024:
             raise ValueError("JSON body is required and must be <= 1 MiB")
         raw = self.rfile.read(length)
@@ -195,7 +214,13 @@ class _Handler(BaseHTTPRequestHandler):
             return []
         return [unquote(segment) for segment in parsed.path.split("/") if segment]
 
+    def do_OPTIONS(self) -> None:
+        self._reply_error(HTTPStatus.FORBIDDEN, "browser cross-origin access is not allowed")
+
     def do_GET(self) -> None:
+        if not self._request_boundary_allowed():
+            self._reply_error(HTTPStatus.FORBIDDEN, "request origin is not allowed")
+            return
         segments = self._segments()
         try:
             if segments == ["v1", "conversations"]:
@@ -220,9 +245,16 @@ class _Handler(BaseHTTPRequestHandler):
             self._reply_error(HTTPStatus.INTERNAL_SERVER_ERROR, str(exc))
 
     def do_POST(self) -> None:
+        if not self._request_boundary_allowed():
+            self._reply_error(HTTPStatus.FORBIDDEN, "request origin is not allowed")
+            return
+        if not self._post_content_type_allowed():
+            self._reply_error(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, "POST requires application/json")
+            return
         segments = self._segments()
         try:
             if segments == ["v1", "conversations"]:
+                self._read_json(allow_empty=True)
                 self._reply_json(HTTPStatus.CREATED, self.transport.create_conversation())
                 return
             if len(segments) == 4 and segments[:2] == ["v1", "conversations"] and segments[3] == "model":
@@ -256,13 +288,12 @@ class _Handler(BaseHTTPRequestHandler):
                         self.wfile.write(b"data: " + _json_bytes(event) + b"\n\n")
                         self.wfile.flush()
                 except (BrokenPipeError, ConnectionResetError):
-                    # Transport disconnect is not cancellation. The request keeps
-                    # running until it reaches a terminal state or an explicit
-                    # /cancel request is accepted.
+                    # Transport disconnect is not cancellation.
                     pass
                 self.close_connection = True
                 return
             if len(segments) == 4 and segments[:2] == ["v1", "requests"] and segments[3] == "cancel":
+                self._read_json(allow_empty=True)
                 self._reply_json(HTTPStatus.OK, self.transport.cancel_request(segments[2]))
                 return
             if len(segments) == 5 and segments[:2] == ["v1", "requests"] and segments[3] == "decisions":
