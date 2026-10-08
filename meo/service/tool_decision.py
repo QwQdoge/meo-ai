@@ -79,7 +79,8 @@ class ToolDecisionRegistry:
         self._current_for_request.pop(request.request_id, None)
         return selected
 
-    def invalidate_for_request(self, request_id: str) -> None:
+    def invalidate_for_request(self, request_id: str) -> str | None:
         decision_id = self._current_for_request.pop(request_id, None)
         if decision_id is not None:
             self._decisions[decision_id].invalidate()
+        return decision_id
