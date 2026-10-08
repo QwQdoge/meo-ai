@@ -145,7 +145,40 @@ class LegacyChatInterfaceAdapter:
             raise ValueError("legacy tool interaction is stale or invalid")
         execution_handle.pending_interaction_id = None
 
+    def _cancel_pending_interaction(self, execution_handle: LegacyExecutionHandle) -> None:
+        interaction_id = execution_handle.pending_interaction_id
+        if not interaction_id:
+            return
+
+        # Prefer a future/public ChatInterface cancellation seam when available.
+        cancel_pending = getattr(self.interface, "cancel_pending_interaction", None)
+        if callable(cancel_pending):
+            try:
+                if cancel_pending(interaction_id):
+                    execution_handle.pending_interaction_id = None
+                    return
+            except Exception:
+                pass
+
+        # Compatibility fallback for current Newelle: interactive ToolResult waits
+        # on a semaphore and must be cancelled explicitly or the worker can remain
+        # blocked forever after AgentService enters cancel_requested.
+        pending = getattr(self.interface, "_pending_interactions", None)
+        if not isinstance(pending, dict):
+            return
+        entry = pending.pop(interaction_id, None)
+        if not isinstance(entry, dict):
+            return
+        result = entry.get("result")
+        cancel_result = getattr(result, "cancel", None)
+        if callable(cancel_result):
+            try:
+                cancel_result()
+            finally:
+                execution_handle.pending_interaction_id = None
+
     def cancel(self, execution_handle: LegacyExecutionHandle) -> None:
+        self._cancel_pending_interaction(execution_handle)
         self.controller.stop_workspace_request(execution_handle.chat_id)
 
     def list_models(self):
