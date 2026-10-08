@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from collections import Counter
 from typing import Dict
 from uuid import uuid4
 
-from .request_state import RequestLifecycle
+from .request_state import RequestLifecycle, RequestState
 
 
 class RequestRegistry:
@@ -25,3 +26,10 @@ class RequestRegistry:
 
     def contains(self, request_id: str) -> bool:
         return request_id in self._requests
+
+    def state_counts(self) -> dict[str, int]:
+        counts = Counter(request.state.value for request in self._requests.values())
+        return {state.value: counts.get(state.value, 0) for state in RequestState}
+
+    def active_count(self) -> int:
+        return sum(1 for request in self._requests.values() if not request.terminal)
