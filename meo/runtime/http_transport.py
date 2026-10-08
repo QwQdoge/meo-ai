@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import queue
+import socket
 import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -244,6 +245,7 @@ class AgentThreadingHttpServer(ThreadingHTTPServer):
         host, _port = address
         if host not in {"127.0.0.1", "::1", "localhost"}:
             raise ValueError("AgentService HTTP transport may only bind to loopback")
+        self.address_family = socket.AF_INET6 if host == "::1" else socket.AF_INET
         self.transport = transport
         super().__init__(address, _Handler)
 
