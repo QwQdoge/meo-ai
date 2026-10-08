@@ -1,0 +1,18 @@
+[Unit]
+Description=Meo AgentService
+Documentation=https://github.com/QwQdoge/meo-ai
+After=graphical-session-pre.target
+
+[Service]
+Type=simple
+ExecStart=@bindir@/meo-agent-service --host 127.0.0.1 --port 8765
+Restart=on-failure
+RestartSec=2
+
+# The service is deliberately unprivileged. OS actions must go through the
+# future typed System AI Router/capability policy rather than gaining authority
+# through this process.
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=default.target
