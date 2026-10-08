@@ -47,16 +47,19 @@ The stable semantic surface is:
 - `GetModels()` / `SetModel(conversationId, modelId)`
 - `ListSkills()` / `SetSkillEnabled(skillId, enabled)`
 - `ListMcpServers()`
-- `GetAgentState()` (still pending)
+- `GetAgentState()`
 
 Model/provider credentials never cross this frontend contract as prompt text.
 
 `ListMessages` is a presentation-safe history surface. The compatibility adapter exposes only visible `user` and `assistant` text. Inherited `Console`, `Command`, `File`, `Folder`, tool-internal records and injected retrieval `<context>` blocks are not replayed into the native UI.
 
+`GetAgentState` deliberately reports only state owned by AgentService itself: whether a backend is attached, active request count and per-lifecycle-state counts. It does not infer provider/model health merely because a backend object exists.
+
 ## Current loopback transport
 
 The Phase B HTTP implementation currently maps those semantics to:
 
+- `GET /v1/agent-state`
 - `GET /v1/conversations`
 - `POST /v1/conversations`
 - `GET /v1/conversations/{conversationId}/messages`
