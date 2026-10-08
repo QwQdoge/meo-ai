@@ -34,6 +34,7 @@ private:
     void requestLegacy(const QString &text);
     void consumeLegacy();
     void ensureServiceConversation(const std::function<void()> &then);
+    void loadServiceHistory();
     void sendService(const QString &text);
     void reconnectServiceStream();
     void attachServiceStream(QNetworkReply *reply);
