@@ -6,7 +6,7 @@ import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from meo.service.backend_adapter import BackendCallbacks
 from meo.service.core import AgentServiceCore, RequestContext
@@ -82,8 +82,6 @@ class AgentHttpTransport:
                 conversation_id=conversation_id,
                 delta=delta,
             ),
-            # AgentServiceCore already normalizes this to tool.requested and
-            # issues the authoritative decision_id. Preserve it verbatim.
             on_tool_event=lambda event: stream.emit_event(event),
             on_done=lambda: self._finish_stream(stream, request_id()),
             on_error=lambda error: self._fail_stream(stream, request_id(), error),
@@ -178,7 +176,7 @@ class _Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         if parsed.query or parsed.fragment:
             return []
-        return [segment for segment in parsed.path.split("/") if segment]
+        return [unquote(segment) for segment in parsed.path.split("/") if segment]
 
     def do_GET(self) -> None:
         segments = self._segments()
