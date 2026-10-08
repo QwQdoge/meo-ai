@@ -8,6 +8,8 @@ Status: Phase B contract. This document defines the stable frontend/runtime boun
 
 The first implementation may use loopback transport internally, but the semantic contract below must not depend on HTTP/SSE details. A later D-Bus implementation must preserve request identity, event ordering and cancellation semantics.
 
+`AgentServiceCore` consumes a narrow `AgentBackendAdapter`. The service layer and adapter contract must remain importable without GTK/Adwaita/WebKit or Newelle UI modules. A compatibility adapter may still wrap the current GTK-era Newelle controller during extraction; that adapter is the temporary seam, not part of the stable frontend contract.
+
 ## Request identity and lifecycle
 
 Every submitted turn receives a service-generated `request_id`. One request follows this state model:
@@ -45,6 +47,12 @@ The transport should expose semantic equivalents of:
 
 Model/provider credentials never cross this frontend contract as prompt text.
 
+## Backend adapter
+
+The backend adapter is the only service-facing seam to the inherited Newelle runtime. It exposes conversation existence/creation, message execution, tool-choice continuation, request-local cancellation, models, Skills and MCP metadata. UI objects, GTK widgets and provider credentials are not part of this interface.
+
+Execution handles returned by the adapter are opaque to transports and frontends. The service owns the mapping from `request_id` to execution handle and never exposes that object as authority. Backends may complete synchronously or asynchronously; terminal service state must not retain a stale handle.
+
 ## Events
 
 At minimum:
@@ -64,7 +72,7 @@ Events carry `request_id`; conversation-scoped events also carry `conversation_i
 
 `tool.requested` is a pause, not approval. The service waits for an explicit matching decision. Closing the frontend, losing the transport, timing out, or receiving malformed input must never be interpreted as approval.
 
-Phase B continues to reuse upstream Newelle tool behavior while extracting the runtime, but the final service contract must not expose `/option N` as its stable API.
+Phase B continues to reuse upstream Newelle tool behavior while extracting the runtime, but the final service contract must not expose `/option N` as its stable API. Legacy Newelle `interaction_id` values are compatibility metadata only; they are never accepted as AgentService decision authority.
 
 ## Persistence and restart
 
@@ -79,5 +87,7 @@ After a service crash/restart:
 ## Headless acceptance gate
 
 Phase B is accepted only when the runtime service can start and serve the contract without constructing a GTK/Adwaita/WebKit frontend. Legacy GTK frontend code may remain in the repository until parity removal; the headless runtime package/import graph itself must not depend on those UI modules.
+
+CI statically checks `meo/service` for forbidden UI imports. This is only an import-boundary gate: it does not prove that the eventual Newelle adapter or provider runtime can execute headlessly. That still requires a real process-start acceptance test.
 
 The acceptance suite must cover start, send/stream, tool pause/deny/approve, cancel in model wait, cancel while awaiting a tool decision, disconnect/reconnect, runtime crash/restart, conversation resume and invalid/stale decision IDs.
