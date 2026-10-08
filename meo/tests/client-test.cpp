@@ -123,6 +123,50 @@ private slots:
         create->deleteLater(); stream->deleteLater(); decision->deleteLater();
     }
 
+    void serviceReconnectsAfterStreamDrop() {
+        qunsetenv("MEO_AI_ENDPOINT");
+        QTcpServer server; QVERIFY(server.listen(QHostAddress::LocalHost));
+        qputenv("MEO_AI_SERVICE_ENDPOINT", QString("http://127.0.0.1:%1").arg(server.serverPort()).toUtf8());
+        AgentClient client;
+        QSignalSpy chunks(&client, &AgentClient::delta);
+        client.newChat();
+
+        QTRY_VERIFY(server.hasPendingConnections());
+        auto create = server.nextPendingConnection();
+        readRequest(create);
+        const QByteArray createBody = "{\"conversation_id\":\"meo:reconnect\"}";
+        create->write("HTTP/1.1 201 Created\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: " + QByteArray::number(createBody.size()) + "\r\n\r\n" + createBody);
+        create->flush(); create->disconnectFromHost();
+        QTRY_VERIFY(!client.actionBusy());
+
+        client.send("continue after disconnect");
+        QTRY_VERIFY(server.hasPendingConnections());
+        auto stream = server.nextPendingConnection();
+        readRequest(stream);
+        stream->write("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\nX-Meo-Request-Id: req-reconnect\r\n\r\n");
+        stream->write("data: {\"seq\":1,\"type\":\"request.started\",\"request_id\":\"req-reconnect\",\"conversation_id\":\"meo:reconnect\",\"state\":\"running_model\"}\n\n");
+        stream->write("data: {\"seq\":2,\"type\":\"message.delta\",\"request_id\":\"req-reconnect\",\"conversation_id\":\"meo:reconnect\",\"delta\":\"first\"}\n\n");
+        stream->flush();
+        QTRY_COMPARE(chunks.size(), 1);
+        stream->disconnectFromHost();
+
+        QTRY_VERIFY(server.hasPendingConnections());
+        auto reconnect = server.nextPendingConnection();
+        const QByteArray reconnectRequest = readRequest(reconnect);
+        QVERIFY(reconnectRequest.contains("GET /v1/requests/req-reconnect/events?after=2"));
+        reconnect->write("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\nX-Meo-Request-Id: req-reconnect\r\n\r\n");
+        reconnect->write("data: {\"seq\":3,\"type\":\"message.delta\",\"request_id\":\"req-reconnect\",\"conversation_id\":\"meo:reconnect\",\"delta\":\" second\"}\n\n");
+        reconnect->write("data: {\"seq\":4,\"type\":\"request.completed\",\"request_id\":\"req-reconnect\",\"state\":\"completed\"}\n\n");
+        reconnect->flush(); reconnect->disconnectFromHost();
+
+        QTRY_VERIFY(!client.busy());
+        QCOMPARE(chunks.size(), 2);
+        QCOMPARE(chunks[0][0].toString(), QString("first"));
+        QCOMPARE(chunks[1][0].toString(), QString(" second"));
+        QVERIFY(client.status().contains("Ready"));
+        create->deleteLater(); stream->deleteLater(); reconnect->deleteLater();
+    }
+
     void serviceCancelUsesDedicatedEndpoint() {
         qunsetenv("MEO_AI_ENDPOINT");
         QTcpServer server; QVERIFY(server.listen(QHostAddress::LocalHost));
