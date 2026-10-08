@@ -29,6 +29,7 @@ jobs:
           test -f build/stage/usr/share/newelle/meo/runtime/http_transport.py
           test -f build/stage/usr/share/newelle/meo/runtime/event_journal.py
           test -f build/stage/usr/share/newelle/meo/service/core.py
+          test -f build/stage/usr/share/newelle/meo/system/system_tool.py
           test -f build/stage/usr/share/newelle/meo/adapters/headless_newelle.py
           test -f build/stage/usr/lib/systemd/user/meo-agent-service.service
           grep -F 'ExecStart=/usr/bin/meo-agent-service --host 127.0.0.1 --port 8765' build/stage/usr/lib/systemd/user/meo-agent-service.service
