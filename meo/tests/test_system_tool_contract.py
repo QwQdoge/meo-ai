@@ -9,10 +9,25 @@ from meo.system.system_tool import (
 )
 
 
+VOLUME_SCHEMA = {
+    "type": "object",
+    "properties": {"percent": {"type": "integer"}},
+    "required": ["percent"],
+    "additionalProperties": False,
+}
+TARGET_SCHEMA = {
+    "type": "object",
+    "properties": {"target": {"type": "string"}},
+    "required": ["target"],
+    "additionalProperties": False,
+}
+
+
 class FakeRouter:
     def __init__(self):
         self.submitted = []
         self.decisions = []
+        self.request_states = {}
 
     def list_capabilities(self):
         return [
@@ -24,6 +39,7 @@ class FakeRouter:
                 "verification": "read-back",
                 "maturity": "stable",
                 "requiresConfirmation": False,
+                "argumentSchema": VOLUME_SCHEMA,
             },
             {
                 "id": "org.meo.test.erase",
@@ -33,6 +49,7 @@ class FakeRouter:
                 "verification": "owner-result",
                 "maturity": "preview",
                 "requiresConfirmation": True,
+                "argumentSchema": TARGET_SCHEMA,
             },
         ]
 
@@ -47,6 +64,10 @@ class FakeRouter:
         return {"requestId": "router:done", "state": "completed", "message": "Volume is 30%"}
 
     def get_request(self, request_id):
+        states = self.request_states.get(request_id)
+        if states:
+            state = states.pop(0)
+            return {"requestId": request_id, "state": state}
         return {"requestId": request_id, "state": "completed"}
 
     def decide_request(self, request_id, fingerprint, approve):
@@ -62,6 +83,7 @@ class SystemToolContractTests(unittest.TestCase):
         self.assertEqual(volume.verification, CapabilityVerification.READ_BACK)
         self.assertEqual(volume.maturity, CapabilityMaturity.STABLE)
         self.assertFalse(volume.requires_confirmation)
+        self.assertEqual(volume.argument_schema, VOLUME_SCHEMA)
 
     def test_unknown_capability_is_rejected_before_submit(self):
         router = FakeRouter()
@@ -96,6 +118,29 @@ class SystemToolContractTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             SystemToolRequest("org.meo.desktop.audio.setVolume", {"percent": None})
 
+    def test_router_rejection_without_request_id_is_preserved(self):
+        router = FakeRouter()
+        router.submit_request = lambda _capability_id, _arguments: {
+            "state": "rejected",
+            "message": "Invalid arguments",
+        }
+        result = SystemTool(router).invoke(
+            SystemToolRequest("org.meo.desktop.audio.setVolume", {"percent": "wrong"})
+        )
+        self.assertIsNone(result.router_request_id)
+        self.assertEqual(result.state, "rejected")
+        self.assertEqual(result.router_view["message"], "Invalid arguments")
+
+    def test_wait_terminal_polls_until_completion(self):
+        router = FakeRouter()
+        router.request_states["router:wait"] = ["running", "running", "completed"]
+        view = SystemTool(router).wait_terminal(
+            "router:wait",
+            timeout=1.0,
+            poll_interval=0.001,
+        )
+        self.assertEqual(view["state"], "completed")
+
     def test_bad_router_metadata_is_rejected(self):
         router = FakeRouter()
         router.list_capabilities = lambda: [{
@@ -106,6 +151,27 @@ class SystemToolContractTests(unittest.TestCase):
             "verification": "read-back",
             "maturity": "stable",
             "requiresConfirmation": False,
+            "argumentSchema": TARGET_SCHEMA,
+        }]
+        with self.assertRaises(ValueError):
+            SystemTool(router).capabilities()
+
+    def test_malformed_argument_schema_is_rejected(self):
+        router = FakeRouter()
+        router.list_capabilities = lambda: [{
+            "id": "org.meo.test.action",
+            "title": "Bad schema",
+            "owner": "org.meo.test",
+            "effect": "session",
+            "verification": "read-back",
+            "maturity": "stable",
+            "requiresConfirmation": False,
+            "argumentSchema": {
+                "type": "object",
+                "properties": {"target": {"type": "string"}},
+                "required": [],
+                "additionalProperties": False,
+            },
         }]
         with self.assertRaises(ValueError):
             SystemTool(router).capabilities()
