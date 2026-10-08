@@ -220,9 +220,30 @@ class LegacyChatInterfaceAdapter:
         self._cancel_pending_interaction(execution_handle)
         self.controller.stop_workspace_request(execution_handle.chat_id)
 
+    def _current_model_selection(self) -> tuple[str, str]:
+        settings = self.controller.settings
+        try:
+            provider_name = settings.get_string("language-model")
+        except Exception:
+            provider_name = getattr(self.controller.newelle_settings, "language_model", "")
+        if not isinstance(provider_name, str):
+            provider_name = ""
+
+        raw_model_id = ""
+        try:
+            llm_settings = json.loads(settings.get_string("llm-settings"))
+            provider_settings = llm_settings.get(provider_name, {}) if isinstance(llm_settings, dict) else {}
+            if isinstance(provider_settings, dict):
+                value = provider_settings.get("model", "")
+                raw_model_id = value if isinstance(value, str) else ""
+        except Exception:
+            pass
+        return provider_name, raw_model_id
+
     def list_models(self):
         from src.constants import AVAILABLE_LLMS
 
+        selected_provider, selected_model = self._current_model_selection()
         result = []
         for provider_name, provider_info in AVAILABLE_LLMS.items():
             try:
@@ -243,6 +264,7 @@ class LegacyChatInterfaceAdapter:
                         label,
                         provider_label,
                         selection_scope="profile",
+                        selected=provider_name == selected_provider and raw_id == selected_model,
                     )
                 )
         return result
