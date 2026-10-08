@@ -46,6 +46,7 @@ install_data(
 
 install_data(
   '../system/system_tool.py',
+  '../system/dbus_router.py',
   install_dir: join_paths(meo_moduledir, 'system')
 )
 
