@@ -35,6 +35,23 @@ class FakeInterface:
                     "verification": FakeVariant("s", "read-back"),
                     "maturity": FakeVariant("s", "stable"),
                     "requiresConfirmation": FakeVariant("b", False),
+                    "argumentSchema": FakeVariant(
+                        "a{sv}",
+                        {
+                            "type": FakeVariant("s", "object"),
+                            "properties": FakeVariant(
+                                "a{sv}",
+                                {
+                                    "percent": FakeVariant(
+                                        "a{sv}",
+                                        {"type": FakeVariant("s", "integer")},
+                                    )
+                                },
+                            ),
+                            "required": FakeVariant("as", ["percent"]),
+                            "additionalProperties": FakeVariant("b", False),
+                        },
+                    ),
                 },
             )
         ]
@@ -85,6 +102,8 @@ class DbusRouterClientTests(unittest.TestCase):
         try:
             capabilities = client.list_capabilities()
             self.assertEqual(capabilities[0]["id"], "org.meo.desktop.audio.setVolume")
+            schema = capabilities[0]["argumentSchema"]
+            self.assertEqual(schema["properties"]["percent"]["type"], "integer")
             submitted = client.submit_request(
                 "org.meo.desktop.audio.setVolume",
                 {"percent": 30},
