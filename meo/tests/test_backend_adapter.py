@@ -3,6 +3,7 @@ import unittest
 from meo.service.backend_adapter import (
     AgentBackendAdapter,
     BackendCallbacks,
+    ConversationMessage,
     McpServerInfo,
     ModelInfo,
     SkillInfo,
@@ -18,6 +19,9 @@ class FakeBackend:
 
     def conversation_exists(self, conversation_id):
         return conversation_id in {"c1", "c2"}
+
+    def list_messages(self, conversation_id):
+        return [ConversationMessage("user", "hello")]
 
     def send_message(self, conversation_id, text, callbacks):
         callbacks.on_text_delta("hi")
@@ -68,6 +72,7 @@ class BackendAdapterContractTests(unittest.TestCase):
         self.assertEqual(ModelInfo("m", "M", selection_scope="profile").selection_scope, "profile")
         self.assertTrue(SkillInfo("s", "S", True).enabled)
         self.assertFalse(McpServerInfo("x", "X", False).enabled)
+        self.assertEqual(ConversationMessage("assistant", "hi").role, "assistant")
 
 
 if __name__ == "__main__":
