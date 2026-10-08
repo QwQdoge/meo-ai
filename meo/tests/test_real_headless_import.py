@@ -87,6 +87,6 @@ assert updates == ["first"] and closed == [True]
 
     @unittest.skipUnless(os.environ.get("MEO_AI_RUN_NEWELLE_IMPORT_TEST") == "1", "opt-in real Newelle dependencies required")
     def test_deferred_annotations_preserve_tool_schema(self):
-        code = "from src.tools import Tool, Command; scope = {}; exec('from __future__ import annotations\ndef f(count: int, enabled: bool, ratio: float): pass', scope); expected = {'count': {'type': 'integer'}, 'enabled': {'type': 'boolean'}, 'ratio': {'type': 'number'}}; assert Tool('test', 'test', scope['f']).schema['properties'] == expected; assert Command('test', 'test', scope['f']).schema['properties'] == expected"
+        code = r"from src.tools import Tool, Command; scope = {}; exec('from __future__ import annotations\ndef f(count: int, enabled: bool, ratio: float): pass', scope); expected = {'count': {'type': 'integer'}, 'enabled': {'type': 'boolean'}, 'ratio': {'type': 'number'}}; assert Tool('test', 'test', scope['f']).schema['properties'] == expected; assert Command('test', 'test', scope['f']).schema['properties'] == expected"
         result = subprocess.run([sys.executable, "-c", code], cwd=ROOT, capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
