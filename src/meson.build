@@ -41,7 +41,8 @@ newelle_sources = [
   'ui_controller.py',
   'tools.py',
   'skills.py',
-  'modes.py'
+  'modes.py',
+  'meo_profile.py'
 ]
 
 integrations_sources = [
@@ -298,3 +299,5 @@ install_data(interface_sources, install_dir: moduledir / 'handlers' / 'interface
 install_data(utility_sources, install_dir: moduledir / 'utility')
 install_data(integrations_sources, install_dir: moduledir / 'integrations')
 install_data(image_generator_sources, install_dir: moduledir / 'handlers' / 'image_generator')
+
+install_data('../meo/prompts/base.md', '../meo/prompts/system-control.md', '../meo/prompts/terminal.md', '../meo/prompts/repair.md', install_dir: join_paths(moduledir, 'meo-prompts'))

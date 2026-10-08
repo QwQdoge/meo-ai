@@ -3,3 +3,5 @@ __pycache__/
 .ruff_cache/
 .flatpak-builder
 flatpak-pip-generator
+build/
+.DS_Store

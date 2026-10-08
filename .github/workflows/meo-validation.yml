@@ -1,0 +1,29 @@
+name: Meo AI preview validation
+on:
+  push:
+    branches: [master, 'meo/**']
+  pull_request:
+    paths: ['meo/**', 'src/**', '.github/workflows/meo-validation.yml']
+permissions:
+  contents: read
+jobs:
+  protocol:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m compileall -q src
+      - run: python3 -m unittest discover -s meo/tests -p 'test_*.py' -v
+  native:
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    steps:
+      - run: pacman -Syu --noconfirm --needed git cmake qt6-base qt6-declarative qt6-shadertools qt6-tools python
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: QwQdoge/MeoUI
+          ref: fb27f21859144665dcc323e32fb4d6eb628536c0
+          path: dependencies/MeoUI
+      - run: cmake -S meo -B build/meo -DMEO_UI_ROOT="$PWD/dependencies/MeoUI" -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build build/meo --parallel 2
+      - run: QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software ctest --test-dir build/meo --output-on-failure --timeout 60

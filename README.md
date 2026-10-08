@@ -1,3 +1,13 @@
+# Meo AI — Newelle-derived MeoArch assistant
+
+Development preview: native C++/QML MeoUI frontend and Meo prompt overlay.
+See [Meo build/run instructions](meo/README.md) and [architecture and migration plan](meo/docs/architecture.md).
+The full agent engine is inherited from [qwersyk/Newelle](https://github.com/qwersyk/Newelle);
+upstream attribution and GPL-3.0 licensing are preserved. GTK remains required
+for the engine during frontend extraction. System integration is under development.
+
+---
+
 <h1 align="center">
   <img src="https://raw.githubusercontent.com/qwersyk/Newelle/master/data/icons/hicolor/scalable/apps/io.github.qwersyk.Newelle.svg" alt="Newelle" width="192" height="192"/>
   <br>

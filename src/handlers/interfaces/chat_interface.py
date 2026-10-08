@@ -198,6 +198,8 @@ class ChatInterface(Interface):
                 if on_tool_event:
                     on_tool_event(event)
 
+        from ...meo_profile import prompt_layers
+
         self.controller.run_llm_with_tools(
             message=text,
             chat_id=chat_id,
@@ -205,6 +207,7 @@ class ChatInterface(Interface):
             on_tool_result_callback=_on_tool,
             save_chat=True,
             force_tools_on_main_thread=True,
+            extra_system_prompts=prompt_layers() if user_id.startswith("meo:") else None,
         )
         return accumulated
 
