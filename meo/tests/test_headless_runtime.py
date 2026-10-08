@@ -27,6 +27,10 @@ def fake_factory():
     return FakeBackend()
 
 
+def this_module_factory_spec():
+    return f"{__name__}:fake_factory"
+
+
 class HeadlessRuntimeTests(unittest.TestCase):
     def test_static_probe_detects_forbidden_prefixes(self):
         result = inspect_loaded_modules([
@@ -45,7 +49,7 @@ class HeadlessRuntimeTests(unittest.TestCase):
         self.assertEqual(main(["--self-check"]), 0)
 
     def test_factory_builds_service(self):
-        service = build_service("meo.tests.test_headless_runtime:fake_factory")
+        service = build_service(this_module_factory_spec())
         self.assertIsInstance(service.backend, FakeBackend)
 
     def test_factory_module_that_loads_ui_is_rejected(self):
@@ -58,7 +62,7 @@ class HeadlessRuntimeTests(unittest.TestCase):
 
     def test_normal_start_refuses_to_claim_transport_ready(self):
         with self.assertRaises(SystemExit) as raised:
-            main(["--backend-factory", "meo.tests.test_headless_runtime:fake_factory"])
+            main(["--backend-factory", this_module_factory_spec()])
         self.assertIn("transport server is intentionally not enabled yet", str(raised.exception))
 
 
