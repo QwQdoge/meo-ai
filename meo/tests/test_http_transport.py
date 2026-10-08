@@ -1,11 +1,10 @@
 import json
 import threading
-import time
 import unittest
 import urllib.request
 
 from meo.runtime.http_transport import create_http_server
-from meo.service.backend_adapter import BackendCallbacks
+from meo.service.backend_adapter import BackendCallbacks, McpServerInfo, ModelInfo, SkillInfo
 from meo.service.core import AgentServiceCore
 
 
@@ -20,6 +19,8 @@ class FakeBackend:
     def __init__(self):
         self.conversations = set()
         self.handles = []
+        self.model_changes = []
+        self.skill_enabled = {"diagnostics": True}
 
     def list_conversations(self):
         return [{"id": cid} for cid in sorted(self.conversations)]
@@ -64,11 +65,22 @@ class FakeBackend:
     def cancel(self, execution_handle):
         execution_handle.cancel.set()
 
-    def list_models(self): return []
-    def set_model(self, conversation_id, model_id): pass
-    def list_skills(self): return []
-    def set_skill_enabled(self, skill_id, enabled): pass
-    def list_mcp_servers(self): return []
+    def list_models(self):
+        return [ModelInfo("local:tiny", "Tiny", "Local")]
+
+    def set_model(self, conversation_id, model_id):
+        self.model_changes.append((conversation_id, model_id))
+
+    def list_skills(self):
+        return [SkillInfo("diagnostics", "Diagnostics", self.skill_enabled["diagnostics"])]
+
+    def set_skill_enabled(self, skill_id, enabled):
+        if skill_id != "diagnostics":
+            raise ValueError("unknown skill_id")
+        self.skill_enabled[skill_id] = enabled
+
+    def list_mcp_servers(self):
+        return [McpServerInfo("filesystem", "Filesystem", False)]
 
 
 class HttpTransportTests(unittest.TestCase):
@@ -99,6 +111,28 @@ class HttpTransportTests(unittest.TestCase):
         status, body = self.json_request("POST", "/v1/conversations")
         self.assertEqual(status, 201)
         return body["conversation_id"]
+
+    def test_catalogs_and_mutations_are_structured(self):
+        cid = self.create_conversation()
+        status, models = self.json_request("GET", "/v1/models")
+        self.assertEqual(status, 200)
+        self.assertEqual(models["models"][0]["model_id"], "local:tiny")
+
+        status, selected = self.json_request(
+            "POST", f"/v1/conversations/{cid}/model", {"model_id": "local:tiny"}
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(selected["accepted"])
+        self.assertEqual(self.backend.model_changes, [(cid, "local:tiny")])
+
+        _, skills = self.json_request("GET", "/v1/skills")
+        self.assertTrue(skills["skills"][0]["enabled"])
+        _, toggled = self.json_request("POST", "/v1/skills/diagnostics", {"enabled": False})
+        self.assertFalse(toggled["enabled"])
+        self.assertFalse(self.backend.skill_enabled["diagnostics"])
+
+        _, mcp = self.json_request("GET", "/v1/mcp-servers")
+        self.assertEqual(mcp["mcp_servers"][0]["server_id"], "filesystem")
 
     def test_message_tool_decision_and_completion(self):
         cid = self.create_conversation()
