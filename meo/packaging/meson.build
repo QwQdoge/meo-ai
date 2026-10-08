@@ -2,10 +2,12 @@ python = import('python')
 meo_python = python.find_installation('python3')
 meo_pkgdatadir = join_paths(get_option('prefix'), get_option('datadir'), meson.project_name())
 meo_moduledir = join_paths(meo_pkgdatadir, 'meo')
+meo_bindir = join_paths(get_option('prefix'), get_option('bindir'))
 
 meo_conf = configuration_data()
 meo_conf.set('PYTHON', meo_python.path())
 meo_conf.set('pkgdatadir', meo_pkgdatadir)
+meo_conf.set('bindir', meo_bindir)
 
 configure_file(
   input: 'meo-agent-service.in',
@@ -14,6 +16,14 @@ configure_file(
   install: true,
   install_dir: get_option('bindir'),
   install_mode: 'r-xr--r--'
+)
+
+configure_file(
+  input: 'meo-agent-service.service.in',
+  output: 'meo-agent-service.service',
+  configuration: meo_conf,
+  install: true,
+  install_dir: join_paths(get_option('libdir'), 'systemd', 'user')
 )
 
 install_data(
