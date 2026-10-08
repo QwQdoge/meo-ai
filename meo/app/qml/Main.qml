@@ -30,7 +30,14 @@ ApplicationWindow {
         RowLayout {
             MeoAiMark { width: 36 * MeoTheme.globalScale; height: width }
             Label { text: qsTr("Meo AI"); font.pixelSize: MeoTheme.headlineMedium.size * MeoTheme.globalScale; font.weight: MeoTheme.headlineMedium.weight; color: MeoTheme.onSurface; Layout.fillWidth: true }
-            MeoButton { text: qsTr("New chat"); type: "tonal"; enabled: !agent.busy && !agent.options.length; onClicked: agent.newChat() }
+            MeoButton {
+                visible: agent.serviceMode && agent.busy
+                text: qsTr("Stop")
+                type: "tonal"
+                enabled: !agent.actionBusy
+                onClicked: agent.cancel()
+            }
+            MeoButton { text: qsTr("New chat"); type: "tonal"; enabled: !agent.busy && !agent.actionBusy && !agent.options.length; onClicked: agent.newChat() }
         }
         Label { text: agent.status; wrapMode: Text.Wrap; color: MeoTheme.onSurfaceVariant; font.pixelSize: MeoTheme.bodyMedium.size * MeoTheme.globalScale; font.weight: MeoTheme.bodyMedium.weight; Layout.fillWidth: true }
         ListView {
@@ -52,7 +59,9 @@ ApplicationWindow {
             Label {
                 visible: messages.count === 0
                 anchors.centerIn: parent
-                text: qsTr("Ask about your project or MeoArch.\n/models · /model · /tools · /skill\nSystem capability integration is pending.")
+                text: agent.serviceMode
+                    ? qsTr("Ask about your project or MeoArch.\nAgentService mode uses typed request and tool-decision events.")
+                    : qsTr("Ask about your project or MeoArch.\n/models · /model · /tools · /skill\nLegacy Newelle API compatibility mode.")
                 horizontalAlignment: Text.AlignHCenter
                 font.pixelSize: MeoTheme.bodyLarge.size * MeoTheme.globalScale; font.weight: MeoTheme.bodyLarge.weight; color: MeoTheme.onSurfaceVariant
             }
@@ -63,7 +72,8 @@ ApplicationWindow {
                 required property var modelData
                 required property int index
                 text: modelData.title
-                type: "tonal"; enabled: !agent.busy
+                type: "tonal"
+                enabled: !agent.actionBusy && (agent.serviceMode || !agent.busy)
                 Layout.fillWidth: true
                 onClicked: agent.choose(index)
             }
@@ -74,7 +84,7 @@ ApplicationWindow {
                 label: qsTr("Message")
                 Layout.fillWidth: true
                 Layout.preferredHeight: 120 * MeoTheme.globalScale
-                enabled: !agent.busy && !agent.options.length
+                enabled: !agent.busy && !agent.actionBusy && !agent.options.length
                 Keys.onPressed: event => {
                     if (event.key === Qt.Key_Return && (event.modifiers & Qt.ControlModifier)) {
                         agent.send(text); text = ""; event.accepted = true
@@ -82,8 +92,8 @@ ApplicationWindow {
                 }
             }
             MeoButton {
-                text: qsTr("Send"); loading: agent.busy
-                enabled: !agent.busy && !agent.options.length && composer.text.trim().length > 0
+                text: qsTr("Send"); loading: agent.busy || agent.actionBusy
+                enabled: !agent.busy && !agent.actionBusy && !agent.options.length && composer.text.trim().length > 0
                 onClicked: { agent.send(composer.text); composer.text = "" }
             }
         }
