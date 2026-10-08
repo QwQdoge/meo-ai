@@ -42,6 +42,11 @@ if(BUILD_TESTING)
     target_link_libraries(meo-ai-history-restore-test PRIVATE Qt6::Network Qt6::Test)
     add_test(NAME meo-ai.history-restore COMMAND meo-ai-history-restore-test)
 
+    qt_add_executable(meo-ai-stale-conversation-recovery-test tests/stale-conversation-recovery-test.cpp app/agentclient.cpp app/agentclient.h)
+    target_include_directories(meo-ai-stale-conversation-recovery-test PRIVATE app)
+    target_link_libraries(meo-ai-stale-conversation-recovery-test PRIVATE Qt6::Network Qt6::Test)
+    add_test(NAME meo-ai.stale-conversation-recovery COMMAND meo-ai-stale-conversation-recovery-test)
+
     add_test(
         NAME meo-ai.default-transport
         COMMAND ${CMAKE_COMMAND} -E env
