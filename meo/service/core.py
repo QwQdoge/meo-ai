@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import threading
 from typing import Callable, Dict
 
 from .backend_adapter import AgentBackendAdapter, BackendCallbacks
@@ -58,13 +59,26 @@ class AgentServiceCore:
         if on_started is not None:
             on_started(context)
 
+        # Some backends start worker threads before returning their execution
+        # handle. Buffer callbacks until the handle is registered so an immediate
+        # tool decision or cancel can never observe a request without its handle.
+        callback_lock = threading.Lock()
+        callback_ready = False
+        pending_callbacks: list[tuple[Callable, tuple]] = []
+
+        def dispatch(function: Callable, *args) -> None:
+            nonlocal callback_ready
+            with callback_lock:
+                if not callback_ready:
+                    pending_callbacks.append((function, args))
+                    return
+            function(*args)
+
         wrapped = BackendCallbacks(
-            on_text_delta=callbacks.on_text_delta,
-            on_tool_event=lambda event: callbacks.on_tool_event(
-                self.publish_legacy_tool_request(request_id, event)
-            ),
-            on_done=lambda: self._backend_done(request_id, callbacks),
-            on_error=lambda error: self._backend_error(request_id, error, callbacks),
+            on_text_delta=lambda delta: dispatch(callbacks.on_text_delta, delta),
+            on_tool_event=lambda event: dispatch(self._publish_backend_tool_event, request_id, event, callbacks),
+            on_done=lambda: dispatch(self._backend_done, request_id, callbacks),
+            on_error=lambda error: dispatch(self._backend_error, request_id, error, callbacks),
         )
         try:
             handle = self.backend.send_message(conversation_id, text, wrapped)
@@ -72,11 +86,21 @@ class AgentServiceCore:
             self.fail_request(request_id, str(exc))
             raise
 
-        # Backends are allowed to complete synchronously. Do not retain a stale
-        # handle if callbacks already moved the request into a terminal state.
-        if not self.requests.get(request_id).terminal:
-            self._execution_handles[request_id] = handle
+        self._execution_handles[request_id] = handle
+        with callback_lock:
+            callback_ready = True
+            queued = list(pending_callbacks)
+            pending_callbacks.clear()
+        for function, args in queued:
+            function(*args)
+
+        # A buffered completion/error callback may have made the request terminal.
+        if self.requests.get(request_id).terminal:
+            self._execution_handles.pop(request_id, None)
         return context
+
+    def _publish_backend_tool_event(self, request_id: str, event: dict, callbacks: BackendCallbacks) -> None:
+        callbacks.on_tool_event(self.publish_legacy_tool_request(request_id, event))
 
     def _backend_done(self, request_id: str, callbacks: BackendCallbacks) -> None:
         request = self.requests.get(request_id)
