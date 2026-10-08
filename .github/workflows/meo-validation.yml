@@ -3,7 +3,7 @@ on:
   push:
     branches: [master, 'meo/**']
   pull_request:
-    paths: ['meo/**', 'src/**', '.github/workflows/meo-validation.yml']
+    paths: ['meo/**', 'src/**', 'meson.build', '.github/workflows/meo-validation.yml']
 permissions:
   contents: read
 jobs:
@@ -15,6 +15,22 @@ jobs:
       - run: python3 meo/tools/check_headless_imports.py
       - run: python3 -m meo.runtime.main --self-check
       - run: python3 -m unittest discover -s meo/tests -p 'test_*.py' -v
+  packaging:
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    steps:
+      - run: pacman -Syu --noconfirm --needed git meson python glib2 gettext
+      - uses: actions/checkout@v4
+      - run: meson setup build/package --prefix=/usr
+      - run: DESTDIR="$PWD/build/stage" meson install -C build/package
+      - run: |
+          test -x build/stage/usr/bin/meo-agent-service
+          test -f build/stage/usr/share/newelle/meo/runtime/main.py
+          test -f build/stage/usr/share/newelle/meo/runtime/http_transport.py
+          test -f build/stage/usr/share/newelle/meo/service/core.py
+          test -f build/stage/usr/share/newelle/meo/adapters/headless_newelle.py
+          test -f build/stage/usr/lib/systemd/user/meo-agent-service.service
+          grep -F 'ExecStart=/usr/bin/meo-agent-service --host 127.0.0.1 --port 8765' build/stage/usr/lib/systemd/user/meo-agent-service.service
   native:
     runs-on: ubuntu-latest
     container: archlinux:base-devel
