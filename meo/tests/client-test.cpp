@@ -91,6 +91,7 @@ private slots:
         AgentClient client;
         QVERIFY(client.serviceMode());
         QSignalSpy chunks(&client, &AgentClient::delta);
+        QSignalSpy tools(&client, &AgentClient::toolEvent);
         client.send("hello service");
 
         QTRY_VERIFY(server.hasPendingConnections());
@@ -126,6 +127,11 @@ private slots:
         decision->flush(); decision->disconnectFromHost();
         QTRY_COMPARE(client.options().size(), 0);
         QVERIFY(client.busy());
+        stream->write("data: {\"type\":\"tool.completed\",\"request_id\":\"req-1\",\"tool_name\":\"volume\",\"display_text\":\"Read volume\"}\n\n");
+        stream->flush();
+        QTRY_COMPARE(tools.size(), 2);
+        QCOMPARE(tools.last()[0].toMap().value("type").toString(), QString("tool.completed"));
+        QCOMPARE(client.options().size(), 0);
 
         stream->write("data: {\"type\":\"request.completed\",\"request_id\":\"req-1\",\"state\":\"completed\"}\n\n");
         stream->flush(); stream->disconnectFromHost();

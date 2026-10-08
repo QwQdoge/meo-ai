@@ -83,6 +83,18 @@ int main(int argc, char **argv) {
         }
     });
     poll.start();
-    QTimer::singleShot(180000, &app, [&] { client.cancel(); app.exit(3); });
+    QTimer::singleShot(180000, &app, [&] {
+        // Let the dedicated cancellation POST reach the service before closing
+        // this process and its network manager.
+        poll.stop();
+        client.cancel();
+        QTimer::singleShot(5000, &app, [&] {
+            const auto report = QJsonDocument(QJsonObject{
+                {"passed", false}, {"status", client.status()}, {"timeout", true},
+                {"deltas", deltas}, {"tool_events", toolEvents}}).toJson();
+            std::fwrite(report.constData(), 1, report.size(), stdout);
+            app.exit(3);
+        });
+    });
     return app.exec();
 }

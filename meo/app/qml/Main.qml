@@ -56,6 +56,8 @@ ApplicationWindow {
             history.positionViewAtEnd()
         }
         function onToolEvent(event) {
+            if (event.type === "tool.completed" || event.type === "tool_result")
+                return
             const text = event.display_text
             window.pendingToolDisplay = typeof text === "string" && text.length
                 ? text

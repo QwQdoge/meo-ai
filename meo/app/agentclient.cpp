@@ -502,6 +502,8 @@ void AgentClient::consumeService() {
                 emit toolEvent(event.toVariantMap());
                 emit changed();
             }
+        } else if (type == "tool.completed") {
+            emit toolEvent(event.toVariantMap());
         } else if (type == "request.completed") {
             m_done = true;
             m_pendingServiceText.clear();
