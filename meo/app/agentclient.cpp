@@ -16,6 +16,9 @@ AgentClient::AgentClient(QObject *parent) : QObject(parent) {
     if (m_serviceMode) {
         m_conversationId = settings.value("serviceConversationId").toString();
         m_status = tr("Connect to the local Meo AgentService to start.");
+        if (!m_conversationId.isEmpty()) {
+            QTimer::singleShot(0, this, [this] { loadServiceHistory(); });
+        }
     } else {
         m_user = settings.value("sessionId").toString();
         if (!m_user.startsWith("meo:")) {
@@ -158,6 +161,63 @@ void AgentClient::ensureServiceConversation(const std::function<void()> &then) {
             } else {
                 QSettings().setValue("serviceConversationId", m_conversationId);
                 then();
+            }
+        }
+        reply->deleteLater();
+        emit changed();
+    });
+}
+
+void AgentClient::loadServiceHistory() {
+    if (!m_serviceMode || m_conversationId.isEmpty() || actionBusy() || busy()) return;
+    QUrl base = validatedOrigin("MEO_AI_SERVICE_ENDPOINT");
+    if (!base.isValid()) {
+        m_status = tr("MEO_AI_SERVICE_ENDPOINT must be a loopback HTTP origin.");
+        emit changed();
+        return;
+    }
+
+    const QString expectedConversation = m_conversationId;
+    QUrl url = base;
+    url.setPath(QString("/v1/conversations/%1/messages").arg(expectedConversation));
+    QNetworkRequest request(url);
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
+    m_status = tr("Restoring conversation…");
+    m_actionReply = m_network.get(request);
+    emit changed();
+
+    connect(m_actionReply, &QNetworkReply::finished, this, [this, expectedConversation] {
+        QNetworkReply *reply = m_actionReply;
+        m_actionReply = nullptr;
+        const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        const auto document = QJsonDocument::fromJson(reply->readAll());
+
+        if (code == 404) {
+            if (m_conversationId == expectedConversation) {
+                m_conversationId.clear();
+                QSettings().remove("serviceConversationId");
+                emit resetChat();
+            }
+            m_status = tr("The previous conversation no longer exists. A new one will be created when you send a message.");
+        } else if (reply->error() != QNetworkReply::NoError || code != 200 || !document.isObject()) {
+            m_status = tr("Could not restore the previous conversation.");
+        } else {
+            const auto object = document.object();
+            const QString returnedConversation = object.value("conversation_id").toString();
+            if (returnedConversation != expectedConversation || m_conversationId != expectedConversation) {
+                m_status = tr("AgentService returned mismatched conversation history.");
+            } else {
+                const auto items = object.value("messages").toArray();
+                emit resetChat();
+                for (const auto &value : items) {
+                    if (!value.isObject()) continue;
+                    const auto entry = value.toObject();
+                    const QString role = entry.value("role").toString();
+                    const QString text = entry.value("text").toString();
+                    if ((role == "user" || role == "assistant") && !text.isEmpty())
+                        emit message(role, text);
+                }
+                m_status = tr("Ready");
             }
         }
         reply->deleteLater();
