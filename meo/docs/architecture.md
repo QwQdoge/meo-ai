@@ -1,118 +1,246 @@
 # Meo AI 架构与跨仓库实施计划
 
-日期：2026-10-08。本文区分已经实现的第一阶段和后续目标。
+日期：2026-10-08。本文是当前架构 source of truth，必须区分“仓库已实现”“兼容过渡层”“需要目标机 live acceptance”和“后续阶段”。
 
 ## 决策
 
-Fork `qwersyk/Newelle` 到 `QwQdoge/meo-ai`，继续保留 Python 引擎和
-GPL-3.0；应用 UI 使用 C++、Qt Quick/QML 和 `MeoUI 1.0`。
-不从 Nyarch 定制层起步。上游默认分支实际为 `master`，第一版实际版本为
-1.5.2，不能把之前方案里的 1.5.0 当成当前源码版本。
+Fork `qwersyk/Newelle` 到 `QwQdoge/meo-ai`，保留 Newelle Python agent engine、上游历史和 GPL-3.0 义务；Meo 原生应用 UI 使用 C++、Qt Quick/QML 和 `MeoUI 1.0`。不从 Nyarch 的二次定制层起步。
 
-初始上游基线：`b9f37f71e2bccaec4986c22897cfa43e4981741a`。
-保留 `origin`（Meo fork）和 `upstream`（Newelle）两个 remote。
+初始 Newelle 基线：`b9f37f71e2bccaec4986c22897cfa43e4981741a`。产品特定代码优先放在 `meo/`；只有必要 integration seam 才修改 `src/`。
 
 ## 源码所有权与运行时边界
 
 | 仓库 | 拥有的源码与职责 | Meo AI 如何使用 |
 |---|---|---|
-| meo-ai | Newelle 引擎、应用 UI、提示词、Skills；最终 Router 与 Repair 编排源码 | 独立用户进程；不以 root 运行 |
-| meo-kde | Plasma/KWin 集成、Meo.System、桌面 capability provider | 通过维护的 Qt/KDE/D-Bus 接口 |
-| MeoSettings | 设置页面与设置入口 | `org.meo.settings.openPage`；后续仅发布已实现的 typed API |
-| MeoUI | 共享控件、tokens、motion | `import MeoUI 1.0`，应用专用卡片留在 meo-ai |
-| meo-repo | PKGBUILD、依赖、发布输入、未来审核的 catalog | 原料来源和打包；不复制 agent 源码或提示词 |
-| meoarch-os | ArchISO 配置、默认软件包、启动和安装验收 | 安装包；不保留第二份 AI 源码 |
-| MeoArch-account | 身份、云连接、凭据、provider grant | 使用 broker，不能把凭据写入提示词或技能 |
-| OmniStore / SystemTransaction | 软件包事务 / 窄化的特权配置事务 | 保留原服务和确认、Polkit、回滚边界 |
+| `meo-ai` | Newelle-derived agent runtime、AgentService、原生 AI UI、prompts、Skills、SystemTool client；后续 Router core/Repair orchestration | 普通用户进程，不以 root 运行 |
+| `meo-kde` | Plasma/KWin/桌面集成、当前 System AI Router daemon 与 KDE owner executors | typed D-Bus owner/provider API |
+| `MeoSettings` | 日常系统设置和设置入口 | typed settings owner API；必要时 hand-off KCM |
+| `MeoUI` | 共享 MD3 Expressive tokens、controls、motion、layout patterns | `import MeoUI 1.0`；AI 专用页面/卡片留在 `meo-ai` |
+| `meo-repo` | PKGBUILD、source manifest、catalog metadata | 安装/升级来源，不复制 agent 源码 |
+| `MeoArch-os-workspace` | ISO、默认软件包、系统集成、Live/installed VM 验收 | 最终安装和激活，不保存第二份 AI 源码 |
+| `MeoArch-account` | 身份、provider credentials/grants | 后续 broker；凭据不能进入 prompts/Skills |
+| OmniStore / SystemTransaction / Repair | 软件事务、窄化特权配置、修复 authority | 保留 Polkit/确认/回滚边界 |
 
-本地目录使用 `meoarch-os`。该 checkout 的现有 origin 名为
-`QwQdoge/MeoArch-os-workspace`；不能因为远程显示名不同而恢复废弃的
-下划线 checkout。
+核心原则：**MeoUI ≠ AI，Settings ≠ AI，meo-kde ≠ AI，AI ≠ system implementation。**
 
-目标运行关系：
+## 目标运行关系
 
 ```mermaid
 flowchart TD
-    UI[C++ QML MeoUI] --> IPC[AgentService]
-    IPC --> Core[Newelle Python core]
-    Core --> Tools[Skills MCP memory workspace tools]
-    Core --> Router[System AI Router]
-    Router --> KDE[Meo.System desktop provider]
+    UI[C++ / QML / MeoUI] --> IPC[AgentService local IPC]
+    IPC --> Core[UI-free Agent Core]
+    Core --> Tools[Skills / MCP / memory / workspace tools]
+    Core --> SystemTool[typed SystemTool]
+    SystemTool --> Router[System AI Router]
+    Router --> KDE[desktop capability providers]
     Router --> Settings[Settings owner APIs]
-    Router --> Repair[Repair service]
-    Repair --> Priv[Existing Polkit and transaction authority]
+    Router --> Repair[Repair orchestration API]
+    Repair --> Priv[existing Polkit / transaction authority]
     Core --> Account[Account provider broker]
 ```
 
-现在实现的传输为 **loopback HTTP v2 + SSE**。不是已完成的 headless
-D-Bus AgentService：Newelle controller 仍导入 Adw/UIController，工具仍有
-GTK 主线程依赖。新客户端先与可运行的 GTK 引擎并存；待 headless 抽取和
-功能 parity 验收后再移除 GTK。
+这个图是目标架构。当前仍有两个过渡层：
 
-## 第一阶段实现
+1. AgentService 的 Newelle backend 仍通过兼容 adapter 包装 GTK-era `src.controller`；用 import shim 避免构造 UI，但还没有完成真正 UI-free `AgentCore` 抽取。
+2. AgentService 的当前 transport 是 hardened loopback HTTP/SSE。它适合开发和语义验证，但**不是最终 system authorization boundary**。最终本地 IPC/activation 仍需和发行版集成一起确定。
 
-- `meo/app/`：原生 QML 聊天、新建会话、流式文本、工具决策按钮。
-- 使用 Newelle `/v2/chat/completions`，历史由引擎保存。
-- Qt 持久保存 `meo:<uuid>` 会话键，重启仍连接同一上游会话。
-- 上游 SSE 保留文本，同时添加 `delta.meo_event`。结构化事件不自动批准工具。
-- 使用 `/option N` 回复原有暂停队列。原有 API 暂停语义与工具循环复用。
-- `meo:` 会话每一轮向 provider 的 system prompt 追加 Meo 分层规则；
-  不把规则伪装成用户消息，也不因 mode 重建而丢失。
-- `meo/skills/system-diagnostics/` 是可安装的示例，尚未自动启用或注册新能力。
-- 原生客户端仅接受 loopback origin，拒绝重定向；可以传递显式 API key。
+## 当前已实现：原生 UI
 
-当前还没有取消操作。关闭客户端或网络断连不等于取消模型/工具执行。
-不提供具有误导性语义的 Stop 按钮。下一个服务阶段需加入可验证的
-request-local cancellation，取消暂停 ToolResult，同时保证不承诺撤销已
-发生的外部操作。
+`meo/app/` 已经不是最早的测试聊天框，而是 MeoUI 原生桌面界面：
 
-现有终端、MCP、扩展功能继承自 Newelle，但其权限不是 OS containment。
-提示词中的限制只是行为指导。本版不能宣传为已隔离的系统控制 agent。
-原生客户端与上游 API 共用用户权限；随机会话键也不是认证凭据。
+- adaptive sidebar / compact layout；
+- Meo AI branding 与 runtime status；
+- user/assistant message bubbles；
+- welcome / quick-start content；
+- tool confirmation card；
+- fixed composer、Send、Stop、New chat；
+- 全部使用 MeoUI/MeoTheme tokens，而不是另造一套主题。
 
-## Router 与 Repair 迁移顺序
+当前 UI 不伪造尚未完成的 History/Skills/Settings 页面。只有已有 contract 的内容才进入正式交互。
 
-当前 Router 真正源码是 `meo-kde/native/airouter/`，已注册：
-`org.meo.application.launch`、`org.meo.desktop.audio.setVolume`、
-`org.meo.desktop.audio.getVolume`、`org.meo.settings.openPage`。
-其 `service.cpp` 仍直接链接 KIO/PulseAudioQt；不能只移动目录后称为已解耦。
+Native 应用的 transport 选择已经调整为：
 
-1. 先合入/对齐能力元数据 PR #40 的最终版本，记录 owner、effect、verification、maturity。
-2. 在 meo-kde 暴露稳定桌面 provider，把 KDE 的实际执行和读回放在 owner。
-3. 使用保留历史的 extraction 分支把 Router core/服务源码迁入 meo-ai，
-   维持 `org.meo.AIRouter1`、`/org/meo/AIRouter1` 和现有方法。
-4. 一个 daemon 保持同一 session-bus connection，贯穿 Submit/Get/Decide。
-   禁止每次以独立 `gdbus` 子进程调用导致 caller 变化。
-5. meo-repo 改包来源并加 conflicts/provides，验证升级后只有一个 service owner。
-6. Router 新包验收通过后，才移除 meo-kde 原 target/service。
+- 没有配置 endpoint 时默认使用 AgentService `http://127.0.0.1:8765`；
+- 显式 `MEO_AI_SERVICE_ENDPOINT` 时继续使用 AgentService，并覆盖默认 origin；
+- 只有在没有 service endpoint、同时显式设置 `MEO_AI_ENDPOINT` 时才进入 Phase A legacy compatibility transport；
+- 已经提交到 AgentService 的请求绝不因为连接错误而自动重放到 legacy transport，避免重复 tool/system side effects。
 
-Repair 当前在 `meoarch-os/repair/`。先记录来源 commit 和完整文件清单，
-迁移 core/knowledge/UI/checks/tests，再更新包和 ISO 的来源。不得修改已有
-`org.meo.Repair1`、Polkit action、root helper 的主体身份或把它们装入 agent
-进程。检查和修复脚本属于原有审核的 service 实现；模型不能提供任意脚本。
-迁移需保留 licensing、translations、live actions 和测试，而非只复制 UI。
+这个“native 默认选择 AgentService”不等于发行版已经完成 service activation。systemd user unit 仍需目标机和 ISO/package 验收后才能决定默认启用策略。
+
+## 当前已实现：AgentService Phase B foundation
+
+### Service ownership
+
+`AgentServiceCore` 已拥有：
+
+- service-generated `request_id`；
+- service-generated `decision_id`；
+- request lifecycle；
+- stale/replay/cross-request decision rejection；
+- backend execution-handle ownership；
+- early callback buffering；
+- explicit cancellation；
+- event journal / reconnect cursor；
+- conversation identity；
+- presentation-safe history；
+- models / Skills / MCP metadata；
+- minimal service-owned AgentState。
+
+生命周期：
+
+```text
+queued
+  -> running_model
+  -> awaiting_tool
+  -> running_tool
+  -> running_model ...
+  -> completed
+
+任何非 terminal 状态
+  -> cancel_requested
+  -> cancelled / failed
+```
+
+SSE disconnect 只是 transport loss，不等于取消。
+
+### Tool handling
+
+兼容层现在同时处理：
+
+- interactive `tool_interaction` -> `tool.requested`；
+- ordinary `tool_result` -> `tool.completed`。
+
+普通工具完成后不会因为 bridge 只认识 confirmation event 而把整个 request 误报失败。
+
+等待 interactive `ToolResult` 时 Stop 会主动取消 pending ToolResult、释放 semaphore，再停止 request-local model work；不会只改 service state 而让 worker 永久卡住。
+
+Cancellation 仍然**不是 rollback**。已经提交给外部 owner 的操作不能因为 agent workflow 被取消就声称已撤销。
+
+### Conversation persistence
+
+Meo-owned inherited chats 带 `meo_conversation_id` metadata。重复 metadata 会被视为 ambiguous，adapter 不猜 ownership。
+
+AgentService 提供 presentation-safe history：只暴露 `user` / `assistant` 文本。不会把 `Console`、`Command`、`File`、`Folder`、tool internals 或 prompt-only `<context>` retrieval data 重放进 QML。
+
+Native client 保存当前 AgentService conversation id。重新打开应用时会请求 history 并恢复消息；如果旧 conversation 已不存在，404 会清除 stale identity，下一次发送再创建新会话。
+
+### Catalog APIs
+
+Models 来自 Newelle provider handlers 的 structured model list。当前 Newelle model selection 是 profile scoped，因此 UI 不能暗示只影响一个 conversation。
+
+Skills 来自 `SkillManager`：
+
+- `configured_enabled` = 用户持久 profile preference；
+- `enabled` = 当前 Mode/runtime overlay 后的 effective state；
+- `override_source=mode` 时 UI 可解释两者差异。
+
+MCP metadata 来自 Newelle `mcp_servers` / `mcp_servers_dict`。AgentService 只暴露 non-secret id、display label 和当前 integration 是否加载；不会把 raw URL、bearer token、custom headers、stdio env 等配置送到前端。
+
+`GetAgentState` 只报告 service 自己确定拥有的状态：backend 是否存在、active request 数量和 lifecycle state counts。它不把“backend object 已构造”包装成“provider/model 健康”。
+
+### Current HTTP mapping
+
+当前 loopback preview transport 包括：
+
+- `GET /v1/agent-state`
+- `GET /v1/conversations`
+- `POST /v1/conversations`
+- `GET /v1/conversations/{id}/messages`
+- `POST /v1/conversations/{id}/messages`
+- `GET /v1/requests/{id}`
+- `GET /v1/requests/{id}/events?after=N`
+- `POST /v1/requests/{id}/cancel`
+- `POST /v1/requests/{id}/decisions/{decisionId}`
+- model / Skill / MCP catalog endpoints。
+
+它只允许 loopback bind、检查 loopback Host、拒绝 browser `Origin` / CORS preflight、要求 JSON POST，并拒绝 redirect-following native client assumptions。但这些 hardening **不等于认证**。
+
+### Installed service
+
+仓库会 staged-install：
+
+- `meo-agent-service` launcher；
+- unprivileged systemd user unit；
+- AgentService runtime / adapter / system modules。
+
+当前 unit 不由本仓库自动 enable。Native app 已默认指向 AgentService 的 loopback origin，但发行版尚未证明 service 会在需要时可靠 activation，因此这仍是 repo-side product default，不是完整 distro integration。
+
+## 当前已实现：early Phase C SystemTool preview
+
+System control 默认关闭。只有显式 `MEO_AI_ENABLE_SYSTEM_TOOL=1` 才安装 Newelle compatibility system tools。
+
+`SystemTool`：
+
+- 只调用 Router typed `SubmitRequest`，不调用自然语言 `SubmitText`；
+- 自己不执行 KIO/PulseAudioQt/KWin/Polkit/Repair 操作；
+- 使用 persistent `dbus-next` session-bus connection，保证 Submit/Get/Decide 是同一个 D-Bus caller identity；
+- 不使用每次新 caller 的 `gdbus`/`busctl` subprocess；
+- 从 Router `ListCapabilities()` 获取 capability metadata 和 authoritative `argumentSchema`；
+- 每个 capability 映射成一个固定 Newelle Tool，而不是给模型一个自由填写 capability id 的万能工具；
+- Router `awaiting_confirmation` 映射为明确 Deny/Approve；不自动批准；
+- confirmation display 传递 Router title/target/impact，但展示文本不构成 authority。
+
+`meo-kde` PR #40 已经合入 main；owner/effect/verification/maturity metadata 已是当前基线。Router main 也已经发布 `argumentSchema`，并有 native schema contract tests。
+
+## Router 与 Repair 仍未迁移
+
+**不要因为 SystemTool client 已存在就称 Phase C 完成。**
+
+Router daemon/core 当前仍位于 `meo-kde/native/airouter/`，而且 executor 仍直接链接 KIO/PulseAudioQt。正确迁移顺序仍然是：
+
+1. 保持现有 D-Bus ABI：`org.meo.AIRouter1` / `/org/meo/AIRouter1`；
+2. 让 `meo-kde` 暴露稳定 desktop provider API，把 KDE execution/read-back 留在 owner；
+3. 再把 Router core/policy/registry/request lifecycle 抽到 `meo-ai`；
+4. 保持 caller binding、fingerprint、expiry、confirmation 和 verification semantics；
+5. 更新 `meo-repo` package ownership / conflicts / provides；
+6. 证明升级后只有一个 Router service owner；
+7. 最后移除旧 meo-kde Router target/service。
+
+Repair 仍在原 authority 边界。不得把 root helper、Polkit action 或任意 model-generated privileged script 搬进 agent process。Repair extraction 必须保留原 service identity、knowledge/checks/tests/licensing、transaction/rollback 语义，并经过 Live/installed VM 验收。
+
+## 尚未完成 / 不得过度声称
+
+Phase B 仍有这些真实缺口：
+
+- 真正 UI-free Newelle `AgentCore` 尚未从 GTK-era controller 抽出；
+- 当前 headless backend 仍是 compatibility shim；
+- real provider/local model headless inference 尚需目标机验收；
+- real model wait / real long-running tool cancellation 尚需 live acceptance；
+- memory API 尚未定义为稳定 frontend contract；
+- systemd user-session activation/restart、关闭 frontend 后 service survival 尚需目标机验收；
+- native app 已默认选择 AgentService，但发行版 package/ISO 尚未保证 service activation；
+- 最终 local IPC/authentication boundary 未定；loopback HTTP 不能当 system authorization；
+- MeoArch package / ISO 默认安装与 activation 尚未完成；
+- Account credential broker 尚未接入；
+- models / Skills / MCP / AgentState 已有 stable repo-side API，但完整原生管理 UI 尚未实现。
+
+Phase C 仍有这些缺口：
+
+- desktop provider 与 Router core 尚未分离；
+- Router core 尚未 extraction 到 `meo-ai`；
+- 真实 Plasma SystemTool calls 和 owner read-back 尚需 live acceptance；
+- capability schema 以后还可增加 range/enum/pattern 提示，但 Router runtime validation 永远是 authority。
 
 ## 分阶段验收
 
-| 阶段 | 交付 | 必须通过的门槛 |
+| 阶段 | 当前状态 | 必须通过的门槛 |
 |---|---|---|
-| A（本 PR） | fork、上游共存的 QML 客户端、prompt overlay、结构化 tool events | Python 协议测试、C++ transport 测试、QML 加载；真实 provider 另行验收 |
-| B | Headless AgentService、历史/模型/skills/MCP/memory API、取消和错误状态 | Linux 独立进程，无 Gtk/Adw/WebKit import；启动、暂停、恢复、取消、崩溃恢复 |
-| C | System tool + 桌面 owner API + Router extraction | caller binding、参数类型、未知能力、过期/拒绝、读回失败；真实 Plasma 验收 |
-| D | Repair extraction、包来源更新、ISO 默认集成 | helper/Polkit 原有测试、单 service owner、staged install、Live/installed VM |
-| E | workspace containment、extension/MCP 信任策略、调度/subagent UI | 独立 sandbox、资源/路径/网络边界、执行与读回，不依赖 prompt enforcement |
-| F | UI parity、voice/live/image workflows，移除 GTK | 功能矩阵和迁移数据兼容验证全部通过 |
+| A | 基本完成 | fork、native QML、prompt overlay、structured tool event、CI |
+| B | repo-side foundation 接近完成，live 未完成 | UI-free runtime、history/models/Skills/MCP/memory/state、真实 provider、pause/resume/cancel/crash/restart |
+| C | typed SystemTool preview 已有，Router extraction 未做 | caller binding、schema、confirmation、verification、desktop provider split、real Plasma |
+| D | 未开始正式迁移 | Repair extraction、single authority、Polkit/helper tests、package/ISO/VM |
+| E | 未开始 | workspace containment、extension/MCP trust、resource/path/network sandbox |
+| F | 未完成 | full UI parity、voice/live/image workflows、GTK removal、migration compatibility |
 
-`meo-repo` 的 skill/catalog 应保存来源 commit、license、摘要和声明的
-capabilities，不把声明当授权。模型 metadata 不能触发自动下载或云上传。
-ISO integration 最后只装包/默认配置，D-Bus activation 和 user units 必须
-有明确 package owner。冻结 release manifest 不因本开发分支自动更新。
+## 下一步顺序
 
-## 本轮仓库证据
+1. 保持 PR #2 为单一 integration PR，不再为了阶段拆多个 PR。
+2. 保持 history restore、MCP metadata、AgentState、默认 transport selection 和 native tests 持续 green。
+3. 做目标机 Phase B live acceptance，特别是真实 provider、cancel、service restart/survival。
+4. 设计可靠 installed-service activation / final local IPC boundary；只有这个门槛通过后，才让 package/ISO 默认启用 AgentService，并继续保留 legacy `/v2` 为显式兼容 fallback。
+5. 在不扩大 privilege boundary 的前提下补 models / Skills / MCP / AgentState 的原生管理 UI；memory contract 单独设计，不伪造。
+6. 再开始 desktop provider split / Router extraction。
+7. Router migration 完成后才推进 Repair extraction。
+8. 最后接 `meo-repo`、ISO、Account broker 和完整 UI parity。
 
-- meo-kde `origin/main`: `44ea500995ec10bb5780caa1aaf7e8a3f73450db`。
-- MeoUI 本地基线: `fb27f21859144665dcc323e32fb4d6eb628536c0`。
-- meoarch-os `origin/main`: `c0084daddb44f8314ba6704516d6bfd89196c756`。
-- [Router metadata PR](https://github.com/QwQdoge/meo-kde/pull/40) 在检查时未合并。
-- ISO 仓库已有 `refactor/meo-ai-repository-boundary` 的计划文件，已对齐其
-  Account、Meo.System、SystemTransaction 所有权边界，没有覆盖它的分支。
+任何阶段都不能用 prompt/Skill/MCP 声明替代 typed capability policy，也不能把“CI mock 通过”描述成“真实 MeoArch/Plasma 已验收”。

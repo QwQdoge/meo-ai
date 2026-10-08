@@ -26,6 +26,50 @@ if(BUILD_TESTING)
     target_include_directories(meo-ai-client-test PRIVATE app)
     target_link_libraries(meo-ai-client-test PRIVATE Qt6::Network Qt6::Test)
     add_test(NAME meo-ai.transport COMMAND meo-ai-client-test)
+
+    qt_add_executable(meo-ai-early-cancel-test tests/early-cancel-test.cpp app/agentclient.cpp app/agentclient.h)
+    target_include_directories(meo-ai-early-cancel-test PRIVATE app)
+    target_link_libraries(meo-ai-early-cancel-test PRIVATE Qt6::Network Qt6::Test)
+    add_test(NAME meo-ai.early-cancel COMMAND meo-ai-early-cancel-test)
+
+    qt_add_executable(meo-ai-service-recovery-test tests/service-recovery-test.cpp app/agentclient.cpp app/agentclient.h)
+    target_include_directories(meo-ai-service-recovery-test PRIVATE app)
+    target_link_libraries(meo-ai-service-recovery-test PRIVATE Qt6::Network Qt6::Test)
+    add_test(NAME meo-ai.service-recovery COMMAND meo-ai-service-recovery-test)
+
+    qt_add_executable(meo-ai-history-restore-test tests/history-restore-test.cpp app/agentclient.cpp app/agentclient.h)
+    target_include_directories(meo-ai-history-restore-test PRIVATE app)
+    target_link_libraries(meo-ai-history-restore-test PRIVATE Qt6::Network Qt6::Test)
+    add_test(NAME meo-ai.history-restore COMMAND meo-ai-history-restore-test)
+
+    qt_add_executable(meo-ai-stale-conversation-recovery-test tests/stale-conversation-recovery-test.cpp app/agentclient.cpp app/agentclient.h)
+    target_include_directories(meo-ai-stale-conversation-recovery-test PRIVATE app)
+    target_link_libraries(meo-ai-stale-conversation-recovery-test PRIVATE Qt6::Network Qt6::Test)
+    add_test(NAME meo-ai.stale-conversation-recovery COMMAND meo-ai-stale-conversation-recovery-test)
+
+    qt_add_executable(meo-ai-service-metadata-test tests/service-metadata-test.cpp app/agentclient.cpp app/agentclient.h)
+    target_include_directories(meo-ai-service-metadata-test PRIVATE app)
+    target_link_libraries(meo-ai-service-metadata-test PRIVATE Qt6::Network Qt6::Test)
+    add_test(NAME meo-ai.service-metadata COMMAND meo-ai-service-metadata-test)
+
+    add_test(
+        NAME meo-ai.default-transport
+        COMMAND ${CMAKE_COMMAND} -E env
+            --unset=MEO_AI_SERVICE_ENDPOINT
+            --unset=MEO_AI_ENDPOINT
+            $<TARGET_FILE:meo-ai> --print-transport
+    )
+    set_tests_properties(meo-ai.default-transport PROPERTIES PASS_REGULAR_EXPRESSION "service")
+
+    add_test(
+        NAME meo-ai.legacy-fallback-transport
+        COMMAND ${CMAKE_COMMAND} -E env
+            --unset=MEO_AI_SERVICE_ENDPOINT
+            MEO_AI_ENDPOINT=http://127.0.0.1:8080
+            $<TARGET_FILE:meo-ai> --print-transport
+    )
+    set_tests_properties(meo-ai.legacy-fallback-transport PROPERTIES PASS_REGULAR_EXPRESSION "legacy")
+
     add_test(NAME meo-ai.qml-smoke COMMAND meo-ai --smoke)
     set_tests_properties(meo-ai.qml-smoke PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QSG_RHI_BACKEND=software")
 endif()
