@@ -73,6 +73,7 @@ class AgentServiceCore:
                 "label": item.label,
                 "provider": item.provider,
                 "selection_scope": item.selection_scope,
+                "selected": item.selected,
             }
             for item in self._require_backend().list_models()
         ]
