@@ -24,44 +24,83 @@ class LegacyChatInterfaceAdapter:
     module does not import Newelle controller/UI modules itself, which keeps the
     AgentService boundary testable while GTK-era construction remains elsewhere.
 
-    Conversation IDs in this adapter are compatibility session keys. Durable
-    history discovery/resume across arbitrary existing Newelle chats is not yet
-    implemented and must not be claimed by callers.
+    Conversation IDs are persisted as additive metadata on Newelle chat records
+    created through this adapter. Existing arbitrary Newelle chats are not silently
+    adopted because that would make ownership ambiguous.
     """
 
     def __init__(self, interface) -> None:
         self.interface = interface
         self._conversations: Dict[str, int] = {}
+        self._hydrate_conversations()
 
     @property
     def controller(self):
         return self.interface.controller
 
+    def _workspace_chats(self):
+        getter = getattr(self.controller, "workspace_chats", None)
+        if callable(getter):
+            try:
+                return getter()
+            except Exception:
+                return {}
+        chats = getattr(self.controller, "chats", None)
+        return chats if isinstance(chats, dict) else {}
+
+    def _hydrate_conversations(self) -> None:
+        for chat_id, record in self._workspace_chats().items():
+            if not isinstance(record, dict):
+                continue
+            conversation_id = record.get("meo_conversation_id")
+            if isinstance(conversation_id, str) and conversation_id.startswith("meo:"):
+                self._conversations.setdefault(conversation_id, chat_id)
+
+    def _remember_conversation(self, conversation_id: str, chat_id: int) -> None:
+        self._conversations[conversation_id] = chat_id
+        record = self._workspace_chats().get(chat_id)
+        if isinstance(record, dict):
+            record["meo_conversation_id"] = conversation_id
+            save = getattr(self.controller, "save_chats", None)
+            if callable(save):
+                save()
+
     def list_conversations(self):
-        return [
-            {"id": conversation_id, "legacy_chat_id": chat_id}
-            for conversation_id, chat_id in sorted(self._conversations.items())
-        ]
+        self._hydrate_conversations()
+        chats = self._workspace_chats()
+        result = []
+        for conversation_id, chat_id in sorted(self._conversations.items()):
+            record = chats.get(chat_id, {}) if isinstance(chats, dict) else {}
+            result.append(
+                {
+                    "id": conversation_id,
+                    "legacy_chat_id": chat_id,
+                    "title": str(record.get("name", "")) if isinstance(record, dict) else "",
+                }
+            )
+        return result
 
     def create_conversation(self) -> str:
         conversation_id = f"meo:{uuid4()}"
         chat_id = self.interface.get_or_create_chat(conversation_id)
-        self._conversations[conversation_id] = chat_id
+        self._remember_conversation(conversation_id, chat_id)
         return conversation_id
 
     def conversation_exists(self, conversation_id: str) -> bool:
-        return conversation_id in self._conversations
+        self._hydrate_conversations()
+        chat_id = self._conversations.get(conversation_id)
+        return chat_id is not None and chat_id in self._workspace_chats()
 
     def attach_existing_session(self, conversation_id: str) -> int:
-        """Register a known compatibility session without inventing chat state."""
+        """Register a known compatibility session and persist its chat ownership."""
         if not isinstance(conversation_id, str) or not conversation_id.startswith("meo:"):
             raise ValueError("legacy compatibility session must use a meo: key")
         chat_id = self.interface.get_or_create_chat(conversation_id)
-        self._conversations[conversation_id] = chat_id
+        self._remember_conversation(conversation_id, chat_id)
         return chat_id
 
     def send_message(self, conversation_id: str, text: str, callbacks: BackendCallbacks):
-        if conversation_id not in self._conversations:
+        if not self.conversation_exists(conversation_id):
             raise ValueError("unknown conversation_id")
         handle = LegacyExecutionHandle(
             conversation_id=conversation_id,
