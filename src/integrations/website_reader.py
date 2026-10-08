@@ -1,9 +1,9 @@
-from gi.repository import Gtk, GLib, GdkPixbuf
+from __future__ import annotations
+
+from gi.repository import GLib, GdkPixbuf
 from ..extensions import NewelleExtension
-from ..ui.widgets import WebsiteButton
 import threading
 from ..utility.message_chunk import get_message_chunks
-from ..ui import load_image_with_callback
 from ..utility.website_scraper import WebsiteScraper
 from ..utility.source_attribution import format_source_context
 from ..tools import Tool, ToolResult
@@ -93,6 +93,7 @@ class WebsiteReader(NewelleExtension):
         return history, prompts
 
     def get_gtk_widget(self, codeblock: str, lang: str) -> Gtk.Widget | None:
+        from ..ui.widgets import WebsiteButton
         website_url = codeblock
          
         button = WebsiteButton(website_url)
@@ -116,6 +117,7 @@ class WebsiteReader(NewelleExtension):
             return scraper
 
     def get_article(self, button: WebsiteButton):
+        from ..ui import load_image_with_callback
         article = self.get_article_content(button.url)
         title = article.get_title()
         favicon = article.get_favicon()

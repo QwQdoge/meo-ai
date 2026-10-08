@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import gettext
 import importlib
 import os
 import sys
 import types
+import threading
 
 from meo.adapters.legacy_chat import LegacyChatInterfaceAdapter
 from meo.runtime.headless_probe import require_headless
@@ -145,14 +147,11 @@ def create_backend():
     steps move into a maintained UI-free Newelle core.
     """
 
+    # Match the installed Newelle launcher without importing its GTK entrypoint.
+    gettext.install("newelle")
     Controller = _import_controller_class()
     controller = Controller(sys.path)
-    controller.ui_init()
-    controller.handlers.load_handlers()
-    controller.handlers.select_handlers(
-        controller.newelle_settings,
-        skip_auto_start_interfaces=True,
-    )
+    controller.ui_init(headless=True)
     controller.set_ui_controller(MeoHeadlessUIController(controller))
 
     # Keep ReplaceHelper pointed at the same controller just as upstream headless mode
@@ -169,4 +168,12 @@ def create_backend():
     backend._meo_controller = controller  # keep the runtime owner alive explicitly
     _install_system_tools(controller, backend)
     require_headless()
+    # Compatibility tools dispatch through GLib idle callbacks. The HTTP server
+    # has no GTK event loop, so own a UI-free loop for the backend lifetime.
+    from gi.repository import GLib
+    backend._meo_glib_loop = GLib.MainLoop()
+    backend._meo_glib_thread = threading.Thread(
+        target=backend._meo_glib_loop.run, name="meo-tool-dispatch", daemon=True
+    )
+    backend._meo_glib_thread.start()
     return backend

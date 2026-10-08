@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from .image_generator import ImageGeneratorHandler
 from ...handlers.extra_settings import ExtraSettings
 from ...utility.system import can_escape_sandbox, is_flatpak, get_spawn_command, has_backend, detect_cuda_version
@@ -12,13 +14,8 @@ from ...utility.download_manager import (
 )
 from ...tools import Tool, ToolResult
 from ...handlers import ErrorSeverity
-from ...ui.model_library import (
-    LibraryModel,
-    ModelLibraryWindow,
-    get_local_backend_label,
-)
+from ...utility.local_backend import get_local_backend_label
 from ...utility.model_icons import get_model_icon
-from ...ui.build_dependency_warning import BuildDependencyWarning
 from gettext import gettext as _
 import subprocess
 import os
@@ -31,7 +28,7 @@ import time
 import socket
 import json
 import glob
-from gi.repository import Gtk, Adw, GLib, Gdk
+from gi.repository import GLib
 import requests
 
 # Model Library
@@ -1443,6 +1440,7 @@ class StableDiffusionCPPHandler(ImageGeneratorHandler):
     # Model library integration (used by ModelLibraryWindow)
     def fetch_models(self):
         """Return the catalog of installable models for the library window."""
+        from ...ui.model_library import LibraryModel, ModelLibraryWindow
         models = []
         for entry in SD_MODELS:
             description = entry["description"]
@@ -1695,6 +1693,7 @@ class StableDiffusionCPPHandler(ImageGeneratorHandler):
             shutil.rmtree(variant_dir, ignore_errors=True)
 
     def open_model_library(self, button):
+        from ...ui.model_library import LibraryModel, ModelLibraryWindow
         try:
             root = button.get_root()
         except Exception:
@@ -2330,6 +2329,8 @@ class StableDiffusionCPPHandler(ImageGeneratorHandler):
     # ── Installation dialog ────────────────────────────────────────────
 
     def show_install_dialog(self, button):
+        from ...ui.build_dependency_warning import BuildDependencyWarning
+        from gi.repository import Gtk, Adw, Gdk
         win = Adw.Window(title="Install stable-diffusion.cpp")
         self._build_window = win
         win.set_default_size(700, 760)
@@ -2849,6 +2850,7 @@ class StableDiffusionCPPHandler(ImageGeneratorHandler):
         self.prebuilt_error_label.set_text(message)
 
     def _populate_prebuilt_list(self, available):
+        from gi.repository import Gtk, Adw, Gdk
         if hasattr(self, "prebuilt_spinner") and self.prebuilt_spinner:
             self.prebuilt_spinner.stop()
             self.prebuilt_spinner.set_visible(False)
@@ -3200,5 +3202,6 @@ class StableDiffusionCPPHandler(ImageGeneratorHandler):
         self.settings_update()
 
     def _copy_to_clipboard(self, text):
+        from gi.repository import Gtk, Adw, Gdk
         clipboard = Gdk.Display.get_default().get_clipboard()
         clipboard.set(text)

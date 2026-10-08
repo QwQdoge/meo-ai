@@ -111,15 +111,15 @@ class Command:
             if name == "self" or name == "msg_uuid" or name == "tool_uuid" or name == "chat_id":
                 continue
             param_type = "string"
-            if param.annotation == int:
+            if param.annotation in (int, "int"):
                 param_type = "integer"
-            elif param.annotation == bool:
+            elif param.annotation in (bool, "bool"):
                 param_type = "boolean"
-            elif param.annotation == float:
+            elif param.annotation in (float, "float"):
                 param_type = "number"
-            elif param.annotation == list:
+            elif param.annotation in (list, "list"):
                 param_type = "array"
-            elif param.annotation == dict:
+            elif param.annotation in (dict, "dict"):
                 param_type = "object"
             
             params[name] = {"type": param_type}
@@ -184,15 +184,15 @@ class Tool:
                 # Internal parameters are injected by the framework, never provided by the LLM
                 continue
             param_type = "string"
-            if param.annotation == int:
+            if param.annotation in (int, "int"):
                 param_type = "integer"
-            elif param.annotation == bool:
+            elif param.annotation in (bool, "bool"):
                 param_type = "boolean"
-            elif param.annotation == float:
+            elif param.annotation in (float, "float"):
                 param_type = "number"
-            elif param.annotation == list:
+            elif param.annotation in (list, "list"):
                 param_type = "array"
-            elif param.annotation == dict:
+            elif param.annotation in (dict, "dict"):
                 param_type = "object"
             
             params[name] = {"type": param_type}

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import fnmatch
 import json
 import os
@@ -8,12 +10,6 @@ from typing import Optional
 from gi.repository import GLib
 from ..extensions import NewelleExtension
 from ..tools import Tool, ToolResult, InteractionOption
-from ..ui.widgets.file_read import ReadFileWidget
-from ..ui.widgets.file_edit import FileEditWidget
-from ..ui.widgets.file_permission_confirm import FilePermissionConfirmWidget
-from ..ui.widgets.glob import GlobWidget
-from ..ui.widgets.grep import GrepWidget
-from ..ui.widgets.list_directory import ListDirectoryWidget
 from ..utility.file_search import glob_files, grep_files
 
 
@@ -104,6 +100,7 @@ class FileEditingIntegration(NewelleExtension):
         Returns:
             A ``ToolResult``.
         """
+        from ..ui.widgets.file_permission_confirm import FilePermissionConfirmWidget
         mode = self._get_permission_mode(file_path, operation)
 
         if mode == "allow":
@@ -285,6 +282,7 @@ class FileEditingIntegration(NewelleExtension):
         )
 
     def _read_file_impl(self, absolute_path: str, offset: int = 0, limit: int = 10000):
+        from ..ui.widgets.file_read import ReadFileWidget
         result = ToolResult()
         content, info, success = self._read_file_content(absolute_path, offset, limit)
         if not success:
@@ -323,6 +321,7 @@ class FileEditingIntegration(NewelleExtension):
         Returns:
             ToolResult with restored widget
         """
+        from ..ui.widgets.file_read import ReadFileWidget
         result = ToolResult()
         
         # Read the file again to get content
@@ -367,6 +366,7 @@ class FileEditingIntegration(NewelleExtension):
         )
 
     def _write_file_impl(self, file_path: str, content: str, preview: bool = False):
+        from ..ui.widgets.file_edit import FileEditWidget
         result = ToolResult()
 
         if not os.path.isabs(file_path):
@@ -449,6 +449,7 @@ class FileEditingIntegration(NewelleExtension):
         Returns:
             ToolResult with restored widget
         """
+        from ..ui.widgets.file_edit import FileEditWidget
         result = ToolResult()
 
         # Read current file content for diff
@@ -494,6 +495,7 @@ class FileEditingIntegration(NewelleExtension):
 
     def _edit_impl(self, file_path: str, old_string: str, new_string: str, replace_all: bool = False,
                    preview: bool = False):
+        from ..ui.widgets.file_edit import FileEditWidget
         result = ToolResult()
 
         if not os.path.isabs(file_path):
@@ -584,6 +586,7 @@ class FileEditingIntegration(NewelleExtension):
         Returns:
             ToolResult with restored widget
         """
+        from ..ui.widgets.file_edit import FileEditWidget
         result = ToolResult()
 
         # Read current file content
@@ -681,6 +684,7 @@ class FileEditingIntegration(NewelleExtension):
         )
 
     def _glob_impl(self, pattern: str, path: Optional[str] = None):
+        from ..ui.widgets.glob import GlobWidget
         result = ToolResult()
 
         if not pattern or not pattern.strip():
@@ -762,6 +766,7 @@ class FileEditingIntegration(NewelleExtension):
         Returns:
             ToolResult with restored widget
         """
+        from ..ui.widgets.glob import GlobWidget
         result = ToolResult()
 
         # Determine search directory
@@ -827,6 +832,7 @@ class FileEditingIntegration(NewelleExtension):
         )
 
     def _list_directory_impl(self, path: str, ignore: Optional[list[str]] = None):
+        from ..ui.widgets.list_directory import ListDirectoryWidget
         result = ToolResult()
 
         if not os.path.isabs(path):
@@ -891,6 +897,7 @@ class FileEditingIntegration(NewelleExtension):
         Returns:
             ToolResult with restored widget
         """
+        from ..ui.widgets.list_directory import ListDirectoryWidget
         result = ToolResult()
 
         if not os.path.isabs(path) or not os.path.exists(path) or not os.path.isdir(path):
@@ -968,6 +975,7 @@ class FileEditingIntegration(NewelleExtension):
         glob: Optional[str] = None,
         limit: Optional[int] = None
     ):
+        from ..ui.widgets.grep import GrepWidget
         result = ToolResult()
 
         if not pattern or not pattern.strip():
@@ -1053,6 +1061,7 @@ class FileEditingIntegration(NewelleExtension):
         """
         Restore the grep_search widget from chat history.
         """
+        from ..ui.widgets.grep import GrepWidget
         result = ToolResult()
 
         if not pattern or not pattern.strip():

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from collections.abc import Callable
 import importlib 
 import os 
@@ -6,7 +8,10 @@ import shutil
 import sys
 import inspect 
 
-from gi.repository import Gtk, Adw
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from gi.repository import Gtk, Adw
 
 from .handlers import Handler
 
@@ -17,7 +22,8 @@ from .handlers.rag import RAGHandler
 from .handlers.memory import MemoryHandler
 from .handlers.embeddings import EmbeddingHandler
 from .handlers.websearch import WebSearchHandler
-from .ui_controller import UIController
+if TYPE_CHECKING:
+    from .ui_controller import UIController
 from .tools import Command
 
 class NewelleExtension(Handler):

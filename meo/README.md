@@ -201,3 +201,19 @@ legacy endpoint.
 Do not put credentials in Git or prompt files. Upstream shell/MCP/extensions are
 not an OS sandbox. Use a dedicated test workspace with reviewed tools. Router,
 Repair, package/ISO and privileged integration remain separate migration tracks.
+
+## Real-provider acceptance client
+
+Build the opt-in `meo-ai-live-client` target to drive the production QML client
+against an explicitly supplied `MEO_AI_SERVICE_ENDPOINT` on the current display.
+Use a dedicated `XDG_CONFIG_HOME`; `--prompt TEXT`, `--cancel-after-delta`,
+`--history`, and `--screenshot PATH` cover streaming, cancellation, history and
+window captures. `--require-tool` requires a real tool event: model text that
+claims an action or invents a result does not satisfy that check.
+
+The compatibility backend initializes the selected provider without installing
+optional providers or starting inherited interface servers. Its model list only
+includes the selected provider; configure a different provider in the inherited
+profile before selecting its models. GLib tool dispatch has its own UI-free loop.
+GTK-only inherited tools still require a separately reviewed compatibility path;
+use a dedicated workspace with only the tools under acceptance enabled.

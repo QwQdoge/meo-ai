@@ -1,6 +1,7 @@
+from __future__ import annotations
+
 from ..extensions import NewelleExtension
 from ..tools import InteractionOption, Tool, ToolResult, create_io_tool 
-from ..ui.widgets import CommandSessionActionWidget, CopyBox
 from gettext import gettext as _
 import os
 import threading
@@ -23,9 +24,7 @@ from ..utility.command_sessions import (
     format_session_result,
     get_command_session_manager,
 )
-from gi.repository import Gtk, Gio, GLib
-from ..ui import load_image_with_callback
-from ..ui.widgets.terminal_dialog import TerminalDialog
+from gi.repository import Gio, GLib
 
 
 class DefaultToolsIntegration(NewelleExtension):
@@ -44,6 +43,7 @@ class DefaultToolsIntegration(NewelleExtension):
         return self.settings
 
     def _on_copybox_terminal_clicked(self, copybox, command, execution_request_mode):
+        from ..ui.widgets.terminal_dialog import TerminalDialog
         shell_command = "cd " + quote_string(self._request_settings().get_string("path")) + "; " + command + "; exec bash"
 
         if not self.settings.get_boolean("virtualization"):
@@ -75,6 +75,7 @@ class DefaultToolsIntegration(NewelleExtension):
 
     def open_session_terminal(self, session_id: str, chat_id: int | None) -> bool:
         """Open a live persistent session in an interactive terminal dialog."""
+        from ..ui.widgets.terminal_dialog import TerminalDialog
         session = get_command_session_manager().get(
             session_id,
             self._session_owner(chat_id),
@@ -219,6 +220,7 @@ class DefaultToolsIntegration(NewelleExtension):
         keys: list | None = None,
         chat_id: int | None = None,
     ) -> ToolResult:
+        from ..ui.widgets import CommandSessionActionWidget, CopyBox
         result = ToolResult()
         result.set_output(output)
         widget = CommandSessionActionWidget(
@@ -286,6 +288,7 @@ class DefaultToolsIntegration(NewelleExtension):
         wait_ms: int,
         max_output_chars: int,
     ) -> ToolResult:
+        from ..ui.widgets import CommandSessionActionWidget, CopyBox
         from ..utility.command_permissions import CommandPermissionManager, CommandAction
 
         if not isinstance(command, str) or not command.strip():
@@ -484,6 +487,7 @@ class DefaultToolsIntegration(NewelleExtension):
         chat_id: int | None = None,
         **_kwargs,
     ):
+        from ..ui.widgets import CommandSessionActionWidget, CopyBox
         output = self.ui_controller.get_tool_result_by_id(tool_uuid)
         normalized_action = (action or "run").strip().lower().replace("-", "_")
         normalized_action = {"keys": "send_keys"}.get(
@@ -531,6 +535,8 @@ class DefaultToolsIntegration(NewelleExtension):
         return result
 
     def show_image(self, image_path_or_url: str):
+        from ..ui import load_image_with_callback
+        from gi.repository import Gtk
         image_path = image_path_or_url
         image = Gtk.Image(css_classes=["image"])
         if image_path.startswith("http"):
@@ -610,6 +616,7 @@ class DefaultToolsIntegration(NewelleExtension):
         return result
     
     def show_video(self, video_path: str):
+            from gi.repository import Gtk
             result = ToolResult() 
             video = Gtk.Video(css_classes=["video"], vexpand=True, hexpand=True)
             video.set_size_request(-1, 400)

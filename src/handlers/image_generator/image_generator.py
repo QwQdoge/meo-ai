@@ -1,6 +1,11 @@
+from __future__ import annotations
+
 from ..handler import Handler
 from ...tools import Tool, ToolResult
-from ...ui.widgets.image_generator import ImageGeneratorWidget
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ...ui.widgets.image_generator import ImageGeneratorWidget
 from gi.repository import GLib
 from threading import Thread
 import os
@@ -152,6 +157,8 @@ class ImageGeneratorHandler(Handler):
 
     def _generate_image_tool(self, prompt: str, msg_uuid = None):
         """Default tool function for image generation."""
+        from ...ui.widgets.image_generator import ImageGeneratorWidget
+
         widget = ImageGeneratorWidget(width=400, height=400)
         widget.set_prompt(prompt)
         result = ToolResult()
@@ -257,6 +264,8 @@ class ImageGeneratorHandler(Handler):
 
     def _restore_image_tool(self, msg_uuid, prompt: str) -> ToolResult:
         """Default restore function for image generation tool."""
+        from ...ui.widgets.image_generator import ImageGeneratorWidget
+
         widget = ImageGeneratorWidget(width=400, height=400)
         widget.set_prompt(prompt)
         cached_path = self.cache_path_for(msg_uuid)

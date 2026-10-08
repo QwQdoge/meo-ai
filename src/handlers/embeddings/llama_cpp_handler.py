@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from ...handlers.embeddings import EmbeddingHandler, EmbeddingPurpose
 from ...handlers import ExtraSettings
 from ...handlers import ErrorSeverity
@@ -11,7 +13,7 @@ from ...utility.download_manager import (
     get_download_manager,
 )
 from ...utility.huggingface_download import download_huggingface_file
-from ...ui.model_library import ModelLibraryWindow, LibraryModel, get_local_backend_label
+from ...utility.local_backend import get_local_backend_label
 from gettext import gettext as _
 import os
 import platform
@@ -23,10 +25,9 @@ import json
 import shutil
 import tarfile
 import tempfile
-from gi.repository import Gtk, Adw, GLib, Gdk
+from gi.repository import GLib
 import requests
 import numpy as np
-from ...ui.build_dependency_warning import BuildDependencyWarning
 
 class LlamaCPPEmbeddingHandler(EmbeddingHandler):
     key = "llamacppembedding"
@@ -319,6 +320,7 @@ class LlamaCPPEmbeddingHandler(EmbeddingHandler):
 
     # Model library
     def fetch_models(self):
+        from ...ui.model_library import ModelLibraryWindow, LibraryModel
         data = self.library_data
         models = []
         for model in data:
@@ -445,11 +447,14 @@ class LlamaCPPEmbeddingHandler(EmbeddingHandler):
                 self.downloading.pop(model, None)
 
     def open_model_library(self, button):
+        from ...ui.model_library import ModelLibraryWindow, LibraryModel
         root = button.get_root()
         win = ModelLibraryWindow(self, root)
         win.present()
 
     def show_install_dialog(self, button):
+        from ...ui.build_dependency_warning import BuildDependencyWarning
+        from gi.repository import Gtk, Adw, Gdk
         win = Adw.Window(title="Install llama.cpp")
         self._build_window = win
         win.set_default_size(700, 760)
@@ -1042,6 +1047,7 @@ class LlamaCPPEmbeddingHandler(EmbeddingHandler):
         self.prebuilt_error_label.set_text(message)
 
     def _populate_prebuilt_list(self, available):
+        from gi.repository import Gtk, Adw, Gdk
         if hasattr(self, 'prebuilt_spinner') and self.prebuilt_spinner:
             self.prebuilt_spinner.stop()
             self.prebuilt_spinner.set_visible(False)
@@ -1410,6 +1416,7 @@ class LlamaCPPEmbeddingHandler(EmbeddingHandler):
         self.settings_update()
 
     def copy_to_clipboard(self, text):
+        from gi.repository import Gtk, Adw, Gdk
         clipboard = Gdk.Display.get_default().get_clipboard()
         clipboard.set(text)
 

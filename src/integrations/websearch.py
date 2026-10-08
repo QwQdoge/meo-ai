@@ -1,9 +1,10 @@
+from __future__ import annotations
+
 import threading
 from ..utility.message_chunk import get_message_chunks
 from ..extensions import NewelleExtension
-from ..ui.widgets import WebSearchWidget
 from ..tools import ToolResult, Tool, Command
-from gi.repository import Gtk, GLib
+from gi.repository import GLib
 import os
 import json 
 
@@ -82,6 +83,7 @@ class WebsearchIntegration(NewelleExtension):
             self.widget_cache[tool_uuid]["websites"].append((title, link, favicon))
 
     def load_search_widget(self, query, sources, result):
+        from ..ui.widgets import WebSearchWidget
         widget = WebSearchWidget(query)
         for title, link, favicon in tuple(sources):
             widget.add_website(title, link, favicon)
@@ -90,6 +92,7 @@ class WebsearchIntegration(NewelleExtension):
         return widget 
 
     def restore_gtk_widget(self, codeblock: str, lang: str, tool_uuid) -> Gtk.Widget | None:
+        from ..ui.widgets import WebSearchWidget
         if tool_uuid:
             tool_uuid = str(tool_uuid)
         cache = self.widget_cache.get(tool_uuid, None)
@@ -101,6 +104,7 @@ class WebsearchIntegration(NewelleExtension):
         return search_widget
 
     def get_gtk_widget(self, codeblock: str, lang: str, tool_uuid) -> Gtk.Widget | None:
+        from ..ui.widgets import WebSearchWidget
         self.tool_uuid = tool_uuid
         search_widget = WebSearchWidget(search_term=codeblock)
         search_widget.connect("website-clicked", lambda widget,link : self.ui_controller.open_link(link, False, not self.settings.get_boolean("external-browser")))

@@ -1,6 +1,6 @@
-from gi.repository import Gtk
+from __future__ import annotations
+
 from ..extensions import NewelleExtension
-from ..ui.widgets.mermaid import MermaidWidget
 
 
 class MermaidIntegration(NewelleExtension):
@@ -14,7 +14,9 @@ class MermaidIntegration(NewelleExtension):
         return ["mmd", "mermaid"]
 
     def get_gtk_widget(self, codeblock: str, lang: str, msg_uuid=None) -> Gtk.Widget | None:
+        from ..ui.widgets.mermaid import MermaidWidget
         return MermaidWidget(codeblock)
 
     def restore_gtk_widget(self, codeblock: str, lang: str, msg_uuid=None) -> Gtk.Widget | None:
+        from ..ui.widgets.mermaid import MermaidWidget
         return MermaidWidget(codeblock)

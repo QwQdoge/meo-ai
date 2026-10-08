@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from gettext import gettext as _
 from ...utility.strings import quote_string
 from ...utility.system import get_spawn_command, can_escape_sandbox, is_flatpak
@@ -6,9 +8,8 @@ from ...utility.build_process import BuildCancelled, BuildProcess
 from ...utility.download_manager import current_download_task
 from .stt import STTHandler
 from ...handlers import ErrorSeverity, ExtraSettings
-from ...ui.model_library import ModelLibraryWindow, LibraryModel, get_local_backend_label
+from ...utility.local_backend import get_local_backend_label
 from ...utility.model_icons import get_model_icon
-from ...ui.build_dependency_warning import BuildDependencyWarning
 import os
 import subprocess
 import threading
@@ -16,7 +17,7 @@ import time
 import shutil
 import json
 import socket
-from gi.repository import Gtk, Adw, GLib, Gdk
+from gi.repository import GLib
 import requests
 
 WHISPER_MODELS = [
@@ -434,6 +435,7 @@ class WhisperCPPHandler(STTHandler):
     # Model library integration
     def fetch_models(self):
         """Fetch models for the model library window"""
+        from ...ui.model_library import ModelLibraryWindow, LibraryModel
         models = []
         icon_name, icon_color = get_model_icon("whisper")
         for model in WHISPER_MODELS:
@@ -454,12 +456,15 @@ class WhisperCPPHandler(STTHandler):
         return self.is_model_installed(model)
 
     def open_model_library(self, button):
+        from ...ui.model_library import ModelLibraryWindow, LibraryModel
         root = button.get_root()
         win = ModelLibraryWindow(self, root)
         win.present()
 
     # Installation dialog (similar to llama.cpp)
     def show_install_dialog(self, button):
+        from ...ui.build_dependency_warning import BuildDependencyWarning
+        from gi.repository import Gtk, Adw, Gdk
         win = Adw.Window(title="Build whisper.cpp")
         self._build_window = win
         win.set_default_size(600, 600)
@@ -828,5 +833,6 @@ class WhisperCPPHandler(STTHandler):
 
     def copy_to_clipboard(self, text):
         """Copy text to system clipboard"""
+        from gi.repository import Gtk, Adw, Gdk
         clipboard = Gdk.Display.get_default().get_clipboard()
         clipboard.set(text)

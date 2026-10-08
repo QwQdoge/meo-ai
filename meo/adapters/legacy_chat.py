@@ -246,6 +246,10 @@ class LegacyChatInterfaceAdapter:
         selected_provider, selected_model = self._current_model_selection()
         result = []
         for provider_name, provider_info in AVAILABLE_LLMS.items():
+            # A headless metadata read must not initialize unselected providers,
+            # download catalogs, or launch their local model servers.
+            if getattr(self.controller, "headless", False) and provider_name != selected_provider:
+                continue
             try:
                 handler_class = provider_info["class"]
                 handler = handler_class(self.controller.settings, self.controller.handlers.directory)

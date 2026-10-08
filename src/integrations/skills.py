@@ -1,7 +1,8 @@
+from __future__ import annotations
+
 from ..extensions import NewelleExtension
 from ..tools import Tool, ToolResult, Command
-from ..ui.widgets.skill import SkillWidget
-from gi.repository import GLib, Gtk
+from gi.repository import GLib
 
 
 class SkillsIntegration(NewelleExtension):
@@ -17,6 +18,7 @@ class SkillsIntegration(NewelleExtension):
 
     def _build_widget(self, name):
         """Build the SkillWidget for a given skill name."""
+        from ..ui.widgets.skill import SkillWidget
         if self.skill_manager is None:
             return None
         skill = self.skill_manager.skills.get(name)

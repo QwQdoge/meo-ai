@@ -353,8 +353,9 @@ class NewelleController(WorkspaceController):
         finally:
             self._settings_syncing = False
 
-    def ui_init(self):
+    def ui_init(self, *, headless=False):
         """Init necessary variables for the UI and load models and handlers"""
+        self.headless = headless
         self.init_paths()
         self.check_path_integrity()
         skills_dirs = self._build_skills_dirs()
@@ -382,7 +383,7 @@ class NewelleController(WorkspaceController):
             self.integrationsloader,
             self,
         )
-        self.handlers.select_handlers(self.newelle_settings)
+        self.handlers.select_handlers(self.newelle_settings, skip_auto_start_interfaces=headless)
         if loaded_extensions_settings != self.newelle_settings.extensions_settings:
             self.reload_extensions()
         self.require_tool_update()
@@ -502,10 +503,16 @@ class NewelleController(WorkspaceController):
             "handlers": request_handlers,
             "mode_manager": mode_manager,
             "skill_manager": request_skill_manager,
+            "cancelled": threading.Event(),
         }
 
     def _request_context(self):
         return getattr(self.workspace_local, "context", None)
+
+    def _request_cancelled(self):
+        context = self._request_context()
+        event = context.get("cancelled") if context else None
+        return event is not None and event.is_set()
 
     def _request_settings(self):
         context = self._request_context()
@@ -536,6 +543,7 @@ class NewelleController(WorkspaceController):
         for context in contexts:
             if context is None:
                 continue
+            context.setdefault("cancelled", threading.Event()).set()
             handlers = context.get("handlers")
             for name in ("llm", "secondary_llm"):
                 handler = getattr(handlers, name, None)
@@ -2468,7 +2476,7 @@ class NewelleController(WorkspaceController):
             model = self.get_model_for_chat(chat)
             send_history = copy.deepcopy(history)
             request_message = request_chat[-1]["Message"]
-            if is_current is not None and not is_current():
+            if self._request_cancelled() or (is_current is not None and not is_current()):
                 return
             self.audio_input.start_audio_transcription(audio_turn)
             if model.stream_enabled():
@@ -2482,7 +2490,7 @@ class NewelleController(WorkspaceController):
             else:
                 message_label = model.send_message(request_message, send_history, prompts)
 
-            if is_current is not None and not is_current():
+            if self._request_cancelled() or (is_current is not None and not is_current()):
                 return
             raw_message_label = str(message_label)
             response_metadata = getattr(message_label, "response_metadata", None)
@@ -2782,7 +2790,7 @@ class NewelleController(WorkspaceController):
                 request_history = self._apply_user_message_prompts(request_history)
                 send_history, _ = self._trim_context(request_history, request_system_prompt, self.audio_input.audio_context_query(prompt, audio_turn))
 
-                if is_current is not None and not is_current():
+                if self._request_cancelled() or (is_current is not None and not is_current()):
                     return ""
                 self.audio_input.start_audio_transcription(audio_turn)
                 if model.stream_enabled():
@@ -2801,7 +2809,7 @@ class NewelleController(WorkspaceController):
                     if on_message_callback:
                         on_message_callback(response)
 
-                if is_current is not None and not is_current():
+                if self._request_cancelled() or (is_current is not None and not is_current()):
                     return ""
                 response_text = str(response)
                 response_metadata = getattr(response, "response_metadata", None)
@@ -2896,6 +2904,8 @@ class NewelleController(WorkspaceController):
                     })
 
                 for tool_call in tool_calls:
+                    if self._request_cancelled():
+                        return ""
                     tool_call_count += 1
                     tool_name = tool_call["name"]
                     tool_args = normalize_tool_arguments(tool_call["args"])
@@ -3072,6 +3082,8 @@ class NewelleController(WorkspaceController):
             raise ValueError(f"Tool '{tool_name}' not found")
 
         arguments = normalize_tool_arguments(arguments)
+        if self._request_cancelled():
+            return None
         if threading.current_thread() is threading.main_thread():
             return tool.execute(**arguments)
 
@@ -3084,7 +3096,8 @@ class NewelleController(WorkspaceController):
             if request_context is not None:
                 self.workspace_local.context = request_context
             try:
-                result_holder["result"] = tool.execute(**arguments)
+                if not self._request_cancelled():
+                    result_holder["result"] = tool.execute(**arguments)
             except Exception as exc:
                 result_holder["error"] = exc
             finally:
@@ -3769,7 +3782,9 @@ class HandlersManager:
 
         self.rag.set_handlers(self.llm, self.embedding)
         #self.image_generator.set_ui_controller(self.controller.ui_controller)
-        threading.Thread(target=self.install_missing_handlers).start()
+        # Service startup never installs optional providers or starts UI interfaces.
+        if not getattr(self.controller, "headless", False):
+            threading.Thread(target=self.install_missing_handlers).start()
 
     def refresh_interfaces(self, auto_start=True):
         """Synchronize interface instances without restarting unchanged ones."""
@@ -4017,7 +4032,10 @@ class HandlersManager:
                     print(f"Error installing {handler.key}: {error}")
 
     def cache_handlers(self):
-        """Cache handlers"""
+        """Cache handlers; the service creates unselected providers on demand."""
+        if getattr(self.controller, "headless", False):
+            self.handlers_cached.release()
+            return
         for key in AVAILABLE_TTS:
             self.handlers[(key, self.convert_constants(AVAILABLE_TTS), False)] = self.get_object(AVAILABLE_TTS, key)
         for key in AVAILABLE_STT:

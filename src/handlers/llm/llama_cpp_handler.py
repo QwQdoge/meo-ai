@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from ...handlers.llm import OpenAIHandler
 from ...handlers.extra_settings import ExtraSettings
 from ...utility.system import can_escape_sandbox, is_flatpak, get_spawn_command, has_backend, detect_cuda_version
@@ -22,14 +24,9 @@ import json
 import shutil
 import tarfile
 import tempfile
-from gi.repository import Gtk, Adw, GLib, Gdk
-from ...ui.model_library import (
-    LibraryModel,
-    ModelLibraryWindow,
-    get_local_backend_label,
-)
+from gi.repository import GLib
+from ...utility.local_backend import get_local_backend_label
 from ...utility.model_icons import get_model_icon
-from ...ui.build_dependency_warning import BuildDependencyWarning
 import requests
 
 class LlamaCPPHandler(OpenAIHandler):
@@ -365,6 +362,7 @@ class LlamaCPPHandler(OpenAIHandler):
 
     # Model library
     def fetch_models(self):
+        from ...ui.model_library import LibraryModel, ModelLibraryWindow
         data = self.library_data
         models = []
         for model in data:
@@ -501,11 +499,14 @@ class LlamaCPPHandler(OpenAIHandler):
                 self.downloading.pop(model, None)
 
     def open_model_library(self, button):
+        from ...ui.model_library import LibraryModel, ModelLibraryWindow
         root = button.get_root()
         win = ModelLibraryWindow(self, root)
         win.present()
 
     def show_install_dialog(self, button):
+        from ...ui.build_dependency_warning import BuildDependencyWarning
+        from gi.repository import Gtk, Adw, Gdk
         win = Adw.Window(title="Install llama.cpp")
         self._build_window = win
         win.set_default_size(700, 760)
@@ -1103,6 +1104,7 @@ class LlamaCPPHandler(OpenAIHandler):
         self.prebuilt_error_label.set_text(message)
 
     def _populate_prebuilt_list(self, available):
+        from gi.repository import Gtk, Adw, Gdk
         if hasattr(self, 'prebuilt_spinner') and self.prebuilt_spinner:
             self.prebuilt_spinner.stop()
             self.prebuilt_spinner.set_visible(False)
@@ -1471,6 +1473,7 @@ class LlamaCPPHandler(OpenAIHandler):
         self.settings_update()
 
     def copy_to_clipboard(self, text):
+        from gi.repository import Gtk, Adw, Gdk
         clipboard = Gdk.Display.get_default().get_clipboard()
         clipboard.set(text)
 

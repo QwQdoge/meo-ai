@@ -1,14 +1,11 @@
+from __future__ import annotations
+
 import threading
 import json
 import time
-from gi.repository import Gtk, Adw, GLib, Gio
+from gi.repository import GLib, Gio
 from ..extensions import NewelleExtension
 from ..tools import Tool, ToolResult
-from ..ui.widgets.subagent import SubagentWidget
-from ..ui.widgets.scheduled_task import ScheduledTaskWidget
-from ..ui.widgets.question import QuestionWidget, RestoredQuestionWidget
-from ..ui.widgets.comborow import ComboRowHelper
-from ..ui.widgets.status import StatusWidget
 
 
 
@@ -48,6 +45,7 @@ class AgentToolsIntegration(NewelleExtension):
             tools: Comma-separated list of tool names to give the subagent.
             skills: Comma-separated list of skill names to activate (optional).
         """
+        from ..ui.widgets.subagent import SubagentWidget
         result = ToolResult()
         widget = SubagentWidget(task)
         result.set_widget(widget)
@@ -149,6 +147,7 @@ class AgentToolsIntegration(NewelleExtension):
         return result
 
     def _restore_subagent(self, tool_uuid: str, task: str, system_prompt: str, tools: str, skills: str = ""):
+        from ..ui.widgets.subagent import SubagentWidget
         widget = SubagentWidget(task)
         output = self.ui_controller.get_tool_result_by_id(tool_uuid)
         widget.update_message(output) 
@@ -160,6 +159,7 @@ class AgentToolsIntegration(NewelleExtension):
 
     def _schedule_task(self, task: str, run_at: str = "", cron: str = ""):
         """Schedule a future agent run in a visible chat."""
+        from ..ui.widgets.scheduled_task import ScheduledTaskWidget
         scheduled_task = self.controller.create_scheduled_task(
             task=task,
             run_at=run_at.strip() or None,
@@ -202,6 +202,7 @@ class AgentToolsIntegration(NewelleExtension):
     def _restore_schedule_task(self, tool_uuid: str, task: str, run_at: str = "", cron: str = ""):
         """Restore the scheduled task widget from chat history."""
         # Get the saved output from chat history
+        from ..ui.widgets.scheduled_task import ScheduledTaskWidget
         output = self.ui_controller.get_tool_result_by_id(tool_uuid)
 
         # Parse the saved output to get schedule info
@@ -243,6 +244,7 @@ class AgentToolsIntegration(NewelleExtension):
         result.set_output(output)
         return result
     def _ask_user(self, question: str, options: str = "", mode: str = "", multiple: bool = False, tool_uuid=None):
+        from ..ui.widgets.question import QuestionWidget, RestoredQuestionWidget
         parsed_options = [o.strip() for o in options.split(",") if o.strip()] if options.strip() else []
         if mode not in ("open", "choice", "choice_with_custom"):
             mode = "choice_with_custom" if parsed_options else "open"
@@ -259,6 +261,7 @@ class AgentToolsIntegration(NewelleExtension):
         return result
 
     def _restore_ask_user(self, tool_uuid: str, question: str, options: str = "", mode: str = "", multiple: str = ""):
+        from ..ui.widgets.question import QuestionWidget, RestoredQuestionWidget
         output = self.ui_controller.get_tool_result_by_id(tool_uuid)
         parsed_options = [o.strip() for o in options.split(",") if o.strip()] if options.strip() else []
         if mode not in ("open", "choice", "choice_with_custom"):
@@ -275,6 +278,7 @@ class AgentToolsIntegration(NewelleExtension):
         Args:
             seconds: Number of seconds to sleep. Must be non-negative.
         """
+        from ..ui.widgets.status import StatusWidget
         if seconds < 0:
             seconds = 0
         message = f"Slept for {seconds} second(s)."
@@ -300,6 +304,7 @@ class AgentToolsIntegration(NewelleExtension):
         return result
 
     def _restore_sleep(self, seconds: float):
+        from ..ui.widgets.status import StatusWidget
         message = f"Slept for {seconds} second(s)."
         result = ToolResult()
         result.set_widget(StatusWidget(
@@ -316,6 +321,7 @@ class AgentToolsIntegration(NewelleExtension):
         Args:
             mode: Name of the mode to activate.
         """
+        from ..ui.widgets.status import StatusWidget
         mm = getattr(self.controller, "mode_manager", None)
         result = ToolResult()
         if mm is None:
@@ -348,6 +354,7 @@ class AgentToolsIntegration(NewelleExtension):
         return result
 
     def _restore_switch_mode(self, mode: str):
+        from ..ui.widgets.status import StatusWidget
         mm = getattr(self.controller, "mode_manager", None)
         icon_name = "applications-system-symbolic"
         description = ""

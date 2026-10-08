@@ -5,10 +5,13 @@
 #include <QTcpSocket>
 #include <QSignalSpy>
 #include <QTest>
+#include <QSettings>
+#include <QTemporaryDir>
 
 class ClientTest : public QObject {
     Q_OBJECT
 private:
+    QTemporaryDir settingsDirectory;
     static QByteArray readRequest(QTcpSocket *socket) {
         QByteArray request;
         for (int i = 0; i < 100 && !request.contains("\r\n\r\n"); ++i) {
@@ -34,6 +37,14 @@ private:
     }
 
 private slots:
+    void initTestCase() {
+        QVERIFY(settingsDirectory.isValid());
+        QSettings::setDefaultFormat(QSettings::IniFormat);
+        QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, settingsDirectory.path());
+    }
+
+    void init() { QSettings().remove("serviceConversationId"); }
+
     void fragmentedStreamAndInteraction() {
         qunsetenv("MEO_AI_SERVICE_ENDPOINT");
         QTcpServer server; QVERIFY(server.listen(QHostAddress::LocalHost));

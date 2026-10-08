@@ -56,10 +56,10 @@ class OllamaHandler(LLMHandler):
             except Exception as e:
                 print(f"Error loading cached models info: {e}")
                 self.models_info = {}
-                threading.Thread(target=self.get_models_infomation, args=()).start()
+                threading.Thread(target=self.get_models_infomation, args=(), daemon=True).start()
         else:
             self.models_info = {}
-            threading.Thread(target=self.get_models_infomation, args=()).start()
+            threading.Thread(target=self.get_models_infomation, args=(), daemon=True).start()
 
     def get_models_list(self):
         return self.models
@@ -68,7 +68,7 @@ class OllamaHandler(LLMHandler):
         """Get information about models on ollama.com"""
         if self.is_installed(): 
             try:
-                info = requests.get(self.library_url).json()
+                info = requests.get(self.library_url, timeout=10).json()
                 cache_path = self.get_cache_path()
                 with open(cache_path, "w") as f:
                     json.dump(info, f)
@@ -219,7 +219,7 @@ class OllamaHandler(LLMHandler):
         """Get the list of installed models in ollama"""
         if not self.is_installed():
             return
-        threading.Thread(target=self.get_models_infomation, args=()).start()
+        threading.Thread(target=self.get_models_infomation, args=(), daemon=True).start()
         client = self.create_client()
         self.auto_serve(client)
         try:
@@ -561,6 +561,8 @@ class OllamaHandler(LLMHandler):
             raise e
     
     def generate_text_stream(self, prompt: str, history: list[dict[str, str]] = [], system_prompt: list[str] = [], on_update: Callable[[str], Any] = lambda _: None, extra_args: list = []) -> str:
+        self.running = True
+        response = None
         if self.get_setting("thinking") is False:
             prompt = "/no_think\n" + prompt
             
@@ -595,6 +597,8 @@ class OllamaHandler(LLMHandler):
             prev_message = ""
             thinking = False
             for chunk in response:
+                if not self.running:
+                    break
                 if "thinking" in chunk["message"] and chunk["message"]["thinking"] is not None:
                     if not thinking:
                         full_message += "<think>"
@@ -624,3 +628,6 @@ class OllamaHandler(LLMHandler):
             return full_message.strip()
         except Exception as e:
             raise e
+        finally:
+            if response is not None and hasattr(response, "close"):
+                response.close()

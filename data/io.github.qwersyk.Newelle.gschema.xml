@@ -372,5 +372,11 @@
         <key name="hide-warning" type="b">
             <default>false</default>
         </key>
+        <key name="user-message-prompts" type="s">
+            <default>"{}"</default>
+        </key>
+        <key name="usage-tracking" type="b">
+            <default>false</default>
+        </key>
 	</schema>
 </schemalist>

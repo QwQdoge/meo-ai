@@ -171,7 +171,7 @@ void AgentClient::submitServiceCancel() {
     postServiceAction(url, QByteArray("{}"), [this](QNetworkReply *) {
         m_options.clear();
         m_decisionId.clear();
-        m_status = tr("Stopping…");
+        if (!m_done) m_status = tr("Stopping…");
         emit changed();
     });
 }
