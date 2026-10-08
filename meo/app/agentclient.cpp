@@ -118,7 +118,9 @@ void AgentClient::newChat() {
     m_conversationId.clear();
     m_requestId.clear();
     m_decisionId.clear();
+    m_pendingServiceText.clear();
     m_cancelPending = false;
+    m_staleConversationRetryUsed = false;
     m_lastEventSeq = 0;
     m_reconnectAttempts = 0;
     QSettings().remove("serviceConversationId");
@@ -225,7 +227,7 @@ void AgentClient::loadServiceHistory() {
     });
 }
 
-void AgentClient::sendService(const QString &text) {
+void AgentClient::sendService(const QString &text, bool emitAssistantPlaceholder) {
     QUrl base = validatedOrigin("MEO_AI_SERVICE_ENDPOINT");
     if (!base.isValid()) {
         m_status = tr("MEO_AI_SERVICE_ENDPOINT must be a loopback HTTP origin.");
@@ -238,6 +240,10 @@ void AgentClient::sendService(const QString &text) {
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
     QJsonObject body{{"text", text}};
+    if (emitAssistantPlaceholder) {
+        m_pendingServiceText = text;
+        m_staleConversationRetryUsed = false;
+    }
     m_buffer.clear();
     m_done = false;
     m_requestId.clear();
@@ -247,7 +253,7 @@ void AgentClient::sendService(const QString &text) {
     m_reconnectAttempts = 0;
     m_options.clear();
     m_status = tr("Receiving…");
-    emit message("assistant", "");
+    if (emitAssistantPlaceholder) emit message("assistant", "");
     attachServiceStream(m_network.post(request, QJsonDocument(body).toJson(QJsonDocument::Compact)));
 }
 
@@ -295,6 +301,7 @@ void AgentClient::attachServiceStream(QNetworkReply *reply) {
         consumeService();
         const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         const auto networkError = reply->error();
+        const QUrl finishedUrl = reply->url();
         reply->deleteLater();
         m_reply = nullptr;
 
@@ -304,11 +311,49 @@ void AgentClient::attachServiceStream(QNetworkReply *reply) {
             return;
         }
 
+        const QString finishedPath = finishedUrl.path();
+        const bool missingConversationBeforeStart = code == 404 && m_requestId.isEmpty()
+            && finishedPath.startsWith("/v1/conversations/") && finishedPath.endsWith("/messages");
+        if (missingConversationBeforeStart) {
+            m_conversationId.clear();
+            QSettings().remove("serviceConversationId");
+            m_requestId.clear();
+            m_decisionId.clear();
+            m_options.clear();
+            m_reconnectAttempts = 0;
+
+            if (m_cancelPending) {
+                m_cancelPending = false;
+                m_pendingServiceText.clear();
+                m_staleConversationRetryUsed = false;
+                m_status = tr("Stopped");
+                emit changed();
+                return;
+            }
+
+            if (!m_staleConversationRetryUsed && !m_pendingServiceText.isEmpty()) {
+                m_staleConversationRetryUsed = true;
+                const QString retryText = m_pendingServiceText;
+                m_status = tr("The previous conversation expired. Creating a new one…");
+                emit changed();
+                ensureServiceConversation([this, retryText] { sendService(retryText, false); });
+                return;
+            }
+
+            m_pendingServiceText.clear();
+            m_staleConversationRetryUsed = false;
+            m_status = tr("The conversation could not be recovered. Send the message again to start a new chat.");
+            emit changed();
+            return;
+        }
+
         if (code == 404) {
             m_requestId.clear();
             m_decisionId.clear();
             m_options.clear();
+            m_pendingServiceText.clear();
             m_cancelPending = false;
+            m_staleConversationRetryUsed = false;
             m_reconnectAttempts = 0;
             m_status = tr("The previous request no longer exists. You can start a new request.");
             emit changed();
@@ -339,6 +384,8 @@ void AgentClient::attachServiceStream(QNetworkReply *reply) {
         } else {
             m_status = tr("AgentService stream ended before a terminal request event.");
         }
+        m_pendingServiceText.clear();
+        m_staleConversationRetryUsed = false;
         m_cancelPending = false;
         emit changed();
     });
@@ -389,16 +436,22 @@ void AgentClient::consumeService() {
             }
         } else if (type == "request.completed") {
             m_done = true;
+            m_pendingServiceText.clear();
+            m_staleConversationRetryUsed = false;
             m_cancelPending = false;
             m_status = tr("Ready");
         } else if (type == "request.cancelled") {
             m_done = true;
+            m_pendingServiceText.clear();
+            m_staleConversationRetryUsed = false;
             m_cancelPending = false;
             m_options.clear();
             m_decisionId.clear();
             m_status = tr("Stopped");
         } else if (type == "request.failed") {
             m_done = true;
+            m_pendingServiceText.clear();
+            m_staleConversationRetryUsed = false;
             m_cancelPending = false;
             m_options.clear();
             m_decisionId.clear();
