@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import re
 import threading
 from typing import Dict
 from uuid import uuid4
 
-from meo.service.backend_adapter import BackendCallbacks, ModelInfo, SkillInfo
+from meo.service.backend_adapter import BackendCallbacks, ConversationMessage, ModelInfo, SkillInfo
 
 
 @dataclass
@@ -98,6 +99,38 @@ class LegacyChatInterfaceAdapter:
         chat_id = self.interface.get_or_create_chat(conversation_id)
         self._remember_conversation(conversation_id, chat_id)
         return chat_id
+
+    @staticmethod
+    def _presentation_text(role: str, value: str) -> str:
+        text = value
+        if role == "user":
+            # Retrieval context is prompt-only metadata injected ahead of the
+            # user's visible text. Never replay it into the native chat UI.
+            text = re.sub(r"<context>.*?</context>\s*", "", text, flags=re.DOTALL)
+        return text.strip()
+
+    def list_messages(self, conversation_id: str):
+        if not self.conversation_exists(conversation_id):
+            raise ValueError("unknown conversation_id")
+        chat_id = self._conversations[conversation_id]
+        chat_record = self._workspace_chats().get(chat_id)
+        raw_messages = chat_record.get("chat", []) if isinstance(chat_record, dict) else []
+        if not isinstance(raw_messages, list):
+            return []
+
+        messages: list[ConversationMessage] = []
+        for entry in raw_messages:
+            if not isinstance(entry, dict):
+                continue
+            source_role = entry.get("User")
+            value = entry.get("Message")
+            if source_role not in {"User", "Assistant"} or not isinstance(value, str):
+                continue
+            role = "user" if source_role == "User" else "assistant"
+            text = self._presentation_text(role, value)
+            if text:
+                messages.append(ConversationMessage(role, text))
+        return messages
 
     def send_message(self, conversation_id: str, text: str, callbacks: BackendCallbacks):
         if not self.conversation_exists(conversation_id):
