@@ -151,6 +151,19 @@ class HttpTransportTests(unittest.TestCase):
             self.json_request("GET", "/v1/conversations/conversation:missing/messages")
         self.assertEqual(raised.exception.code, 404)
 
+    def test_unknown_conversation_message_is_404_before_request_start(self):
+        with self.assertRaises(urllib.error.HTTPError) as raised:
+            self.json_request(
+                "POST",
+                "/v1/conversations/conversation:missing/messages",
+                {"text": "must not execute"},
+            )
+        self.assertEqual(raised.exception.code, 404)
+        self.assertEqual(self.backend.handles, [])
+        _, state = self.json_request("GET", "/v1/agent-state")
+        self.assertEqual(state["active_requests"], 0)
+        self.assertEqual(state["request_states"], {})
+
     def test_catalogs_and_mutations_are_structured(self):
         cid = self.create_conversation()
         status, models = self.json_request("GET", "/v1/models")
