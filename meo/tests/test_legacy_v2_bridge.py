@@ -33,6 +33,22 @@ class LegacyV2ToolBridgeTests(unittest.TestCase):
         self.assertEqual(normalized["compatibility"]["interaction_id"], "legacy-i1")
         self.assertEqual(normalized["display_text"], "Review target before continuing")
 
+    def test_non_interactive_result_becomes_completion_event_without_decision(self):
+        bridge = LegacyV2ToolBridge()
+        req = self.running_request()
+        normalized = bridge.publish_result(
+            req,
+            {
+                "type": "tool_result",
+                "tool_name": "system_org_meo_desktop_audio_get_volume",
+                "display_text": "Read volume",
+            },
+        )
+        self.assertEqual(req.state, RequestState.RUNNING_MODEL)
+        self.assertEqual(normalized["type"], "tool.completed")
+        self.assertEqual(normalized["request_id"], req.request_id)
+        self.assertNotIn("decision_id", normalized)
+
     def test_display_text_is_bounded_and_never_decision_authority(self):
         bridge = LegacyV2ToolBridge()
         req = self.running_request()
@@ -41,6 +57,15 @@ class LegacyV2ToolBridgeTests(unittest.TestCase):
         normalized = bridge.publish(req, event)
         self.assertEqual(len(normalized["display_text"]), 4000)
         self.assertTrue(normalized["decision_id"].startswith("decision:"))
+
+    def test_result_display_text_is_also_bounded(self):
+        bridge = LegacyV2ToolBridge()
+        req = self.running_request()
+        normalized = bridge.publish_result(
+            req,
+            {"type": "tool_result", "tool_name": "read", "display_text": "x" * 5000},
+        )
+        self.assertEqual(len(normalized["display_text"]), 4000)
 
     def test_resolve_maps_frontend_position_to_legacy_index(self):
         bridge = LegacyV2ToolBridge()
