@@ -1,6 +1,6 @@
 import unittest
 
-from meo.service.backend_adapter import BackendCallbacks
+from meo.service.backend_adapter import BackendCallbacks, ConversationMessage
 from meo.service.core import AgentServiceCore
 from meo.service.request_state import RequestState
 
@@ -20,6 +20,9 @@ class FakeBackend:
 
     def conversation_exists(self, conversation_id):
         return conversation_id == "conversation:1"
+
+    def list_messages(self, conversation_id):
+        return [ConversationMessage("assistant", "history")]
 
     def send_message(self, conversation_id, text, callbacks):
         self.callbacks = callbacks
@@ -71,6 +74,23 @@ class AgentServiceCoreTests(unittest.TestCase):
             on_done=lambda: events.append(("done", None)),
             on_error=lambda error: events.append(("error", error)),
         )
+
+    def test_agent_state_reports_only_service_owned_lifecycle(self):
+        service = AgentServiceCore(FakeBackend())
+        initial = service.get_agent_state()
+        self.assertTrue(initial["ready"])
+        self.assertEqual(initial["active_requests"], 0)
+        self.assertEqual(initial["request_states"]["running_model"], 0)
+
+        context = service.start_request("conversation:1")
+        running = service.get_agent_state()
+        self.assertEqual(running["active_requests"], 1)
+        self.assertEqual(running["request_states"]["running_model"], 1)
+
+        service.complete_request(context.request_id)
+        complete = service.get_agent_state()
+        self.assertEqual(complete["active_requests"], 0)
+        self.assertEqual(complete["request_states"]["completed"], 1)
 
     def test_request_context_and_tool_round_trip(self):
         service = AgentServiceCore()
