@@ -11,6 +11,8 @@ ApplicationWindow {
     title: qsTr("Meo AI · Preview")
     color: MeoTheme.background
     readonly property real margin: MeoTheme.windowPageMargin(width)
+    property string pendingToolDisplay: ""
+
     ListModel { id: messages }
     Connections {
         target: agent
@@ -22,7 +24,14 @@ ApplicationWindow {
                 history.positionViewAtEnd()
             }
         }
-        function onResetChat() { messages.clear() }
+        function onToolEvent(event) {
+            const text = event.display_text
+            window.pendingToolDisplay = typeof text === "string" ? text : ""
+        }
+        function onResetChat() {
+            messages.clear()
+            window.pendingToolDisplay = ""
+        }
     }
     ColumnLayout {
         anchors.fill: parent; anchors.margins: window.margin
@@ -64,6 +73,29 @@ ApplicationWindow {
                     : qsTr("Ask about your project or MeoArch.\n/models · /model · /tools · /skill\nLegacy Newelle API compatibility mode.")
                 horizontalAlignment: Text.AlignHCenter
                 font.pixelSize: MeoTheme.bodyLarge.size * MeoTheme.globalScale; font.weight: MeoTheme.bodyLarge.weight; color: MeoTheme.onSurfaceVariant
+            }
+        }
+        MeoCard {
+            visible: agent.options.length > 0 && window.pendingToolDisplay.length > 0
+            Layout.fillWidth: true
+            type: "filled"
+            contentItem: ColumnLayout {
+                spacing: 6 * MeoTheme.globalScale
+                Label {
+                    text: qsTr("Confirmation required")
+                    font.pixelSize: MeoTheme.labelLarge.size * MeoTheme.globalScale
+                    font.weight: MeoTheme.labelLarge.weight
+                    color: MeoTheme.primary
+                }
+                Label {
+                    text: window.pendingToolDisplay
+                    textFormat: Text.PlainText
+                    wrapMode: Text.Wrap
+                    Layout.fillWidth: true
+                    font.pixelSize: MeoTheme.bodyMedium.size * MeoTheme.globalScale
+                    font.weight: MeoTheme.bodyMedium.weight
+                    color: MeoTheme.onSurface
+                }
             }
         }
         Repeater {
