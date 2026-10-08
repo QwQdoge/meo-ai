@@ -17,6 +17,9 @@ class SkillInfo:
     skill_id: str
     label: str
     enabled: bool
+    configured_enabled: bool | None = None
+    selection_scope: str = "profile"
+    override_source: str = ""
 
 
 @dataclass(frozen=True)
