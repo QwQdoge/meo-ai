@@ -35,7 +35,7 @@ private:
     void consumeLegacy();
     void ensureServiceConversation(const std::function<void()> &then);
     void loadServiceHistory();
-    void sendService(const QString &text);
+    void sendService(const QString &text, bool emitAssistantPlaceholder = true);
     void reconnectServiceStream();
     void attachServiceStream(QNetworkReply *reply);
     void consumeService();
@@ -50,11 +50,13 @@ private:
     QString m_conversationId;
     QString m_requestId;
     QString m_decisionId;
+    QString m_pendingServiceText;
     QString m_status;
     QVariantList m_options;
     bool m_done = false;
     bool m_serviceMode = false;
     bool m_cancelPending = false;
+    bool m_staleConversationRetryUsed = false;
     int m_lastEventSeq = 0;
     int m_reconnectAttempts = 0;
 };
