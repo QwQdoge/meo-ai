@@ -18,12 +18,7 @@ class LegacyExecutionHandle:
 
 
 class LegacyChatInterfaceAdapter:
-    """Temporary adapter for the inherited Newelle ChatInterface API.
-
-    The caller injects an already-constructed ChatInterface-like object. This
-    module does not import Newelle controller/UI modules itself, which keeps the
-    AgentService boundary testable while GTK-era construction remains elsewhere.
-    """
+    """Temporary adapter for the inherited Newelle ChatInterface API."""
 
     def __init__(self, interface) -> None:
         self.interface = interface
@@ -79,7 +74,6 @@ class LegacyChatInterfaceAdapter:
         return chat_id is not None and chat_id in self._workspace_chats()
 
     def attach_existing_session(self, conversation_id: str) -> int:
-        """Register a known compatibility session and persist its chat ownership."""
         if not isinstance(conversation_id, str) or not conversation_id.startswith("meo:"):
             raise ValueError("legacy compatibility session must use a meo: key")
         chat_id = self.interface.get_or_create_chat(conversation_id)
@@ -136,7 +130,6 @@ class LegacyChatInterfaceAdapter:
         self.controller.stop_workspace_request(execution_handle.chat_id)
 
     def list_models(self):
-        """Return structured provider/model data using Newelle's existing handlers."""
         from src.constants import AVAILABLE_LLMS
 
         result = []
@@ -164,13 +157,6 @@ class LegacyChatInterfaceAdapter:
         return result
 
     def set_model(self, conversation_id: str, model_id: str) -> None:
-        """Compatibility model switch.
-
-        Newelle's current provider/model selection is process/profile scoped, not
-        conversation-local. AgentService still requires a valid conversation so a
-        stale UI cannot mutate settings through a dead conversation. Model metadata
-        exposes selection_scope=profile so frontends do not imply per-chat control.
-        """
         from src.constants import AVAILABLE_LLMS
 
         if not self.conversation_exists(conversation_id):
@@ -199,10 +185,31 @@ class LegacyChatInterfaceAdapter:
         manager = getattr(self.controller, "skill_manager", None)
         if manager is None:
             return []
-        return [
-            SkillInfo(skill.name, skill.name, manager.is_skill_enabled(skill.name))
-            for skill in sorted(manager.skills.values(), key=lambda item: item.name.casefold())
-        ]
+
+        result = []
+        for skill in sorted(manager.skills.values(), key=lambda item: item.name.casefold()):
+            effective_enabled = bool(manager.is_skill_enabled(skill.name))
+            try:
+                configured_enabled = bool(manager.is_skill_enabled(skill.name, apply_overrides=False))
+            except TypeError:
+                configured_enabled = effective_enabled
+
+            override_source = ""
+            overrides = getattr(manager, "mode_skill_overrides", None)
+            if isinstance(overrides, dict) and overrides.get(skill.name) in {"enable", "remove"}:
+                override_source = "mode"
+
+            result.append(
+                SkillInfo(
+                    skill.name,
+                    skill.name,
+                    effective_enabled,
+                    configured_enabled=configured_enabled,
+                    selection_scope="profile",
+                    override_source=override_source,
+                )
+            )
+        return result
 
     def set_skill_enabled(self, skill_id: str, enabled: bool) -> None:
         manager = getattr(self.controller, "skill_manager", None)
@@ -211,7 +218,4 @@ class LegacyChatInterfaceAdapter:
         manager.set_skill_enabled(skill_id, bool(enabled))
 
     def list_mcp_servers(self):
-        # Newelle's MCP catalog/runtime is still coupled to extension/integration
-        # structures. Keep this empty rather than parsing presentation text or
-        # claiming a stable schema before the owning manager is identified.
         return []
