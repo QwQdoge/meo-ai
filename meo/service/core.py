@@ -47,7 +47,12 @@ class AgentServiceCore:
 
     def list_models(self) -> list[dict]:
         return [
-            {"model_id": item.model_id, "label": item.label, "provider": item.provider}
+            {
+                "model_id": item.model_id,
+                "label": item.label,
+                "provider": item.provider,
+                "selection_scope": item.selection_scope,
+            }
             for item in self._require_backend().list_models()
         ]
 
