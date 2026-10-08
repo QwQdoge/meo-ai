@@ -52,11 +52,27 @@ class AgentHttpTransport:
         self._lock = threading.Lock()
 
     def list_conversations(self) -> list[dict]:
-        return list(self.service.backend.list_conversations())
+        return self.service.list_conversations()
 
     def create_conversation(self) -> dict:
-        conversation_id = self.service.backend.create_conversation()
-        return {"conversation_id": conversation_id}
+        return {"conversation_id": self.service.create_conversation()}
+
+    def list_models(self) -> list[dict]:
+        return self.service.list_models()
+
+    def set_model(self, conversation_id: str, model_id: str) -> dict:
+        self.service.set_model(conversation_id, model_id)
+        return {"conversation_id": conversation_id, "model_id": model_id, "accepted": True}
+
+    def list_skills(self) -> list[dict]:
+        return self.service.list_skills()
+
+    def set_skill_enabled(self, skill_id: str, enabled: bool) -> dict:
+        self.service.set_skill_enabled(skill_id, enabled)
+        return {"skill_id": skill_id, "enabled": enabled, "accepted": True}
+
+    def list_mcp_servers(self) -> list[dict]:
+        return self.service.list_mcp_servers()
 
     def send_message(self, conversation_id: str, text: str) -> tuple[str, RequestEventStream]:
         stream = RequestEventStream()
@@ -185,6 +201,15 @@ class _Handler(BaseHTTPRequestHandler):
             if segments == ["v1", "conversations"]:
                 self._reply_json(HTTPStatus.OK, {"conversations": self.transport.list_conversations()})
                 return
+            if segments == ["v1", "models"]:
+                self._reply_json(HTTPStatus.OK, {"models": self.transport.list_models()})
+                return
+            if segments == ["v1", "skills"]:
+                self._reply_json(HTTPStatus.OK, {"skills": self.transport.list_skills()})
+                return
+            if segments == ["v1", "mcp-servers"]:
+                self._reply_json(HTTPStatus.OK, {"mcp_servers": self.transport.list_mcp_servers()})
+                return
             if len(segments) == 3 and segments[:2] == ["v1", "requests"]:
                 self._reply_json(HTTPStatus.OK, self.transport.get_request(segments[2]))
                 return
@@ -199,6 +224,20 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             if segments == ["v1", "conversations"]:
                 self._reply_json(HTTPStatus.CREATED, self.transport.create_conversation())
+                return
+            if len(segments) == 4 and segments[:2] == ["v1", "conversations"] and segments[3] == "model":
+                body = self._read_json()
+                model_id = body.get("model_id")
+                if not isinstance(model_id, str) or not model_id.strip():
+                    raise ValueError("model_id is required")
+                self._reply_json(HTTPStatus.OK, self.transport.set_model(segments[2], model_id))
+                return
+            if len(segments) == 3 and segments[:2] == ["v1", "skills"]:
+                body = self._read_json()
+                enabled = body.get("enabled")
+                if not isinstance(enabled, bool):
+                    raise ValueError("enabled must be a boolean")
+                self._reply_json(HTTPStatus.OK, self.transport.set_skill_enabled(segments[2], enabled))
                 return
             if len(segments) == 4 and segments[:2] == ["v1", "conversations"] and segments[3] == "messages":
                 body = self._read_json()
