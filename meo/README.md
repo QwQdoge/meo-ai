@@ -143,10 +143,25 @@ When enabled:
 - reversible requests wait for the owning component to report a terminal result;
 - `awaiting_confirmation` becomes explicit Deny/Approve choices through the
   existing AgentService tool-decision path;
+- confirmation UI receives bounded Router-backed title/target/impact context;
 - approval uses the Router-issued request ID and fingerprint, and no model/Skill
   output can auto-approve it;
 - Router rejections are surfaced as results rather than retried with guessed
   arguments.
+
+For live Router acceptance without starting a model, the helper is read-only by
+default:
+
+```sh
+python3 meo/tools/live_system_tool_check.py
+python3 meo/tools/live_system_tool_check.py --read-volume
+```
+
+A state-changing volume check is only performed when explicitly requested:
+
+```sh
+python3 meo/tools/live_system_tool_check.py --set-volume 30
+```
 
 The installed systemd unit intentionally does **not** set
 `MEO_AI_ENABLE_SYSTEM_TOOL=1` yet. Distro enablement waits for live D-Bus,
