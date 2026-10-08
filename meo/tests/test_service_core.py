@@ -6,8 +6,9 @@ from meo.service.request_state import RequestState
 
 
 class FakeBackend:
-    def __init__(self, *, complete_synchronously=False):
+    def __init__(self, *, complete_synchronously=False, tool_event=None):
         self.complete_synchronously = complete_synchronously
+        self.tool_event = tool_event
         self.callbacks = None
         self.handle = {"cancelled": False, "choices": []}
 
@@ -23,6 +24,8 @@ class FakeBackend:
     def send_message(self, conversation_id, text, callbacks):
         self.callbacks = callbacks
         callbacks.on_text_delta("hello")
+        if self.tool_event is not None:
+            callbacks.on_tool_event(self.tool_event)
         if self.complete_synchronously:
             callbacks.on_done()
         return self.handle
@@ -101,6 +104,16 @@ class AgentServiceCoreTests(unittest.TestCase):
         context = service.send_message("conversation:1", "hello", self.callbacks(events))
         backend.callbacks.on_tool_event(self.event())
         normalized = events[-1][1]
+        service.choose_tool_option(context.request_id, normalized["decision_id"], 1)
+        self.assertEqual(backend.handle["choices"], [1])
+
+    def test_tool_callback_before_backend_returns_still_has_execution_handle(self):
+        backend = FakeBackend(tool_event=self.event())
+        service = AgentServiceCore(backend)
+        events = []
+        context = service.send_message("conversation:1", "hello", self.callbacks(events))
+        normalized = next(payload for kind, payload in events if kind == "tool")
+        self.assertEqual(service.get_request(context.request_id).state, RequestState.AWAITING_TOOL)
         service.choose_tool_option(context.request_id, normalized["decision_id"], 1)
         self.assertEqual(backend.handle["choices"], [1])
 
