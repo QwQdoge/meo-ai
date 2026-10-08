@@ -36,6 +36,7 @@ private:
     void ensureServiceConversation(const std::function<void()> &then);
     void sendService(const QString &text);
     void consumeService();
+    void submitServiceCancel();
     void postServiceAction(const QUrl &url, const QByteArray &body, const std::function<void(QNetworkReply *)> &onSuccess);
     QUrl validatedOrigin(const QByteArray &variable, const QString &fallback = QString()) const;
     QNetworkAccessManager m_network;
@@ -50,4 +51,5 @@ private:
     QVariantList m_options;
     bool m_done = false;
     bool m_serviceMode = false;
+    bool m_cancelPending = false;
 };
