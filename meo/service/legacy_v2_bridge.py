@@ -7,20 +7,26 @@ from .tool_decision import ToolDecisionRegistry
 
 
 class LegacyV2ToolBridge:
-    """Translate Newelle v2 tool_interaction events into AgentService semantics.
+    """Translate Newelle v2 tool events into AgentService semantics.
 
-    This module intentionally does not perform HTTP calls. It only normalizes the
-    inherited event and maps a service-issued decision back to the legacy option
-    index expected by the existing compatibility transport.
+    Interactive events receive a service-owned decision ID. Non-interactive
+    results are surfaced as completion events and never create approval state.
     """
 
     def __init__(self, decisions: ToolDecisionRegistry | None = None) -> None:
         self.decisions = decisions or ToolDecisionRegistry()
         self._legacy_indices: Dict[str, Tuple[int, ...]] = {}
 
+    @staticmethod
+    def _bounded_display_text(event: dict) -> str:
+        display_text = event.get("display_text", "")
+        if not isinstance(display_text, str):
+            raise ValueError("legacy tool display_text must be a string")
+        return display_text[:4000]
+
     def publish(self, request: RequestLifecycle, event: dict) -> dict:
         if event.get("type") != "tool_interaction":
-            raise ValueError("unsupported legacy tool event")
+            raise ValueError("unsupported legacy interactive tool event")
         if request.state is RequestState.RUNNING_MODEL:
             request.transition(RequestState.AWAITING_TOOL)
         if request.state is not RequestState.AWAITING_TOOL:
@@ -46,13 +52,6 @@ class LegacyV2ToolBridge:
             legacy_indices.append(legacy_index)
             normalized_options.append({"index": position, "title": title})
 
-        display_text = event.get("display_text", "")
-        if not isinstance(display_text, str):
-            raise ValueError("legacy tool display_text must be a string")
-        # Display context is untrusted presentation data for generic tools. Keep
-        # it bounded and separate from decision authority/fingerprints.
-        display_text = display_text[:4000]
-
         decision = self.decisions.issue(request, titles)
         self._legacy_indices[decision.decision_id] = tuple(legacy_indices)
         return {
@@ -60,12 +59,27 @@ class LegacyV2ToolBridge:
             "request_id": request.request_id,
             "decision_id": decision.decision_id,
             "tool_name": str(event.get("tool_name") or ""),
-            "display_text": display_text,
+            "display_text": self._bounded_display_text(event),
             "options": normalized_options,
             "compatibility": {
                 "source": "newelle-v2",
                 "interaction_id": event.get("interaction_id"),
             },
+        }
+
+    def publish_result(self, request: RequestLifecycle, event: dict) -> dict:
+        """Normalize a non-interactive Newelle tool result without approval state."""
+
+        if event.get("type") != "tool_result":
+            raise ValueError("unsupported legacy tool result")
+        if request.terminal:
+            raise ValueError("tool result received for terminal request")
+        return {
+            "type": "tool.completed",
+            "request_id": request.request_id,
+            "tool_name": str(event.get("tool_name") or ""),
+            "display_text": self._bounded_display_text(event),
+            "compatibility": {"source": "newelle-v2"},
         }
 
     def resolve(self, request: RequestLifecycle, decision_id: str, option_index: int) -> int:
