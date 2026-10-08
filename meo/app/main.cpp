@@ -7,6 +7,17 @@
 int main(int argc, char **argv) {
     QGuiApplication app(argc, argv);
     app.setOrganizationName("MeoArch"); app.setApplicationName("MeoAI");
+
+    // Phase B is the default native path. Preserve the Phase A API only as an
+    // explicit compatibility fallback: setting MEO_AI_ENDPOINT keeps the
+    // legacy client, while MEO_AI_SERVICE_ENDPOINT always takes precedence.
+    // Never fall back after a request has been submitted, because replaying a
+    // message across transports could duplicate tool or system side effects.
+    if (qEnvironmentVariableIsEmpty("MEO_AI_SERVICE_ENDPOINT") &&
+        qEnvironmentVariableIsEmpty("MEO_AI_ENDPOINT")) {
+        qputenv("MEO_AI_SERVICE_ENDPOINT", "http://127.0.0.1:8765");
+    }
+
     QQmlApplicationEngine engine;
     engine.addImportPath(QStringLiteral(MEOUI_IMPORT_PATH));
     AgentClient client;
