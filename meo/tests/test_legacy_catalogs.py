@@ -92,6 +92,7 @@ class LegacyCatalogTests(unittest.TestCase):
             models = adapter.list_models()
             self.assertEqual([model.model_id for model in models], ["local:tiny", "local:large"])
             self.assertEqual(models[0].label, "Tiny Model")
+            self.assertEqual({model.selection_scope for model in models}, {"profile"})
             adapter.set_model(conversation, "local:large")
         settings = adapter.controller.settings
         self.assertEqual(settings.get_string("language-model"), "local")
