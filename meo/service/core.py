@@ -68,7 +68,11 @@ class AgentServiceCore:
         except Exception as exc:
             self.fail_request(request_id, str(exc))
             raise
-        self._execution_handles[request_id] = handle
+
+        # Backends are allowed to complete synchronously. Do not retain a stale
+        # handle if callbacks already moved the request into a terminal state.
+        if not self.requests.get(request_id).terminal:
+            self._execution_handles[request_id] = handle
         return context
 
     def _backend_done(self, request_id: str, callbacks: BackendCallbacks) -> None:
