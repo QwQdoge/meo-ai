@@ -34,6 +34,12 @@ class AgentHttpTransport:
     def create_conversation(self) -> dict:
         return {"conversation_id": self.service.create_conversation()}
 
+    def list_messages(self, conversation_id: str) -> dict:
+        return {
+            "conversation_id": conversation_id,
+            "messages": self.service.list_messages(conversation_id),
+        }
+
     def list_models(self) -> list[dict]:
         return self.service.list_models()
 
@@ -257,6 +263,14 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             if segments == ["v1", "conversations"] and not query:
                 self._reply_json(HTTPStatus.OK, {"conversations": self.transport.list_conversations()})
+                return
+            if len(segments) == 4 and segments[:2] == ["v1", "conversations"] and segments[3] == "messages" and not query:
+                try:
+                    payload = self.transport.list_messages(segments[2])
+                except ValueError as exc:
+                    self._reply_error(HTTPStatus.NOT_FOUND, str(exc))
+                    return
+                self._reply_json(HTTPStatus.OK, payload)
                 return
             if segments == ["v1", "models"] and not query:
                 self._reply_json(HTTPStatus.OK, {"models": self.transport.list_models()})
