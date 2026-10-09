@@ -64,6 +64,23 @@ class RelayRegistry:
         session = self._sessions.get(device_id)
         return bool(session and session.account_user_id == account_user_id)
 
+    def online_sessions(
+        self,
+        *,
+        account_user_id: str,
+        required_capability: str | None = None,
+    ) -> tuple[RelaySession, ...]:
+        sessions = []
+        for device_id, session in self._sessions.items():
+            if session.account_user_id != account_user_id:
+                continue
+            if device_id not in self._connections:
+                continue
+            if required_capability is not None and required_capability not in session.capabilities:
+                continue
+            sessions.append(session)
+        return tuple(sorted(sessions, key=lambda item: item.device_id))
+
     async def dispatch_agent_run(
         self,
         *,
@@ -73,6 +90,7 @@ class RelayRegistry:
         conversation_id: str,
         text: str,
         required_capability: str = "agent.chat",
+        workspace_ref: str | None = None,
     ) -> None:
         if not run_id or not conversation_id or not text.strip():
             raise ValueError("AgentRun dispatch is incomplete")
@@ -84,16 +102,20 @@ class RelayRegistry:
             raise PermissionError("device does not belong to this account")
         if required_capability not in session.capabilities:
             raise PermissionError("device does not advertise required capability")
-        await connection.send_json(
-            {
-                "protocol_version": 1,
-                "type": "dispatch",
-                "run_id": run_id,
-                "conversation_id": conversation_id,
-                "device_id": device_id,
-                "text": text,
-            }
-        )
+        payload = {
+            "protocol_version": 1,
+            "type": "dispatch",
+            "run_id": run_id,
+            "conversation_id": conversation_id,
+            "device_id": device_id,
+            "text": text,
+        }
+        if workspace_ref is not None:
+            normalized_workspace = workspace_ref.strip()
+            if not normalized_workspace:
+                raise ValueError("workspace_ref must be non-empty when provided")
+            payload["workspace_ref"] = normalized_workspace
+        await connection.send_json(payload)
 
     async def cancel_agent_run(
         self,
