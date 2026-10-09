@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
+import os
+import shutil
 import socket
+import subprocess
 import time
 import webbrowser
 from dataclasses import dataclass
+from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
@@ -15,6 +20,9 @@ from meo.device.agentd import AgentdConfig
 from meo.device.config import relay_url_from_cloud, save_agentd_config
 from meo.device.protocol import DeviceRegistration
 from meo.device.secrets import KWalletDeviceSecretProvider
+
+
+DEFAULT_CLOUD_URL = "https://ai.meoarch.org"
 
 
 @dataclass(frozen=True)
@@ -126,8 +134,42 @@ class PairingClient:
         return item.strip()
 
 
+def default_device_id() -> str:
+    """Return a stable pseudonymous device ID without exposing machine-id."""
+    raw: bytes | None = None
+    for path in (Path("/etc/machine-id"), Path("/var/lib/dbus/machine-id")):
+        try:
+            candidate = path.read_bytes().strip()
+        except OSError:
+            continue
+        if candidate:
+            raw = candidate
+            break
+    if raw is None:
+        raw = socket.gethostname().encode("utf-8", errors="replace")
+    digest = hashlib.sha256(b"meo-ai-device-v1\0" + raw).hexdigest()[:20]
+    return f"device-{digest}"
+
+
+def try_start_agentd() -> bool:
+    systemctl = shutil.which("systemctl")
+    if not systemctl:
+        return False
+    try:
+        result = subprocess.run(
+            [systemctl, "--user", "enable", "--now", "meo-agentd.service"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
+
+
 async def _main_async(args) -> None:
-    device_id = args.device_id or socket.gethostname().lower().replace(" ", "-")
+    device_id = args.device_id or default_device_id()
     display_name = args.display_name or socket.gethostname()
     capabilities = tuple(args.capability or ("agent.chat",))
     config = PairingClientConfig(
@@ -148,20 +190,33 @@ async def _main_async(args) -> None:
     print("Connected to Meo.")
     print("Device credential: KWallet")
     print(f"Agent configuration: {config_path}")
-    print("Start the bridge with: meo-agentd")
+
+    if not args.no_start and try_start_agentd():
+        print("Meo agent is online and will start automatically with your session.")
+    else:
+        print("Start the bridge with: systemctl --user enable --now meo-agentd.service")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Connect this computer to Meo AI")
-    parser.add_argument("--cloud-url", required=True, help="Meo AI Cloud base URL")
-    parser.add_argument("--device-id", help="Stable Meo device ID; defaults to hostname")
-    parser.add_argument("--display-name", help="Friendly device name")
+    parser.add_argument(
+        "--cloud-url",
+        default=os.environ.get("MEO_AI_CLOUD_URL", DEFAULT_CLOUD_URL),
+        help=f"Meo AI Cloud base URL (default: {DEFAULT_CLOUD_URL})",
+    )
+    parser.add_argument("--device-id", help="Stable Meo device ID; generated locally by default")
+    parser.add_argument("--display-name", help="Friendly device name; defaults to hostname")
     parser.add_argument(
         "--capability",
         action="append",
         help="Device capability; may be repeated (default: agent.chat)",
     )
     parser.add_argument("--wallet", default="kdewallet", help="KWallet name")
+    parser.add_argument(
+        "--no-start",
+        action="store_true",
+        help="Connect the device but do not enable/start meo-agentd.service",
+    )
     args = parser.parse_args()
     try:
         asyncio.run(_main_async(args))
