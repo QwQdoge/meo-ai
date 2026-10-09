@@ -4,13 +4,22 @@ from dataclasses import dataclass
 from typing import Callable
 
 from meo.device.protocol import AgentRunBinding, AgentRunStatus
+from meo.device.workspace_bridge import (
+    bind_conversation_workspace,
+    ensure_remote_conversation,
+)
 from meo.service.backend_adapter import BackendCallbacks
 from meo.service.core import AgentServiceCore
 
 
 @dataclass
 class AgentServiceExecutor:
-    """Adapter from remote AgentRun messages to the existing AgentServiceCore."""
+    """Adapter from remote AgentRun messages to the existing AgentServiceCore.
+
+    Cloud conversation IDs are mapped to deterministic local Meo conversation
+    aliases. Optional workspace references are opaque local workspace IDs and are
+    resolved only by the local backend; they are never treated as paths.
+    """
 
     service: AgentServiceCore
     publish_event: Callable[[str, dict], None]
@@ -20,11 +29,23 @@ class AgentServiceExecutor:
         if not isinstance(text, str) or not text.strip():
             raise ValueError("dispatch text is required")
 
-        conversation_id = run.conversation_id
-        if not self.service.backend:
+        backend = self.service.backend
+        if backend is None:
             raise RuntimeError("AgentService backend is unavailable")
-        if not self.service.backend.conversation_exists(conversation_id):
-            raise ValueError("unknown conversation_id")
+
+        local_conversation_id = ensure_remote_conversation(
+            backend,
+            run.conversation_id,
+        )
+        workspace_ref = payload.get("workspace_ref")
+        if workspace_ref is not None:
+            if not isinstance(workspace_ref, str) or not workspace_ref.strip():
+                raise ValueError("workspace_ref must be a non-empty opaque ID")
+            bind_conversation_workspace(
+                backend,
+                local_conversation_id,
+                workspace_ref.strip(),
+            )
 
         def emit(kind: str, body: dict) -> None:
             self.publish_event(run.run_id, {"type": kind, **body})
@@ -68,8 +89,8 @@ class AgentServiceExecutor:
             on_error=on_error,
         )
         self.service.send_message(
-            conversation_id,
-            text,
+            local_conversation_id,
+            text.strip(),
             callbacks,
             on_started=on_started,
         )
