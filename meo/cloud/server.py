@@ -89,9 +89,9 @@ class _AiohttpRelaySocket:
 class _PairingStartLimiter:
     """Small in-process abuse guard for the unauthenticated pairing start route.
 
-    This is intentionally not the only deployment rate limit; production should
-    also rate-limit the route at the reverse proxy/edge. We do not trust
-    X-Forwarded-For here because proxy trust configuration belongs to deployment.
+    Production should also rate-limit this endpoint at the reverse proxy/edge.
+    X-Forwarded-For is deliberately ignored here because proxy trust belongs to
+    deployment configuration, not application code.
     """
 
     def __init__(self, *, limit: int = 8, window_seconds: int = 600) -> None:
@@ -168,7 +168,6 @@ def build_application(config: CloudServerConfig):
                 status=400,
             )
         except Exception:
-            # Never leak stack traces, local paths, database payloads or secrets.
             return web.json_response(
                 {"error": {"code": "internal_error", "message": "Meo AI could not complete this request."}},
                 status=500,
@@ -204,7 +203,6 @@ def build_application(config: CloudServerConfig):
             raise ApiError("invalid_request", "Request body must be an object.")
         return value
 
-    @staticmethod
     def ensure_fields(payload: dict[str, Any], allowed: set[str]) -> None:
         unknown = set(payload) - allowed
         if unknown:
@@ -218,8 +216,7 @@ def build_application(config: CloudServerConfig):
         return web.json_response({"ok": True, "service": "meo-ai-cloud"})
 
     async def start_device_pairing(request):
-        peer = request.remote or "unknown"
-        pairing_limiter.check(peer)
+        pairing_limiter.check(request.remote or "unknown")
         payload = await json_body(request)
         ensure_fields(payload, {"device_id", "display_name", "capabilities"})
         capabilities = payload.get("capabilities")
@@ -293,11 +290,7 @@ def build_application(config: CloudServerConfig):
                 ) from exc
             raise
         return web.json_response(
-            {
-                "state": "approved",
-                "device_id": preview.device_id,
-                "display_name": preview.display_name,
-            }
+            {"state": "approved", "device_id": preview.device_id, "display_name": preview.display_name}
         )
 
     async def create_agent_run(request):
@@ -306,8 +299,6 @@ def build_application(config: CloudServerConfig):
         result = await api.create(
             user_id=account.user_id,
             payload=payload,
-            # Full Access stays disabled until a trusted Account re-auth adapter
-            # explicitly authorizes this request server-side.
             allow_full_access=False,
         )
         return web.json_response(result, status=201)
@@ -330,7 +321,6 @@ def build_application(config: CloudServerConfig):
         return web.json_response(result)
 
     async def device_relay(request):
-        # Reject invalid device credentials before sending HTTP 101 Upgrade.
         authorization = request.headers.get("Authorization", "")
         if not authorization.startswith("Bearer "):
             raise ApiError("unauthorized_device", "Device credential is required.", status=401)
@@ -401,8 +391,6 @@ def main() -> None:
 
     config = CloudServerConfig.from_env()
     app = build_application(config)
-    # TLS is intentionally terminated by the deployment platform/reverse proxy.
-    # Do not expose this bind directly to the public internet without HTTPS.
     web.run_app(app, host=config.bind_host, port=config.port, access_log=None)
 
 
