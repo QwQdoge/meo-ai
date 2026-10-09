@@ -14,7 +14,7 @@ class SupabaseRestStoreTests(unittest.IsolatedAsyncioTestCase):
             if "ai_agent_events" in path:
                 return [{"id": 1}]
             if "ai_project_locations" in path:
-                return [{"device_id": "legion", "workspace_ref": "/home/user/Projects/meo-ai"}]
+                return [{"device_id": "legion", "workspace_ref": "workspace-meo-ai"}]
             if "ai_agent_runs" in path and method == "GET":
                 return [{"id": "run-1", "device_id": "legion", "status": "running"}]
             return None
@@ -51,7 +51,7 @@ class SupabaseRestStoreTests(unittest.IsolatedAsyncioTestCase):
             device_id="legion",
             status="queued",
             project_id="project-1",
-            workspace_ref="/home/user/Projects/meo-ai",
+            workspace_ref="workspace-meo-ai",
             permission_mode="smart",
             requested_capabilities=("agent.chat",),
         )
@@ -59,7 +59,8 @@ class SupabaseRestStoreTests(unittest.IsolatedAsyncioTestCase):
         assert body is not None
         self.assertEqual(body["permission_mode"], "smart")
         self.assertEqual(body["requested_capabilities"], ["agent.chat"])
-        self.assertEqual(body["workspace_ref"], "/home/user/Projects/meo-ai")
+        self.assertEqual(body["workspace_ref"], "workspace-meo-ai")
+        self.assertNotIn("/", body["workspace_ref"])
 
     async def test_project_location_read_is_explicitly_owner_scoped(self) -> None:
         rows = await self.store.list_project_locations(
@@ -73,12 +74,14 @@ class SupabaseRestStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("user_id=eq.user-1", path)
         self.assertIn("project_id=eq.project-1", path)
         self.assertEqual(rows[0]["device_id"], "legion")
+        self.assertEqual(rows[0]["workspace_ref"], "workspace-meo-ai")
 
     async def test_get_agent_run_is_owner_scoped(self) -> None:
         row = await self.store.get_agent_run(user_id="user-1", run_id="run-1")
         _method, path, _body, _prefer = self.calls[-1]
         self.assertIn("user_id=eq.user-1", path)
         self.assertIn("id=eq.run-1", path)
+        assert row is not None
         self.assertEqual(row["device_id"], "legion")
 
     async def test_new_agent_event_returns_true(self) -> None:
