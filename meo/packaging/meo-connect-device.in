@@ -1,0 +1,11 @@
+#!@PYTHON@
+
+import sys
+
+pkgdatadir = '@pkgdatadir@'
+sys.path.insert(1, pkgdatadir)
+
+from meo.device.pairing_client import main
+
+if __name__ == '__main__':
+    main()
