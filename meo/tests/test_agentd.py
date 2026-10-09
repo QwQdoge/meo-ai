@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from meo.device.agentd import AgentdConfig, MeoAgentd
+from meo.device.agentd import AgentdConfig, MeoAgentd, config_from_json
 from meo.device.protocol import AgentRunStatus, DeviceRegistration
 
 
@@ -18,6 +18,11 @@ class FakeConnection:
 
     async def close(self) -> None:
         pass
+
+
+class FakeSecrets:
+    async def get_device_token(self) -> str:
+        return "device-token"
 
 
 class FakeExecutor:
@@ -38,7 +43,7 @@ class FakeExecutor:
         self.decisions.append((run.run_id, decision_id, option_index))
 
 
-async def unused_connector(_config):
+async def unused_connector(_config, _device_token):
     raise RuntimeError("not used")
 
 
@@ -52,10 +57,14 @@ class AgentdTests(unittest.IsolatedAsyncioTestCase):
         self.config = AgentdConfig(
             device=device,
             relay_url="wss://relay.example.test/v1/device",
-            device_token="device-token",
         )
         self.executor = FakeExecutor()
-        self.agentd = MeoAgentd(self.config, unused_connector, self.executor)
+        self.agentd = MeoAgentd(
+            self.config,
+            FakeSecrets(),
+            unused_connector,
+            self.executor,
+        )
         self.connection = FakeConnection()
 
     async def test_duplicate_dispatch_is_acknowledged_without_reexecution(self) -> None:
@@ -136,6 +145,14 @@ class AgentdTests(unittest.IsolatedAsyncioTestCase):
                     "device_id": "other-device",
                     "text": "Do something",
                 },
+            )
+
+    def test_persisted_config_rejects_device_secret(self) -> None:
+        with self.assertRaises(ValueError):
+            config_from_json(
+                '{"device_id":"legion","display_name":"Legion",'
+                '"relay_url":"wss://relay.example.test/v1/device",'
+                '"capabilities":[],"device_token":"secret"}'
             )
 
 
