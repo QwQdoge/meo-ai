@@ -62,6 +62,20 @@ class ChatGrantTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             grant.validate(now=self.now)
 
+    def test_naive_current_time_is_rejected_cleanly(self) -> None:
+        grant = ChatGrant(
+            grant_id="grant-5",
+            user_id="user-1",
+            client_id="meo-ai-web",
+            credential_id="credential-1",
+            mode=ChatGrantMode.SESSION,
+            data_categories=frozenset({"chat_text"}),
+            issued_at=self.now,
+            expires_at=self.now + timedelta(hours=1),
+        )
+        with self.assertRaisesRegex(ValueError, "now must be timezone-aware"):
+            grant.validate(now=datetime(2026, 10, 9, 11, 31))
+
 
 class BrokerInferenceRequestTests(unittest.TestCase):
     def test_valid_request_contains_no_provider_secret(self) -> None:
