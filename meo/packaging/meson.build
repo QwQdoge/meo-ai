@@ -19,8 +19,25 @@ configure_file(
 )
 
 configure_file(
+  input: 'meo-agentd.in',
+  output: 'meo-agentd',
+  configuration: meo_conf,
+  install: true,
+  install_dir: get_option('bindir'),
+  install_mode: 'r-xr--r--'
+)
+
+configure_file(
   input: 'meo-agent-service.service.in',
   output: 'meo-agent-service.service',
+  configuration: meo_conf,
+  install: true,
+  install_dir: join_paths(get_option('libdir'), 'systemd', 'user')
+)
+
+configure_file(
+  input: 'meo-agentd.service.in',
+  output: 'meo-agentd.service',
   configuration: meo_conf,
   install: true,
   install_dir: join_paths(get_option('libdir'), 'systemd', 'user')
@@ -55,4 +72,19 @@ install_data(
   '../adapters/legacy_chat.py',
   '../adapters/system_tools.py',
   install_dir: join_paths(meo_moduledir, 'adapters')
+)
+
+install_data(
+  '../device/agentd.py',
+  '../device/config.py',
+  '../device/events.py',
+  '../device/executor.py',
+  '../device/main.py',
+  '../device/pairing_client.py',
+  '../device/protocol.py',
+  '../device/runtime.py',
+  '../device/secrets.py',
+  '../device/websocket_transport.py',
+  '../device/workspace_bridge.py',
+  install_dir: join_paths(meo_moduledir, 'device')
 )
