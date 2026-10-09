@@ -23,6 +23,11 @@ _ALLOWED_DATA_CATEGORIES = frozenset(
 )
 
 
+def _require_aware(value: datetime, label: str) -> None:
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError(f"{label} must be timezone-aware")
+
+
 @dataclass(frozen=True)
 class ChatGrant:
     """A revocable permission to use one Account-owned AI credential for chat.
@@ -43,12 +48,12 @@ class ChatGrant:
 
     def validate(self, *, now: datetime | None = None) -> None:
         current = now or datetime.now(timezone.utc)
-        if self.issued_at.tzinfo is None:
-            raise ValueError("issued_at must be timezone-aware")
-        if self.expires_at is not None and self.expires_at.tzinfo is None:
-            raise ValueError("expires_at must be timezone-aware")
-        if self.revoked_at is not None and self.revoked_at.tzinfo is None:
-            raise ValueError("revoked_at must be timezone-aware")
+        _require_aware(current, "now")
+        _require_aware(self.issued_at, "issued_at")
+        if self.expires_at is not None:
+            _require_aware(self.expires_at, "expires_at")
+        if self.revoked_at is not None:
+            _require_aware(self.revoked_at, "revoked_at")
         if not self.grant_id or not self.user_id or not self.client_id or not self.credential_id:
             raise ValueError("grant identity fields are required")
         if not self.data_categories:
