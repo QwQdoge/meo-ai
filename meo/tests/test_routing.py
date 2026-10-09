@@ -64,7 +64,7 @@ class AutomaticDeviceResolverTests(unittest.IsolatedAsyncioTestCase):
                 [
                     {
                         "device_id": "legion",
-                        "workspace_ref": "/home/user/Projects/meo-ai",
+                        "workspace_ref": "workspace-meo-ai",
                     }
                 ]
             ),
@@ -77,7 +77,7 @@ class AutomaticDeviceResolverTests(unittest.IsolatedAsyncioTestCase):
             required_capability="agent.chat",
         )
         self.assertEqual(result.device_id, "legion")
-        self.assertEqual(result.workspace_ref, "/home/user/Projects/meo-ai")
+        self.assertEqual(result.workspace_ref, "workspace-meo-ai")
 
     async def test_project_without_saved_location_does_not_fall_back_to_arbitrary_path(self) -> None:
         resolver = AutomaticDeviceResolver(FakeStore(), self.registry_with("legion"))
