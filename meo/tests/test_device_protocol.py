@@ -49,14 +49,24 @@ class AgentRunBindingTests(unittest.TestCase):
         self.assertFalse(run.observe_event(0))
         self.assertEqual(run.last_event_seq, 1)
 
-    def test_terminal_status_is_explicit(self) -> None:
+    def test_valid_lifecycle_reaches_completion(self) -> None:
+        run = AgentRunBinding("run-1", "conversation-1", "legion")
+        run.transition(AgentRunStatus.DISPATCHING)
+        run.transition(AgentRunStatus.RUNNING)
+        run.transition(AgentRunStatus.AWAITING_APPROVAL)
+        run.transition(AgentRunStatus.RUNNING)
+        run.transition(AgentRunStatus.COMPLETED)
+        self.assertTrue(run.terminal)
+
+    def test_terminal_run_cannot_restart(self) -> None:
         run = AgentRunBinding(
             "run-1",
             "conversation-1",
             "legion",
             status=AgentRunStatus.COMPLETED,
         )
-        self.assertTrue(run.terminal)
+        with self.assertRaises(ValueError):
+            run.transition(AgentRunStatus.RUNNING)
 
     def test_invalid_event_sequence_is_rejected(self) -> None:
         run = AgentRunBinding("run-1", "conversation-1", "legion")
