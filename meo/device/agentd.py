@@ -21,7 +21,6 @@ class AgentdState(str, Enum):
 class AgentdConfig:
     device: DeviceRegistration
     relay_url: str
-    device_token: str
     heartbeat_seconds: float = 20.0
     reconnect_min_seconds: float = 1.0
     reconnect_max_seconds: float = 30.0
@@ -30,14 +29,16 @@ class AgentdConfig:
         self.device.validate()
         if not self.relay_url.startswith("wss://"):
             raise ValueError("relay_url must use wss://")
-        if not self.device_token.strip():
-            raise ValueError("device_token is required")
         if self.heartbeat_seconds <= 0:
             raise ValueError("heartbeat_seconds must be positive")
         if self.reconnect_min_seconds <= 0:
             raise ValueError("reconnect_min_seconds must be positive")
         if self.reconnect_max_seconds < self.reconnect_min_seconds:
             raise ValueError("reconnect_max_seconds must be >= reconnect_min_seconds")
+
+
+class DeviceSecretProvider(Protocol):
+    async def get_device_token(self) -> str: ...
 
 
 class RelayConnection(Protocol):
@@ -49,7 +50,7 @@ class RelayConnection(Protocol):
 
 
 class RelayConnector(Protocol):
-    async def __call__(self, config: AgentdConfig) -> RelayConnection: ...
+    async def __call__(self, config: AgentdConfig, device_token: str) -> RelayConnection: ...
 
 
 class AgentRunExecutor(Protocol):
@@ -63,14 +64,16 @@ class AgentRunExecutor(Protocol):
 class MeoAgentd:
     """Transport coordinator for one enrolled Meo device.
 
-    This layer deliberately does not expose arbitrary remote shell execution.
-    It accepts typed relay messages and delegates local agent work to an injected
-    executor, which is expected to bridge to the existing AgentService boundary.
+    Persisted configuration is intentionally non-secret. A narrow device token is
+    loaded at connection time from an injected secure-storage provider. This layer
+    does not expose arbitrary remote shell execution; it accepts typed relay
+    messages and delegates local work to the existing AgentService boundary.
     """
 
     def __init__(
         self,
         config: AgentdConfig,
+        secrets: DeviceSecretProvider,
         connector: RelayConnector,
         executor: AgentRunExecutor,
         *,
@@ -79,6 +82,7 @@ class MeoAgentd:
     ) -> None:
         config.validate()
         self.config = config
+        self.secrets = secrets
         self.connector = connector
         self.executor = executor
         self.sleep = sleep
@@ -94,7 +98,10 @@ class MeoAgentd:
             self.state = AgentdState.CONNECTING
             connection: RelayConnection | None = None
             try:
-                connection = await self.connector(self.config)
+                device_token = (await self.secrets.get_device_token()).strip()
+                if not device_token:
+                    raise RuntimeError("device credential is unavailable")
+                connection = await self.connector(self.config, device_token)
                 delay = self.config.reconnect_min_seconds
                 self.state = AgentdState.ONLINE
                 await self._serve(connection)
@@ -262,6 +269,8 @@ def config_from_json(value: str) -> AgentdConfig:
     payload = json.loads(value)
     if not isinstance(payload, dict):
         raise ValueError("agentd config must be a JSON object")
+    if "device_token" in payload or "token" in payload:
+        raise ValueError("device credentials must not be stored in agentd config")
     capabilities = payload.get("capabilities", [])
     if not isinstance(capabilities, list):
         raise ValueError("capabilities must be a list")
@@ -273,7 +282,6 @@ def config_from_json(value: str) -> AgentdConfig:
     config = AgentdConfig(
         device=device,
         relay_url=str(payload.get("relay_url", "")),
-        device_token=str(payload.get("device_token", "")),
         heartbeat_seconds=float(payload.get("heartbeat_seconds", 20.0)),
         reconnect_min_seconds=float(payload.get("reconnect_min_seconds", 1.0)),
         reconnect_max_seconds=float(payload.get("reconnect_max_seconds", 30.0)),
