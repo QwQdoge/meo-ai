@@ -28,6 +28,15 @@ configure_file(
 )
 
 configure_file(
+  input: 'meo-connect-device.in',
+  output: 'meo-connect-device',
+  configuration: meo_conf,
+  install: true,
+  install_dir: get_option('bindir'),
+  install_mode: 'r-xr--r--'
+)
+
+configure_file(
   input: 'meo-agent-service.service.in',
   output: 'meo-agent-service.service',
   configuration: meo_conf,
