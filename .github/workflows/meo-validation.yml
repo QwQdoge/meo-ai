@@ -25,6 +25,7 @@ jobs:
       - run: DESTDIR="$PWD/build/stage" meson install -C build/package
       - run: |
           test -x build/stage/usr/bin/meo-agent-service
+          test -x build/stage/usr/bin/meo-agentd
           test -f build/stage/usr/share/newelle/meo/runtime/main.py
           test -f build/stage/usr/share/newelle/meo/runtime/http_transport.py
           test -f build/stage/usr/share/newelle/meo/runtime/event_journal.py
@@ -33,8 +34,15 @@ jobs:
           test -f build/stage/usr/share/newelle/meo/system/dbus_router.py
           test -f build/stage/usr/share/newelle/meo/adapters/headless_newelle.py
           test -f build/stage/usr/share/newelle/meo/adapters/system_tools.py
+          test -f build/stage/usr/share/newelle/meo/device/main.py
+          test -f build/stage/usr/share/newelle/meo/device/config.py
+          test -f build/stage/usr/share/newelle/meo/device/secrets.py
           test -f build/stage/usr/lib/systemd/user/meo-agent-service.service
+          test -f build/stage/usr/lib/systemd/user/meo-agentd.service
           grep -F 'ExecStart=/usr/bin/meo-agent-service --host 127.0.0.1 --port 8765' build/stage/usr/lib/systemd/user/meo-agent-service.service
+          grep -F 'ExecStart=/usr/bin/meo-agentd' build/stage/usr/lib/systemd/user/meo-agentd.service
+          grep -F 'NoNewPrivileges=true' build/stage/usr/lib/systemd/user/meo-agentd.service
+          grep -F 'ReadWritePaths=%h' build/stage/usr/lib/systemd/user/meo-agentd.service
   native:
     runs-on: ubuntu-latest
     container: archlinux:base-devel
