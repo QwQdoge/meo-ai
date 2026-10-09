@@ -78,7 +78,12 @@ class RelayWebSocketServer:
             while True:
                 message = await self._receive_json(websocket)
                 self._require_protocol(message)
-                await self._handle_device_message(session, display_name, message)
+                await self._handle_device_message(
+                    session,
+                    display_name,
+                    connection,
+                    message,
+                )
         finally:
             self.registry.unregister(device_id, connection)
 
@@ -86,6 +91,7 @@ class RelayWebSocketServer:
         self,
         session: RelaySession,
         display_name: str,
+        connection: "_WebSocketConnection",
         message: dict,
     ) -> None:
         message_type = message.get("type")
@@ -142,8 +148,6 @@ class RelayWebSocketServer:
             return
 
         if message_type == "decision_ack":
-            # The decision is already tied to an existing run; the next device
-            # event is authoritative for execution progress.
             self._required_text(message, "run_id")
             self._required_text(message, "decision_id")
             return
@@ -161,34 +165,44 @@ class RelayWebSocketServer:
             event_type=event_type,
             payload=payload,
         )
-        if not inserted:
-            return
 
-        values: dict[str, Any] = {"last_event_seq": seq}
-        if event_type == "request_started":
-            request_id = payload.get("request_id")
-            if isinstance(request_id, str) and request_id.strip():
-                values["local_request_id"] = request_id.strip()
-                values["status"] = "running"
-        elif event_type == "done":
-            status = payload.get("status")
-            values["status"] = self._run_status(status)
-        elif event_type == "error":
-            values["status"] = "failed"
-            code = payload.get("code")
-            if isinstance(code, str) and code.strip():
-                values["error_code"] = code.strip()
-        elif event_type == "tool_event":
-            event = payload.get("event")
-            if isinstance(event, dict) and event.get("type") == "tool_interaction":
-                values["status"] = "awaiting_approval"
-            elif isinstance(event, dict) and event.get("type") == "tool_result":
-                values["status"] = "running"
+        if inserted:
+            values: dict[str, Any] = {"last_event_seq": seq}
+            if event_type == "request_started":
+                request_id = payload.get("request_id")
+                if isinstance(request_id, str) and request_id.strip():
+                    values["local_request_id"] = request_id.strip()
+                    values["status"] = "running"
+            elif event_type == "done":
+                status = payload.get("status")
+                values["status"] = self._run_status(status)
+            elif event_type == "error":
+                values["status"] = "failed"
+                code = payload.get("code")
+                if isinstance(code, str) and code.strip():
+                    values["error_code"] = code.strip()
+            elif event_type == "tool_event":
+                event = payload.get("event")
+                if isinstance(event, dict) and event.get("type") == "tool_interaction":
+                    values["status"] = "awaiting_approval"
+                elif isinstance(event, dict) and event.get("type") == "tool_result":
+                    values["status"] = "running"
 
-        await self.store.update_agent_run(
-            user_id=session.account_user_id,
-            run_id=run_id,
-            values=values,
+            await self.store.update_agent_run(
+                user_id=session.account_user_id,
+                run_id=run_id,
+                values=values,
+            )
+
+        # A duplicate event is also acknowledged. Its unique (run_id, seq) row
+        # proves it was persisted by this or an earlier connection attempt.
+        await connection.send_json(
+            {
+                "protocol_version": PROTOCOL_VERSION,
+                "type": "event_ack",
+                "run_id": run_id,
+                "seq": seq,
+            }
         )
 
     @staticmethod
