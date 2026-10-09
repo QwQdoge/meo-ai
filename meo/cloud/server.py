@@ -77,7 +77,7 @@ class _AiohttpRelaySocket:
         await self.websocket.send_str(value)
 
 
-async def build_application(config: CloudServerConfig):
+def build_application(config: CloudServerConfig):
     try:
         from aiohttp import WSMsgType, web
     except ImportError as exc:
@@ -97,38 +97,16 @@ async def build_application(config: CloudServerConfig):
             publishable_key=config.supabase_publishable_key,
         )
     )
+    device_verifier = DeviceBearerVerifier(store)
     relay = RelayRegistry()
     resolver = AutomaticDeviceResolver(store=store, relay=relay)
     orchestrator = AgentRunOrchestrator(store=store, relay=relay, resolver=resolver)
     api = AgentRunApi(store=store, relay=relay, orchestrator=orchestrator)
     relay_server = RelayWebSocketServer(
         registry=relay,
-        verifier=DeviceBearerVerifier(store),
+        verifier=device_verifier,
         store=store,
     )
-
-    app = web.Application(client_max_size=128 * 1024)
-
-    async def identity(request):
-        authorization = request.headers.get("Authorization", "")
-        if not authorization.startswith("Bearer "):
-            raise ApiError("unauthorized", "Sign in with Meo Account.", status=401)
-        token = authorization.removeprefix("Bearer ").strip()
-        try:
-            return await account_verifier.verify(token)
-        except PermissionError as exc:
-            raise ApiError("unauthorized", "Your Meo Account session is invalid or expired.", status=401) from exc
-
-    async def json_body(request) -> dict[str, Any]:
-        if request.content_type != "application/json":
-            raise ApiError("invalid_content_type", "Use application/json.", status=415)
-        try:
-            value = await request.json(loads=json.loads)
-        except Exception as exc:
-            raise ApiError("invalid_json", "Request body is not valid JSON.") from exc
-        if not isinstance(value, dict):
-            raise ApiError("invalid_request", "Request body must be an object.")
-        return value
 
     @web.middleware
     async def safe_errors(request, handler):
@@ -156,8 +134,31 @@ async def build_application(config: CloudServerConfig):
         response.headers["Cache-Control"] = "no-store"
         return response
 
-    # aiohttp applies middlewares in the order configured at application creation.
-    app.middlewares.append(safe_errors)
+    app = web.Application(
+        client_max_size=128 * 1024,
+        middlewares=[safe_errors],
+    )
+
+    async def identity(request):
+        authorization = request.headers.get("Authorization", "")
+        if not authorization.startswith("Bearer "):
+            raise ApiError("unauthorized", "Sign in with Meo Account.", status=401)
+        token = authorization.removeprefix("Bearer ").strip()
+        try:
+            return await account_verifier.verify(token)
+        except PermissionError as exc:
+            raise ApiError("unauthorized", "Your Meo Account session is invalid or expired.", status=401) from exc
+
+    async def json_body(request) -> dict[str, Any]:
+        if request.content_type != "application/json":
+            raise ApiError("invalid_content_type", "Use application/json.", status=415)
+        try:
+            value = await request.json(loads=json.loads)
+        except Exception as exc:
+            raise ApiError("invalid_json", "Request body is not valid JSON.") from exc
+        if not isinstance(value, dict):
+            raise ApiError("invalid_request", "Request body must be an object.")
+        return value
 
     async def health(_request):
         return web.json_response({"ok": True, "service": "meo-ai-cloud"})
@@ -202,6 +203,23 @@ async def build_application(config: CloudServerConfig):
         return web.json_response(result)
 
     async def device_relay(request):
+        # Reject invalid device credentials before sending HTTP 101 Upgrade.
+        authorization = request.headers.get("Authorization", "")
+        if not authorization.startswith("Bearer "):
+            raise ApiError("unauthorized_device", "Device credential is required.", status=401)
+        token = authorization.removeprefix("Bearer ").strip()
+        try:
+            claims = await device_verifier.verify(token)
+        except PermissionError as exc:
+            raise ApiError("unauthorized_device", "Device credential is invalid or expired.", status=401) from exc
+        if not claims.allows("relay.connect"):
+            raise ApiError("unauthorized_device", "Device credential cannot connect to Relay.", status=403)
+
+        requested_protocols = request.headers.get("Sec-WebSocket-Protocol", "")
+        protocols = {item.strip() for item in requested_protocols.split(",") if item.strip()}
+        if "meo-agentd.v1" not in protocols:
+            raise ApiError("unsupported_protocol", "meo-agentd.v1 is required.", status=426)
+
         websocket = web.WebSocketResponse(
             protocols=("meo-agentd.v1",),
             heartbeat=20,
@@ -209,12 +227,9 @@ async def build_application(config: CloudServerConfig):
             max_msg_size=1_048_576,
         )
         await websocket.prepare(request)
-        if websocket.ws_protocol != "meo-agentd.v1":
-            await websocket.close(code=1002, message=b"meo-agentd.v1 required")
-            return websocket
         adapter = _AiohttpRelaySocket(request, websocket, WSMsgType)
         try:
-            await relay_server.handle(adapter)
+            await relay_server.handle(adapter, claims=claims)
         except ConnectionError:
             pass
         finally:
