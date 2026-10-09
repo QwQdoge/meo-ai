@@ -22,6 +22,35 @@ _TERMINAL_RUN_STATES = {
     AgentRunStatus.FAILED,
 }
 
+_ALLOWED_RUN_TRANSITIONS = {
+    AgentRunStatus.QUEUED: {
+        AgentRunStatus.DISPATCHING,
+        AgentRunStatus.CANCEL_REQUESTED,
+        AgentRunStatus.CANCELLED,
+        AgentRunStatus.FAILED,
+    },
+    AgentRunStatus.DISPATCHING: {
+        AgentRunStatus.RUNNING,
+        AgentRunStatus.CANCEL_REQUESTED,
+        AgentRunStatus.FAILED,
+    },
+    AgentRunStatus.RUNNING: {
+        AgentRunStatus.AWAITING_APPROVAL,
+        AgentRunStatus.COMPLETED,
+        AgentRunStatus.CANCEL_REQUESTED,
+        AgentRunStatus.FAILED,
+    },
+    AgentRunStatus.AWAITING_APPROVAL: {
+        AgentRunStatus.RUNNING,
+        AgentRunStatus.CANCEL_REQUESTED,
+        AgentRunStatus.FAILED,
+    },
+    AgentRunStatus.CANCEL_REQUESTED: {
+        AgentRunStatus.CANCELLED,
+        AgentRunStatus.FAILED,
+    },
+}
+
 
 @dataclass(frozen=True)
 class DeviceRegistration:
@@ -81,6 +110,13 @@ class AgentRunBinding:
     @property
     def terminal(self) -> bool:
         return self.status in _TERMINAL_RUN_STATES
+
+    def transition(self, next_status: AgentRunStatus) -> None:
+        if self.terminal:
+            raise ValueError(f"AgentRun is already terminal: {self.status}")
+        if next_status not in _ALLOWED_RUN_TRANSITIONS.get(self.status, set()):
+            raise ValueError(f"invalid AgentRun transition {self.status} -> {next_status}")
+        self.status = next_status
 
     def bind_local_request(self, request_id: str) -> None:
         request_id = str(request_id).strip()
