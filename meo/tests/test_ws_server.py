@@ -20,6 +20,27 @@ class FakeVerifier:
         return self.claims
 
 
+class FakeStore:
+    def __init__(self, *, inserted: bool = True) -> None:
+        self.inserted = inserted
+        self.devices: list[dict] = []
+        self.events: list[dict] = []
+        self.updates: list[dict] = []
+
+    async def touch_device(self, **values) -> None:
+        self.devices.append(values)
+
+    async def create_agent_run(self, **values) -> None:
+        pass
+
+    async def append_agent_event(self, **values) -> bool:
+        self.events.append(values)
+        return self.inserted
+
+    async def update_agent_run(self, **values) -> None:
+        self.updates.append(values)
+
+
 class FakeWebSocket:
     def __init__(self, frames: list[dict], token: str = "device-token") -> None:
         self.request_headers = {"Authorization": f"Bearer {token}"}
@@ -47,21 +68,21 @@ class RelayWebSocketServerTests(unittest.IsolatedAsyncioTestCase):
             expires_at=now + timedelta(days=30),
         )
 
+    @staticmethod
+    def hello(device_id: str = "legion") -> dict:
+        return {
+            "protocol_version": 1,
+            "type": "hello",
+            "device_id": device_id,
+            "display_name": "Legion Y9000X",
+            "capabilities": ["agent.chat"],
+        }
+
     async def test_authenticated_hello_registers_device_then_cleans_up(self) -> None:
         registry = RelayRegistry()
         verifier = FakeVerifier(self.claims)
         server = RelayWebSocketServer(registry, verifier)
-        websocket = FakeWebSocket(
-            [
-                {
-                    "protocol_version": 1,
-                    "type": "hello",
-                    "device_id": "legion",
-                    "display_name": "Legion Y9000X",
-                    "capabilities": ["agent.chat"],
-                }
-            ]
-        )
+        websocket = FakeWebSocket([self.hello()])
 
         with self.assertRaises(RuntimeError):
             await server.handle(websocket)
@@ -70,32 +91,78 @@ class RelayWebSocketServerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(websocket.sent[0]["type"], "hello_ack")
         self.assertFalse(registry.is_online("user-1", "legion"))
 
-    async def test_credential_device_must_match_hello(self) -> None:
-        server = RelayWebSocketServer(RelayRegistry(), FakeVerifier(self.claims))
+    async def test_event_is_persisted_and_acknowledged(self) -> None:
+        store = FakeStore()
+        server = RelayWebSocketServer(
+            RelayRegistry(),
+            FakeVerifier(self.claims),
+            store,
+        )
         websocket = FakeWebSocket(
             [
+                self.hello(),
                 {
                     "protocol_version": 1,
-                    "type": "hello",
-                    "device_id": "other-device",
-                    "capabilities": ["agent.chat"],
-                }
+                    "type": "event",
+                    "device_id": "legion",
+                    "run_id": "run-1",
+                    "seq": 0,
+                    "event_type": "request_started",
+                    "payload": {"request_id": "local-1"},
+                },
             ]
         )
+
+        with self.assertRaises(RuntimeError):
+            await server.handle(websocket)
+
+        self.assertEqual(len(store.devices), 1)
+        self.assertEqual(store.events[0]["run_id"], "run-1")
+        self.assertEqual(store.events[0]["seq"], 0)
+        self.assertEqual(store.updates[0]["values"]["local_request_id"], "local-1")
+        self.assertEqual(websocket.sent[-1]["type"], "event_ack")
+        self.assertEqual(websocket.sent[-1]["seq"], 0)
+
+    async def test_duplicate_persisted_event_is_still_acknowledged(self) -> None:
+        store = FakeStore(inserted=False)
+        server = RelayWebSocketServer(
+            RelayRegistry(),
+            FakeVerifier(self.claims),
+            store,
+        )
+        websocket = FakeWebSocket(
+            [
+                self.hello(),
+                {
+                    "protocol_version": 1,
+                    "type": "event",
+                    "device_id": "legion",
+                    "run_id": "run-1",
+                    "seq": 4,
+                    "event_type": "text_delta",
+                    "payload": {"text": "again"},
+                },
+            ]
+        )
+
+        with self.assertRaises(RuntimeError):
+            await server.handle(websocket)
+
+        self.assertEqual(store.updates, [])
+        self.assertEqual(websocket.sent[-1]["type"], "event_ack")
+        self.assertEqual(websocket.sent[-1]["seq"], 4)
+
+    async def test_credential_device_must_match_hello(self) -> None:
+        server = RelayWebSocketServer(RelayRegistry(), FakeVerifier(self.claims))
+        websocket = FakeWebSocket([self.hello("other-device")])
         with self.assertRaises(PermissionError):
             await server.handle(websocket)
 
     async def test_protocol_version_is_required(self) -> None:
         server = RelayWebSocketServer(RelayRegistry(), FakeVerifier(self.claims))
-        websocket = FakeWebSocket(
-            [
-                {
-                    "type": "hello",
-                    "device_id": "legion",
-                    "capabilities": ["agent.chat"],
-                }
-            ]
-        )
+        frame = self.hello()
+        frame.pop("protocol_version")
+        websocket = FakeWebSocket([frame])
         with self.assertRaises(ValueError):
             await server.handle(websocket)
 
