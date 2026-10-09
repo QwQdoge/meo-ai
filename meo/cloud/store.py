@@ -66,6 +66,12 @@ class CloudStore(Protocol):
         run_id: str,
     ) -> dict | None: ...
 
+    async def get_device_credential_by_hash(
+        self,
+        *,
+        token_hash: str,
+    ) -> dict | None: ...
+
 
 @dataclass(frozen=True)
 class SupabaseRestConfig:
@@ -83,8 +89,8 @@ class SupabaseRestStore:
     """Server-only persistence adapter for Meo AI cloud state.
 
     The service-role key must never be shipped to browser/native clients. All
-    service-role reads include explicit owner filters because service_role bypasses
-    RLS by design.
+    service-role reads include explicit owner filters where ownership is known;
+    opaque credential lookups use only a one-way token hash.
     """
 
     def __init__(
@@ -273,6 +279,33 @@ class SupabaseRestStore:
         )
         if not isinstance(result, list):
             raise RuntimeError("Supabase AgentRun response is invalid")
+        if not result:
+            return None
+        row = result[0]
+        return row if isinstance(row, dict) else None
+
+    async def get_device_credential_by_hash(
+        self,
+        *,
+        token_hash: str,
+    ) -> dict | None:
+        token_hash = token_hash.strip().lower()
+        if len(token_hash) != 64 or any(ch not in "0123456789abcdef" for ch in token_hash):
+            raise ValueError("token_hash must be a SHA-256 hex digest")
+        query = urlencode(
+            {
+                "select": "id,user_id,device_id,scopes,issued_at,expires_at,revoked_at",
+                "token_hash": f"eq.{token_hash}",
+                "limit": "1",
+            }
+        )
+        result = await self._request(
+            "GET",
+            f"/rest/v1/ai_device_credentials?{query}",
+            None,
+        )
+        if not isinstance(result, list):
+            raise RuntimeError("Supabase device credential response is invalid")
         if not result:
             return None
         row = result[0]
