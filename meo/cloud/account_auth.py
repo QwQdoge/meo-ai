@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -12,6 +13,7 @@ from urllib.request import Request, urlopen
 class AccountIdentity:
     user_id: str
     email: str | None = None
+    session_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -27,7 +29,12 @@ class SupabaseAccountAuthConfig:
 
 
 class SupabaseAccountTokenVerifier:
-    """Verify a Meo Account access token without trusting browser-supplied IDs."""
+    """Verify a Meo Account access token without trusting browser-supplied IDs.
+
+    The user identity comes from Supabase Auth. ``session_id`` is decoded only
+    from that same verified token and is used to bind sensitive server-side
+    re-auth checks to the browser session that proved the user's identity.
+    """
 
     def __init__(
         self,
@@ -58,7 +65,25 @@ class SupabaseAccountTokenVerifier:
         return AccountIdentity(
             user_id=user_id.strip(),
             email=email if isinstance(email, str) else None,
+            session_id=self._session_id(token),
         )
+
+    @staticmethod
+    def _session_id(token: str) -> str | None:
+        parts = token.split(".")
+        if len(parts) != 3:
+            return None
+        try:
+            payload = parts[1]
+            padded = payload + "=" * (-len(payload) % 4)
+            decoded = base64.urlsafe_b64decode(padded.encode("ascii"))
+            claims = json.loads(decoded.decode("utf-8"))
+        except Exception:
+            return None
+        if not isinstance(claims, dict):
+            return None
+        session_id = claims.get("session_id")
+        return session_id.strip() if isinstance(session_id, str) and session_id.strip() else None
 
     def _request_user_sync(self, token: str) -> dict:
         request = Request(
