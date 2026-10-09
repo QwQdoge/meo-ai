@@ -72,6 +72,50 @@ class CloudStore(Protocol):
         token_hash: str,
     ) -> dict | None: ...
 
+    async def create_device_enrollment(
+        self,
+        *,
+        enrollment_id: str,
+        secret_hash: str,
+        user_code: str,
+        device_id: str,
+        display_name: str,
+        capabilities: tuple[str, ...],
+        requested_scopes: tuple[str, ...],
+        expires_at: datetime,
+    ) -> None: ...
+
+    async def get_device_enrollment_by_code(self, *, user_code: str) -> dict | None: ...
+
+    async def get_device_enrollment_by_secret_hash(
+        self,
+        *,
+        secret_hash: str,
+    ) -> dict | None: ...
+
+    async def approve_device_enrollment(
+        self,
+        *,
+        enrollment_id: str,
+        user_id: str,
+    ) -> dict | None: ...
+
+    async def consume_device_enrollment(
+        self,
+        *,
+        secret_hash: str,
+        token_hash: str,
+        credential_expires_at: datetime,
+    ) -> dict | None: ...
+
+    async def has_recent_reauth(
+        self,
+        *,
+        user_id: str,
+        session_id: str,
+        purpose: str,
+    ) -> bool: ...
+
 
 @dataclass(frozen=True)
 class SupabaseRestConfig:
@@ -90,7 +134,8 @@ class SupabaseRestStore:
 
     The service-role key must never be shipped to browser/native clients. All
     service-role reads include explicit owner filters where ownership is known;
-    opaque credential lookups use only a one-way token hash.
+    opaque credential/enrollment lookups use only one-way token hashes or short
+    public pairing codes.
     """
 
     def __init__(
@@ -236,11 +281,7 @@ class SupabaseRestStore:
                 "order": "updated_at.desc",
             }
         )
-        result = await self._request(
-            "GET",
-            f"/rest/v1/ai_project_locations?{query}",
-            None,
-        )
+        result = await self._request("GET", f"/rest/v1/ai_project_locations?{query}", None)
         if not isinstance(result, list):
             raise RuntimeError("Supabase project location response is invalid")
         rows: list[dict] = []
@@ -250,20 +291,10 @@ class SupabaseRestStore:
             device_id = row.get("device_id")
             workspace_ref = row.get("workspace_ref")
             if isinstance(device_id, str) and device_id.strip() and isinstance(workspace_ref, str) and workspace_ref.strip():
-                rows.append(
-                    {
-                        "device_id": device_id.strip(),
-                        "workspace_ref": workspace_ref.strip(),
-                    }
-                )
+                rows.append({"device_id": device_id.strip(), "workspace_ref": workspace_ref.strip()})
         return tuple(rows)
 
-    async def get_agent_run(
-        self,
-        *,
-        user_id: str,
-        run_id: str,
-    ) -> dict | None:
+    async def get_agent_run(self, *, user_id: str, run_id: str) -> dict | None:
         query = urlencode(
             {
                 "select": "id,device_id,status,conversation_id,permission_mode,last_event_seq",
@@ -272,26 +303,11 @@ class SupabaseRestStore:
                 "limit": "1",
             }
         )
-        result = await self._request(
-            "GET",
-            f"/rest/v1/ai_agent_runs?{query}",
-            None,
-        )
-        if not isinstance(result, list):
-            raise RuntimeError("Supabase AgentRun response is invalid")
-        if not result:
-            return None
-        row = result[0]
-        return row if isinstance(row, dict) else None
+        result = await self._request("GET", f"/rest/v1/ai_agent_runs?{query}", None)
+        return self._single_row(result, "Supabase AgentRun response is invalid")
 
-    async def get_device_credential_by_hash(
-        self,
-        *,
-        token_hash: str,
-    ) -> dict | None:
-        token_hash = token_hash.strip().lower()
-        if len(token_hash) != 64 or any(ch not in "0123456789abcdef" for ch in token_hash):
-            raise ValueError("token_hash must be a SHA-256 hex digest")
+    async def get_device_credential_by_hash(self, *, token_hash: str) -> dict | None:
+        token_hash = self._sha256_hex(token_hash)
         query = urlencode(
             {
                 "select": "id,user_id,device_id,scopes,issued_at,expires_at,revoked_at",
@@ -299,17 +315,158 @@ class SupabaseRestStore:
                 "limit": "1",
             }
         )
-        result = await self._request(
-            "GET",
-            f"/rest/v1/ai_device_credentials?{query}",
-            None,
+        result = await self._request("GET", f"/rest/v1/ai_device_credentials?{query}", None)
+        return self._single_row(result, "Supabase device credential response is invalid")
+
+    async def create_device_enrollment(
+        self,
+        *,
+        enrollment_id: str,
+        secret_hash: str,
+        user_code: str,
+        device_id: str,
+        display_name: str,
+        capabilities: tuple[str, ...],
+        requested_scopes: tuple[str, ...],
+        expires_at: datetime,
+    ) -> None:
+        self._sha256_hex(secret_hash)
+        if not user_code or len(user_code) != 8:
+            raise ValueError("user_code must be 8 characters")
+        if not device_id.strip() or not display_name.strip():
+            raise ValueError("device identity is required")
+        if not capabilities or not requested_scopes:
+            raise ValueError("enrollment capabilities and scopes are required")
+        if expires_at.tzinfo is None or expires_at <= datetime.now(timezone.utc):
+            raise ValueError("enrollment expiry must be in the future")
+        await self._request(
+            "POST",
+            "/rest/v1/ai_device_enrollments",
+            {
+                "id": enrollment_id,
+                "secret_hash": secret_hash,
+                "user_code": user_code,
+                "device_id": device_id.strip(),
+                "display_name": display_name.strip(),
+                "capabilities": list(capabilities),
+                "requested_scopes": list(requested_scopes),
+                "expires_at": expires_at.isoformat(),
+            },
+            prefer="return=minimal",
         )
+
+    async def get_device_enrollment_by_code(self, *, user_code: str) -> dict | None:
+        query = urlencode(
+            {
+                "select": "id,user_id,device_id,display_name,capabilities,requested_scopes,state,expires_at,approved_at,consumed_at",
+                "user_code": f"eq.{user_code.strip().upper()}",
+                "limit": "1",
+            }
+        )
+        result = await self._request("GET", f"/rest/v1/ai_device_enrollments?{query}", None)
+        return self._single_row(result, "Supabase enrollment response is invalid")
+
+    async def get_device_enrollment_by_secret_hash(self, *, secret_hash: str) -> dict | None:
+        secret_hash = self._sha256_hex(secret_hash)
+        query = urlencode(
+            {
+                "select": "id,user_id,device_id,display_name,capabilities,requested_scopes,state,expires_at,approved_at,consumed_at",
+                "secret_hash": f"eq.{secret_hash}",
+                "limit": "1",
+            }
+        )
+        result = await self._request("GET", f"/rest/v1/ai_device_enrollments?{query}", None)
+        return self._single_row(result, "Supabase enrollment response is invalid")
+
+    async def approve_device_enrollment(
+        self,
+        *,
+        enrollment_id: str,
+        user_id: str,
+    ) -> dict | None:
+        now = datetime.now(timezone.utc)
+        query = urlencode(
+            {
+                "id": f"eq.{enrollment_id}",
+                "state": "eq.pending",
+                "expires_at": f"gt.{now.isoformat()}",
+            }
+        )
+        result = await self._request(
+            "PATCH",
+            f"/rest/v1/ai_device_enrollments?{query}",
+            {
+                "user_id": user_id,
+                "state": "approved",
+                "approved_at": now.isoformat(),
+            },
+            prefer="return=representation",
+        )
+        return self._single_row(result, "Supabase enrollment approval response is invalid")
+
+    async def consume_device_enrollment(
+        self,
+        *,
+        secret_hash: str,
+        token_hash: str,
+        credential_expires_at: datetime,
+    ) -> dict | None:
+        secret_hash = self._sha256_hex(secret_hash)
+        token_hash = self._sha256_hex(token_hash)
+        if credential_expires_at.tzinfo is None or credential_expires_at <= datetime.now(timezone.utc):
+            raise ValueError("credential expiry must be in the future")
+        result = await self._request(
+            "POST",
+            "/rest/v1/rpc/service_consume_ai_device_enrollment",
+            {
+                "target_secret_hash": secret_hash,
+                "new_token_hash": token_hash,
+                "credential_expires_at": credential_expires_at.isoformat(),
+            },
+            prefer="return=representation",
+        )
+        return self._single_row(result, "Supabase enrollment consumption response is invalid")
+
+    async def has_recent_reauth(
+        self,
+        *,
+        user_id: str,
+        session_id: str,
+        purpose: str,
+    ) -> bool:
+        if purpose not in {"account_security", "admin"}:
+            raise ValueError("unsupported reauth purpose")
+        now = datetime.now(timezone.utc).isoformat()
+        query = urlencode(
+            {
+                "select": "expires_at",
+                "user_id": f"eq.{user_id}",
+                "session_id": f"eq.{session_id}",
+                "purpose": f"eq.{purpose}",
+                "expires_at": f"gt.{now}",
+                "limit": "1",
+            }
+        )
+        result = await self._request("GET", f"/rest/v1/reauth_grants?{query}", None)
         if not isinstance(result, list):
-            raise RuntimeError("Supabase device credential response is invalid")
+            raise RuntimeError("Supabase re-auth response is invalid")
+        return bool(result)
+
+    @staticmethod
+    def _single_row(result: Any, error_message: str) -> dict | None:
+        if not isinstance(result, list):
+            raise RuntimeError(error_message)
         if not result:
             return None
         row = result[0]
         return row if isinstance(row, dict) else None
+
+    @staticmethod
+    def _sha256_hex(value: str) -> str:
+        normalized = value.strip().lower()
+        if len(normalized) != 64 or any(ch not in "0123456789abcdef" for ch in normalized):
+            raise ValueError("value must be a SHA-256 hex digest")
+        return normalized
 
     async def _request(
         self,
@@ -344,12 +501,7 @@ class SupabaseRestStore:
         }
         if prefer is not None:
             headers["Prefer"] = prefer
-        request = Request(
-            url,
-            data=payload,
-            method=method,
-            headers=headers,
-        )
+        request = Request(url, data=payload, method=method, headers=headers)
         try:
             with urlopen(request, timeout=15) as response:
                 raw = response.read()
