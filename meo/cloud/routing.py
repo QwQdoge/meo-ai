@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from meo.cloud.orchestrator import DeviceResolver, ResolvedDevice
+from meo.cloud.orchestrator import ResolvedDevice
 from meo.cloud.relay import RelayRegistry
 from meo.cloud.store import CloudStore
 
@@ -22,7 +22,7 @@ class ProjectLocationRequired(RuntimeError):
 
 
 @dataclass
-class AutomaticDeviceResolver(DeviceResolver):
+class AutomaticDeviceResolver:
     store: CloudStore
     relay: RelayRegistry
 
