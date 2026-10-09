@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass
 from typing import Callable
 
@@ -27,14 +26,13 @@ class AgentServiceExecutor:
         if not self.service.backend.conversation_exists(conversation_id):
             raise ValueError("unknown conversation_id")
 
-        loop = asyncio.get_running_loop()
-        done = loop.create_future()
-
         def emit(kind: str, body: dict) -> None:
             self.publish_event(run.run_id, {"type": kind, **body})
 
         def on_started(context) -> None:
             run.bind_local_request(context.request_id)
+            if run.status is AgentRunStatus.DISPATCHING:
+                run.transition(AgentRunStatus.RUNNING)
             emit("request_started", {"request_id": context.request_id})
 
         def on_text_delta(delta: str) -> None:
@@ -56,15 +54,11 @@ class AgentServiceExecutor:
                     run.transition(AgentRunStatus.CANCELLED)
                 else:
                     run.transition(AgentRunStatus.COMPLETED)
-            if not done.done():
-                done.set_result(None)
             emit("done", {"status": run.status.value})
 
-        def on_error(error: str) -> None:
+        def on_error(_error: str) -> None:
             if not run.terminal:
                 run.transition(AgentRunStatus.FAILED)
-            if not done.done():
-                done.set_result(None)
             emit("error", {"message": "Agent request failed", "status": run.status.value})
 
         callbacks = BackendCallbacks(
