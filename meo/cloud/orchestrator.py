@@ -38,6 +38,8 @@ class ResolvedDevice:
     def validate(self) -> None:
         if not self.device_id.strip():
             raise ValueError("resolved device_id is required")
+        if self.workspace_ref is not None and not self.workspace_ref.strip():
+            raise ValueError("workspace_ref must be non-empty when provided")
 
 
 class DeviceResolver(Protocol):
@@ -64,6 +66,7 @@ class AgentRunOrchestrator:
 
     The browser supplies conversational intent, not local shell commands or raw
     filesystem paths. Device/workspace routing is server-owned via DeviceResolver.
+    Full Access is never granted merely because a browser requested it.
     """
 
     def __init__(
@@ -82,11 +85,14 @@ class AgentRunOrchestrator:
         *,
         user_id: str,
         request: AgentRunRequest,
+        allow_full_access: bool = False,
     ) -> AgentRunCreated:
         user_id = user_id.strip()
         if not user_id:
             raise ValueError("authenticated user_id is required")
         request.validate()
+        if request.permission_mode is PermissionMode.FULL_ACCESS and not allow_full_access:
+            raise PermissionError("Full Access requires a trusted server-side authorization")
 
         resolved = await self.resolver.resolve(
             user_id=user_id,
@@ -103,6 +109,10 @@ class AgentRunOrchestrator:
             conversation_id=request.conversation_id.strip(),
             device_id=resolved.device_id,
             status="queued",
+            project_id=request.project_id,
+            workspace_ref=resolved.workspace_ref,
+            permission_mode=request.permission_mode.value,
+            requested_capabilities=("agent.chat",),
         )
 
         try:
@@ -113,6 +123,7 @@ class AgentRunOrchestrator:
                 conversation_id=request.conversation_id.strip(),
                 text=request.text.strip(),
                 required_capability="agent.chat",
+                workspace_ref=resolved.workspace_ref,
             )
         except ConnectionError:
             await self.store.update_agent_run(
