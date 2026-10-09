@@ -8,11 +8,11 @@ Type=simple
 ExecStart=@bindir@/meo-agentd
 Restart=on-failure
 RestartSec=5
+UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ProtectHome=read-only
-ReadWritePaths=%h/.config/meo
+ReadWritePaths=%h
 
 [Install]
 WantedBy=default.target
