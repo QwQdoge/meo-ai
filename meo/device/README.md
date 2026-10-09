@@ -26,6 +26,29 @@ It should not:
 - execute arbitrary privileged commands outside AgentService/Router policy;
 - claim rollback when a local capability has already committed an effect.
 
+## Connect a Plasma device
+
+The intended first-run UX is one command followed by one browser approval:
+
+```bash
+python3 -m meo.device.pairing_client \
+  --cloud-url https://ai.meoarch.org \
+  --device-id legion-y9000x \
+  --display-name "Legion Y9000X"
+```
+
+The client:
+
+1. requests a ten-minute pairing code;
+2. opens the Meo Account device-approval page;
+3. waits for the signed-in browser to approve the named device;
+4. receives a narrow `meo_dev_*` credential exactly once;
+5. writes it to KDE Wallet with `kwallet-query` through stdin.
+
+The Meo Account access token never needs to be copied to the device daemon. The pairing secret is short-lived and is sent only in POST bodies. The long-lived device credential is stored in KWallet, not the agentd JSON configuration.
+
+For local development only, `EnvironmentDeviceSecretProvider` may read `MEO_AGENTD_DEVICE_TOKEN`. Production Plasma packaging should use `KWalletDeviceSecretProvider`.
+
 ## Initial capability advertisement
 
 Start with a small set:
@@ -38,7 +61,7 @@ agent.approval
 system.router   # only when local Router integration is available
 ```
 
-Shell, filesystem, Git and browser powers should remain tools behind the selected local agent backend rather than becoming unauthenticated generic remote RPC methods.
+Shell, filesystem, Git and browser powers remain tools behind the selected local agent backend rather than becoming generic remote RPC methods.
 
 ## Connection model
 
@@ -48,7 +71,7 @@ The target model is outbound-only:
 meo-agentd -> authenticated relay/service -> browser/native client
 ```
 
-For the personal prototype, a private overlay such as Tailscale may be used to validate behavior before a Meo relay is implemented. Production design must not require router port forwarding.
+No inbound public port or router forwarding is required. A private overlay such as Tailscale can still be used during development, but the relay protocol no longer depends on it.
 
 ## First acceptance
 
