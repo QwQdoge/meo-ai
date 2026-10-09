@@ -1,6 +1,6 @@
 # Meo AI device bridge
 
-`meo/device/` owns the AI-facing device registration and remote execution bridge. The local daemon is tentatively named `meo-agentd`.
+`meo/device/` owns the AI-facing device registration and remote execution bridge. The local daemon is `meo-agentd`.
 
 `meo-agentd` is not a second agent engine. It bridges authenticated remote AgentRuns to the existing local AgentService and streams events/approvals back to Meo AI cloud.
 
@@ -16,19 +16,28 @@
 - stream ordered local request events back to the cloud;
 - forward cancellation and exact approval/deny decisions;
 - reconnect without replaying side-effecting requests;
-- optionally expose known project/workspace IDs without uploading workspace contents.
+- expose only opaque known project/workspace IDs, never local paths.
 
 It should not:
 
 - expose AgentService directly to the public network;
 - store provider API keys;
+- store the device credential in JSON;
 - duplicate the System AI Router;
-- execute arbitrary privileged commands outside AgentService/Router policy;
+- execute privileged system writes outside AgentService/Router policy;
 - claim rollback when a local capability has already committed an effect.
 
 ## Connect a Plasma device
 
-The intended first-run UX is one command followed by one browser approval:
+Install the small remote-bridge dependency when running from source:
+
+```bash
+python3 -m pip install -r meo/device/requirements.txt
+```
+
+On Plasma, `kwallet-query` must also be available so the enrolled credential can stay in KDE Wallet.
+
+The first-run UX is one command followed by one browser approval:
 
 ```bash
 python3 -m meo.device.pairing_client \
@@ -41,13 +50,36 @@ The client:
 
 1. requests a ten-minute pairing code;
 2. opens the Meo Account device-approval page;
-3. waits for the signed-in browser to approve the named device;
-4. receives a narrow `meo_dev_*` credential exactly once;
-5. writes it to KDE Wallet with `kwallet-query` through stdin.
+3. shows the named device before asking for verification;
+4. waits for the signed-in browser to approve it;
+5. receives a narrow `meo_dev_*` credential exactly once;
+6. writes the credential to KDE Wallet through stdin;
+7. writes only non-secret device metadata and the WSS relay URL to `~/.config/meo/agentd.json` with mode `0600`.
 
-The Meo Account access token never needs to be copied to the device daemon. The pairing secret is short-lived and is sent only in POST bodies. The long-lived device credential is stored in KWallet, not the agentd JSON configuration.
+The Meo Account access token never needs to be copied to the device daemon. The pairing secret is short-lived and sent only in POST bodies. The long-lived device credential is stored in KWallet, not the agentd JSON configuration.
 
-For local development only, `EnvironmentDeviceSecretProvider` may read `MEO_AGENTD_DEVICE_TOKEN`. Production Plasma packaging should use `KWalletDeviceSecretProvider`.
+After packaging, start and persist the bridge with:
+
+```bash
+systemctl --user enable --now meo-agentd.service
+```
+
+The service reads its non-secret config automatically and retrieves the narrow device token from KWallet. There is no token in the systemd unit or environment.
+
+For local development only, `meo-agentd --development-env-token` may read `MEO_AGENTD_DEVICE_TOKEN`. Production Plasma packaging uses `KWalletDeviceSecretProvider` by default.
+
+## Systemd boundary
+
+The packaged user service intentionally has:
+
+```text
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=%h
+UMask=0077
+```
+
+This keeps user projects writable while preventing the remote agent process from turning an ordinary tool call into a direct privileged system write. Privileged OS changes should go through the Meo System Router/capability policy instead of arbitrary `sudo` inside agentd.
 
 ## Initial capability advertisement
 
@@ -65,13 +97,13 @@ Shell, filesystem, Git and browser powers remain tools behind the selected local
 
 ## Connection model
 
-The target model is outbound-only:
+The connection is outbound-only:
 
 ```text
-meo-agentd -> authenticated relay/service -> browser/native client
+meo-agentd -> authenticated WSS relay -> Meo AI web/native client
 ```
 
-No inbound public port or router forwarding is required. A private overlay such as Tailscale can still be used during development, but the relay protocol no longer depends on it.
+No inbound public port or router forwarding is required. A private overlay such as Tailscale can still be used during development, but the relay protocol does not depend on it.
 
 ## First acceptance
 
