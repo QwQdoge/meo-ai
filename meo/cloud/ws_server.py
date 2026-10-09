@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable, Protocol
+from typing import Any, Protocol
 
 from meo.cloud.enrollment import DeviceCredentialClaims
 from meo.cloud.relay import RelayRegistry, RelaySession
+
+
+PROTOCOL_VERSION = 1
 
 
 class DeviceCredentialVerifier(Protocol):
@@ -25,6 +28,7 @@ class RelayWebSocketServer:
             raise PermissionError("device credential does not allow relay connection")
 
         first = await self._receive_json(websocket)
+        self._require_protocol(first)
         if first.get("type") != "hello":
             raise ValueError("first relay frame must be hello")
         device_id = self._required_text(first, "device_id")
@@ -36,23 +40,24 @@ class RelayWebSocketServer:
         ):
             raise ValueError("hello capabilities are invalid")
         normalized = tuple(item.strip() for item in capabilities)
+        connection = _WebSocketConnection(websocket)
         session = RelaySession(
             account_user_id=claims.account_user_id,
             device_id=device_id,
             capabilities=normalized,
         )
-        self.registry.register(session, _WebSocketConnection(websocket))
-        connection = self.registry._connections[device_id]
+        self.registry.register(session, connection)
         try:
             await connection.send_json(
                 {
-                    "protocol_version": 1,
+                    "protocol_version": PROTOCOL_VERSION,
                     "type": "hello_ack",
                     "device_id": device_id,
                 }
             )
             while True:
                 message = await self._receive_json(websocket)
+                self._require_protocol(message)
                 await self._handle_device_message(session, message)
         finally:
             self.registry.unregister(device_id, connection)
@@ -99,6 +104,12 @@ class RelayWebSocketServer:
         if not isinstance(value, dict):
             raise ValueError("relay message must be a JSON object")
         return value
+
+    @staticmethod
+    def _require_protocol(payload: dict) -> None:
+        version = payload.get("protocol_version")
+        if version != PROTOCOL_VERSION:
+            raise ValueError("unsupported relay protocol version")
 
     @staticmethod
     def _required_text(payload: dict, key: str) -> str:
