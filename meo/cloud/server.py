@@ -5,7 +5,7 @@ import os
 import time
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 from meo.cloud.account_auth import (
     SupabaseAccountAuthConfig,
@@ -27,6 +27,7 @@ class CloudServerConfig:
     supabase_publishable_key: str
     supabase_service_role_key: str
     account_url: str = "https://account.meoarch.org"
+    allowed_web_origins: tuple[str, ...] = ("https://account.meoarch.org",)
     bind_host: str = "127.0.0.1"
     port: int = 8080
 
@@ -47,14 +48,20 @@ class CloudServerConfig:
             raise RuntimeError("PORT must be between 1 and 65535")
 
         account_url = os.environ.get("MEO_ACCOUNT_URL", "https://account.meoarch.org").strip()
-        if not account_url.startswith("https://"):
-            raise RuntimeError("MEO_ACCOUNT_URL must use https://")
+        account_origin = _normalized_origin(account_url, label="MEO_ACCOUNT_URL")
+        configured_origins = os.environ.get("MEO_ALLOWED_WEB_ORIGINS", "").split(",")
+        origins = [account_origin]
+        for value in configured_origins:
+            value = value.strip()
+            if value:
+                origins.append(_normalized_origin(value, label="MEO_ALLOWED_WEB_ORIGINS"))
 
         return cls(
             supabase_url=required("MEO_SUPABASE_URL"),
             supabase_publishable_key=required("MEO_SUPABASE_PUBLISHABLE_KEY"),
             supabase_service_role_key=required("MEO_SUPABASE_SERVICE_ROLE_KEY"),
             account_url=account_url.rstrip("/"),
+            allowed_web_origins=tuple(dict.fromkeys(origins)),
             bind_host=os.environ.get("MEO_BIND_HOST", "127.0.0.1").strip() or "127.0.0.1",
             port=port,
         )
@@ -113,6 +120,24 @@ class _PairingStartLimiter:
         self.entries[peer] = recent
 
 
+def _normalized_origin(value: str, *, label: str) -> str:
+    parsed = urlsplit(value.strip())
+    loopback = parsed.hostname in {"localhost", "127.0.0.1", "::1"}
+    if parsed.scheme != "https" and not (parsed.scheme == "http" and loopback):
+        raise RuntimeError(f"{label} must use https:// (http is allowed only for loopback development)")
+    if not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise RuntimeError(f"{label} contains an invalid origin")
+    if parsed.path not in {"", "/"}:
+        raise RuntimeError(f"{label} must contain only an origin, not a path")
+    host = parsed.hostname
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    default_port = 443 if parsed.scheme == "https" else 80
+    port = parsed.port
+    authority = host if port in {None, default_port} else f"{host}:{port}"
+    return f"{parsed.scheme}://{authority}"
+
+
 def build_application(config: CloudServerConfig):
     try:
         from aiohttp import WSMsgType, web
@@ -145,36 +170,81 @@ def build_application(config: CloudServerConfig):
         verifier=device_verifier,
         store=store,
     )
+    allowed_origins = frozenset(config.allowed_web_origins)
+
+    def apply_cors(request, response):
+        origin = request.headers.get("Origin")
+        if origin in allowed_origins:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type, Accept"
+            response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+            response.headers["Access-Control-Max-Age"] = "600"
+            response.headers["Vary"] = "Origin"
+        return response
 
     @web.middleware
     async def safe_errors(request, handler):
+        origin = request.headers.get("Origin")
+        if origin and origin not in allowed_origins:
+            return web.json_response(
+                {"error": {"code": "origin_not_allowed", "message": "This web origin is not allowed."}},
+                status=403,
+                headers={"Cache-Control": "no-store", "Vary": "Origin"},
+            )
+        if request.method == "OPTIONS":
+            if not origin:
+                return web.Response(status=400, headers={"Cache-Control": "no-store"})
+            requested_method = request.headers.get("Access-Control-Request-Method", "")
+            if requested_method not in {"GET", "POST"}:
+                return apply_cors(
+                    request,
+                    web.json_response(
+                        {"error": {"code": "method_not_allowed", "message": "This request method is not allowed."}},
+                        status=405,
+                    ),
+                )
+            requested_headers = {
+                item.strip().lower()
+                for item in request.headers.get("Access-Control-Request-Headers", "").split(",")
+                if item.strip()
+            }
+            if not requested_headers <= {"authorization", "content-type", "accept"}:
+                return apply_cors(
+                    request,
+                    web.json_response(
+                        {"error": {"code": "headers_not_allowed", "message": "This request header is not allowed."}},
+                        status=400,
+                    ),
+                )
+            return apply_cors(request, web.Response(status=204))
+
         try:
             response = await handler(request)
         except ApiError as exc:
-            return web.json_response(exc.as_dict(), status=exc.status)
+            response = web.json_response(exc.as_dict(), status=exc.status)
         except LookupError:
-            return web.json_response(
+            response = web.json_response(
                 {"error": {"code": "not_found", "message": "This pairing request was not found."}},
                 status=404,
             )
         except PermissionError:
-            return web.json_response(
+            response = web.json_response(
                 {"error": {"code": "not_allowed", "message": "This request is not allowed."}},
                 status=403,
             )
         except ValueError as exc:
-            return web.json_response(
+            response = web.json_response(
                 {"error": {"code": "invalid_request", "message": str(exc)}},
                 status=400,
             )
         except Exception:
-            return web.json_response(
+            response = web.json_response(
                 {"error": {"code": "internal_error", "message": "Meo AI could not complete this request."}},
                 status=500,
             )
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Cache-Control"] = "no-store"
-        return response
+        return apply_cors(request, response)
 
     app = web.Application(client_max_size=128 * 1024, middlewares=[safe_errors])
 
