@@ -7,6 +7,7 @@ import json
 import random
 from typing import Awaitable, Callable, Protocol
 
+from meo.device.events import RelayEventQueue
 from meo.device.protocol import AgentRunBinding, AgentRunStatus, DeviceRegistration
 
 
@@ -77,6 +78,7 @@ class MeoAgentd:
         connector: RelayConnector,
         executor: AgentRunExecutor,
         *,
+        events: RelayEventQueue | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         jitter: Callable[[], float] = random.random,
     ) -> None:
@@ -85,6 +87,7 @@ class MeoAgentd:
         self.secrets = secrets
         self.connector = connector
         self.executor = executor
+        self.events = events
         self.sleep = sleep
         self.jitter = jitter
         self.state = AgentdState.STOPPED
@@ -136,16 +139,25 @@ class MeoAgentd:
         )
 
         heartbeat_task = asyncio.create_task(self._heartbeat_loop(connection))
+        event_task: asyncio.Task | None = None
+        if self.events is not None:
+            self.events.requeue_all()
+            event_task = asyncio.create_task(self.events.send_loop(connection))
         try:
             while not self._stop_requested:
                 message = await connection.receive_json()
                 await self.handle_message(connection, message)
         finally:
-            heartbeat_task.cancel()
-            try:
-                await heartbeat_task
-            except asyncio.CancelledError:
-                pass
+            tasks = [heartbeat_task]
+            if event_task is not None:
+                tasks.append(event_task)
+            for task in tasks:
+                task.cancel()
+            for task in tasks:
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
 
     async def _heartbeat_loop(self, connection: RelayConnection) -> None:
         while True:
@@ -164,6 +176,20 @@ class MeoAgentd:
         if not isinstance(message, dict):
             raise ValueError("relay message must be an object")
         message_type = message.get("type")
+        if message_type == "hello_ack":
+            device_id = self._required_text(message, "device_id")
+            if device_id != self.config.device.device_id:
+                raise ValueError("relay acknowledged a different device")
+            return
+        if message_type == "event_ack":
+            if self.events is None:
+                return
+            run_id = self._required_text(message, "run_id")
+            seq = message.get("seq")
+            if not isinstance(seq, int) or isinstance(seq, bool) or seq < 0:
+                raise ValueError("event ack seq must be a non-negative integer")
+            self.events.acknowledge(run_id, seq)
+            return
         if message_type == "dispatch":
             await self._handle_dispatch(connection, message)
             return
