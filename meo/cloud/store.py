@@ -28,6 +28,10 @@ class CloudStore(Protocol):
         conversation_id: str | None,
         device_id: str,
         status: str,
+        project_id: str | None = None,
+        workspace_ref: str | None = None,
+        permission_mode: str = "smart",
+        requested_capabilities: tuple[str, ...] = ("agent.chat",),
     ) -> None: ...
 
     async def append_agent_event(
@@ -48,6 +52,20 @@ class CloudStore(Protocol):
         values: dict,
     ) -> None: ...
 
+    async def list_project_locations(
+        self,
+        *,
+        user_id: str,
+        project_id: str,
+    ) -> tuple[dict, ...]: ...
+
+    async def get_agent_run(
+        self,
+        *,
+        user_id: str,
+        run_id: str,
+    ) -> dict | None: ...
+
 
 @dataclass(frozen=True)
 class SupabaseRestConfig:
@@ -64,8 +82,9 @@ class SupabaseRestConfig:
 class SupabaseRestStore:
     """Server-only persistence adapter for Meo AI cloud state.
 
-    The service-role key must never be shipped to browser/native clients. The
-    adapter uses PostgREST so the relay process doesn't need a database driver.
+    The service-role key must never be shipped to browser/native clients. All
+    service-role reads include explicit owner filters because service_role bypasses
+    RLS by design.
     """
 
     def __init__(
@@ -109,15 +128,29 @@ class SupabaseRestStore:
         conversation_id: str | None,
         device_id: str,
         status: str,
+        project_id: str | None = None,
+        workspace_ref: str | None = None,
+        permission_mode: str = "smart",
+        requested_capabilities: tuple[str, ...] = ("agent.chat",),
     ) -> None:
+        if permission_mode not in {"ask", "smart", "full_access"}:
+            raise ValueError("invalid permission_mode")
+        if not requested_capabilities or any(not item.strip() for item in requested_capabilities):
+            raise ValueError("requested_capabilities must be non-empty")
         body: dict[str, Any] = {
             "id": run_id,
             "user_id": user_id,
             "device_id": device_id,
             "status": status,
+            "permission_mode": permission_mode,
+            "requested_capabilities": list(requested_capabilities),
         }
         if conversation_id is not None:
             body["conversation_id"] = conversation_id
+        if project_id is not None:
+            body["project_id"] = project_id
+        if workspace_ref is not None:
+            body["workspace_ref"] = workspace_ref
         await self._request(
             "POST",
             "/rest/v1/ai_agent_runs?on_conflict=id",
@@ -150,8 +183,6 @@ class SupabaseRestStore:
             },
             prefer="resolution=ignore-duplicates,return=representation",
         )
-        # PostgREST returns one inserted row for a new event and an empty array
-        # when ON CONFLICT DO NOTHING absorbs a reconnect duplicate.
         if isinstance(result, list):
             return bool(result)
         return result is not None
@@ -185,13 +216,75 @@ class SupabaseRestStore:
             prefer="return=minimal",
         )
 
+    async def list_project_locations(
+        self,
+        *,
+        user_id: str,
+        project_id: str,
+    ) -> tuple[dict, ...]:
+        query = urlencode(
+            {
+                "select": "device_id,workspace_ref",
+                "user_id": f"eq.{user_id}",
+                "project_id": f"eq.{project_id}",
+                "order": "updated_at.desc",
+            }
+        )
+        result = await self._request(
+            "GET",
+            f"/rest/v1/ai_project_locations?{query}",
+            None,
+        )
+        if not isinstance(result, list):
+            raise RuntimeError("Supabase project location response is invalid")
+        rows: list[dict] = []
+        for row in result:
+            if not isinstance(row, dict):
+                continue
+            device_id = row.get("device_id")
+            workspace_ref = row.get("workspace_ref")
+            if isinstance(device_id, str) and device_id.strip() and isinstance(workspace_ref, str) and workspace_ref.strip():
+                rows.append(
+                    {
+                        "device_id": device_id.strip(),
+                        "workspace_ref": workspace_ref.strip(),
+                    }
+                )
+        return tuple(rows)
+
+    async def get_agent_run(
+        self,
+        *,
+        user_id: str,
+        run_id: str,
+    ) -> dict | None:
+        query = urlencode(
+            {
+                "select": "id,device_id,status,conversation_id,permission_mode,last_event_seq",
+                "id": f"eq.{run_id}",
+                "user_id": f"eq.{user_id}",
+                "limit": "1",
+            }
+        )
+        result = await self._request(
+            "GET",
+            f"/rest/v1/ai_agent_runs?{query}",
+            None,
+        )
+        if not isinstance(result, list):
+            raise RuntimeError("Supabase AgentRun response is invalid")
+        if not result:
+            return None
+        row = result[0]
+        return row if isinstance(row, dict) else None
+
     async def _request(
         self,
         method: str,
         path: str,
-        body: dict,
+        body: dict | None,
         *,
-        prefer: str,
+        prefer: str | None = None,
     ) -> Any:
         if self._request_json_override is not None:
             result = self._request_json_override(method, path, body, prefer)
@@ -200,19 +293,29 @@ class SupabaseRestStore:
             return result
         return await asyncio.to_thread(self._request_sync, method, path, body, prefer)
 
-    def _request_sync(self, method: str, path: str, body: dict, prefer: str) -> Any:
+    def _request_sync(
+        self,
+        method: str,
+        path: str,
+        body: dict | None,
+        prefer: str | None,
+    ) -> Any:
         url = self.config.project_url.rstrip("/") + path
-        payload = json.dumps(body, separators=(",", ":")).encode("utf-8")
+        payload = None
+        if body is not None:
+            payload = json.dumps(body, separators=(",", ":")).encode("utf-8")
+        headers = {
+            "Authorization": f"Bearer {self.config.service_role_key}",
+            "apikey": self.config.service_role_key,
+            "Content-Type": "application/json",
+        }
+        if prefer is not None:
+            headers["Prefer"] = prefer
         request = Request(
             url,
             data=payload,
             method=method,
-            headers={
-                "Authorization": f"Bearer {self.config.service_role_key}",
-                "apikey": self.config.service_role_key,
-                "Content-Type": "application/json",
-                "Prefer": prefer,
-            },
+            headers=headers,
         )
         try:
             with urlopen(request, timeout=15) as response:
