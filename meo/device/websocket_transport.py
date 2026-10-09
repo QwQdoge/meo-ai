@@ -6,12 +6,17 @@ from typing import Any
 from meo.device.agentd import AgentdConfig
 
 
+PROTOCOL_VERSION = 1
+
+
 class WebSocketRelayConnection:
     def __init__(self, websocket: Any) -> None:
         self.websocket = websocket
 
     async def send_json(self, payload: dict) -> None:
-        await self.websocket.send(json.dumps(payload, separators=(",", ":")))
+        envelope = dict(payload)
+        envelope.setdefault("protocol_version", PROTOCOL_VERSION)
+        await self.websocket.send(json.dumps(envelope, separators=(",", ":")))
 
     async def receive_json(self) -> dict:
         raw = await self.websocket.recv()
@@ -22,6 +27,9 @@ class WebSocketRelayConnection:
         value = json.loads(raw)
         if not isinstance(value, dict):
             raise ValueError("relay message must be a JSON object")
+        version = value.get("protocol_version")
+        if version != PROTOCOL_VERSION:
+            raise ValueError("unsupported relay protocol version")
         return value
 
     async def close(self) -> None:
