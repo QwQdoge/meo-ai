@@ -11,6 +11,9 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
+from meo.device.agentd import AgentdConfig
+from meo.device.config import relay_url_from_cloud, save_agentd_config
+from meo.device.protocol import DeviceRegistration
 from meo.device.secrets import KWalletDeviceSecretProvider
 
 
@@ -125,16 +128,27 @@ class PairingClient:
 
 async def _main_async(args) -> None:
     device_id = args.device_id or socket.gethostname().lower().replace(" ", "-")
+    display_name = args.display_name or socket.gethostname()
+    capabilities = tuple(args.capability or ("agent.chat",))
     config = PairingClientConfig(
         cloud_url=args.cloud_url,
         device_id=device_id,
-        display_name=args.display_name or socket.gethostname(),
-        capabilities=tuple(args.capability or ("agent.chat",)),
+        display_name=display_name,
+        capabilities=capabilities,
     )
     token = await PairingClient(config).enroll()
     store = KWalletDeviceSecretProvider(device_id=device_id, wallet=args.wallet)
     await store.store_device_token(token)
-    print("Connected to Meo. Device credential stored securely in KWallet.")
+
+    agentd_config = AgentdConfig(
+        device=DeviceRegistration.create(device_id, display_name, capabilities),
+        relay_url=relay_url_from_cloud(args.cloud_url),
+    )
+    config_path = save_agentd_config(agentd_config)
+    print("Connected to Meo.")
+    print("Device credential: KWallet")
+    print(f"Agent configuration: {config_path}")
+    print("Start the bridge with: meo-agentd")
 
 
 def main() -> None:
