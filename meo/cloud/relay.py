@@ -57,6 +57,9 @@ class RelayRegistry:
     def get_session(self, device_id: str) -> RelaySession | None:
         return self._sessions.get(device_id)
 
+    def get_connection(self, device_id: str) -> DeviceConnection | None:
+        return self._connections.get(device_id)
+
     def is_online(self, account_user_id: str, device_id: str) -> bool:
         session = self._sessions.get(device_id)
         return bool(session and session.account_user_id == account_user_id)
