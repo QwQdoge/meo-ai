@@ -26,6 +26,7 @@ jobs:
       - run: |
           test -x build/stage/usr/bin/meo-agent-service
           test -x build/stage/usr/bin/meo-agentd
+          test -x build/stage/usr/bin/meo-connect-device
           test -f build/stage/usr/share/newelle/meo/runtime/main.py
           test -f build/stage/usr/share/newelle/meo/runtime/http_transport.py
           test -f build/stage/usr/share/newelle/meo/runtime/event_journal.py
