@@ -138,22 +138,23 @@ class SupabaseRestStore:
             raise ValueError("event seq must be a non-negative integer")
         if not event_type.strip():
             raise ValueError("event_type is required")
-        try:
-            await self._request(
-                "POST",
-                "/rest/v1/ai_agent_events?on_conflict=run_id,seq",
-                {
-                    "user_id": user_id,
-                    "run_id": run_id,
-                    "seq": seq,
-                    "event_type": event_type,
-                    "payload": payload,
-                },
-                prefer="resolution=ignore-duplicates,return=representation",
-            )
-            return True
-        except CloudStoreConflict:
-            return False
+        result = await self._request(
+            "POST",
+            "/rest/v1/ai_agent_events?on_conflict=run_id,seq",
+            {
+                "user_id": user_id,
+                "run_id": run_id,
+                "seq": seq,
+                "event_type": event_type,
+                "payload": payload,
+            },
+            prefer="resolution=ignore-duplicates,return=representation",
+        )
+        # PostgREST returns one inserted row for a new event and an empty array
+        # when ON CONFLICT DO NOTHING absorbs a reconnect duplicate.
+        if isinstance(result, list):
+            return bool(result)
+        return result is not None
 
     async def update_agent_run(
         self,
