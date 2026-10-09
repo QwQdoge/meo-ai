@@ -34,6 +34,8 @@ class DeviceEnrollmentRequest:
         capabilities: Iterable[str],
         created_at: datetime,
         expires_at: datetime,
+        *,
+        now: datetime | None = None,
     ) -> "DeviceEnrollmentRequest":
         request = cls(
             enrollment_id=str(enrollment_id).strip(),
@@ -44,7 +46,7 @@ class DeviceEnrollmentRequest:
             created_at=created_at,
             expires_at=expires_at,
         )
-        request.validate()
+        request.validate(now=now)
         return request
 
     def validate(self, *, now: datetime | None = None) -> None:
