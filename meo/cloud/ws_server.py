@@ -32,12 +32,27 @@ class RelayWebSocketServer:
     verifier: DeviceCredentialVerifier
     store: CloudStore | None = None
 
-    async def handle(self, websocket: Any) -> None:
+    async def authenticate(self, websocket: Any) -> DeviceCredentialClaims:
+        """Authenticate before a real server upgrades the connection when possible."""
         token = self._bearer_token(websocket)
         claims = await self.verifier.verify(token)
         claims.validate()
         if not claims.allows("relay.connect"):
             raise PermissionError("device credential does not allow relay connection")
+        return claims
+
+    async def handle(
+        self,
+        websocket: Any,
+        *,
+        claims: DeviceCredentialClaims | None = None,
+    ) -> None:
+        if claims is None:
+            claims = await self.authenticate(websocket)
+        else:
+            claims.validate()
+            if not claims.allows("relay.connect"):
+                raise PermissionError("device credential does not allow relay connection")
 
         first = await self._receive_json(websocket)
         self._require_protocol(first)
