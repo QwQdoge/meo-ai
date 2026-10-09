@@ -22,27 +22,42 @@ class FakeWebSocket:
 
 
 class WebSocketRelayConnectionTests(unittest.IsolatedAsyncioTestCase):
-    async def test_send_json_uses_compact_text_frame(self) -> None:
+    async def test_send_json_injects_protocol_version(self) -> None:
         websocket = FakeWebSocket()
         connection = WebSocketRelayConnection(websocket)
 
         await connection.send_json({"type": "ping", "value": 1})
 
-        self.assertEqual(websocket.sent, ['{"type":"ping","value":1}'])
+        self.assertEqual(
+            websocket.sent,
+            ['{"type":"ping","value":1,"protocol_version":1}'],
+        )
 
-    async def test_receive_json_accepts_text_or_utf8_bytes(self) -> None:
+    async def test_receive_json_accepts_versioned_text_or_utf8_bytes(self) -> None:
         websocket = FakeWebSocket()
-        websocket.received = ['{"type":"pong"}', b'{"type":"heartbeat"}']
+        websocket.received = [
+            '{"protocol_version":1,"type":"pong"}',
+            b'{"protocol_version":1,"type":"heartbeat"}',
+        ]
         connection = WebSocketRelayConnection(websocket)
 
-        self.assertEqual(await connection.receive_json(), {"type": "pong"})
-        self.assertEqual(await connection.receive_json(), {"type": "heartbeat"})
+        self.assertEqual(
+            await connection.receive_json(),
+            {"protocol_version": 1, "type": "pong"},
+        )
+        self.assertEqual(
+            await connection.receive_json(),
+            {"protocol_version": 1, "type": "heartbeat"},
+        )
 
-    async def test_receive_json_rejects_non_object(self) -> None:
+    async def test_receive_json_rejects_non_object_or_wrong_version(self) -> None:
         websocket = FakeWebSocket()
         websocket.received = ['[1,2,3]']
         connection = WebSocketRelayConnection(websocket)
+        with self.assertRaises(ValueError):
+            await connection.receive_json()
 
+        websocket.received = ['{"protocol_version":2,"type":"pong"}']
         with self.assertRaises(ValueError):
             await connection.receive_json()
 
