@@ -52,6 +52,11 @@ class RelayEventQueue:
         return self._pending.pop((run_id, seq), None) is not None
 
     def requeue_all(self) -> None:
+        while True:
+            try:
+                self._ready.get_nowait()
+            except asyncio.QueueEmpty:
+                break
         for key in sorted(self._pending):
             self._ready.put_nowait(key)
 
