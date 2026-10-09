@@ -19,6 +19,7 @@ class EnrollmentTests(unittest.TestCase):
             ["agent.chat", "agent.workspace"],
             self.now,
             self.now + timedelta(minutes=10),
+            now=self.now,
         )
         self.assertEqual(request.device_id, "legion")
         self.assertEqual(request.capabilities, ("agent.chat", "agent.workspace"))
@@ -33,6 +34,7 @@ class EnrollmentTests(unittest.TestCase):
                 ["agent.chat"],
                 self.now - timedelta(minutes=20),
                 self.now - timedelta(minutes=10),
+                now=self.now,
             )
 
     def test_device_credential_is_narrow_and_revocable(self) -> None:
