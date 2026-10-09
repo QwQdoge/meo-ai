@@ -7,12 +7,16 @@ from meo.cloud.store import SupabaseRestConfig, SupabaseRestStore
 
 class SupabaseRestStoreTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
-        self.calls: list[tuple[str, str, dict, str]] = []
+        self.calls: list[tuple[str, str, dict | None, str | None]] = []
 
-        async def request_json(method: str, path: str, body: dict, prefer: str):
+        async def request_json(method: str, path: str, body: dict | None, prefer: str | None):
             self.calls.append((method, path, body, prefer))
             if "ai_agent_events" in path:
                 return [{"id": 1}]
+            if "ai_project_locations" in path:
+                return [{"device_id": "legion", "workspace_ref": "/home/user/Projects/meo-ai"}]
+            if "ai_agent_runs" in path and method == "GET":
+                return [{"id": "run-1", "device_id": "legion", "status": "running"}]
             return None
 
         self.store = SupabaseRestStore(
@@ -33,9 +37,49 @@ class SupabaseRestStoreTests(unittest.IsolatedAsyncioTestCase):
         method, path, body, prefer = self.calls[-1]
         self.assertEqual(method, "POST")
         self.assertIn("on_conflict=user_id,device_id", path)
+        assert body is not None
         self.assertEqual(body["user_id"], "user-1")
         self.assertEqual(body["device_id"], "legion")
+        assert prefer is not None
         self.assertIn("merge-duplicates", prefer)
+
+    async def test_agent_run_persists_permission_and_server_routed_workspace(self) -> None:
+        await self.store.create_agent_run(
+            run_id="run-1",
+            user_id="user-1",
+            conversation_id=None,
+            device_id="legion",
+            status="queued",
+            project_id="project-1",
+            workspace_ref="/home/user/Projects/meo-ai",
+            permission_mode="smart",
+            requested_capabilities=("agent.chat",),
+        )
+        _method, _path, body, _prefer = self.calls[-1]
+        assert body is not None
+        self.assertEqual(body["permission_mode"], "smart")
+        self.assertEqual(body["requested_capabilities"], ["agent.chat"])
+        self.assertEqual(body["workspace_ref"], "/home/user/Projects/meo-ai")
+
+    async def test_project_location_read_is_explicitly_owner_scoped(self) -> None:
+        rows = await self.store.list_project_locations(
+            user_id="user-1",
+            project_id="project-1",
+        )
+        method, path, body, prefer = self.calls[-1]
+        self.assertEqual(method, "GET")
+        self.assertIsNone(body)
+        self.assertIsNone(prefer)
+        self.assertIn("user_id=eq.user-1", path)
+        self.assertIn("project_id=eq.project-1", path)
+        self.assertEqual(rows[0]["device_id"], "legion")
+
+    async def test_get_agent_run_is_owner_scoped(self) -> None:
+        row = await self.store.get_agent_run(user_id="user-1", run_id="run-1")
+        _method, path, _body, _prefer = self.calls[-1]
+        self.assertIn("user_id=eq.user-1", path)
+        self.assertIn("id=eq.run-1", path)
+        self.assertEqual(row["device_id"], "legion")
 
     async def test_new_agent_event_returns_true(self) -> None:
         inserted = await self.store.append_agent_event(
@@ -48,7 +92,7 @@ class SupabaseRestStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(inserted)
 
     async def test_duplicate_agent_event_returns_false(self) -> None:
-        async def duplicate_request(method: str, path: str, body: dict, prefer: str):
+        async def duplicate_request(method: str, path: str, body: dict | None, prefer: str | None):
             return []
 
         store = SupabaseRestStore(
