@@ -48,9 +48,7 @@ class AgentRunOrchestratorTests(unittest.IsolatedAsyncioTestCase):
             RelaySession("user-1", "legion", ("agent.chat",)),
             self.connection,
         )
-        self.resolver = FakeResolver(
-            ResolvedDevice("legion", "/home/user/Projects/meo-ai")
-        )
+        self.resolver = FakeResolver(ResolvedDevice("legion", "workspace-meo-ai"))
         self.orchestrator = AgentRunOrchestrator(
             store=self.store,
             relay=self.relay,
@@ -67,12 +65,10 @@ class AgentRunOrchestratorTests(unittest.IsolatedAsyncioTestCase):
             ),
         )
         self.assertEqual(created.device_id, "legion")
-        self.assertEqual(self.store.created[0]["workspace_ref"], "/home/user/Projects/meo-ai")
+        self.assertEqual(self.store.created[0]["workspace_ref"], "workspace-meo-ai")
         self.assertEqual(self.store.created[0]["permission_mode"], "smart")
-        self.assertEqual(
-            self.connection.sent[0]["workspace_ref"],
-            "/home/user/Projects/meo-ai",
-        )
+        self.assertEqual(self.connection.sent[0]["workspace_ref"], "workspace-meo-ai")
+        self.assertNotIn("/home/", self.connection.sent[0]["workspace_ref"])
         self.assertEqual(self.store.updated[-1]["values"]["status"], "dispatching")
 
     async def test_full_access_requires_server_side_trust(self) -> None:
