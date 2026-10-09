@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from meo.device.agentd import AgentdConfig, MeoAgentd, config_from_json
+from meo.device.events import RelayEventQueue
 from meo.device.protocol import AgentRunStatus, DeviceRegistration
 
 
@@ -59,13 +60,37 @@ class AgentdTests(unittest.IsolatedAsyncioTestCase):
             relay_url="wss://relay.example.test/v1/device",
         )
         self.executor = FakeExecutor()
+        self.events = RelayEventQueue("legion")
         self.agentd = MeoAgentd(
             self.config,
             FakeSecrets(),
             unused_connector,
             self.executor,
+            events=self.events,
         )
         self.connection = FakeConnection()
+
+    async def test_hello_ack_for_this_device_is_accepted(self) -> None:
+        await self.agentd.handle_message(
+            self.connection,
+            {"type": "hello_ack", "device_id": "legion"},
+        )
+
+    async def test_hello_ack_for_other_device_is_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            await self.agentd.handle_message(
+                self.connection,
+                {"type": "hello_ack", "device_id": "other"},
+            )
+
+    async def test_event_ack_removes_only_persisted_event(self) -> None:
+        self.events.publish("run-1", {"type": "text_delta", "text": "hello"})
+        self.assertEqual(self.events.pending_count, 1)
+        await self.agentd.handle_message(
+            self.connection,
+            {"type": "event_ack", "run_id": "run-1", "seq": 0},
+        )
+        self.assertEqual(self.events.pending_count, 0)
 
     async def test_duplicate_dispatch_is_acknowledged_without_reexecution(self) -> None:
         message = {
