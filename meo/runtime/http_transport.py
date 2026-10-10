@@ -120,6 +120,12 @@ class AgentHttpTransport:
     def list_mcp_servers(self) -> list[dict]:
         return self.service.list_mcp_servers()
 
+    def list_controls(self) -> list[dict]:
+        return self.service.list_controls()
+
+    def set_control(self, control_id: str, value: Any) -> dict:
+        return {"accepted": True, "control": self.service.set_control(control_id, value)}
+
     def send_message(
         self,
         conversation_id: str,
@@ -400,6 +406,9 @@ class _Handler(BaseHTTPRequestHandler):
             if segments == ["v1", "mcp-servers"] and not query:
                 self._reply_json(HTTPStatus.OK, {"mcp_servers": self.transport.list_mcp_servers()})
                 return
+            if segments == ["v1", "controls"] and not query:
+                self._reply_json(HTTPStatus.OK, {"controls": self.transport.list_controls()})
+                return
             if len(segments) == 3 and segments[:2] == ["v1", "requests"] and not query:
                 self._reply_json(HTTPStatus.OK, self.transport.get_request(segments[2]))
                 return
@@ -519,6 +528,12 @@ class _Handler(BaseHTTPRequestHandler):
                 if not isinstance(enabled, bool):
                     raise ValueError("enabled must be a boolean")
                 self._reply_json(HTTPStatus.OK, self.transport.set_skill_enabled(segments[2], enabled))
+                return
+            if len(segments) == 3 and segments[:2] == ["v1", "controls"]:
+                body = self._read_json()
+                if "value" not in body:
+                    raise ValueError("value is required")
+                self._reply_json(HTTPStatus.OK, self.transport.set_control(segments[2], body["value"]))
                 return
             if len(segments) == 4 and segments[:2] == ["v1", "conversations"] and segments[3] == "messages":
                 body = self._read_json()
