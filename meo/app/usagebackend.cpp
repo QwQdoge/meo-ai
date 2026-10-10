@@ -3,6 +3,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QProcessEnvironment>
+#include <QStandardPaths>
 #include <QStringList>
 
 UsageBackend::UsageBackend(QObject *parent)
@@ -32,8 +33,6 @@ void UsageBackend::run(const QString &command)
     if (m_process.state() != QProcess::NotRunning)
         return;
 
-    const QString override = qEnvironmentVariable("MEO_AI_USAGE_PYTHON").trimmed();
-    const QString python = override.isEmpty() ? QStringLiteral("python3") : override;
     setBusy(true);
     if (command == QLatin1String("refresh"))
         setStatus(tr("Importing Codex and Claude Code history…"));
@@ -43,6 +42,20 @@ void UsageBackend::run(const QString &command)
         setStatus(tr("Loading AI activity…"));
 
     m_process.setProcessChannelMode(QProcess::SeparateChannels);
+
+    const QString commandOverride = qEnvironmentVariable("MEO_AI_USAGE_COMMAND").trimmed();
+    const QString installedCommand = commandOverride.isEmpty()
+        ? QStandardPaths::findExecutable(QStringLiteral("meo-ai-usage"))
+        : commandOverride;
+    if (!installedCommand.isEmpty()) {
+        m_process.start(installedCommand, {command});
+        return;
+    }
+
+    // Source checkouts do not have the packaged wrapper yet. Keeping this
+    // fallback makes local development and CI previews work without install.
+    const QString pythonOverride = qEnvironmentVariable("MEO_AI_USAGE_PYTHON").trimmed();
+    const QString python = pythonOverride.isEmpty() ? QStringLiteral("python3") : pythonOverride;
     m_process.start(python, {QStringLiteral("-m"), QStringLiteral("meo.usage.cli"), command});
 }
 
