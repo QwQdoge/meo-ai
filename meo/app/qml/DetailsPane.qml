@@ -35,7 +35,7 @@ Rectangle {
             Layout.leftMargin: 8 * root.uiScale
             MeoText {
                 Layout.fillWidth: true
-                text: [qsTr("Response details"), qsTr("Memory"), qsTr("Resources"), qsTr("AI settings")][root.tab]
+                text: [qsTr("Response details"), qsTr("Memory"), qsTr("Resources"), qsTr("AI activity"), qsTr("AI settings")][root.tab]
                 typeRole: "title"
                 typeSize: "small"
                 color: MeoTheme.contentOnSurface
@@ -54,7 +54,7 @@ Rectangle {
             Layout.fillWidth: true
             spacing: 4 * root.uiScale
             Repeater {
-                model: [qsTr("Response"), qsTr("Memory"), qsTr("Files"), qsTr("Settings")]
+                model: [qsTr("Response"), qsTr("Memory"), qsTr("Files"), qsTr("Activity"), qsTr("Settings")]
                 delegate: MeoButton {
                     required property string modelData
                     required property int index
@@ -97,10 +97,17 @@ Rectangle {
             }
             Item { Layout.fillHeight: true }
         }
+
+        ActivityDashboard {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            visible: root.tab === 3
+        }
+
         ScrollView {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            visible: root.tab !== 0
+            visible: root.tab === 1 || root.tab === 2 || root.tab === 4
             clip: true
             ColumnLayout {
                 width: parent.width
@@ -149,7 +156,7 @@ Rectangle {
                             }
                         }
                         MeoButton {
-                            visible: root.tab === 3
+                            visible: root.tab === 4
                             Layout.fillWidth: true
                             text: qsTr("AI controls"); type: "outlined"; size: "s"
                             enabled: !root.busy
@@ -204,7 +211,8 @@ Rectangle {
             }
             MeoText {
                 Layout.fillWidth: true
-                text: root.ready ? qsTr("Local service connected") : qsTr("Local service not connected")
+                text: root.tab === 3 ? (usage.status || qsTr("AI activity ready"))
+                                     : (root.ready ? qsTr("Local service connected") : qsTr("Local service not connected"))
                 typeRole: "label"; typeSize: "small"
                 color: MeoTheme.contentOnSurfaceVariant
                 elide: Text.ElideRight
