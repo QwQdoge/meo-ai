@@ -29,6 +29,8 @@ jobs:
           test -f build/stage/usr/share/newelle/meo/runtime/http_transport.py
           test -f build/stage/usr/share/newelle/meo/runtime/event_journal.py
           test -f build/stage/usr/share/newelle/meo/service/core.py
+          test -f build/stage/usr/share/newelle/meo/service/model_roles.py
+          test -f build/stage/usr/share/newelle/meo/service/presentation.py
           test -f build/stage/usr/share/newelle/meo/system/system_tool.py
           test -f build/stage/usr/share/newelle/meo/system/dbus_router.py
           test -f build/stage/usr/share/newelle/meo/adapters/headless_newelle.py
