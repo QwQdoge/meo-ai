@@ -64,14 +64,7 @@ class MeoHeadlessUIController:
 
 @contextmanager
 def _controller_import_shims():
-    """Bypass two known UI-only imports while the upstream controller is extracted.
-
-    `src.controller` currently imports Adw even though it does not use it, and imports
-    UIController only for its type boundary. The shim is temporary and removed again
-    immediately after importing the controller. Any later real UI import is caught by
-    `require_headless()`.
-    """
-
+    """Bypass two known UI-only imports while the upstream controller is extracted."""
     repository = importlib.import_module("gi.repository")
     missing = object()
     previous_adw = repository.__dict__.get("Adw", missing)
@@ -103,22 +96,10 @@ def _import_controller_class():
 
 
 def _system_tools_enabled() -> bool:
-    return os.environ.get("MEO_AI_ENABLE_SYSTEM_TOOL", "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
+    return os.environ.get("MEO_AI_ENABLE_SYSTEM_TOOL", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _install_presentation_tools(controller, backend) -> None:
-    """Install the Meo data-only native presentation tool.
-
-    The tool has no OS authority and only emits a bounded card payload. It is
-    available by default so a model can present useful structured results even
-    while the compatibility runtime is being extracted.
-    """
-
     from meo.adapters.presentation_tools import NewellePresentationToolAdapter
 
     adapter = NewellePresentationToolAdapter()
@@ -127,12 +108,6 @@ def _install_presentation_tools(controller, backend) -> None:
 
 
 def _install_system_tools(controller, backend) -> None:
-    """Install the Router-backed Newelle compatibility tools when explicitly enabled.
-
-    This is fail-closed: opting in requires both dbus-next and a reachable Router.
-    The ordinary AgentService chat path remains independent from Phase C.
-    """
-
     if not _system_tools_enabled():
         return
 
@@ -147,30 +122,18 @@ def _install_system_tools(controller, backend) -> None:
     except Exception:
         router_client.close()
         raise
-
-    # Keep both runtime objects alive for the same lifetime as the backend. The
-    # Router client intentionally preserves one D-Bus caller identity.
     backend._meo_router_client = router_client
     backend._meo_system_tool_adapter = adapter
 
 
 def create_backend():
-    """Construct the current Newelle core without importing `src.main` or a window.
-
-    This is a Phase B/early-Phase-C extraction adapter, not the final architecture.
-    It intentionally mirrors upstream `run_headless()` initialization until those
-    steps move into a maintained UI-free Newelle core.
-    """
-
-    # Match the installed Newelle launcher without importing its GTK entrypoint.
+    """Construct the compatibility core without constructing a Newelle window."""
     gettext.install("newelle")
     Controller = _import_controller_class()
     controller = Controller(sys.path)
     controller.ui_init(headless=True)
     controller.set_ui_controller(MeoHeadlessUIController(controller))
 
-    # Keep ReplaceHelper pointed at the same controller just as upstream headless mode
-    # does; this module is UI-free despite the historical helper name.
     from src.utility.replacehelper import ReplaceHelper
     ReplaceHelper.set_controller(controller)
 
@@ -180,16 +143,19 @@ def create_backend():
     interface = ChatInterface(controller.settings, interface_path)
     interface.set_controller(controller)
     backend = MeoLegacyChatInterfaceAdapter(interface)
-    backend._meo_controller = controller  # keep the runtime owner alive explicitly
+    backend._meo_controller = controller
     _install_presentation_tools(controller, backend)
     _install_system_tools(controller, backend)
     require_headless()
-    # Compatibility tools dispatch through GLib idle callbacks. The HTTP server
-    # has no GTK event loop, so own a UI-free loop for the backend lifetime.
+
     from gi.repository import GLib
     backend._meo_glib_loop = GLib.MainLoop()
     backend._meo_glib_thread = threading.Thread(
         target=backend._meo_glib_loop.run, name="meo-tool-dispatch", daemon=True
     )
     backend._meo_glib_thread.start()
-    return backend
+
+    # Keep Newelle GSettings details behind one temporary adapter. AgentService
+    # and the native frontend see only typed Meo control IDs.
+    from meo.adapters.control_backend import ControlledLegacyBackend
+    return ControlledLegacyBackend(backend, controller)
