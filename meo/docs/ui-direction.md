@@ -17,6 +17,16 @@ Meo AI should feel clearly designed, but never performative. The visual target i
 - Medium desktop: navigation rail collapses to 78 dp rather than forcing content too narrow.
 - Compact window: navigation rail disappears; the top bar keeps only the essential model-role, stop, and new-chat controls.
 - Conversation text is visually quieter than cards and actions. User messages use a compact container; assistant messages use open surface plus a thin accent rail.
+- The composer is bounded to the same readable maximum width as the main conversation instead of stretching across an ultrawide window.
+
+## Interaction stability
+
+- Streaming follows the bottom only while the reader is already near the bottom. If the user scrolls upward, new tokens must not drag the viewport back down.
+- `Enter` sends, while `Shift+Enter` inserts a new line. IME composition is allowed to consume Enter first so Chinese/Japanese/Korean input is not broken.
+- `Ctrl+N` creates a new chat when no request or confirmation is blocking it.
+- Presentation cards use `card_id` as stable identity. A repeated ID updates the existing card in place instead of appending duplicates and shifting the shelf.
+- New cards may move the horizontal shelf just enough to reveal the newly added card. Updates to an existing card do not steal horizontal scroll position.
+- Important controls expose stable object names so native UI tests can inspect responsive states without depending on pixel-perfect screenshots.
 
 ## AI presentation cards
 
@@ -26,6 +36,7 @@ Cards are **secondary context**, not another chat transcript.
 - Multiple cards live in one horizontal shelf above the composer instead of wrapping into unpredictable rows.
 - Cards use a consistent compact width and bounded text. Long detail text is clipped rather than expanding the whole interface.
 - `info`, `status`, `metric`, `file`, and `system` share the same visual family. The kind label is metadata, not a loud badge.
+- Repeated updates to the same card preserve its position, which is especially important for metrics, media state, build status, and system controls.
 - Cards never imply authority. Privileged operations continue through typed tools and explicit confirmation.
 
 ## Confirmation
@@ -34,7 +45,9 @@ A pending tool decision is visually separated from ordinary cards with a selecte
 
 ## Model roles
 
-Model-role configuration is a focused modal surface, not a permanent dashboard. Role cards are outlined and dense. The UI should make the split between background (`title`, `judge`) and primary (`reasoning`, `execution`) workloads understandable without implying that a saved preference is already active runtime routing.
+Model-role configuration is a focused modal surface, not a permanent dashboard. Background roles (`title`, `judge`) use quieter outlined cards while primary roles (`reasoning`, `execution`) use filled cards. The model picker uses the MeoUI exposed-dropdown component so keyboard, focus, visual state, and accessibility behavior match the rest of MeoArch.
+
+The UI must make the split between background and primary workloads understandable without implying that a saved preference is already active runtime routing.
 
 ## Visual limits
 
