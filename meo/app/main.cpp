@@ -1,4 +1,4 @@
-#include "agentclient.h"
+#include "nativeagentclient.h"
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
@@ -88,7 +88,7 @@ int main(int argc, char **argv) {
         qputenv("MEO_AI_SERVICE_ENDPOINT", "http://127.0.0.1:8765");
     }
 
-    AgentClient client;
+    NativeAgentClient client;
     if (app.arguments().contains("--print-transport")) {
         std::puts(client.serviceMode() ? "service" : "legacy");
         return 0;
