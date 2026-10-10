@@ -70,27 +70,37 @@ remains an integration seam for a later feature and resumes event streams by
 
 ## Upstream pin and maintenance
 
-This integration branch is based on LibreChat fork `origin/dev` commit
-`4afd5e17f85e95d610e606c0cdfddf3b2ba97978` (`Keep Quiet Chat Streams Alive
-Behind Idle-Timeout Proxies`, PR #16904). The product evaluation in `meo-ai`
-recorded `e1dfc10449ff713faffacd60273fddcfe2c0a698` from upstream `main`; the
-actual fork checkout was created from the newer `dev` snapshot, so upgrades
-must record and compare against the pinned `dev` ancestor. LibreChat is
-MIT-licensed; retain the upstream `LICENSE`, copyright notices and license text
-in every release.
+The integration is on the `main` default branch of `QwQdoge/meo-ai-web`. Its
+LibreChat upstream base is `e1dfc10449ff713faffacd60273fddcfe2c0a698`
+(`fix: Require Colon in API-Key Header Detection`, PR #16803). At integration
+completion, the fork head is `1c47fa13ecd5ff556db3ec21fe7dd483f883503d`.
+Earlier Meo Account activity-sync commits are already on that fork branch and
+remain alongside the chat integration. A temporary integration branch was
+tested against upstream `dev` commit
+`4afd5e17f85e95d610e606c0cdfddf3b2ba97978`; it was not merged wholesale, so
+its unrelated upstream commits are not part of the default branch.
+
+LibreChat is MIT-licensed. Keep the upstream `LICENSE`, copyright notices and
+license text in the fork and every release. Review the license and attribution
+when updating the upstream base.
 
 Meo patch surface:
 
-1. `packages/api/src/meo/accountProviderClient.ts` contains the broker client and
-   request validation.
-2. `api/server/routes/meo.js` and two route registrations expose the authenticated
-   same-origin API.
-3. `client/src/components/Meo/MeoChat.tsx` and two React route entries provide
-   provider/model selection, consent, chat and the deep link.
-4. `meo/` contains environment/configuration and this contract.
+1. `packages/api/src/meo/accountProviderClient.ts` and
+   `cloudConversationClient.ts` contain the Account broker and Meo Cloud clients;
+   their `*.spec.ts` files cover the adapters.
+2. `api/server/routes/meo.js`, `api/server/routes/index.js`, and
+   `api/server/index.js` expose the authenticated same-origin API while retaining
+   the separate `meoActivity` route.
+3. `client/src/components/Meo/MeoChat.tsx`, `client/src/routes/index.tsx`,
+   `client/src/hooks/Nav/useUnifiedSidebarLinks.ts`, and the English translation
+   entries provide chat, deep links, history navigation and labels.
+4. `meo/` contains local configuration and startup instructions. The root
+   LibreChat application and upstream `LICENSE` remain upstream-owned.
 
-For upgrades, fetch the `upstream` remote, review security and auth changes,
-merge upstream into the Meo branch, reapply only this listed surface, run the
-focused Meo adapter tests, API TypeScript check and client typecheck/build, then
-review dependency and MIT attribution changes. Do not vendor a second LibreChat
-tree into `meo-ai`.
+For upgrades, fetch the `upstream` remote and update from its `main` branch.
+Record the new exact upstream base SHA, review security and authentication
+changes, and reapply only the listed Meo surface while preserving Meo activity
+sync. Run the adapter tests, API TypeScript check, affected static checks,
+client typecheck/build and Lighthouse. Review dependency and MIT attribution
+changes. Do not vendor a second LibreChat tree into `meo-ai`.
