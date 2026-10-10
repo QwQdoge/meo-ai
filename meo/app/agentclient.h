@@ -22,6 +22,8 @@ class AgentClient : public QObject {
     Q_PROPERTY(QVariantList skills READ skills NOTIFY changed)
     Q_PROPERTY(QVariantList mcpServers READ mcpServers NOTIFY changed)
     Q_PROPERTY(QVariantList controls READ controls NOTIFY changed)
+    Q_PROPERTY(QVariantMap memoryState READ memoryState NOTIFY changed)
+    Q_PROPERTY(QVariantList memories READ memories NOTIFY changed)
     Q_PROPERTY(QVariantMap responseMetadata READ responseMetadata NOTIFY changed)
 public:
     explicit AgentClient(QObject *parent = nullptr);
@@ -38,6 +40,8 @@ public:
     QVariantList skills() const { return m_skills; }
     QVariantList mcpServers() const { return m_mcpServers; }
     QVariantList controls() const { return m_controls; }
+    QVariantMap memoryState() const { return m_memoryState; }
+    QVariantList memories() const { return m_memories; }
     QVariantMap responseMetadata() const { return m_responseMetadata; }
     Q_INVOKABLE void send(const QString &text);
     Q_INVOKABLE void choose(int index);
@@ -46,6 +50,10 @@ public:
     Q_INVOKABLE void refreshServiceMetadata();
     Q_INVOKABLE void setModelRole(const QString &roleId, const QString &modelId);
     Q_INVOKABLE void setControl(const QString &controlId, const QVariant &value);
+    Q_INVOKABLE void setMemoryEnabled(bool enabled);
+    Q_INVOKABLE void createMemory(const QString &text, bool pinned = false);
+    Q_INVOKABLE void updateMemory(const QString &memoryId, const QString &text, bool pinned);
+    Q_INVOKABLE void deleteMemory(const QString &memoryId);
 signals:
     void changed();
     void message(const QString &role, const QString &text);
@@ -66,6 +74,7 @@ private:
     void submitServiceCancel();
     void fetchServiceMetadataStep(int step, bool hadError);
     void postServiceAction(const QUrl &url, const QByteArray &body, const std::function<void(QNetworkReply *)> &onSuccess);
+    void deleteServiceAction(const QUrl &url, const std::function<void(QNetworkReply *)> &onSuccess);
     QUrl validatedOrigin(const QByteArray &variable, const QString &fallback = QString()) const;
     QNetworkAccessManager m_network;
     QNetworkReply *m_reply = nullptr;
@@ -86,6 +95,8 @@ private:
     QVariantList m_skills;
     QVariantList m_mcpServers;
     QVariantList m_controls;
+    QVariantMap m_memoryState;
+    QVariantList m_memories;
     QVariantMap m_responseMetadata;
     bool m_done = false;
     bool m_serviceMode = false;
