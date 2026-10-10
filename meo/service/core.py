@@ -6,6 +6,8 @@ from typing import Callable, Dict
 
 from .backend_adapter import AgentBackendAdapter, BackendCallbacks
 from .legacy_v2_bridge import LegacyV2ToolBridge
+from .model_roles import ModelRoleRegistry
+from .presentation import normalize_presentation_card
 from .request_registry import RequestRegistry
 from .request_state import RequestLifecycle, RequestState
 
@@ -24,8 +26,13 @@ class AgentServiceCore:
     translate to these operations instead of owning request/decision state.
     """
 
-    def __init__(self, backend: AgentBackendAdapter | None = None) -> None:
+    def __init__(
+        self,
+        backend: AgentBackendAdapter | None = None,
+        model_roles: ModelRoleRegistry | None = None,
+    ) -> None:
         self.backend = backend
+        self.model_roles = model_roles or ModelRoleRegistry()
         self.requests = RequestRegistry()
         self.tool_bridge = LegacyV2ToolBridge()
         self._contexts: Dict[str, RequestContext] = {}
@@ -83,6 +90,14 @@ class AgentServiceCore:
         if not backend.conversation_exists(conversation_id):
             raise ValueError("unknown conversation_id")
         backend.set_model(conversation_id, model_id)
+
+    def list_model_roles(self) -> list[dict]:
+        models = list(self._require_backend().list_models())
+        return self.model_roles.list_roles(models)
+
+    def set_model_role(self, role_id: str, model_id: str | None) -> dict:
+        models = list(self._require_backend().list_models())
+        return self.model_roles.set_role(role_id, model_id, models)
 
     def list_skills(self) -> list[dict]:
         return [
@@ -178,6 +193,10 @@ class AgentServiceCore:
             normalized = self.publish_legacy_tool_request(request_id, event)
         elif event_type == "tool_result":
             normalized = self.tool_bridge.publish_result(request, event)
+            normalized["conversation_id"] = self.get_context(request_id).conversation_id
+        elif event_type == "presentation_card":
+            normalized = normalize_presentation_card(event)
+            normalized["request_id"] = request_id
             normalized["conversation_id"] = self.get_context(request_id).conversation_id
         else:
             raise ValueError(f"unsupported backend tool event: {event_type}")
