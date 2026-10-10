@@ -48,7 +48,7 @@ Popup {
 
                 MeoText {
                     Layout.fillWidth: true
-                    text: qsTr("Only settings supported by the active runtime are shown.")
+                    text: qsTr("Runtime settings, memory, and conversation-scoped AI input.")
                     typeRole: "body"
                     typeSize: "small"
                     color: MeoTheme.contentOnSurfaceVariant
@@ -79,6 +79,120 @@ Popup {
             Column {
                 width: parent.width
                 spacing: 8 * root.uiScale
+
+                Rectangle {
+                    width: parent.width
+                    visible: agent.serviceMode
+                    implicitHeight: visible ? resourceColumn.implicitHeight + 24 * root.uiScale : 0
+                    radius: 18 * root.uiScale
+                    color: MeoTheme.surfaceContainer
+
+                    ColumnLayout {
+                        id: resourceColumn
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        anchors.margins: 12 * root.uiScale
+                        spacing: 8 * root.uiScale
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 10 * root.uiScale
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 2 * root.uiScale
+
+                                MeoText {
+                                    Layout.fillWidth: true
+                                    text: qsTr("Conversation input")
+                                    typeRole: "label"
+                                    typeSize: "medium"
+                                    color: MeoTheme.contentOnSurface
+                                }
+
+                                MeoText {
+                                    Layout.fillWidth: true
+                                    text: agent.pendingResources.length > 0
+                                        ? qsTr("%1 attachment(s) will be sent with the next message.").arg(agent.pendingResources.length)
+                                        : qsTr("Attach long text as structured conversation data.")
+                                    typeRole: "body"
+                                    typeSize: "small"
+                                    color: MeoTheme.contentOnSurfaceVariant
+                                    wrapMode: Text.Wrap
+                                }
+                            }
+
+                            MeoButton {
+                                text: qsTr("Long paste")
+                                type: "tonal"
+                                size: "xs"
+                                enabled: !agent.busy && !agent.actionBusy
+                                onClicked: longPastePanel.open()
+                            }
+                        }
+
+                        Repeater {
+                            model: agent.pendingResources
+
+                            delegate: Rectangle {
+                                required property var modelData
+                                Layout.fillWidth: true
+                                implicitHeight: 42 * root.uiScale
+                                radius: 13 * root.uiScale
+                                color: MeoTheme.surfaceContainerLow
+
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 10 * root.uiScale
+                                    anchors.rightMargin: 8 * root.uiScale
+                                    spacing: 8 * root.uiScale
+
+                                    ColumnLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 0
+
+                                        MeoText {
+                                            Layout.fillWidth: true
+                                            text: String(modelData.name || qsTr("Attachment"))
+                                            typeRole: "label"
+                                            typeSize: "small"
+                                            color: MeoTheme.contentOnSurface
+                                            elide: Text.ElideRight
+                                        }
+
+                                        MeoText {
+                                            Layout.fillWidth: true
+                                            text: qsTr("%1 bytes · %2").arg(Number(modelData.size_bytes || 0)).arg(String(modelData.kind || "resource"))
+                                            typeRole: "label"
+                                            typeSize: "small"
+                                            color: MeoTheme.contentOnSurfaceVariant
+                                            opacity: 0.68
+                                            elide: Text.ElideRight
+                                        }
+                                    }
+
+                                    MeoButton {
+                                        text: qsTr("Remove")
+                                        type: "text"
+                                        size: "xs"
+                                        enabled: !agent.busy && !agent.actionBusy
+                                        onClicked: agent.discardPendingResource(String(modelData.resource_id || ""))
+                                    }
+                                }
+                            }
+                        }
+
+                        MeoButton {
+                            visible: agent.pendingResources.length > 1
+                            text: qsTr("Clear pending attachments")
+                            type: "text"
+                            size: "xs"
+                            enabled: !agent.busy && !agent.actionBusy
+                            onClicked: agent.clearPendingResources()
+                        }
+                    }
+                }
 
                 Rectangle {
                     width: parent.width
@@ -252,7 +366,7 @@ Popup {
                 }
 
                 MeoText {
-                    visible: root.controls.length === 0
+                    visible: root.controls.length === 0 && !agent.serviceMode
                     width: parent.width
                     text: qsTr("The active backend does not currently expose adjustable AI controls.")
                     typeRole: "body"
@@ -288,6 +402,16 @@ Popup {
         }
         onDeleteRequested: function(memoryId) {
             agent.deleteMemory(memoryId)
+        }
+    }
+
+    LongPastePanel {
+        id: longPastePanel
+        parent: Overlay.overlay
+        x: parent ? Math.round((parent.width - width) / 2) : 0
+        y: parent ? Math.round((parent.height - height) / 2) : 0
+        onAttachRequested: function(name, text) {
+            agent.addLongTextResource(name, text)
         }
     }
 }
