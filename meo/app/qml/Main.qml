@@ -213,7 +213,7 @@ ApplicationWindow {
                                 Text {
                                     Layout.fillWidth: true
                                     text: qsTr("Current chat")
-                                    color: MeoTheme.contentOnSurface
+                                    color: MeoTheme.contentOnPrimaryContainer
                                     font.pixelSize: MeoTheme.labelLarge.size * window.scale
                                     font.weight: Font.DemiBold
                                     elide: Text.ElideRight
@@ -222,9 +222,10 @@ ApplicationWindow {
                                 Text {
                                     Layout.fillWidth: true
                                     text: agent.busy ? qsTr("Working") : qsTr("Ready")
-                                    color: MeoTheme.contentOnSurfaceVariant
+                                    color: MeoTheme.contentOnPrimaryContainer
                                     font.pixelSize: MeoTheme.labelSmall.size * window.scale
                                     elide: Text.ElideRight
+                                    opacity: 0.72
                                 }
                             }
                         }
@@ -339,7 +340,10 @@ ApplicationWindow {
 
                         Rectangle {
                             visible: !window.compact
-                            implicitWidth: modelLabel.implicitWidth + 24 * window.scale
+                            Layout.preferredWidth: Math.min(
+                                modelLabel.implicitWidth + 24 * window.scale,
+                                220 * window.scale)
+                            Layout.maximumWidth: 220 * window.scale
                             implicitHeight: 32 * window.scale
                             radius: 12 * window.scale
                             color: MeoTheme.surfaceContainerLow
@@ -348,7 +352,11 @@ ApplicationWindow {
 
                             Text {
                                 id: modelLabel
-                                anchors.centerIn: parent
+                                anchors.fill: parent
+                                anchors.leftMargin: 12 * window.scale
+                                anchors.rightMargin: 12 * window.scale
+                                verticalAlignment: Text.AlignVCenter
+                                horizontalAlignment: Text.AlignHCenter
                                 text: agent.serviceMode
                                     ? (window.selectedModelLabel.length
                                         ? window.selectedModelLabel
@@ -357,6 +365,7 @@ ApplicationWindow {
                                 color: MeoTheme.contentOnSurfaceVariant
                                 font.pixelSize: MeoTheme.labelSmall.size * window.scale
                                 font.weight: Font.DemiBold
+                                elide: Text.ElideRight
                             }
                         }
 
@@ -569,9 +578,7 @@ ApplicationWindow {
                     Layout.leftMargin: window.pageMargin
                     Layout.rightMargin: window.pageMargin
                     Layout.bottomMargin: visible ? 10 * window.scale : 0
-                    Layout.preferredHeight: visible
-                        ? Math.min(172 * window.scale, cardRow.implicitHeight + 2 * window.scale)
-                        : 0
+                    Layout.preferredHeight: visible ? 154 * window.scale : 0
 
                     Flickable {
                         anchors.fill: parent
@@ -600,7 +607,7 @@ ApplicationWindow {
                                     width: window.compact
                                         ? Math.min(presentationShelf.width, 330 * window.scale)
                                         : 286 * window.scale
-                                    height: Math.max(132 * window.scale, presentationShelf.height)
+                                    height: presentationShelf.height
                                     type: "filled"
                                     compact: true
 
@@ -799,7 +806,7 @@ ApplicationWindow {
                                 }
 
                                 MeoButton {
-                                    text: agent.busy ? qsTr("Working") : qsTr("Send")
+                                    text: qsTr("Send")
                                     type: "filled"
                                     loading: agent.busy || agent.actionBusy
                                     enabled: !agent.busy && !agent.actionBusy
