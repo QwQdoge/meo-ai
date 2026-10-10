@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from hashlib import sha256
 import json
 import os
@@ -10,7 +10,7 @@ from uuid import uuid4
 
 
 RESOURCE_KINDS = {"attachment", "image", "long_text", "artifact"}
-RESOURCE_STATES = {"ready", "failed"}
+RESOURCE_STATES = {"uploading", "ready", "failed"}
 _DEFAULT_MAX_BYTES = 25 * 1024 * 1024
 _MAX_NAME = 512
 _MAX_MIME = 128
@@ -114,6 +114,14 @@ class ConversationResourceStore:
         return state
 
     @staticmethod
+    def _validate_size(size_bytes: int, max_bytes: int) -> int:
+        if isinstance(size_bytes, bool) or not isinstance(size_bytes, int) or size_bytes < 0:
+            raise ResourceError("resource size must be a non-negative integer")
+        if size_bytes > max_bytes:
+            raise ResourceError("resource exceeds configured size limit")
+        return size_bytes
+
+    @staticmethod
     def _token(resource_id: str) -> str:
         if not isinstance(resource_id, str) or not resource_id.startswith("resource:"):
             raise ResourceError("invalid resource_id")
@@ -164,34 +172,53 @@ class ConversationResourceStore:
         self._validate_name(record.name)
         self._validate_mime(record.mime_type)
         self._validate_state(record.state)
-        if isinstance(record.size_bytes, bool) or not isinstance(record.size_bytes, int) or record.size_bytes < 0:
-            raise ResourceError("resource metadata size is invalid")
-        if not isinstance(record.sha256, str) or len(record.sha256) != 64:
-            raise ResourceError("resource metadata digest is invalid")
+        self._validate_size(record.size_bytes, self.max_resource_bytes)
+        if record.state == "ready":
+            if not isinstance(record.sha256, str) or len(record.sha256) != 64:
+                raise ResourceError("resource metadata digest is invalid")
+        elif record.sha256:
+            raise ResourceError("unfinished resource must not claim a digest")
         return record
 
-    def put_bytes(
+    def reserve(
         self,
         conversation_id: str,
         *,
         kind: str,
         name: str,
         mime_type: str,
-        data: bytes,
-        state: str = "ready",
+        size_bytes: int,
     ) -> ResourceRecord:
         conversation_id = self._validate_conversation_id(conversation_id)
         kind = self._validate_kind(kind)
         name = self._validate_name(name)
         mime_type = self._validate_mime(mime_type)
-        state = self._validate_state(state)
+        size_bytes = self._validate_size(size_bytes, self.max_resource_bytes)
+        resource_id = f"resource:{uuid4().hex}"
+        record = ResourceRecord(
+            resource_id=resource_id,
+            conversation_id=conversation_id,
+            kind=kind,
+            name=name,
+            mime_type=mime_type,
+            size_bytes=size_bytes,
+            sha256="",
+            state="uploading",
+        )
+        self._write_metadata(record)
+        return record
+
+    def finalize_upload(self, conversation_id: str, resource_id: str, data: bytes) -> ResourceRecord:
+        record = self.get(conversation_id, resource_id)
+        if record.state != "uploading":
+            raise ResourceError("resource is not awaiting upload")
         if not isinstance(data, (bytes, bytearray, memoryview)):
             raise ResourceError("resource data must be bytes")
         content = bytes(data)
-        if len(content) > self.max_resource_bytes:
-            raise ResourceError("resource exceeds configured size limit")
+        self._validate_size(len(content), self.max_resource_bytes)
+        if len(content) != record.size_bytes:
+            raise ResourceError("uploaded size does not match reserved size")
 
-        resource_id = f"resource:{uuid4().hex}"
         object_path = self._object_path(resource_id)
         fd, temp_name = tempfile.mkstemp(prefix="resource-data-", dir=self.objects)
         try:
@@ -206,25 +233,48 @@ class ConversationResourceStore:
             if os.path.exists(temp_name):
                 os.unlink(temp_name)
 
-        record = ResourceRecord(
-            resource_id=resource_id,
-            conversation_id=conversation_id,
-            kind=kind,
-            name=name,
-            mime_type=mime_type,
-            size_bytes=len(content),
+        ready = replace(
+            record,
             sha256=sha256(content).hexdigest(),
-            state=state,
+            state="ready",
         )
         try:
-            self._write_metadata(record)
+            self._write_metadata(ready)
         except Exception:
             try:
                 object_path.unlink()
             except FileNotFoundError:
                 pass
             raise
-        return record
+        return ready
+
+    def put_bytes(
+        self,
+        conversation_id: str,
+        *,
+        kind: str,
+        name: str,
+        mime_type: str,
+        data: bytes,
+        state: str = "ready",
+    ) -> ResourceRecord:
+        if state != "ready":
+            raise ResourceError("direct resource writes must use ready state")
+        if not isinstance(data, (bytes, bytearray, memoryview)):
+            raise ResourceError("resource data must be bytes")
+        content = bytes(data)
+        reserved = self.reserve(
+            conversation_id,
+            kind=kind,
+            name=name,
+            mime_type=mime_type,
+            size_bytes=len(content),
+        )
+        try:
+            return self.finalize_upload(conversation_id, reserved.resource_id, content)
+        except Exception:
+            self.delete(conversation_id, reserved.resource_id)
+            raise
 
     def put_text(
         self,
@@ -254,6 +304,8 @@ class ConversationResourceStore:
 
     def read_bytes(self, conversation_id: str, resource_id: str) -> bytes:
         record = self.get(conversation_id, resource_id)
+        if record.state != "ready":
+            raise ResourceError("resource is not ready")
         try:
             content = self._object_path(record.resource_id).read_bytes()
         except FileNotFoundError as exc:
