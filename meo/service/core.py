@@ -4,7 +4,12 @@ from dataclasses import dataclass
 import threading
 from typing import Callable, Dict
 
-from .backend_adapter import AgentBackendAdapter, BackendCallbacks
+from .backend_adapter import (
+    AgentBackendAdapter,
+    BackendCallbacks,
+    InputResource,
+    ResourceInputBackend,
+)
 from .content_blocks import legacy_text_block
 from .legacy_v2_bridge import LegacyV2ToolBridge
 from .model_roles import ModelRoleRegistry
@@ -12,6 +17,10 @@ from .presentation import normalize_presentation_card
 from .request_registry import RequestRegistry
 from .request_state import RequestLifecycle, RequestState
 from .resources import ConversationResourceStore
+
+
+_MAX_REQUEST_RESOURCES = 16
+_MAX_REQUEST_RESOURCE_BYTES = 32 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -155,6 +164,37 @@ class AgentServiceCore:
         self._require_conversation(conversation_id)
         self._require_resource_store().delete(conversation_id, resource_id)
 
+    def _resolve_input_resources(
+        self,
+        conversation_id: str,
+        resource_ids: tuple[str, ...],
+    ) -> tuple[InputResource, ...]:
+        if len(resource_ids) > _MAX_REQUEST_RESOURCES:
+            raise ValueError(f"at most {_MAX_REQUEST_RESOURCES} resources may be sent with one request")
+        if len(set(resource_ids)) != len(resource_ids):
+            raise ValueError("resource_ids must not contain duplicates")
+        store = self._require_resource_store()
+        resolved: list[InputResource] = []
+        total_bytes = 0
+        for resource_id in resource_ids:
+            if not isinstance(resource_id, str) or not resource_id:
+                raise ValueError("resource_ids must contain non-empty strings")
+            record = store.get(conversation_id, resource_id)
+            if record.state != "ready":
+                raise ValueError("all input resources must be ready")
+            data = store.read_bytes(conversation_id, resource_id)
+            total_bytes += len(data)
+            if total_bytes > _MAX_REQUEST_RESOURCE_BYTES:
+                raise ValueError("combined request resources exceed the input limit")
+            resolved.append(InputResource(
+                resource_id=record.resource_id,
+                kind=record.kind,
+                name=record.name,
+                mime_type=record.mime_type,
+                data=data,
+            ))
+        return tuple(resolved)
+
     def list_models(self) -> list[dict]:
         return [
             {
@@ -218,10 +258,19 @@ class AgentServiceCore:
         text: str,
         callbacks: BackendCallbacks,
         on_started: Callable[[RequestContext], None] | None = None,
+        resource_ids: tuple[str, ...] = (),
     ) -> RequestContext:
         backend = self._require_conversation(conversation_id)
         if not isinstance(text, str) or not text.strip():
             raise ValueError("message text is required")
+        if not isinstance(resource_ids, tuple):
+            raise ValueError("resource_ids must be a tuple")
+
+        resources: tuple[InputResource, ...] = ()
+        if resource_ids:
+            if not isinstance(backend, ResourceInputBackend):
+                raise ValueError("selected backend does not support resource inputs")
+            resources = self._resolve_input_resources(conversation_id, resource_ids)
 
         context = self.start_request(conversation_id)
         request_id = context.request_id
@@ -247,7 +296,15 @@ class AgentServiceCore:
             on_error=lambda error: dispatch(self._backend_error, request_id, error, callbacks),
         )
         try:
-            handle = backend.send_message(conversation_id, text, wrapped)
+            if resources:
+                handle = backend.send_message_with_resources(
+                    conversation_id,
+                    text,
+                    resources,
+                    wrapped,
+                )
+            else:
+                handle = backend.send_message(conversation_id, text, wrapped)
         except Exception as exc:
             self.fail_request(request_id, str(exc))
             raise
