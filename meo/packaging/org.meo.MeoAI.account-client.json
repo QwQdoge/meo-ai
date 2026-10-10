@@ -1,0 +1,15 @@
+{
+  "id": "org.meo.MeoAI",
+  "name": "Meo AI",
+  "oauthClientId": "meo-ai-native",
+  "redirectUri": "meoai://auth/callback",
+  "executables": [
+    "/usr/bin/meo-ai"
+  ],
+  "scopes": [
+    "openid"
+  ],
+  "capabilities": [
+    "ai_usage_sync"
+  ]
+}
