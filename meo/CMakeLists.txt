@@ -59,6 +59,11 @@ if(BUILD_TESTING)
     target_link_libraries(meo-ai-service-metadata-test PRIVATE Qt6::Network Qt6::Test)
     add_test(NAME meo-ai.service-metadata COMMAND meo-ai-service-metadata-test)
 
+    qt_add_executable(meo-ai-presentation-event-test tests/presentation-event-test.cpp app/agentclient.cpp app/agentclient.h)
+    target_include_directories(meo-ai-presentation-event-test PRIVATE app)
+    target_link_libraries(meo-ai-presentation-event-test PRIVATE Qt6::Network Qt6::Test)
+    add_test(NAME meo-ai.presentation-event COMMAND meo-ai-presentation-event-test)
+
     add_test(
         NAME meo-ai.default-transport
         COMMAND ${CMAKE_COMMAND} -E env
