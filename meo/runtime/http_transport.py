@@ -120,7 +120,12 @@ class AgentHttpTransport:
     def list_mcp_servers(self) -> list[dict]:
         return self.service.list_mcp_servers()
 
-    def send_message(self, conversation_id: str, text: str) -> tuple[str, RequestEventJournal]:
+    def send_message(
+        self,
+        conversation_id: str,
+        text: str,
+        resource_ids: tuple[str, ...] = (),
+    ) -> tuple[str, RequestEventJournal]:
         journal = RequestEventJournal()
         request_box: dict[str, str] = {}
 
@@ -149,7 +154,13 @@ class AgentHttpTransport:
             on_done=lambda: self._finish_journal(journal, request_id()),
             on_error=lambda error: self._fail_journal(journal, request_id(), error),
         )
-        context = self.service.send_message(conversation_id, text, callbacks, on_started=on_started)
+        context = self.service.send_message(
+            conversation_id,
+            text,
+            callbacks,
+            on_started=on_started,
+            resource_ids=resource_ids,
+        )
         return context.request_id, journal
 
     def _finish_journal(self, journal: RequestEventJournal, request_id: str) -> None:
@@ -512,12 +523,19 @@ class _Handler(BaseHTTPRequestHandler):
             if len(segments) == 4 and segments[:2] == ["v1", "conversations"] and segments[3] == "messages":
                 body = self._read_json()
                 text = body.get("text")
+                resource_ids = body.get("resource_ids", [])
                 if not isinstance(text, str) or not text.strip():
                     raise ValueError("text is required")
+                if not isinstance(resource_ids, list) or any(not isinstance(item, str) for item in resource_ids):
+                    raise ValueError("resource_ids must be an array of strings")
                 try:
-                    request_id, journal = self.transport.send_message(segments[2], text)
+                    request_id, journal = self.transport.send_message(
+                        segments[2],
+                        text,
+                        tuple(resource_ids),
+                    )
                 except ValueError as exc:
-                    if str(exc) == "unknown conversation_id":
+                    if _resource_missing(exc):
                         self._reply_error(HTTPStatus.NOT_FOUND, str(exc))
                         return
                     raise
