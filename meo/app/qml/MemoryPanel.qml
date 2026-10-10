@@ -13,12 +13,12 @@ Popup {
     property real uiScale: MeoTheme.globalScale
     property string editingId: ""
     property string editingText: ""
+    property bool editingPinned: false
 
     signal refreshRequested(string query)
     signal enabledChangeRequested(bool enabled)
     signal createRequested(string text, bool pinned)
-    signal editRequested(string memoryId, string text)
-    signal pinRequested(string memoryId, bool pinned)
+    signal updateRequested(string memoryId, string text, bool pinned)
     signal deleteRequested(string memoryId)
 
     modal: true
@@ -292,7 +292,10 @@ Popup {
                                     type: "text"
                                     size: "xs"
                                     enabled: !root.busy
-                                    onClicked: root.pinRequested(String(modelData.memory_id || ""), !modelData.pinned)
+                                    onClicked: root.updateRequested(
+                                        String(modelData.memory_id || ""),
+                                        String(modelData.text || ""),
+                                        !modelData.pinned)
                                 }
 
                                 MeoButton {
@@ -303,6 +306,7 @@ Popup {
                                     onClicked: {
                                         root.editingId = String(modelData.memory_id || "")
                                         root.editingText = String(modelData.text || "")
+                                        root.editingPinned = modelData.pinned === true
                                     }
                                 }
 
@@ -365,6 +369,7 @@ Popup {
                         onClicked: {
                             root.editingId = ""
                             root.editingText = ""
+                            root.editingPinned = false
                         }
                     }
                     MeoButton {
@@ -373,9 +378,10 @@ Popup {
                         size: "xs"
                         enabled: !root.busy && editTextArea.text.trim().length > 0
                         onClicked: {
-                            root.editRequested(root.editingId, editTextArea.text)
+                            root.updateRequested(root.editingId, editTextArea.text, root.editingPinned)
                             root.editingId = ""
                             root.editingText = ""
+                            root.editingPinned = false
                         }
                     }
                 }
