@@ -57,10 +57,12 @@ Popup {
     readonly property var timing: map(metadata.timing)
     readonly property var contextInfo: map(metadata.context)
     readonly property var activity: map(metadata.activity)
+    readonly property var searchInfo: map(activity.search)
     readonly property var reasoning: map(metadata.reasoning)
     readonly property var controlsInfo: map(metadata.controls)
     readonly property var costInfo: map(metadata.cost)
     readonly property var rateLimits: map(metadata.rate_limits)
+    readonly property var citations: Array.isArray(metadata.citations) ? metadata.citations : []
     readonly property bool contextIsRuntimeBudget: contextInfo.status === "runtime_budget"
 
     background: Rectangle {
@@ -294,6 +296,92 @@ Popup {
                         typeRole: "body"
                         typeSize: "small"
                         color: MeoTheme.contentOnSurfaceVariant
+                    }
+                }
+
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    visible: root.searchInfo.used === true || root.citations.length > 0
+                    spacing: 7 * root.uiScale
+
+                    MeoText {
+                        text: qsTr("Search & sources")
+                        typeRole: "label"
+                        typeSize: "medium"
+                        color: MeoTheme.contentOnSurface
+                    }
+
+                    MeoText {
+                        Layout.fillWidth: true
+                        visible: Array.isArray(root.searchInfo.queries) && root.searchInfo.queries.length > 0
+                        text: qsTr("Queries: %1").arg(root.searchInfo.queries.join(" · "))
+                        textFormat: Text.PlainText
+                        wrapMode: Text.Wrap
+                        typeRole: "body"
+                        typeSize: "small"
+                        color: MeoTheme.contentOnSurfaceVariant
+                    }
+
+                    MeoText {
+                        Layout.fillWidth: true
+                        visible: root.searchInfo.result_count !== undefined
+                        text: qsTr("%1 observed search results").arg(root.searchInfo.result_count)
+                        typeRole: "label"
+                        typeSize: "small"
+                        color: MeoTheme.contentOnSurfaceVariant
+                    }
+
+                    Repeater {
+                        model: root.citations
+
+                        delegate: Rectangle {
+                            required property var modelData
+                            Layout.fillWidth: true
+                            implicitHeight: sourceColumn.implicitHeight + 16 * root.uiScale
+                            radius: 14 * root.uiScale
+                            color: MeoTheme.surfaceContainerLow
+
+                            ColumnLayout {
+                                id: sourceColumn
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                anchors.top: parent.top
+                                anchors.margins: 8 * root.uiScale
+                                spacing: 2 * root.uiScale
+
+                                MeoText {
+                                    Layout.fillWidth: true
+                                    text: String(modelData.title || modelData.uri || qsTr("Source"))
+                                    textFormat: Text.PlainText
+                                    wrapMode: Text.Wrap
+                                    typeRole: "label"
+                                    typeSize: "medium"
+                                    color: MeoTheme.contentOnSurface
+                                }
+
+                                MeoText {
+                                    Layout.fillWidth: true
+                                    visible: String(modelData.uri || "").length > 0
+                                    text: String(modelData.uri || "")
+                                    textFormat: Text.PlainText
+                                    wrapMode: Text.WrapAnywhere
+                                    typeRole: "body"
+                                    typeSize: "small"
+                                    color: MeoTheme.primary
+                                    selectByMouse: true
+                                }
+
+                                MeoText {
+                                    Layout.fillWidth: true
+                                    visible: String(modelData.provider || "").length > 0
+                                    text: String(modelData.provider || "")
+                                    typeRole: "label"
+                                    typeSize: "small"
+                                    color: MeoTheme.contentOnSurfaceVariant
+                                    opacity: 0.7
+                                }
+                            }
+                        }
                     }
                 }
 
