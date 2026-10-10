@@ -24,6 +24,7 @@ class AgentClient : public QObject {
     Q_PROPERTY(QVariantList controls READ controls NOTIFY changed)
     Q_PROPERTY(QVariantMap memoryState READ memoryState NOTIFY changed)
     Q_PROPERTY(QVariantList memories READ memories NOTIFY changed)
+    Q_PROPERTY(QVariantList pendingResources READ pendingResources NOTIFY changed)
     Q_PROPERTY(QVariantMap responseMetadata READ responseMetadata NOTIFY changed)
 public:
     explicit AgentClient(QObject *parent = nullptr);
@@ -42,8 +43,13 @@ public:
     QVariantList controls() const { return m_controls; }
     QVariantMap memoryState() const { return m_memoryState; }
     QVariantList memories() const { return m_memories; }
+    QVariantList pendingResources() const { return m_pendingResources; }
     QVariantMap responseMetadata() const { return m_responseMetadata; }
     Q_INVOKABLE void send(const QString &text);
+    Q_INVOKABLE void sendWithPendingResources(const QString &text);
+    Q_INVOKABLE void addLongTextResource(const QString &name, const QString &text);
+    Q_INVOKABLE void discardPendingResource(const QString &resourceId);
+    Q_INVOKABLE void clearPendingResources();
     Q_INVOKABLE void choose(int index);
     Q_INVOKABLE void cancel();
     Q_INVOKABLE void newChat();
@@ -69,6 +75,7 @@ private:
     void ensureServiceConversation(const std::function<void()> &then);
     void loadServiceHistory();
     void sendService(const QString &text, bool emitAssistantPlaceholder = true);
+    void sendServiceWithResources(const QString &text, const QVariantList &resources);
     void reconnectServiceStream();
     void attachServiceStream(QNetworkReply *reply);
     void consumeService();
@@ -99,6 +106,7 @@ private:
     QVariantList m_controls;
     QVariantMap m_memoryState;
     QVariantList m_memories;
+    QVariantList m_pendingResources;
     QVariantMap m_responseMetadata;
     bool m_done = false;
     bool m_serviceMode = false;
