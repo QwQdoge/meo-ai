@@ -45,7 +45,7 @@ public:
     QVariantList memories() const { return m_memories; }
     QVariantList pendingResources() const { return m_pendingResources; }
     QVariantMap responseMetadata() const { return m_responseMetadata; }
-    Q_INVOKABLE void send(const QString &text);
+    Q_INVOKABLE virtual void send(const QString &text);
     Q_INVOKABLE void sendWithPendingResources(const QString &text);
     Q_INVOKABLE void addLongTextResource(const QString &name, const QString &text);
     Q_INVOKABLE void discardPendingResource(const QString &resourceId);
