@@ -120,6 +120,37 @@ class AgentServiceCore:
         )
         return record.public_dict()
 
+    def reserve_resource(
+        self,
+        conversation_id: str,
+        *,
+        kind: str,
+        name: str,
+        mime_type: str,
+        size_bytes: int,
+    ) -> dict:
+        self._require_conversation(conversation_id)
+        record = self._require_resource_store().reserve(
+            conversation_id,
+            kind=kind,
+            name=name,
+            mime_type=mime_type,
+            size_bytes=size_bytes,
+        )
+        return record.public_dict()
+
+    def upload_resource(self, conversation_id: str, resource_id: str, data: bytes) -> dict:
+        self._require_conversation(conversation_id)
+        record = self._require_resource_store().finalize_upload(
+            conversation_id,
+            resource_id,
+            data,
+        )
+        return record.public_dict()
+
+    def resource_upload_limit(self) -> int:
+        return self._require_resource_store().max_resource_bytes
+
     def delete_resource(self, conversation_id: str, resource_id: str) -> None:
         self._require_conversation(conversation_id)
         self._require_resource_store().delete(conversation_id, resource_id)
