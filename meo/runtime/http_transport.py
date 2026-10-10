@@ -50,6 +50,13 @@ class AgentHttpTransport:
         self.service.set_model(conversation_id, model_id)
         return {"conversation_id": conversation_id, "model_id": model_id, "accepted": True}
 
+    def list_model_roles(self) -> list[dict]:
+        return self.service.list_model_roles()
+
+    def set_model_role(self, role_id: str, model_id: str | None) -> dict:
+        role = self.service.set_model_role(role_id, model_id)
+        return {"accepted": True, "role": role}
+
     def list_skills(self) -> list[dict]:
         return self.service.list_skills()
 
@@ -281,6 +288,9 @@ class _Handler(BaseHTTPRequestHandler):
             if segments == ["v1", "models"] and not query:
                 self._reply_json(HTTPStatus.OK, {"models": self.transport.list_models()})
                 return
+            if segments == ["v1", "model-roles"] and not query:
+                self._reply_json(HTTPStatus.OK, {"model_roles": self.transport.list_model_roles()})
+                return
             if segments == ["v1", "skills"] and not query:
                 self._reply_json(HTTPStatus.OK, {"skills": self.transport.list_skills()})
                 return
@@ -334,6 +344,13 @@ class _Handler(BaseHTTPRequestHandler):
                 if not isinstance(model_id, str) or not model_id.strip():
                     raise ValueError("model_id is required")
                 self._reply_json(HTTPStatus.OK, self.transport.set_model(segments[2], model_id))
+                return
+            if len(segments) == 3 and segments[:2] == ["v1", "model-roles"]:
+                body = self._read_json()
+                model_id = body.get("model_id")
+                if model_id is not None and not isinstance(model_id, str):
+                    raise ValueError("model_id must be a string or null")
+                self._reply_json(HTTPStatus.OK, self.transport.set_model_role(segments[2], model_id))
                 return
             if len(segments) == 3 and segments[:2] == ["v1", "skills"]:
                 body = self._read_json()
