@@ -40,7 +40,17 @@ ApplicationWindow {
         composer.text = ""
     }
 
+    function modelIndex(modelId) {
+        const wanted = String(modelId || "")
+        for (let i = 0; i < agent.models.length; ++i) {
+            if (String(agent.models[i].model_id || "") === wanted)
+                return i
+        }
+        return agent.models.length ? 0 : -1
+    }
+
     ListModel { id: messages }
+    ListModel { id: presentationCards }
 
     Connections {
         target: agent
@@ -63,8 +73,24 @@ ApplicationWindow {
                 ? text
                 : qsTr("Meo AI needs your confirmation before continuing.")
         }
+        function onPresentationEvent(event) {
+            const card = event.card
+            if (!card || !card.title)
+                return
+            if (presentationCards.count >= 6)
+                presentationCards.remove(0)
+            presentationCards.append({
+                cardId: String(card.card_id || ""),
+                kind: String(card.kind || "info"),
+                title: String(card.title || ""),
+                subtitle: String(card.subtitle || ""),
+                cardValue: String(card.value || ""),
+                detail: String(card.detail || "")
+            })
+        }
         function onResetChat() {
             messages.clear()
+            presentationCards.clear()
             window.pendingToolDisplay = ""
         }
     }
@@ -275,6 +301,14 @@ ApplicationWindow {
                         }
 
                         MeoButton {
+                            visible: agent.serviceMode
+                            text: qsTr("Model roles")
+                            type: "tonal"
+                            enabled: !agent.actionBusy && !agent.metadataBusy
+                            onClicked: modelRolesPopup.open()
+                        }
+
+                        MeoButton {
                             visible: agent.serviceMode && agent.busy
                             text: qsTr("Stop")
                             type: "tonal"
@@ -407,6 +441,86 @@ ApplicationWindow {
                                 text: qsTr("Help with code")
                                 type: "tonal"
                                 onClicked: window.submit(qsTr("Help me work on my current coding project."))
+                            }
+                        }
+                    }
+                }
+
+                Flow {
+                    id: cardFlow
+                    visible: presentationCards.count > 0
+                    Layout.fillWidth: true
+                    Layout.leftMargin: window.pageMargin
+                    Layout.rightMargin: window.pageMargin
+                    Layout.bottomMargin: visible ? 12 * window.scale : 0
+                    Layout.preferredHeight: visible ? implicitHeight : 0
+                    implicitHeight: childrenRect.height
+                    spacing: 10 * window.scale
+
+                    Repeater {
+                        model: presentationCards
+                        delegate: MeoCard {
+                            required property string cardId
+                            required property string kind
+                            required property string title
+                            required property string subtitle
+                            required property string cardValue
+                            required property string detail
+                            width: Math.min(320 * window.scale, cardFlow.width)
+                            type: "filled"
+
+                            contentItem: ColumnLayout {
+                                spacing: 5 * window.scale
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 8 * window.scale
+                                    Rectangle {
+                                        width: 9 * window.scale
+                                        height: width
+                                        radius: width / 2
+                                        color: MeoTheme.primary
+                                    }
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: title
+                                        color: MeoTheme.contentOnSurface
+                                        font.pixelSize: MeoTheme.titleSmall.size * window.scale
+                                        font.weight: Font.DemiBold
+                                        elide: Text.ElideRight
+                                    }
+                                    Text {
+                                        visible: kind.length > 0
+                                        text: kind.toUpperCase()
+                                        color: MeoTheme.contentOnSurfaceVariant
+                                        font.pixelSize: MeoTheme.labelSmall.size * window.scale
+                                    }
+                                }
+                                Text {
+                                    visible: subtitle.length > 0
+                                    Layout.fillWidth: true
+                                    text: subtitle
+                                    color: MeoTheme.contentOnSurfaceVariant
+                                    font.pixelSize: MeoTheme.labelMedium.size * window.scale
+                                    elide: Text.ElideRight
+                                }
+                                Text {
+                                    visible: cardValue.length > 0
+                                    Layout.fillWidth: true
+                                    text: cardValue
+                                    color: MeoTheme.primary
+                                    font.pixelSize: MeoTheme.headlineSmall.size * window.scale
+                                    font.weight: Font.DemiBold
+                                    wrapMode: Text.Wrap
+                                }
+                                Text {
+                                    visible: detail.length > 0
+                                    Layout.fillWidth: true
+                                    text: detail
+                                    textFormat: Text.PlainText
+                                    wrapMode: Text.Wrap
+                                    color: MeoTheme.contentOnSurfaceVariant
+                                    font.pixelSize: MeoTheme.bodySmall.size * window.scale
+                                }
                             }
                         }
                     }
@@ -547,6 +661,134 @@ ApplicationWindow {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    Popup {
+        id: modelRolesPopup
+        modal: true
+        focus: true
+        x: Math.round((window.width - width) / 2)
+        y: Math.round((window.height - height) / 2)
+        width: Math.min(620 * window.scale, window.width - 32 * window.scale)
+        height: Math.min(650 * window.scale, window.height - 32 * window.scale)
+        padding: 0
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+
+        background: Rectangle {
+            radius: 28 * window.scale
+            color: MeoTheme.surfaceContainer
+            border.width: Math.max(1, window.scale)
+            border.color: MeoTheme.outlineVariant
+        }
+
+        contentItem: ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 20 * window.scale
+            spacing: 12 * window.scale
+
+            RowLayout {
+                Layout.fillWidth: true
+                Text {
+                    Layout.fillWidth: true
+                    text: qsTr("Model roles")
+                    color: MeoTheme.contentOnSurface
+                    font.pixelSize: MeoTheme.headlineSmall.size * window.scale
+                    font.weight: MeoTheme.headlineSmall.weight
+                }
+                MeoButton {
+                    text: qsTr("Close")
+                    type: "tonal"
+                    onClicked: modelRolesPopup.close()
+                }
+            }
+
+            Text {
+                Layout.fillWidth: true
+                text: qsTr("Choose a model for each job. These choices are saved now; the current Newelle compatibility runtime still uses one profile model until true multi-model routing is extracted into AgentCore.")
+                wrapMode: Text.Wrap
+                color: MeoTheme.contentOnSurfaceVariant
+                font.pixelSize: MeoTheme.bodyMedium.size * window.scale
+            }
+
+            ScrollView {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+
+                Column {
+                    width: parent.width
+                    spacing: 10 * window.scale
+
+                    Repeater {
+                        model: agent.modelRoles
+                        delegate: MeoCard {
+                            required property var modelData
+                            width: parent.width
+                            type: "filled"
+
+                            contentItem: ColumnLayout {
+                                spacing: 6 * window.scale
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: String(modelData.label || modelData.role_id || "")
+                                        color: MeoTheme.contentOnSurface
+                                        font.pixelSize: MeoTheme.titleMedium.size * window.scale
+                                        font.weight: Font.DemiBold
+                                    }
+                                    Text {
+                                        text: modelData.workload === "auxiliary" ? qsTr("Background") : qsTr("Primary")
+                                        color: MeoTheme.primary
+                                        font.pixelSize: MeoTheme.labelMedium.size * window.scale
+                                        font.weight: Font.DemiBold
+                                    }
+                                }
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: String(modelData.description || "")
+                                    wrapMode: Text.Wrap
+                                    color: MeoTheme.contentOnSurfaceVariant
+                                    font.pixelSize: MeoTheme.bodySmall.size * window.scale
+                                }
+                                ComboBox {
+                                    Layout.fillWidth: true
+                                    model: agent.models
+                                    textRole: "label"
+                                    valueRole: "model_id"
+                                    enabled: agent.models.length > 0 && !agent.actionBusy
+                                    currentIndex: window.modelIndex(
+                                        String(modelData.preferred_model_id || modelData.fallback_model_id || ""))
+                                    onActivated: function(index) {
+                                        if (index < 0 || index >= agent.models.length)
+                                            return
+                                        agent.setModelRole(
+                                            String(modelData.role_id || ""),
+                                            String(agent.models[index].model_id || ""))
+                                    }
+                                }
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: modelData.runtime_supported
+                                        ? qsTr("Routing active")
+                                        : qsTr("Saved preference · runtime routing not active yet")
+                                    color: modelData.runtime_supported ? MeoTheme.primary : MeoTheme.contentOnSurfaceVariant
+                                    font.pixelSize: MeoTheme.labelSmall.size * window.scale
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Text {
+                Layout.fillWidth: true
+                text: qsTr("Judge models can classify or rank choices, but never approve privileged system actions. Permissions still belong to the typed Router and confirmation policy.")
+                wrapMode: Text.Wrap
+                color: MeoTheme.contentOnSurfaceVariant
+                font.pixelSize: MeoTheme.labelSmall.size * window.scale
             }
         }
     }
