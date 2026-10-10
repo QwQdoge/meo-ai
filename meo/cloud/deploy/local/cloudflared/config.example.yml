@@ -1,0 +1,12 @@
+# Copy to cloudflared/config.yml after `cloudflared tunnel create meo-ai`.
+# Replace the UUID and credentials filename with the values printed by cloudflared.
+tunnel: 00000000-0000-0000-0000-000000000000
+credentials-file: /etc/cloudflared/00000000-0000-0000-0000-000000000000.json
+
+ingress:
+  - hostname: ai.meoarch.org
+    service: http://meo-ai-cloud:8080
+    originRequest:
+      connectTimeout: 10s
+      noHappyEyeballs: false
+  - service: http_status:404
