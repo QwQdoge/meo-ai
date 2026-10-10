@@ -9,6 +9,7 @@ from meo.runtime.headless_probe import require_headless
 from meo.runtime.http_transport import create_http_server
 from meo.service.core import AgentServiceCore
 from meo.service.backend_adapter import AgentBackendAdapter
+from meo.service.model_roles import ModelRoleRegistry, default_model_role_path
 
 
 BackendFactory = Callable[[], AgentBackendAdapter]
@@ -33,7 +34,10 @@ def build_service(spec: str) -> AgentServiceCore:
     factory = load_backend_factory(spec)
     backend = factory()
     require_headless()
-    return AgentServiceCore(backend=backend)
+    return AgentServiceCore(
+        backend=backend,
+        model_roles=ModelRoleRegistry(default_model_role_path()),
+    )
 
 
 def parser() -> argparse.ArgumentParser:
