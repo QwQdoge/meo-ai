@@ -21,6 +21,60 @@ class SupabaseRestStoreTests(unittest.IsolatedAsyncioTestCase):
         for after in (-2, True):
             with self.assertRaises(ValueError):
                 await self.store.list_agent_events(user_id="user-1", run_id="run-1", after=after)
+
+    async def test_conversation_and_message_queries_are_owner_scoped(self) -> None:
+        async def conversation_request(method: str, path: str, body: dict | None, prefer: str | None):
+            self.calls.append((method, path, body, prefer))
+            if method == "POST" and "ai_conversations" in path:
+                return [{"id": "conversation-1", "user_id": "user-1", "title": "Hello"}]
+            if method == "POST" and "ai_messages" in path:
+                return [{"id": "message-1", "role": "user", "content": body["content"]}]
+            if method == "GET" and "ai_conversations" in path:
+                return [{"id": "conversation-1", "title": "Hello"}]
+            if method == "GET" and "ai_messages" in path:
+                return [{"id": "message-1", "role": "user"}]
+            return None
+
+        self.store = SupabaseRestStore(
+            SupabaseRestConfig(
+                project_url="https://example.supabase.co",
+                service_role_key="service-role-test-key",
+            ),
+            request_json=conversation_request,
+        )
+        from urllib.parse import parse_qs, urlsplit
+
+        conversations = await self.store.list_conversations(user_id="user-1")
+        query = parse_qs(urlsplit(self.calls[-1][1]).query)
+        self.assertEqual(query["user_id"], ["eq.user-1"])
+        self.assertEqual(conversations[0]["id"], "conversation-1")
+
+        conversation = await self.store.create_conversation(user_id="user-1", title="  Hello  ")
+        self.assertEqual(self.calls[-1][2], {"user_id": "user-1", "title": "Hello"})
+        self.assertEqual(conversation["id"], "conversation-1")
+
+        messages = await self.store.list_conversation_messages(
+            user_id="user-1",
+            conversation_id="conversation-1",
+        )
+        query = parse_qs(urlsplit(self.calls[-1][1]).query)
+        self.assertEqual(query["user_id"], ["eq.user-1"])
+        self.assertEqual(query["conversation_id"], ["eq.conversation-1"])
+        self.assertEqual(messages[0]["id"], "message-1")
+
+        saved = await self.store.append_conversation_message(
+            user_id="user-1",
+            conversation_id="conversation-1",
+            role="user",
+            content="Hello",
+        )
+        message_call = self.calls[-2]
+        assert message_call[2] is not None
+        self.assertEqual(message_call[2]["user_id"], "user-1")
+        self.assertEqual(message_call[2]["content"], [{"type": "text", "text": "Hello"}])
+        self.assertEqual(saved["id"], "message-1")
+        self.assertIn("user_id=eq.user-1", self.calls[-1][1])
+
     def setUp(self) -> None:
         self.calls: list[tuple[str, str, dict | None, str | None]] = []
 

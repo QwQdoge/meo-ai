@@ -6,6 +6,7 @@ import os
 import time
 from dataclasses import dataclass
 from typing import Any
+from uuid import UUID
 from urllib.parse import urlencode, urlsplit
 
 from meo.cloud.account_auth import (
@@ -286,6 +287,76 @@ def build_application(config: CloudServerConfig):
     async def health(_request):
         return web.json_response({"ok": True, "service": "meo-ai-cloud"})
 
+    def parse_conversation_id(request) -> str:
+        try:
+            return str(UUID(request.match_info["conversation_id"]))
+        except (ValueError, TypeError, KeyError) as exc:
+            raise ApiError("invalid_conversation_id", "Conversation ID is invalid.") from exc
+
+    async def list_conversations(request):
+        account = await identity(request)
+        try:
+            limit = int(request.query.get("limit", "50"))
+        except ValueError as exc:
+            raise ApiError("invalid_limit", "Conversation limit is invalid.") from exc
+        if not 1 <= limit <= 100:
+            raise ApiError("invalid_limit", "Conversation limit must be between 1 and 100.")
+        rows = await store.list_conversations(user_id=account.user_id, limit=limit)
+        return web.json_response({"conversations": list(rows)})
+
+    async def create_conversation(request):
+        account = await identity(request)
+        payload = await json_body(request)
+        ensure_fields(payload, {"title"})
+        title = payload.get("title", "")
+        if not isinstance(title, str) or len(title) > 200:
+            raise ApiError("invalid_title", "Conversation title is invalid.")
+        conversation = await store.create_conversation(
+            user_id=account.user_id,
+            title=title.strip(),
+        )
+        return web.json_response({"conversation": conversation}, status=201)
+
+    async def list_conversation_messages(request):
+        account = await identity(request)
+        conversation_id = parse_conversation_id(request)
+        conversation = await store.get_conversation(
+            user_id=account.user_id,
+            conversation_id=conversation_id,
+        )
+        if conversation is None:
+            raise ApiError("conversation_not_found", "Conversation was not found.", status=404)
+        rows = await store.list_conversation_messages(
+            user_id=account.user_id,
+            conversation_id=conversation_id,
+        )
+        return web.json_response({"messages": list(rows)})
+
+    async def create_conversation_message(request):
+        account = await identity(request)
+        conversation_id = parse_conversation_id(request)
+        payload = await json_body(request)
+        ensure_fields(payload, {"role", "content"})
+        role = payload.get("role")
+        content = payload.get("content")
+        if not isinstance(role, str) or role not in {"user", "assistant"}:
+            raise ApiError("invalid_message_role", "Message role is invalid.")
+        if not isinstance(content, str) or not content.strip() or len(content) > 40000:
+            raise ApiError("invalid_message_content", "Message content is invalid.")
+        conversation = await store.get_conversation(
+            user_id=account.user_id,
+            conversation_id=conversation_id,
+        )
+        if conversation is None:
+            raise ApiError("conversation_not_found", "Conversation was not found.", status=404)
+        message = await store.append_conversation_message(
+            user_id=account.user_id,
+            conversation_id=conversation_id,
+            role=role,
+            content=content,
+        )
+        return web.json_response({"message": message}, status=201)
+
     async def start_device_pairing(request):
         pairing_limiter.check(request.remote or "unknown")
         payload = await json_body(request)
@@ -480,6 +551,16 @@ def build_application(config: CloudServerConfig):
     app.add_routes(
         [
             web.get("/health", health),
+            web.get("/v1/conversations", list_conversations),
+            web.post("/v1/conversations", create_conversation),
+            web.get(
+                "/v1/conversations/{conversation_id}/messages",
+                list_conversation_messages,
+            ),
+            web.post(
+                "/v1/conversations/{conversation_id}/messages",
+                create_conversation_message,
+            ),
             web.post("/v1/device-enrollments/start", start_device_pairing),
             web.post("/v1/device-enrollments/poll", poll_device_pairing),
             web.get("/v1/device-enrollments/{user_code}", preview_device_pairing),

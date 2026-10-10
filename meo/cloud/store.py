@@ -11,6 +11,22 @@ from urllib.request import Request, urlopen
 
 
 class CloudStore(Protocol):
+    async def list_conversations(
+        self, *, user_id: str, limit: int = 50,
+    ) -> tuple[dict, ...]: ...
+
+    async def create_conversation(self, *, user_id: str, title: str) -> dict: ...
+
+    async def get_conversation(self, *, user_id: str, conversation_id: str) -> dict | None: ...
+
+    async def list_conversation_messages(
+        self, *, user_id: str, conversation_id: str, limit: int = 500,
+    ) -> tuple[dict, ...]: ...
+
+    async def append_conversation_message(
+        self, *, user_id: str, conversation_id: str, role: str, content: str,
+    ) -> dict: ...
+
     async def list_agent_events(
         self, *, user_id: str, run_id: str, after: int, limit: int = 100,
     ) -> tuple[dict, ...]: ...
@@ -151,6 +167,104 @@ class SupabaseRestStore:
         config.validate()
         self.config = config
         self._request_json_override = request_json
+
+    async def list_conversations(
+        self, *, user_id: str, limit: int = 50,
+    ) -> tuple[dict, ...]:
+        if not 1 <= limit <= 100:
+            raise ValueError("conversation limit must be between 1 and 100")
+        query = urlencode(
+            {
+                "select": "id,title,created_at,updated_at",
+                "user_id": f"eq.{user_id}",
+                "order": "updated_at.desc,id.desc",
+                "limit": str(limit),
+            }
+        )
+        result = await self._request("GET", f"/rest/v1/ai_conversations?{query}", None)
+        if not isinstance(result, list):
+            raise RuntimeError("Supabase conversation response is invalid")
+        return tuple(row for row in result if isinstance(row, dict))
+
+    async def create_conversation(self, *, user_id: str, title: str) -> dict:
+        result = await self._request(
+            "POST",
+            "/rest/v1/ai_conversations",
+            {"user_id": user_id, "title": title.strip()[:200]},
+            prefer="return=representation",
+        )
+        row = self._single_row(result, "Supabase conversation creation response is invalid")
+        if row is None:
+            raise RuntimeError("Supabase did not create a conversation")
+        return row
+
+    async def get_conversation(
+        self, *, user_id: str, conversation_id: str,
+    ) -> dict | None:
+        query = urlencode(
+            {
+                "select": "id,title,created_at,updated_at",
+                "id": f"eq.{conversation_id}",
+                "user_id": f"eq.{user_id}",
+                "limit": "1",
+            }
+        )
+        result = await self._request("GET", f"/rest/v1/ai_conversations?{query}", None)
+        return self._single_row(result, "Supabase conversation response is invalid")
+
+    async def list_conversation_messages(
+        self, *, user_id: str, conversation_id: str, limit: int = 500,
+    ) -> tuple[dict, ...]:
+        if not 1 <= limit <= 1000:
+            raise ValueError("message limit must be between 1 and 1000")
+        query = urlencode(
+            {
+                "select": "id,conversation_id,role,executor,content,created_at",
+                "conversation_id": f"eq.{conversation_id}",
+                "user_id": f"eq.{user_id}",
+                "order": "created_at.asc,id.asc",
+                "limit": str(limit),
+            }
+        )
+        result = await self._request("GET", f"/rest/v1/ai_messages?{query}", None)
+        if not isinstance(result, list):
+            raise RuntimeError("Supabase message response is invalid")
+        return tuple(row for row in result if isinstance(row, dict))
+
+    async def append_conversation_message(
+        self, *, user_id: str, conversation_id: str, role: str, content: str,
+    ) -> dict:
+        if role not in {"user", "assistant"}:
+            raise ValueError("message role is invalid")
+        result = await self._request(
+            "POST",
+            "/rest/v1/ai_messages",
+            {
+                "user_id": user_id,
+                "conversation_id": conversation_id,
+                "role": role,
+                "executor": "chat",
+                "content": [{"type": "text", "text": content}],
+            },
+            prefer="return=representation",
+        )
+        row = self._single_row(result, "Supabase message creation response is invalid")
+        if row is None:
+            raise RuntimeError("Supabase did not create a message")
+        now = datetime.now(timezone.utc).isoformat()
+        query = urlencode(
+            {
+                "id": f"eq.{conversation_id}",
+                "user_id": f"eq.{user_id}",
+            }
+        )
+        await self._request(
+            "PATCH",
+            f"/rest/v1/ai_conversations?{query}",
+            {"updated_at": now},
+            prefer="return=minimal",
+        )
+        return row
 
     async def touch_device(
         self,
