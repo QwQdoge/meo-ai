@@ -56,9 +56,19 @@ def callbacks(events):
     )
 
 
+class MinimalSettings:
+    def get_string(self, key):
+        if key == "language-model":
+            return "fake"
+        if key == "llm-settings":
+            return "{}"
+        return ""
+
+
 class MinimalController:
     def __init__(self):
         self.chats = {}
+        self.settings = MinimalSettings()
 
     def stop_workspace_request(self, _chat_id): pass
 
