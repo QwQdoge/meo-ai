@@ -274,8 +274,8 @@ Popup {
         busy: agent.actionBusy || agent.metadataBusy
         x: parent ? Math.round((parent.width - width) / 2) : 0
         y: parent ? Math.round((parent.height - height) / 2) : 0
-        onRefreshRequested: function(_query) {
-            agent.refreshServiceMetadata()
+        onRefreshRequested: function(query) {
+            agent.refreshMemory(query)
         }
         onEnabledChangeRequested: function(enabled) {
             agent.setMemoryEnabled(enabled)
