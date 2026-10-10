@@ -143,8 +143,24 @@ class HttpTransportTests(unittest.TestCase):
         self.assertEqual(
             history["messages"],
             [
-                {"role": "user", "text": "hello"},
-                {"role": "assistant", "text": "Hi from history"},
+                {
+                    "role": "user",
+                    "text": "hello",
+                    "blocks": [
+                        {"block_id": "history:0:text", "type": "text", "text": "hello"}
+                    ],
+                },
+                {
+                    "role": "assistant",
+                    "text": "Hi from history",
+                    "blocks": [
+                        {
+                            "block_id": "history:1:text",
+                            "type": "markdown",
+                            "text": "Hi from history",
+                        }
+                    ],
+                },
             ],
         )
         with self.assertRaises(urllib.error.HTTPError) as raised:
