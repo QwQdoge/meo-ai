@@ -26,6 +26,8 @@ AgentService normalizes that to a `presentation.card` request event. The accepte
 
 The native client keeps a small bounded set of cards and renders them with MeoUI next to the conversation. More card types can be registered later, but each type must have a typed schema and a native implementation.
 
+The Newelle compatibility backend also registers `meo_present_card`, a data-only tool that lets the model request one or several of these native cards. The tool returns only a small acknowledgement to the model. Its private compatibility encoding is consumed before AgentService, revalidated at the service boundary, and is not a frontend protocol.
+
 Presentation is never authority. A card saying that Bluetooth is enabled does not grant permission to change Bluetooth, and a card saying that an operation is safe does not approve it. Real actions continue through typed tools, Router policy, owner APIs, confirmation, and verification.
 
 ## Model roles
@@ -70,29 +72,41 @@ AgentService now owns a non-secret `ModelRoleRegistry` and exposes:
 
 Preferences persist in the user's config directory. The registry validates a selected model against the backend's structured model catalog. Provider credentials are not stored in this file and never cross the native frontend contract.
 
-The current Newelle compatibility backend still selects one model at profile scope. Therefore every role reports `runtime_supported=false` and `routing_status=preference_only`. The UI deliberately says the preference is saved but not yet active as independent runtime routing.
+The native MeoUI client has a Model roles surface that lets the user choose a model for Title, Judge, Reasoning, and Execution. It explicitly marks the current selections as saved preferences rather than pretending role-specific execution is already active.
 
-True model-role execution should be activated only after AgentCore exposes a UI-free per-call model invocation seam (or equivalent provider broker contract) that can select a model without mutating the global Newelle profile model for concurrent work.
+The current Newelle compatibility backend still selects one model at profile scope. Therefore every role reports `runtime_supported=false` and `routing_status=preference_only`. True model-role execution should be activated only after AgentCore exposes a UI-free per-call model invocation seam (or equivalent provider broker contract) that can select a model without mutating the global Newelle profile model for concurrent work.
 
 ## Account/provider ownership
 
 Long-term credentials and provider connections belong behind the Account provider broker, not inside QML or prompts. The frontend should receive only non-secret records such as provider label, model id, model capabilities, availability, pricing hints, and current role assignment.
 
-The desired ownership split is:
+Meo Account already has the right primitives, so Meo AI should integrate them rather than create a second API-key database:
+
+- the account service can store multiple provider credentials and exposes only non-secret credential metadata to its account UI;
+- the desktop `meo-accountd` broker stores device AI credentials in KWallet and never returns saved keys to clients;
+- approved clients can use `ListAvailableLocalAiConnections(clientId)` to receive enabled, non-secret connection metadata;
+- approved clients can request model discovery/inference through `StartLocalAiOperation(clientId, action, arguments)` while the Account broker remains the credential-bearing network caller;
+- Account's client-manifest capability boundary is kept separate from AI model roles and from OS tool permissions.
+
+That means the intended integration path is not `QML -> API key`. It is:
 
 ```text
-Meo Account / provider broker
-  -> credentials and provider connections
+Meo Account / meo-accountd
+  -> credentials, provider connections, device model catalog authority
 
 AgentService
-  -> model catalog, role preferences, routing policy, request lifecycle
+  -> non-secret model catalog, role preferences, routing policy, request lifecycle
 
-AgentCore
-  -> actual per-call inference and tool loop
+AgentCore / provider broker adapter
+  -> actual per-call inference using an approved provider connection
 
 Native QML
   -> model-role selection and presentation only
 ```
+
+The Meo Account broker already distinguishes ordinary provider metadata from privileged credential access. Meo AI must preserve that split when it gains the `local_ai` client capability. Installing/authorizing that manifest and enabling automatic inference is a packaging/security decision; it must not be silently synthesized by Meo AI itself.
+
+For cloud-backed account connections, the account-side AI provider broker also already supports OpenAI, Gemini, DeepSeek, OpenRouter, and OpenAI-compatible profiles. Meo AI should consume a deliberately exposed non-secret catalog/inference seam from Account rather than fetch or duplicate those encrypted credentials.
 
 This keeps API keys out of the UI and lets the same role configuration survive provider changes without weakening tool/security boundaries.
 
@@ -100,8 +114,9 @@ This keeps API keys out of the UI and lets the same role configuration survive p
 
 1. Keep presentation cards data-only and add typed card schemas as real use cases appear.
 2. Add provider/model capability metadata needed for routing, such as tools, vision, context, structured output, cost class, and local/cloud status.
-3. Extract a per-call model invocation seam from the compatibility backend.
-4. Activate `title` and `judge` first because they are isolated auxiliary calls and easiest to test for cost savings.
-5. Activate `reasoning` and `execution` only with request-local model state, cancellation, accounting, and concurrency tests.
-6. Integrate the Account broker so adding/removing provider credentials updates the catalog without exposing secrets to QML.
-7. Keep Router policy and human confirmation independent of all model-role choices.
+3. Add a Meo Account catalog adapter that consumes only approved non-secret connection/model metadata; do not add an independent key store to Meo AI.
+4. Extract a per-call model invocation seam from the compatibility backend.
+5. Activate `title` and `judge` first because they are isolated auxiliary calls and easiest to test for cost savings.
+6. Activate `reasoning` and `execution` only with request-local model state, cancellation, accounting, and concurrency tests.
+7. Sync role preferences to Account only after a stable account-owned preference schema exists; local role configuration remains the safe fallback until then.
+8. Keep Router policy and human confirmation independent of all model-role choices.
