@@ -59,7 +59,6 @@ void AgentClient::fetchServiceMetadataStep(int step, bool hadError) {
         QStringLiteral("/v1/mcp-servers"),
         QStringLiteral("/v1/controls"),
         QStringLiteral("/v1/memory"),
-        QStringLiteral("/v1/memories"),
     };
     if (step >= paths.size()) {
         if (!hadError) m_metadataStatus = tr("Ready");
@@ -110,14 +109,58 @@ void AgentClient::fetchServiceMetadataStep(int step, bool hadError) {
             } else if (step == 5) {
                 m_controls = object.value("controls").toArray().toVariantList();
             } else if (step == 6) {
-                m_memoryState = object.toVariantMap();
-            } else if (step == 7) {
-                m_memories = object.value("memories").toArray().toVariantList();
+                auto state = object.toVariantMap();
+                state.remove("memories");
+                m_memoryState = state;
+                if (m_memoryQuery.isEmpty())
+                    m_memories = object.value("memories").toArray().toVariantList();
             }
         }
         reply->deleteLater();
         emit changed();
         fetchServiceMetadataStep(step + 1, nextHadError);
+    });
+}
+
+void AgentClient::refreshMemory(const QString &query) {
+    if (!m_serviceMode || actionBusy()) return;
+    QUrl base = validatedOrigin("MEO_AI_SERVICE_ENDPOINT");
+    if (!base.isValid()) {
+        m_status = tr("MEO_AI_SERVICE_ENDPOINT must be a loopback HTTP origin.");
+        emit changed();
+        return;
+    }
+
+    m_memoryQuery = query.trimmed();
+    QUrl url = base;
+    url.setPath("/v1/memory");
+    if (!m_memoryQuery.isEmpty()) {
+        QUrlQuery urlQuery;
+        urlQuery.addQueryItem("q", m_memoryQuery);
+        url.setQuery(urlQuery);
+    }
+    QNetworkRequest request(url);
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
+    m_actionReply = m_network.get(request);
+    emit changed();
+    connect(m_actionReply, &QNetworkReply::finished, this, [this] {
+        QNetworkReply *reply = m_actionReply;
+        m_actionReply = nullptr;
+        const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        QJsonParseError parseError;
+        const auto document = QJsonDocument::fromJson(reply->readAll(), &parseError);
+        if (reply->error() != QNetworkReply::NoError || code != 200 ||
+            parseError.error != QJsonParseError::NoError || !document.isObject()) {
+            m_status = tr("Memory could not be refreshed (HTTP %1).").arg(code);
+        } else {
+            const auto object = document.object();
+            auto state = object.toVariantMap();
+            state.remove("memories");
+            m_memoryState = state;
+            m_memories = object.value("memories").toArray().toVariantList();
+        }
+        reply->deleteLater();
+        emit changed();
     });
 }
 
@@ -166,11 +209,11 @@ void AgentClient::setMemoryEnabled(bool enabled) {
         return;
     }
     QUrl url = base;
-    url.setPath("/v1/memory/state");
+    url.setPath("/v1/memory/settings");
     QJsonObject body{{"enabled", enabled}};
     postServiceAction(url, QJsonDocument(body).toJson(QJsonDocument::Compact), [this](QNetworkReply *) {
         m_status = tr("Memory setting saved");
-        QTimer::singleShot(0, this, [this] { refreshServiceMetadata(); });
+        QTimer::singleShot(0, this, [this] { refreshMemory(m_memoryQuery); });
     });
 }
 
@@ -184,11 +227,11 @@ void AgentClient::createMemory(const QString &text, bool pinned) {
         return;
     }
     QUrl url = base;
-    url.setPath("/v1/memories");
+    url.setPath("/v1/memory");
     QJsonObject body{{"text", value}, {"pinned", pinned}};
     postServiceAction(url, QJsonDocument(body).toJson(QJsonDocument::Compact), [this](QNetworkReply *) {
         m_status = tr("Memory saved");
-        QTimer::singleShot(0, this, [this] { refreshServiceMetadata(); });
+        QTimer::singleShot(0, this, [this] { refreshMemory(m_memoryQuery); });
     });
 }
 
@@ -203,11 +246,11 @@ void AgentClient::updateMemory(const QString &memoryId, const QString &text, boo
         return;
     }
     QUrl url = base;
-    url.setPath(QString("/v1/memories/%1").arg(id));
+    url.setPath(QString("/v1/memory/%1").arg(id));
     QJsonObject body{{"text", value}, {"pinned", pinned}};
     postServiceAction(url, QJsonDocument(body).toJson(QJsonDocument::Compact), [this](QNetworkReply *) {
         m_status = tr("Memory updated");
-        QTimer::singleShot(0, this, [this] { refreshServiceMetadata(); });
+        QTimer::singleShot(0, this, [this] { refreshMemory(m_memoryQuery); });
     });
 }
 
@@ -221,10 +264,10 @@ void AgentClient::deleteMemory(const QString &memoryId) {
         return;
     }
     QUrl url = base;
-    url.setPath(QString("/v1/memories/%1").arg(id));
+    url.setPath(QString("/v1/memory/%1").arg(id));
     deleteServiceAction(url, [this](QNetworkReply *) {
         m_status = tr("Memory deleted");
-        QTimer::singleShot(0, this, [this] { refreshServiceMetadata(); });
+        QTimer::singleShot(0, this, [this] { refreshMemory(m_memoryQuery); });
     });
 }
 
