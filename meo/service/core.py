@@ -5,6 +5,7 @@ import threading
 from typing import Callable, Dict
 
 from .backend_adapter import AgentBackendAdapter, BackendCallbacks
+from .content_blocks import legacy_text_block
 from .legacy_v2_bridge import LegacyV2ToolBridge
 from .model_roles import ModelRoleRegistry
 from .presentation import normalize_presentation_card
@@ -61,16 +62,33 @@ class AgentServiceCore:
         return conversation_id
 
     def list_messages(self, conversation_id: str) -> list[dict]:
+        """Return presentation-safe history with a typed-block compatibility view.
+
+        `text` remains during the migration so older native clients can restore
+        history unchanged. New clients should prefer `blocks`. Legacy Newelle
+        history only contains visible user/assistant strings, therefore each
+        message currently projects to exactly one safe text/markdown block.
+        """
+
         backend = self._require_backend()
         if not backend.conversation_exists(conversation_id):
             raise ValueError("unknown conversation_id")
         messages = []
-        for item in backend.list_messages(conversation_id):
+        for index, item in enumerate(backend.list_messages(conversation_id)):
             if item.role not in {"user", "assistant"}:
                 raise RuntimeError("backend returned an invalid conversation role")
             if not isinstance(item.text, str):
                 raise RuntimeError("backend returned invalid conversation text")
-            messages.append({"role": item.role, "text": item.text})
+            block = legacy_text_block(
+                block_id=f"history:{index}:text",
+                role=item.role,
+                text=item.text,
+            )
+            messages.append({
+                "role": item.role,
+                "text": item.text,
+                "blocks": [block],
+            })
         return messages
 
     def list_models(self) -> list[dict]:
