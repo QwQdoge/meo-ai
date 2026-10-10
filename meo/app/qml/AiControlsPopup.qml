@@ -80,6 +80,55 @@ Popup {
                 width: parent.width
                 spacing: 8 * root.uiScale
 
+                Rectangle {
+                    width: parent.width
+                    visible: agent.serviceMode && agent.memoryState.supported === true
+                    implicitHeight: visible ? memoryEntryRow.implicitHeight + 24 * root.uiScale : 0
+                    radius: 18 * root.uiScale
+                    color: MeoTheme.surfaceContainer
+
+                    RowLayout {
+                        id: memoryEntryRow
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        anchors.margins: 12 * root.uiScale
+                        spacing: 10 * root.uiScale
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 2 * root.uiScale
+
+                            MeoText {
+                                Layout.fillWidth: true
+                                text: qsTr("Managed memory")
+                                typeRole: "label"
+                                typeSize: "medium"
+                                color: MeoTheme.contentOnSurface
+                            }
+
+                            MeoText {
+                                Layout.fillWidth: true
+                                text: qsTr("%1 saved · %2")
+                                    .arg(agent.memories.length)
+                                    .arg(agent.memoryState.enabled === true ? qsTr("automatic recall on") : qsTr("automatic recall off"))
+                                typeRole: "body"
+                                typeSize: "small"
+                                color: MeoTheme.contentOnSurfaceVariant
+                                wrapMode: Text.Wrap
+                            }
+                        }
+
+                        MeoButton {
+                            text: qsTr("Manage")
+                            type: "tonal"
+                            size: "xs"
+                            enabled: !agent.actionBusy && !agent.metadataBusy
+                            onClicked: memoryPanel.open()
+                        }
+                    }
+                }
+
                 Repeater {
                     model: root.controls
 
@@ -214,6 +263,31 @@ Popup {
                     topPadding: 32 * root.uiScale
                 }
             }
+        }
+    }
+
+    MemoryPanel {
+        id: memoryPanel
+        parent: Overlay.overlay
+        memoryState: agent.memoryState
+        memories: agent.memories
+        busy: agent.actionBusy || agent.metadataBusy
+        x: parent ? Math.round((parent.width - width) / 2) : 0
+        y: parent ? Math.round((parent.height - height) / 2) : 0
+        onRefreshRequested: function(_query) {
+            agent.refreshServiceMetadata()
+        }
+        onEnabledChangeRequested: function(enabled) {
+            agent.setMemoryEnabled(enabled)
+        }
+        onCreateRequested: function(text, pinned) {
+            agent.createMemory(text, pinned)
+        }
+        onUpdateRequested: function(memoryId, text, pinned) {
+            agent.updateMemory(memoryId, text, pinned)
+        }
+        onDeleteRequested: function(memoryId) {
+            agent.deleteMemory(memoryId)
         }
     }
 }
