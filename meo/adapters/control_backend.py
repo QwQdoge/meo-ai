@@ -41,6 +41,9 @@ class ControlledLegacyBackend:
     def list_memories(self, *, scope: str | None = None, query: str = ""):
         return self._memory.list_memories(scope=scope, query=query)
 
+    def create_memory(self, text: str, *, pinned: bool = False):
+        return self._memory.create_memory(text, pinned=pinned)
+
     def update_memory(self, memory_id: str, *, text: str | None = None, pinned: bool | None = None):
         return self._memory.update_memory(memory_id, text=text, pinned=pinned)
 
