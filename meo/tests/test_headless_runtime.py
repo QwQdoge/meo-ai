@@ -74,9 +74,9 @@ class HeadlessRuntimeTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 load_backend_factory(f"{module_name}:factory")
 
-    def test_normal_start_runs_loopback_transport(self):
+    def test_normal_start_runs_native_loopback_transport(self):
         fake_server = FakeServer()
-        with mock.patch("meo.runtime.main.create_http_server", return_value=fake_server) as create:
+        with mock.patch("meo.runtime.main.create_native_http_server", return_value=fake_server) as create:
             self.assertEqual(main(["--backend-factory", this_module_factory_spec()]), 0)
         create.assert_called_once()
         self.assertTrue(fake_server.served)

@@ -45,14 +45,21 @@ private slots:
         AgentClient client;
         QVERIFY(client.serviceMode());
         QVERIFY(client.models().isEmpty());
+        QVERIFY(client.modelRoles().isEmpty());
+        QVERIFY(client.controls().isEmpty());
+        QVERIFY(client.memoryState().isEmpty());
+        QVERIFY(client.memories().isEmpty());
         client.refreshServiceMetadata();
 
         struct Exchange { QByteArray path; QByteArray body; };
         const QList<Exchange> exchanges{
             {"GET /v1/agent-state ", "{\"ready\":true,\"active_requests\":0,\"request_states\":{\"running_model\":0}}"},
             {"GET /v1/models ", "{\"models\":[{\"model_id\":\"local:tiny\",\"label\":\"Tiny\",\"provider\":\"Local\",\"selection_scope\":\"profile\",\"selected\":true}]}"},
+            {"GET /v1/model-roles ", "{\"model_roles\":[{\"role_id\":\"title\",\"label\":\"Title\",\"description\":\"Chat titles\",\"workload\":\"auxiliary\",\"preferred_model_id\":\"local:tiny\",\"preferred_available\":true,\"fallback_model_id\":\"local:tiny\",\"runtime_supported\":false,\"routing_status\":\"preference_only\",\"selection_scope\":\"profile\"}]}"},
             {"GET /v1/skills ", "{\"skills\":[{\"skill_id\":\"diagnostics\",\"label\":\"Diagnostics\",\"enabled\":true,\"configured_enabled\":true,\"selection_scope\":\"profile\",\"override_source\":\"\"}]}"},
             {"GET /v1/mcp-servers ", "{\"mcp_servers\":[{\"server_id\":\"mcp:files\",\"label\":\"Files\",\"enabled\":false}]}"},
+            {"GET /v1/controls ", "{\"controls\":[{\"control_id\":\"memory.enabled\",\"label\":\"Memory\",\"kind\":\"toggle\",\"value\":true,\"scope\":\"profile\",\"writable\":true,\"restart_required\":false}]}"},
+            {"GET /v1/memory ", "{\"supported\":true,\"enabled\":true,\"scope\":null,\"query\":\"\",\"memories\":[{\"memory_id\":\"memory:one\",\"text\":\"Compact native UI\",\"scope\":\"account\",\"source\":\"test\",\"created_at\":\"2026-10-10T00:00:00Z\",\"updated_at\":\"2026-10-10T00:00:00Z\",\"state\":\"active\",\"pinned\":true,\"sync_state\":\"local\",\"workspace_id\":\"\",\"conversation_id\":\"\"}]}"},
         };
 
         for (const auto &exchange : exchanges) {
@@ -71,10 +78,21 @@ private slots:
         QCOMPARE(client.models().size(), 1);
         QCOMPARE(client.models().at(0).toMap().value("model_id").toString(), QString("local:tiny"));
         QCOMPARE(client.models().at(0).toMap().value("selected").toBool(), true);
+        QCOMPARE(client.modelRoles().size(), 1);
+        QCOMPARE(client.modelRoles().at(0).toMap().value("role_id").toString(), QString("title"));
+        QCOMPARE(client.modelRoles().at(0).toMap().value("preferred_model_id").toString(), QString("local:tiny"));
         QCOMPARE(client.skills().size(), 1);
         QCOMPARE(client.skills().at(0).toMap().value("skill_id").toString(), QString("diagnostics"));
         QCOMPARE(client.mcpServers().size(), 1);
         QCOMPARE(client.mcpServers().at(0).toMap().value("server_id").toString(), QString("mcp:files"));
+        QCOMPARE(client.controls().size(), 1);
+        QCOMPARE(client.controls().at(0).toMap().value("control_id").toString(), QString("memory.enabled"));
+        QCOMPARE(client.controls().at(0).toMap().value("value").toBool(), true);
+        QCOMPARE(client.memoryState().value("supported").toBool(), true);
+        QCOMPARE(client.memoryState().value("enabled").toBool(), true);
+        QCOMPARE(client.memories().size(), 1);
+        QCOMPARE(client.memories().at(0).toMap().value("memory_id").toString(), QString("memory:one"));
+        QCOMPARE(client.memories().at(0).toMap().value("pinned").toBool(), true);
     }
 };
 

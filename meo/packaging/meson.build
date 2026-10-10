@@ -30,16 +30,26 @@ install_data(
   '../runtime/main.py',
   '../runtime/headless_probe.py',
   '../runtime/http_transport.py',
+  '../runtime/native_http_transport.py',
   '../runtime/event_journal.py',
   install_dir: join_paths(meo_moduledir, 'runtime')
 )
 
 install_data(
   '../service/backend_adapter.py',
+  '../service/content_blocks.py',
+  '../service/controls.py',
   '../service/core.py',
   '../service/legacy_v2_bridge.py',
+  '../service/memory.py',
+  '../service/model_roles.py',
+  '../service/presentation.py',
   '../service/request_registry.py',
   '../service/request_state.py',
+  '../service/resources.py',
+  '../service/response_meta.py',
+  '../service/search_trace.py',
+  '../service/sync_contract.py',
   '../service/tool_decision.py',
   install_dir: join_paths(meo_moduledir, 'service')
 )
@@ -51,8 +61,13 @@ install_data(
 )
 
 install_data(
+  '../adapters/control_backend.py',
   '../adapters/headless_newelle.py',
   '../adapters/legacy_chat.py',
+  '../adapters/legacy_controls.py',
+  '../adapters/legacy_memory.py',
+  '../adapters/presentation_legacy_chat.py',
+  '../adapters/presentation_tools.py',
   '../adapters/system_tools.py',
   install_dir: join_paths(meo_moduledir, 'adapters')
 )

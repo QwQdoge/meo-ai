@@ -4,10 +4,23 @@ from dataclasses import dataclass
 import threading
 from typing import Callable, Dict
 
-from .backend_adapter import AgentBackendAdapter, BackendCallbacks
+from .backend_adapter import (
+    AgentBackendAdapter,
+    BackendCallbacks,
+    InputResource,
+)
+from .content_blocks import legacy_text_block
 from .legacy_v2_bridge import LegacyV2ToolBridge
+from .model_roles import ModelRoleRegistry
+from .presentation import normalize_presentation_card
 from .request_registry import RequestRegistry
 from .request_state import RequestLifecycle, RequestState
+from .resources import ConversationResourceStore
+from .response_meta import normalize_response_meta
+
+
+_MAX_REQUEST_RESOURCES = 16
+_MAX_REQUEST_RESOURCE_BYTES = 32 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -17,15 +30,15 @@ class RequestContext:
 
 
 class AgentServiceCore:
-    """Transport-independent Phase B request orchestration.
-
-    A backend adapter may wrap the current Newelle-derived controller or a later
-    extracted headless core. HTTP, D-Bus, QML and legacy controller code should
-    translate to these operations instead of owning request/decision state.
-    """
-
-    def __init__(self, backend: AgentBackendAdapter | None = None) -> None:
+    def __init__(
+        self,
+        backend: AgentBackendAdapter | None = None,
+        model_roles: ModelRoleRegistry | None = None,
+        resource_store: ConversationResourceStore | None = None,
+    ) -> None:
         self.backend = backend
+        self.model_roles = model_roles or ModelRoleRegistry()
+        self.resource_store = resource_store
         self.requests = RequestRegistry()
         self.tool_bridge = LegacyV2ToolBridge()
         self._contexts: Dict[str, RequestContext] = {}
@@ -36,10 +49,27 @@ class AgentServiceCore:
             raise RuntimeError("AgentServiceCore has no backend adapter")
         return self.backend
 
+    def _require_resource_store(self) -> ConversationResourceStore:
+        if self.resource_store is None:
+            raise RuntimeError("AgentServiceCore has no resource store")
+        return self.resource_store
+
+    def _require_conversation(self, conversation_id: str) -> AgentBackendAdapter:
+        backend = self._require_backend()
+        if not backend.conversation_exists(conversation_id):
+            raise ValueError("unknown conversation_id")
+        return backend
+
+    def _memory_method(self, name: str):
+        method = getattr(self._require_backend(), name, None)
+        if not callable(method):
+            raise ValueError("selected backend does not expose managed memory")
+        return method
+
     def get_agent_state(self) -> dict:
-        """Return only service-owned state; do not infer provider health."""
         return {
             "ready": self.backend is not None,
+            "resources_ready": self.resource_store is not None,
             "active_requests": self.requests.active_count(),
             "request_states": self.requests.state_counts(),
         }
@@ -54,17 +84,95 @@ class AgentServiceCore:
         return conversation_id
 
     def list_messages(self, conversation_id: str) -> list[dict]:
-        backend = self._require_backend()
-        if not backend.conversation_exists(conversation_id):
-            raise ValueError("unknown conversation_id")
+        backend = self._require_conversation(conversation_id)
         messages = []
-        for item in backend.list_messages(conversation_id):
+        for index, item in enumerate(backend.list_messages(conversation_id)):
             if item.role not in {"user", "assistant"}:
                 raise RuntimeError("backend returned an invalid conversation role")
             if not isinstance(item.text, str):
                 raise RuntimeError("backend returned invalid conversation text")
-            messages.append({"role": item.role, "text": item.text})
+            block = legacy_text_block(
+                block_id=f"history:{index}:text",
+                role=item.role,
+                text=item.text,
+            )
+            messages.append({
+                "role": item.role,
+                "text": item.text,
+                "blocks": [block],
+            })
         return messages
+
+    def list_resources(self, conversation_id: str) -> list[dict]:
+        self._require_conversation(conversation_id)
+        return [record.public_dict() for record in self._require_resource_store().list_resources(conversation_id)]
+
+    def create_text_resource(self, conversation_id: str, *, name: str, text: str) -> dict:
+        self._require_conversation(conversation_id)
+        record = self._require_resource_store().put_text(conversation_id, name=name, text=text)
+        return record.public_dict()
+
+    def reserve_resource(
+        self,
+        conversation_id: str,
+        *,
+        kind: str,
+        name: str,
+        mime_type: str,
+        size_bytes: int,
+    ) -> dict:
+        self._require_conversation(conversation_id)
+        record = self._require_resource_store().reserve(
+            conversation_id,
+            kind=kind,
+            name=name,
+            mime_type=mime_type,
+            size_bytes=size_bytes,
+        )
+        return record.public_dict()
+
+    def upload_resource(self, conversation_id: str, resource_id: str, data: bytes) -> dict:
+        self._require_conversation(conversation_id)
+        record = self._require_resource_store().finalize_upload(conversation_id, resource_id, data)
+        return record.public_dict()
+
+    def resource_upload_limit(self) -> int:
+        return self._require_resource_store().max_resource_bytes
+
+    def delete_resource(self, conversation_id: str, resource_id: str) -> None:
+        self._require_conversation(conversation_id)
+        self._require_resource_store().delete(conversation_id, resource_id)
+
+    def _resolve_input_resources(
+        self,
+        conversation_id: str,
+        resource_ids: tuple[str, ...],
+    ) -> tuple[InputResource, ...]:
+        if len(resource_ids) > _MAX_REQUEST_RESOURCES:
+            raise ValueError(f"at most {_MAX_REQUEST_RESOURCES} resources may be sent with one request")
+        if len(set(resource_ids)) != len(resource_ids):
+            raise ValueError("resource_ids must not contain duplicates")
+        store = self._require_resource_store()
+        resolved: list[InputResource] = []
+        total_bytes = 0
+        for resource_id in resource_ids:
+            if not isinstance(resource_id, str) or not resource_id:
+                raise ValueError("resource_ids must contain non-empty strings")
+            record = store.get(conversation_id, resource_id)
+            if record.state != "ready":
+                raise ValueError("all input resources must be ready")
+            data = store.read_bytes(conversation_id, resource_id)
+            total_bytes += len(data)
+            if total_bytes > _MAX_REQUEST_RESOURCE_BYTES:
+                raise ValueError("combined request resources exceed the input limit")
+            resolved.append(InputResource(
+                resource_id=record.resource_id,
+                kind=record.kind,
+                name=record.name,
+                mime_type=record.mime_type,
+                data=data,
+            ))
+        return tuple(resolved)
 
     def list_models(self) -> list[dict]:
         return [
@@ -79,10 +187,15 @@ class AgentServiceCore:
         ]
 
     def set_model(self, conversation_id: str, model_id: str) -> None:
-        backend = self._require_backend()
-        if not backend.conversation_exists(conversation_id):
-            raise ValueError("unknown conversation_id")
-        backend.set_model(conversation_id, model_id)
+        self._require_conversation(conversation_id).set_model(conversation_id, model_id)
+
+    def list_model_roles(self) -> list[dict]:
+        models = list(self._require_backend().list_models())
+        return self.model_roles.list_roles(models)
+
+    def set_model_role(self, role_id: str, model_id: str | None) -> dict:
+        models = list(self._require_backend().list_models())
+        return self.model_roles.set_role(role_id, model_id, models)
 
     def list_skills(self) -> list[dict]:
         return [
@@ -108,6 +221,74 @@ class AgentServiceCore:
             for item in self._require_backend().list_mcp_servers()
         ]
 
+    def list_controls(self) -> list[dict]:
+        method = getattr(self._require_backend(), "list_controls", None)
+        if not callable(method):
+            return []
+        return [item.public_dict() for item in method()]
+
+    def set_control(self, control_id: str, value) -> dict:
+        if not isinstance(control_id, str) or not control_id.strip():
+            raise ValueError("control_id is required")
+        method = getattr(self._require_backend(), "set_control", None)
+        if not callable(method):
+            raise ValueError("selected backend does not expose AI controls")
+        return method(control_id, value).public_dict()
+
+    def memory_state(self) -> dict:
+        backend = self._require_backend()
+        supported_method = getattr(backend, "memory_supported", None)
+        enabled_method = getattr(backend, "memory_enabled", None)
+        supported = bool(supported_method()) if callable(supported_method) else False
+        enabled = bool(enabled_method()) if supported and callable(enabled_method) else False
+        return {"supported": supported, "enabled": enabled}
+
+    def list_memories(self, *, scope: str | None = None, query: str = "") -> list[dict]:
+        state = self.memory_state()
+        if not state["supported"]:
+            return []
+        records = self._memory_method("list_memories")(scope=scope, query=query)
+        return [record.public_dict() for record in records]
+
+    def create_memory(self, text: str, *, pinned: bool = False) -> dict:
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError("memory text is required")
+        record = self._memory_method("create_memory")(text.strip(), pinned=bool(pinned))
+        return record.public_dict()
+
+    def set_memory_enabled(self, enabled: bool) -> dict:
+        value = bool(self._memory_method("set_memory_enabled")(bool(enabled)))
+        state = self.memory_state()
+        state["enabled"] = value
+        return state
+
+    def update_memory(
+        self,
+        memory_id: str,
+        *,
+        text: str | None = None,
+        pinned: bool | None = None,
+    ) -> dict:
+        if not isinstance(memory_id, str) or not memory_id.strip():
+            raise ValueError("memory_id is required")
+        if text is None and pinned is None:
+            raise ValueError("memory update requires text or pinned")
+        if text is not None and (not isinstance(text, str) or not text.strip()):
+            raise ValueError("memory text is required")
+        if pinned is not None and not isinstance(pinned, bool):
+            raise ValueError("pinned must be a boolean")
+        record = self._memory_method("update_memory")(
+            memory_id,
+            text=text.strip() if text is not None else None,
+            pinned=pinned,
+        )
+        return record.public_dict()
+
+    def delete_memory(self, memory_id: str) -> None:
+        if not isinstance(memory_id, str) or not memory_id.strip():
+            raise ValueError("memory_id is required")
+        self._memory_method("delete_memory")(memory_id)
+
     def start_request(self, conversation_id: str) -> RequestContext:
         if not isinstance(conversation_id, str) or not conversation_id.strip():
             raise ValueError("conversation_id is required")
@@ -123,12 +304,20 @@ class AgentServiceCore:
         text: str,
         callbacks: BackendCallbacks,
         on_started: Callable[[RequestContext], None] | None = None,
+        resource_ids: tuple[str, ...] = (),
     ) -> RequestContext:
-        backend = self._require_backend()
-        if not backend.conversation_exists(conversation_id):
-            raise ValueError("unknown conversation_id")
+        backend = self._require_conversation(conversation_id)
         if not isinstance(text, str) or not text.strip():
             raise ValueError("message text is required")
+        if not isinstance(resource_ids, tuple):
+            raise ValueError("resource_ids must be a tuple")
+
+        resources: tuple[InputResource, ...] = ()
+        send_with_resources = getattr(backend, "send_message_with_resources", None)
+        if resource_ids:
+            if not callable(send_with_resources):
+                raise ValueError("selected backend does not support resource inputs")
+            resources = self._resolve_input_resources(conversation_id, resource_ids)
 
         context = self.start_request(conversation_id)
         request_id = context.request_id
@@ -154,7 +343,10 @@ class AgentServiceCore:
             on_error=lambda error: dispatch(self._backend_error, request_id, error, callbacks),
         )
         try:
-            handle = backend.send_message(conversation_id, text, wrapped)
+            if resources:
+                handle = send_with_resources(conversation_id, text, resources, wrapped)
+            else:
+                handle = backend.send_message(conversation_id, text, wrapped)
         except Exception as exc:
             self.fail_request(request_id, str(exc))
             raise
@@ -178,6 +370,14 @@ class AgentServiceCore:
             normalized = self.publish_legacy_tool_request(request_id, event)
         elif event_type == "tool_result":
             normalized = self.tool_bridge.publish_result(request, event)
+            normalized["conversation_id"] = self.get_context(request_id).conversation_id
+        elif event_type == "presentation_card":
+            normalized = normalize_presentation_card(event)
+            normalized["request_id"] = request_id
+            normalized["conversation_id"] = self.get_context(request_id).conversation_id
+        elif event_type == "response_meta":
+            normalized = normalize_response_meta(event)
+            normalized["request_id"] = request_id
             normalized["conversation_id"] = self.get_context(request_id).conversation_id
         else:
             raise ValueError(f"unsupported backend tool event: {event_type}")

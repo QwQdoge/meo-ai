@@ -1,12 +1,15 @@
 import json
+import tempfile
 import threading
 import unittest
 import urllib.error
+import urllib.parse
 import urllib.request
 
 from meo.runtime.http_transport import create_http_server
 from meo.service.backend_adapter import BackendCallbacks, ConversationMessage, McpServerInfo, ModelInfo, SkillInfo
 from meo.service.core import AgentServiceCore
+from meo.service.resources import ConversationResourceStore
 
 
 class FakeHandle:
@@ -95,7 +98,12 @@ class FakeBackend:
 class HttpTransportTests(unittest.TestCase):
     def setUp(self):
         self.backend = FakeBackend()
-        self.server = create_http_server(AgentServiceCore(self.backend), port=0)
+        self.resources = tempfile.TemporaryDirectory()
+        service = AgentServiceCore(
+            self.backend,
+            resource_store=ConversationResourceStore(self.resources.name),
+        )
+        self.server = create_http_server(service, port=0)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.base = f"http://127.0.0.1:{self.server.server_address[1]}"
@@ -104,6 +112,7 @@ class HttpTransportTests(unittest.TestCase):
         self.server.shutdown()
         self.server.server_close()
         self.thread.join(timeout=1)
+        self.resources.cleanup()
 
     def json_request(self, method, path, body=None):
         data = None if body is None else json.dumps(body).encode()
@@ -143,12 +152,73 @@ class HttpTransportTests(unittest.TestCase):
         self.assertEqual(
             history["messages"],
             [
-                {"role": "user", "text": "hello"},
-                {"role": "assistant", "text": "Hi from history"},
+                {
+                    "role": "user",
+                    "text": "hello",
+                    "blocks": [
+                        {"block_id": "history:0:text", "type": "text", "text": "hello"}
+                    ],
+                },
+                {
+                    "role": "assistant",
+                    "text": "Hi from history",
+                    "blocks": [
+                        {
+                            "block_id": "history:1:text",
+                            "type": "markdown",
+                            "text": "Hi from history",
+                        }
+                    ],
+                },
             ],
         )
         with self.assertRaises(urllib.error.HTTPError) as raised:
             self.json_request("GET", "/v1/conversations/conversation:missing/messages")
+        self.assertEqual(raised.exception.code, 404)
+
+    def test_text_resource_create_list_and_delete(self):
+        cid = self.create_conversation()
+        status, created = self.json_request(
+            "POST",
+            f"/v1/conversations/{cid}/resources/text",
+            {"name": "pasted-text.txt", "text": "line one\n第二行"},
+        )
+        self.assertEqual(status, 201)
+        resource = created["resource"]
+        self.assertEqual(resource["kind"], "long_text")
+        self.assertEqual(resource["name"], "pasted-text.txt")
+        self.assertNotIn("path", resource)
+        self.assertNotIn("conversation_id", resource)
+
+        status, listing = self.json_request("GET", f"/v1/conversations/{cid}/resources")
+        self.assertEqual(status, 200)
+        self.assertEqual(listing["resources"], [resource])
+
+        encoded = urllib.parse.quote(resource["resource_id"], safe="")
+        status, deleted = self.json_request(
+            "DELETE",
+            f"/v1/conversations/{cid}/resources/{encoded}",
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(deleted["deleted"])
+
+        _, listing = self.json_request("GET", f"/v1/conversations/{cid}/resources")
+        self.assertEqual(listing["resources"], [])
+
+    def test_resource_scope_hides_cross_conversation_identity(self):
+        first = self.create_conversation()
+        second = self.create_conversation()
+        _, created = self.json_request(
+            "POST",
+            f"/v1/conversations/{first}/resources/text",
+            {"name": "private.txt", "text": "private"},
+        )
+        resource_id = urllib.parse.quote(created["resource"]["resource_id"], safe="")
+        with self.assertRaises(urllib.error.HTTPError) as raised:
+            self.json_request(
+                "DELETE",
+                f"/v1/conversations/{second}/resources/{resource_id}",
+            )
         self.assertEqual(raised.exception.code, 404)
 
     def test_unknown_conversation_message_is_404_before_request_start(self):
@@ -162,6 +232,7 @@ class HttpTransportTests(unittest.TestCase):
         self.assertEqual(self.backend.handles, [])
         _, state = self.json_request("GET", "/v1/agent-state")
         self.assertEqual(state["active_requests"], 0)
+        self.assertTrue(state["resources_ready"])
         self.assertTrue(state["request_states"])
         self.assertTrue(all(count == 0 for count in state["request_states"].values()))
 

@@ -1,6 +1,6 @@
 # Meo AgentService contract
 
-Status: Phase B contract with an early Phase C typed-SystemTool preview. This document defines the stable frontend/runtime boundary before GTK removal.
+Status: Phase B contract with early Phase C typed-system, native-memory and response-observability surfaces. This document defines the stable frontend/runtime boundary before GTK removal.
 
 ## Boundary
 
@@ -39,14 +39,23 @@ The stable semantic surface is:
 - `ListConversations()`
 - `ListMessages(conversationId)`
 - `ResumeConversation(conversationId)`
-- `SendMessage(conversationId, text)` -> request id
+- `SendMessage(conversationId, text, resourceIds)` -> request id
 - `SubscribeRequestEvents(requestId, afterSequence)`
 - `CancelRequest(requestId)`
 - `GetRequest(requestId)`
 - `ChooseToolOption(requestId, decisionId, option)`
+- `ListResources(conversationId)` / create, upload and delete resource operations
 - `GetModels()` / `SetModel(conversationId, modelId)`
+- `GetModelRoles()` / `SetModelRole(roleId, modelIdOrNull)`
 - `ListSkills()` / `SetSkillEnabled(skillId, enabled)`
 - `ListMcpServers()`
+- `ListControls()` / `SetControl(controlId, value)`
+- `GetMemoryState()`
+- `ListMemories(scope, query)`
+- `CreateMemory(text, pinned)`
+- `SetMemoryEnabled(enabled)`
+- `UpdateMemory(memoryId, textOrNull, pinnedOrNull)`
+- `DeleteMemory(memoryId)`
 - `GetAgentState()`
 
 Model/provider credentials never cross this frontend contract as prompt text.
@@ -64,15 +73,30 @@ The Phase B HTTP implementation currently maps those semantics to:
 - `POST /v1/conversations`
 - `GET /v1/conversations/{conversationId}/messages`
 - `POST /v1/conversations/{conversationId}/messages` -> initial SSE event stream
+- `GET /v1/conversations/{conversationId}/resources`
+- `POST /v1/conversations/{conversationId}/resources` -> reserve binary attachment/image
+- `POST /v1/conversations/{conversationId}/resources/text` -> create long-text resource
+- `PUT /v1/conversations/{conversationId}/resources/{resourceId}/content`
+- `DELETE /v1/conversations/{conversationId}/resources/{resourceId}`
 - `GET /v1/requests/{requestId}`
 - `GET /v1/requests/{requestId}/events?after={sequence}` -> reconnect SSE stream
 - `POST /v1/requests/{requestId}/cancel`
 - `POST /v1/requests/{requestId}/decisions/{decisionId}` with `{"option_index": N}`
 - `GET /v1/models`
 - `POST /v1/conversations/{conversationId}/model` with `{"model_id": "..."}`
+- `GET /v1/model-roles`
+- `POST /v1/model-roles/{roleId}` with `{"model_id": "..."}` or `{"model_id": null}`
 - `GET /v1/skills`
 - `POST /v1/skills/{skillId}` with `{"enabled": true|false}`
 - `GET /v1/mcp-servers`
+- `GET /v1/controls`
+- `POST /v1/controls/{controlId}` with `{"value": ...}`
+- `GET /v1/memory` -> managed-memory support and enabled state
+- `GET /v1/memories?scope={scope}&q={query}`
+- `POST /v1/memory/state` with `{"enabled": true|false}`
+- `POST /v1/memories` with `{"text": "...", "pinned": true|false}`
+- `POST /v1/memories/{memoryId}` with `text` and/or `pinned`
+- `DELETE /v1/memories/{memoryId}`
 
 The transport is intentionally local-only:
 
@@ -87,7 +111,7 @@ These rules reduce browser-originated localhost abuse and DNS-rebinding-style ac
 
 ## Backend adapter
 
-The backend adapter is the only service-facing seam to the inherited Newelle runtime. It exposes conversation existence/creation, presentation-safe history, message execution, tool-choice continuation, request-local cancellation, models, Skills and MCP metadata. UI objects, GTK widgets and provider credentials are not part of this interface.
+The backend adapter is the only service-facing seam to the inherited Newelle runtime. It exposes conversation existence/creation, presentation-safe history, message execution, tool-choice continuation, request-local cancellation, models, Skills and MCP metadata. Optional typed extensions expose resources, controls and managed memory without expanding prompt authority. UI objects, GTK widgets and provider credentials are not part of this interface.
 
 Execution handles returned by the adapter are opaque to transports and frontends. The service owns the mapping from `request_id` to execution handle and never exposes that object as authority. Backends may complete synchronously or asynchronously; terminal service state must not retain a stale handle.
 
@@ -101,6 +125,8 @@ The current stream emits:
 - `message.delta`
 - `tool.requested`
 - `tool.completed`
+- `presentation.card`
+- `response.meta`
 - `request.completed`
 - `request.cancelled`
 - `request.failed`
@@ -117,23 +143,43 @@ Events carry `request_id`; conversation-scoped events also carry `conversation_i
 
 A non-interactive inherited `tool_result` is normalized as `tool.completed`; it must not be mistaken for an interactive approval request or fail the whole AgentService request after the tool already succeeded.
 
+`presentation.card` is data-only presentation. The compatibility backend may emit `presentation_card` containing a bounded native card payload; AgentService normalizes it before the frontend sees it. The current schema accepts only the registered kinds `info`, `status`, `metric`, `file` and `system`, and only `card_id`, `kind`, `title`, `subtitle`, `value` and `detail` reach QML. Arbitrary QML, HTML, JavaScript, commands, URLs and action payloads are not part of this contract. Presentation cards carry no approval or capability authority.
+
+`response.meta` carries normalized runtime/provider observability for the completed response. Stable fields include provider/model identity, token usage, context/timing where known, activity, controls/cost/rate-limit metadata and provider-returned reasoning. Unknown provider fields are retained in a bounded JSON-safe raw metadata object. Credential-shaped keys such as authorization headers, API keys, passwords, cookies and access/refresh tokens are redacted before the event reaches QML. Provider reasoning is shown only when that material was explicitly returned; AgentService does not reconstruct hidden chain-of-thought from answer text.
+
 ## Tool pause semantics
 
 `tool.requested` is a pause, not approval. The service waits for an explicit matching decision. Closing the frontend, losing the transport, timing out, or receiving malformed input must never be interpreted as approval.
 
 Phase B continues to reuse upstream Newelle tool behavior while extracting the runtime, but the stable service contract never exposes `/option N`. Legacy Newelle `interaction_id` values are compatibility metadata only; they are never accepted as AgentService decision authority.
 
-## Models, Skills and MCP
+## Models, model roles, Skills, MCP and controls
 
 Models and Skills are exposed as structured data from their owning Newelle managers/handlers rather than by parsing slash-command presentation output.
 
 Each model record carries `selection_scope`. `conversation` means switching that model is local to the addressed conversation. `profile` means the backend stores the selection at profile/process scope. The current Newelle compatibility adapter reports `profile` because Newelle provider/model settings are shared.
 
+AgentService also stores non-secret model-role preferences for `title`, `judge`, `reasoning` and `execution`. A role record includes a preferred model, fallback model, workload class and whether true role-specific runtime routing is active. The current compatibility backend cannot safely run concurrent per-call model selections, so these records deliberately report `runtime_supported=false` and `routing_status=preference_only`. The UI may configure the future routing preference but must not claim the role is active until the extracted AgentCore/provider broker supports request-local model choice.
+
+`title` is intended for cheap background naming/label work. `judge` is intended for structured classification, ranking and routing decisions. `reasoning` is the main planner/answer model. `execution` is the tool-capable implementation model. The Judge role is not a security authority: it must never authorize privileged operations, replace deterministic policy, grant capabilities or bypass human confirmation. Model selection also never changes tool permissions.
+
 Each Skill record carries both `enabled` and `configured_enabled`. `configured_enabled` is the persisted profile preference; `enabled` is the current effective state after runtime/Mode overlays. If a Mode overrides the profile preference, `override_source` is `mode`.
 
-MCP metadata now comes from Newelle's structured MCP configuration/integration (`mcp_servers` / `mcp_servers_dict`). The frontend contract deliberately exposes only a non-secret id, display label and whether the integration is currently loaded. Raw URLs, bearer tokens, custom headers, stdio environment variables and other connection secrets are not exposed through `ListMcpServers`.
+MCP metadata comes from Newelle's structured MCP configuration/integration (`mcp_servers` / `mcp_servers_dict`). The frontend contract deliberately exposes only a non-secret id, display label and whether the integration is currently loaded. Raw URLs, bearer tokens, custom headers, stdio environment variables and other connection secrets are not exposed through `ListMcpServers`.
+
+AI controls are typed records rather than free-form provider JSON. A control declares kind, effective value, scope, writability and optional range/options/safety metadata. Unsupported controls are absent instead of pretending a preference took effect. Changing `tools.auto_run`, for example, does not bypass System Router policy or privileged confirmation.
 
 Skill text, model output and MCP descriptions remain untrusted input. Enabling a Skill or MCP server never grants an OS capability by itself.
+
+## Managed memory
+
+Memory is separate from transcript history. The compatibility backend exposes managed memory only when the selected Newelle memory provider has an authoritative, inspectable store. The current `LongTermMemoryHandler` path is bridged through its public store operations; a provider without such a store reports `supported=false` and mutations fail closed.
+
+A memory record carries stable identity, text, scope, provenance/source, created/updated timestamps, state, pinned state and sync state. The current compatibility bridge maps the active Newelle memory scope into the Meo managed-memory surface while retaining the backend scope in provenance. Cloud sync is not implied by an `account` scope: current bridged items report `sync_state=local` until a real Meo Account sync owner accepts them.
+
+Create/edit/pin/delete operations go to the owning store. The model cannot delete a durable memory merely by saying that it forgot something. The native memory panel therefore reflects verified store mutations rather than assistant prose.
+
+Search in the native memory panel is currently local over the fetched bounded catalog, while the service endpoint also supports `scope` and `q` filtering for future larger catalogs and remote/synced providers.
 
 ## Persistence and restart
 
@@ -142,6 +188,10 @@ Conversation history is durable according to inherited Newelle storage. Meo-owne
 Conversation identity must be unambiguous. If more than one inherited chat carries the same `meo_conversation_id`, the adapter does not guess ownership; the ambiguous identity is excluded until metadata is repaired.
 
 The native client stores its current AgentService conversation id. On startup it requests the presentation-safe history and replays those messages into QML. A 404 clears the stale saved conversation id so the next send can create a new conversation instead of trapping the UI on a dead identity.
+
+Model-role preferences persist separately as non-secret local configuration. They contain model identifiers only, not provider credentials. Provider/API credentials remain an Account/provider-broker responsibility and must not be persisted by QML or embedded in prompts.
+
+Managed memories persist through their owning memory provider. The compatibility bridge never copies provider credentials into memory metadata. Sync ownership remains separate from local memory persistence.
 
 Request execution state and event journals are not automatically durable. After a service crash/restart:
 
@@ -159,6 +209,8 @@ Distro packaging may decide default activation only after live session acceptanc
 
 Phase B is accepted only when the runtime service can start and serve the contract without constructing a GTK/Adwaita/WebKit frontend. Legacy GTK frontend code may remain in the repository until parity removal; the headless runtime package/import graph itself must not depend on those UI modules.
 
-CI statically checks stable headless layers for forbidden UI imports and dynamically checks the runtime shell. Meson staged-install CI verifies the launcher, runtime modules and user unit. Native CI covers transport, early cancellation, request recovery, conversation-history restore and QML smoke behavior.
+CI statically checks stable headless layers for forbidden UI imports and dynamically checks the runtime shell. Meson staged-install CI verifies the launcher, runtime modules and user unit. Native CI covers transport, early cancellation, request recovery, conversation-history restore, structured service metadata, managed-memory metadata and QML smoke behavior. Python protocol tests cover model-role persistence/HTTP semantics, managed-memory HTTP/store semantics, response metadata and presentation-card normalization.
 
-These gates do not yet prove that a real provider and every real tool can execute headlessly on a live MeoArch session. Memory remains intentionally outside the stable frontend contract until an authoritative, non-UI Newelle memory surface is selected. The full live acceptance suite still covers real provider send/stream, tool pause/deny/approve, cancel in model wait, cancel while awaiting a tool decision, disconnect/reconnect, runtime crash/restart, conversation resume, invalid/stale decisions, systemd user-session start/restart and Plasma-session behavior.
+These gates do not yet prove that a real provider and every real tool can execute headlessly on a live MeoArch session. The full live acceptance suite still covers real provider send/stream, tool pause/deny/approve, cancel in model wait, cancel while awaiting a tool decision, disconnect/reconnect, runtime crash/restart, conversation resume, invalid/stale decisions, systemd user-session start/restart and Plasma-session behavior.
+
+See `runtime-observability.md` for response metadata, memory/search/control/sync product behavior and `presentation-model-routing.md` for the presentation block and multi-model evolution plan.

@@ -6,6 +6,9 @@ on:
     paths: ['meo/**', 'src/**', 'meson.build', '.github/workflows/meo-validation.yml']
 permissions:
   contents: read
+concurrency:
+  group: meo-validation-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   protocol:
     runs-on: ubuntu-latest
@@ -27,11 +30,28 @@ jobs:
           test -x build/stage/usr/bin/meo-agent-service
           test -f build/stage/usr/share/newelle/meo/runtime/main.py
           test -f build/stage/usr/share/newelle/meo/runtime/http_transport.py
+          test -f build/stage/usr/share/newelle/meo/runtime/native_http_transport.py
           test -f build/stage/usr/share/newelle/meo/runtime/event_journal.py
+          test -f build/stage/usr/share/newelle/meo/service/backend_adapter.py
+          test -f build/stage/usr/share/newelle/meo/service/content_blocks.py
+          test -f build/stage/usr/share/newelle/meo/service/controls.py
           test -f build/stage/usr/share/newelle/meo/service/core.py
+          test -f build/stage/usr/share/newelle/meo/service/memory.py
+          test -f build/stage/usr/share/newelle/meo/service/model_roles.py
+          test -f build/stage/usr/share/newelle/meo/service/presentation.py
+          test -f build/stage/usr/share/newelle/meo/service/resources.py
+          test -f build/stage/usr/share/newelle/meo/service/response_meta.py
+          test -f build/stage/usr/share/newelle/meo/service/search_trace.py
+          test -f build/stage/usr/share/newelle/meo/service/sync_contract.py
           test -f build/stage/usr/share/newelle/meo/system/system_tool.py
           test -f build/stage/usr/share/newelle/meo/system/dbus_router.py
+          test -f build/stage/usr/share/newelle/meo/adapters/control_backend.py
           test -f build/stage/usr/share/newelle/meo/adapters/headless_newelle.py
+          test -f build/stage/usr/share/newelle/meo/adapters/legacy_chat.py
+          test -f build/stage/usr/share/newelle/meo/adapters/legacy_controls.py
+          test -f build/stage/usr/share/newelle/meo/adapters/legacy_memory.py
+          test -f build/stage/usr/share/newelle/meo/adapters/presentation_legacy_chat.py
+          test -f build/stage/usr/share/newelle/meo/adapters/presentation_tools.py
           test -f build/stage/usr/share/newelle/meo/adapters/system_tools.py
           test -f build/stage/usr/lib/systemd/user/meo-agent-service.service
           grep -F 'ExecStart=/usr/bin/meo-agent-service --host 127.0.0.1 --port 8765' build/stage/usr/lib/systemd/user/meo-agent-service.service
@@ -39,7 +59,7 @@ jobs:
     runs-on: ubuntu-latest
     container: archlinux:base-devel
     steps:
-      - run: pacman -Syu --noconfirm --needed git cmake qt6-base qt6-declarative qt6-shadertools qt6-tools python
+      - run: pacman -Syu --noconfirm --needed git cmake qt6-base qt6-declarative qt6-shadertools qt6-tools python ttf-roboto noto-fonts noto-fonts-emoji
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
         with:
@@ -49,3 +69,17 @@ jobs:
       - run: cmake -S meo -B build/meo -DMEO_UI_ROOT="$PWD/dependencies/MeoUI" -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Release
       - run: cmake --build build/meo --parallel 2
       - run: QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software ctest --test-dir build/meo --output-on-failure --timeout 60
+      - name: Capture responsive UI previews
+        run: |
+          mkdir -p build/ui-previews
+          QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software build/meo/meo-ai --ui-demo --size 1180x780 --screenshot build/ui-previews/wide.png
+          QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software build/meo/meo-ai --ui-demo --size 960x720 --screenshot build/ui-previews/medium.png
+          QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software build/meo/meo-ai --ui-demo --size 720x640 --screenshot build/ui-previews/compact.png
+          test -s build/ui-previews/wide.png
+          test -s build/ui-previews/medium.png
+          test -s build/ui-previews/compact.png
+      - uses: actions/upload-artifact@v4
+        with:
+          name: meo-ai-ui-previews
+          path: build/ui-previews/*.png
+          if-no-files-found: error

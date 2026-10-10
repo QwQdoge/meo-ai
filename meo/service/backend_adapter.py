@@ -37,11 +37,40 @@ class ConversationMessage:
 
 
 @dataclass(frozen=True)
+class InputResource:
+    """Request-local resource material passed to a capable backend.
+
+    The stable frontend identity is `resource_id`. AgentService resolves that
+    identity and supplies bytes internally so adapters never need a user-visible
+    filesystem path.
+    """
+
+    resource_id: str
+    kind: str
+    name: str
+    mime_type: str
+    data: bytes
+
+
+@dataclass(frozen=True)
 class BackendCallbacks:
     on_text_delta: Callable[[str], None]
     on_tool_event: Callable[[dict], None]
     on_done: Callable[[], None]
     on_error: Callable[[str], None]
+
+
+@runtime_checkable
+class ResourceInputBackend(Protocol):
+    """Optional extension implemented only when resource input is real."""
+
+    def send_message_with_resources(
+        self,
+        conversation_id: str,
+        text: str,
+        resources: tuple[InputResource, ...],
+        callbacks: BackendCallbacks,
+    ) -> object: ...
 
 
 @runtime_checkable

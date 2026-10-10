@@ -43,12 +43,72 @@ class AgentHttpTransport:
             "messages": self.service.list_messages(conversation_id),
         }
 
+    def list_resources(self, conversation_id: str) -> dict:
+        return {
+            "conversation_id": conversation_id,
+            "resources": self.service.list_resources(conversation_id),
+        }
+
+    def create_text_resource(self, conversation_id: str, name: str, text: str) -> dict:
+        return {
+            "conversation_id": conversation_id,
+            "resource": self.service.create_text_resource(
+                conversation_id,
+                name=name,
+                text=text,
+            ),
+        }
+
+    def reserve_resource(
+        self,
+        conversation_id: str,
+        *,
+        kind: str,
+        name: str,
+        mime_type: str,
+        size_bytes: int,
+    ) -> dict:
+        return {
+            "conversation_id": conversation_id,
+            "resource": self.service.reserve_resource(
+                conversation_id,
+                kind=kind,
+                name=name,
+                mime_type=mime_type,
+                size_bytes=size_bytes,
+            ),
+        }
+
+    def upload_resource(self, conversation_id: str, resource_id: str, data: bytes) -> dict:
+        return {
+            "conversation_id": conversation_id,
+            "resource": self.service.upload_resource(conversation_id, resource_id, data),
+        }
+
+    def resource_upload_limit(self) -> int:
+        return self.service.resource_upload_limit()
+
+    def delete_resource(self, conversation_id: str, resource_id: str) -> dict:
+        self.service.delete_resource(conversation_id, resource_id)
+        return {
+            "conversation_id": conversation_id,
+            "resource_id": resource_id,
+            "deleted": True,
+        }
+
     def list_models(self) -> list[dict]:
         return self.service.list_models()
 
     def set_model(self, conversation_id: str, model_id: str) -> dict:
         self.service.set_model(conversation_id, model_id)
         return {"conversation_id": conversation_id, "model_id": model_id, "accepted": True}
+
+    def list_model_roles(self) -> list[dict]:
+        return self.service.list_model_roles()
+
+    def set_model_role(self, role_id: str, model_id: str | None) -> dict:
+        role = self.service.set_model_role(role_id, model_id)
+        return {"accepted": True, "role": role}
 
     def list_skills(self) -> list[dict]:
         return self.service.list_skills()
@@ -60,7 +120,46 @@ class AgentHttpTransport:
     def list_mcp_servers(self) -> list[dict]:
         return self.service.list_mcp_servers()
 
-    def send_message(self, conversation_id: str, text: str) -> tuple[str, RequestEventJournal]:
+    def list_controls(self) -> list[dict]:
+        return self.service.list_controls()
+
+    def set_control(self, control_id: str, value: Any) -> dict:
+        return {"accepted": True, "control": self.service.set_control(control_id, value)}
+
+    def memory_state(self) -> dict:
+        return self.service.memory_state()
+
+    def list_memories(self, *, scope: str | None = None, query: str = "") -> dict:
+        return {"memories": self.service.list_memories(scope=scope, query=query)}
+
+    def create_memory(self, text: str, pinned: bool = False) -> dict:
+        return {"accepted": True, "memory": self.service.create_memory(text, pinned=pinned)}
+
+    def set_memory_enabled(self, enabled: bool) -> dict:
+        return {"accepted": True, **self.service.set_memory_enabled(enabled)}
+
+    def update_memory(
+        self,
+        memory_id: str,
+        *,
+        text: str | None = None,
+        pinned: bool | None = None,
+    ) -> dict:
+        return {
+            "accepted": True,
+            "memory": self.service.update_memory(memory_id, text=text, pinned=pinned),
+        }
+
+    def delete_memory(self, memory_id: str) -> dict:
+        self.service.delete_memory(memory_id)
+        return {"accepted": True, "memory_id": memory_id, "deleted": True}
+
+    def send_message(
+        self,
+        conversation_id: str,
+        text: str,
+        resource_ids: tuple[str, ...] = (),
+    ) -> tuple[str, RequestEventJournal]:
         journal = RequestEventJournal()
         request_box: dict[str, str] = {}
 
@@ -89,7 +188,13 @@ class AgentHttpTransport:
             on_done=lambda: self._finish_journal(journal, request_id()),
             on_error=lambda error: self._fail_journal(journal, request_id(), error),
         )
-        context = self.service.send_message(conversation_id, text, callbacks, on_started=on_started)
+        context = self.service.send_message(
+            conversation_id,
+            text,
+            callbacks,
+            on_started=on_started,
+            resource_ids=resource_ids,
+        )
         return context.request_id, journal
 
     def _finish_journal(self, journal: RequestEventJournal, request_id: str) -> None:
@@ -115,8 +220,6 @@ class AgentHttpTransport:
                 self._journals.pop(request_id, None)
 
     def get_event_journal(self, request_id: str) -> RequestEventJournal:
-        # Validate service request identity first so a pruned/unknown event
-        # journal never becomes an alternate request-existence oracle.
         self.service.get_request(request_id)
         with self._lock:
             journal = self._journals.get(request_id)
@@ -184,6 +287,18 @@ def _loopback_host_header(value: str | None) -> bool:
     return parsed.hostname in {"127.0.0.1", "localhost", "::1"}
 
 
+def _resource_missing(error: ValueError) -> bool:
+    return str(error) in {
+        "unknown conversation_id",
+        "unknown resource_id",
+        "resource does not belong to this conversation",
+    }
+
+
+class PayloadTooLargeError(ValueError):
+    pass
+
+
 class _Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = "MeoAgentService/0"
@@ -202,11 +317,21 @@ class _Handler(BaseHTTPRequestHandler):
         content_type = self.headers.get("Content-Type", "")
         return content_type.split(";", 1)[0].strip().lower() == "application/json"
 
-    def _read_json(self, *, allow_empty: bool = False) -> dict:
+    def _binary_content_type_allowed(self) -> bool:
+        content_type = self.headers.get("Content-Type", "")
+        return content_type.split(";", 1)[0].strip().lower() == "application/octet-stream"
+
+    def _content_length(self) -> int:
         try:
             length = int(self.headers.get("Content-Length", "0"))
         except ValueError as exc:
             raise ValueError("invalid Content-Length") from exc
+        if length < 0:
+            raise ValueError("invalid Content-Length")
+        return length
+
+    def _read_json(self, *, allow_empty: bool = False) -> dict:
+        length = self._content_length()
         if length == 0 and allow_empty:
             return {}
         if length <= 0 or length > 1024 * 1024:
@@ -219,6 +344,12 @@ class _Handler(BaseHTTPRequestHandler):
         if not isinstance(value, dict):
             raise ValueError("JSON body must be an object")
         return value
+
+    def _read_binary(self, max_bytes: int) -> bytes:
+        length = self._content_length()
+        if length > max_bytes:
+            raise PayloadTooLargeError("resource exceeds configured size limit")
+        return self.rfile.read(length)
 
     def _reply_json(self, status: int, value: Any) -> None:
         body = _json_bytes(value)
@@ -251,7 +382,6 @@ class _Handler(BaseHTTPRequestHandler):
                 self.wfile.write(b"data: " + _json_bytes(event) + b"\n\n")
                 self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError):
-            # Transport disconnect is not cancellation.
             pass
         self.close_connection = True
 
@@ -278,14 +408,52 @@ class _Handler(BaseHTTPRequestHandler):
                     return
                 self._reply_json(HTTPStatus.OK, payload)
                 return
+            if len(segments) == 4 and segments[:2] == ["v1", "conversations"] and segments[3] == "resources" and not query:
+                try:
+                    payload = self.transport.list_resources(segments[2])
+                except ValueError as exc:
+                    self._reply_error(
+                        HTTPStatus.NOT_FOUND if _resource_missing(exc) else HTTPStatus.BAD_REQUEST,
+                        str(exc),
+                    )
+                    return
+                except RuntimeError as exc:
+                    self._reply_error(HTTPStatus.SERVICE_UNAVAILABLE, str(exc))
+                    return
+                self._reply_json(HTTPStatus.OK, payload)
+                return
             if segments == ["v1", "models"] and not query:
                 self._reply_json(HTTPStatus.OK, {"models": self.transport.list_models()})
+                return
+            if segments == ["v1", "model-roles"] and not query:
+                self._reply_json(HTTPStatus.OK, {"model_roles": self.transport.list_model_roles()})
                 return
             if segments == ["v1", "skills"] and not query:
                 self._reply_json(HTTPStatus.OK, {"skills": self.transport.list_skills()})
                 return
             if segments == ["v1", "mcp-servers"] and not query:
                 self._reply_json(HTTPStatus.OK, {"mcp_servers": self.transport.list_mcp_servers()})
+                return
+            if segments == ["v1", "controls"] and not query:
+                self._reply_json(HTTPStatus.OK, {"controls": self.transport.list_controls()})
+                return
+            if segments == ["v1", "memory"] and not query:
+                self._reply_json(HTTPStatus.OK, self.transport.memory_state())
+                return
+            if segments == ["v1", "memories"]:
+                unknown = set(query) - {"scope", "q"}
+                if unknown:
+                    raise ValueError("unsupported memory query parameter")
+                scope_values = query.get("scope", [""])
+                q_values = query.get("q", [""])
+                if len(scope_values) != 1 or len(q_values) != 1:
+                    raise ValueError("memory query parameters must be specified at most once")
+                scope = scope_values[0].strip() or None
+                search_query = q_values[0].strip()
+                self._reply_json(
+                    HTTPStatus.OK,
+                    self.transport.list_memories(scope=scope, query=search_query),
+                )
                 return
             if len(segments) == 3 and segments[:2] == ["v1", "requests"] and not query:
                 self._reply_json(HTTPStatus.OK, self.transport.get_request(segments[2]))
@@ -328,12 +496,77 @@ class _Handler(BaseHTTPRequestHandler):
                 self._read_json(allow_empty=True)
                 self._reply_json(HTTPStatus.CREATED, self.transport.create_conversation())
                 return
+            if len(segments) == 4 and segments[:2] == ["v1", "conversations"] and segments[3] == "resources":
+                body = self._read_json()
+                kind = body.get("kind")
+                name = body.get("name")
+                mime_type = body.get("mime_type", "")
+                size_bytes = body.get("size_bytes")
+                if kind not in {"attachment", "image"}:
+                    raise ValueError("binary upload kind must be attachment or image")
+                if not isinstance(name, str) or not name.strip():
+                    raise ValueError("name is required")
+                if not isinstance(mime_type, str):
+                    raise ValueError("mime_type must be a string")
+                if isinstance(size_bytes, bool) or not isinstance(size_bytes, int) or size_bytes < 0:
+                    raise ValueError("size_bytes must be a non-negative integer")
+                try:
+                    limit = self.transport.resource_upload_limit()
+                    if size_bytes > limit:
+                        self._reply_error(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "resource exceeds configured size limit")
+                        return
+                    payload = self.transport.reserve_resource(
+                        segments[2],
+                        kind=kind,
+                        name=name,
+                        mime_type=mime_type,
+                        size_bytes=size_bytes,
+                    )
+                except ValueError as exc:
+                    self._reply_error(
+                        HTTPStatus.NOT_FOUND if _resource_missing(exc) else HTTPStatus.BAD_REQUEST,
+                        str(exc),
+                    )
+                    return
+                except RuntimeError as exc:
+                    self._reply_error(HTTPStatus.SERVICE_UNAVAILABLE, str(exc))
+                    return
+                self._reply_json(HTTPStatus.CREATED, payload)
+                return
+            if len(segments) == 5 and segments[:2] == ["v1", "conversations"] and segments[3:] == ["resources", "text"]:
+                body = self._read_json()
+                name = body.get("name")
+                text = body.get("text")
+                if not isinstance(name, str) or not name.strip():
+                    raise ValueError("name is required")
+                if not isinstance(text, str) or not text:
+                    raise ValueError("text is required")
+                try:
+                    payload = self.transport.create_text_resource(segments[2], name, text)
+                except ValueError as exc:
+                    self._reply_error(
+                        HTTPStatus.NOT_FOUND if _resource_missing(exc) else HTTPStatus.BAD_REQUEST,
+                        str(exc),
+                    )
+                    return
+                except RuntimeError as exc:
+                    self._reply_error(HTTPStatus.SERVICE_UNAVAILABLE, str(exc))
+                    return
+                self._reply_json(HTTPStatus.CREATED, payload)
+                return
             if len(segments) == 4 and segments[:2] == ["v1", "conversations"] and segments[3] == "model":
                 body = self._read_json()
                 model_id = body.get("model_id")
                 if not isinstance(model_id, str) or not model_id.strip():
                     raise ValueError("model_id is required")
                 self._reply_json(HTTPStatus.OK, self.transport.set_model(segments[2], model_id))
+                return
+            if len(segments) == 3 and segments[:2] == ["v1", "model-roles"]:
+                body = self._read_json()
+                model_id = body.get("model_id")
+                if model_id is not None and not isinstance(model_id, str):
+                    raise ValueError("model_id must be a string or null")
+                self._reply_json(HTTPStatus.OK, self.transport.set_model_role(segments[2], model_id))
                 return
             if len(segments) == 3 and segments[:2] == ["v1", "skills"]:
                 body = self._read_json()
@@ -342,19 +575,58 @@ class _Handler(BaseHTTPRequestHandler):
                     raise ValueError("enabled must be a boolean")
                 self._reply_json(HTTPStatus.OK, self.transport.set_skill_enabled(segments[2], enabled))
                 return
+            if len(segments) == 3 and segments[:2] == ["v1", "controls"]:
+                body = self._read_json()
+                if "value" not in body:
+                    raise ValueError("value is required")
+                self._reply_json(HTTPStatus.OK, self.transport.set_control(segments[2], body["value"]))
+                return
+            if segments == ["v1", "memory", "state"]:
+                body = self._read_json()
+                enabled = body.get("enabled")
+                if not isinstance(enabled, bool):
+                    raise ValueError("enabled must be a boolean")
+                self._reply_json(HTTPStatus.OK, self.transport.set_memory_enabled(enabled))
+                return
+            if segments == ["v1", "memories"]:
+                body = self._read_json()
+                text = body.get("text")
+                pinned = body.get("pinned", False)
+                if not isinstance(text, str) or not text.strip():
+                    raise ValueError("memory text is required")
+                if not isinstance(pinned, bool):
+                    raise ValueError("pinned must be a boolean")
+                self._reply_json(HTTPStatus.CREATED, self.transport.create_memory(text, pinned))
+                return
+            if len(segments) == 3 and segments[:2] == ["v1", "memories"]:
+                body = self._read_json()
+                text = body.get("text") if "text" in body else None
+                pinned = body.get("pinned") if "pinned" in body else None
+                if text is not None and not isinstance(text, str):
+                    raise ValueError("memory text must be a string")
+                if pinned is not None and not isinstance(pinned, bool):
+                    raise ValueError("pinned must be a boolean")
+                self._reply_json(
+                    HTTPStatus.OK,
+                    self.transport.update_memory(segments[2], text=text, pinned=pinned),
+                )
+                return
             if len(segments) == 4 and segments[:2] == ["v1", "conversations"] and segments[3] == "messages":
                 body = self._read_json()
                 text = body.get("text")
+                resource_ids = body.get("resource_ids", [])
                 if not isinstance(text, str) or not text.strip():
                     raise ValueError("text is required")
+                if not isinstance(resource_ids, list) or any(not isinstance(item, str) for item in resource_ids):
+                    raise ValueError("resource_ids must be an array of strings")
                 try:
-                    request_id, journal = self.transport.send_message(segments[2], text)
+                    request_id, journal = self.transport.send_message(
+                        segments[2],
+                        text,
+                        tuple(resource_ids),
+                    )
                 except ValueError as exc:
-                    if str(exc) == "unknown conversation_id":
-                        # This response is intentionally emitted before a request
-                        # ID or execution handle exists. A native client may use
-                        # this precise 404 to recreate a stale persisted
-                        # conversation once without risking duplicate execution.
+                    if _resource_missing(exc):
                         self._reply_error(HTTPStatus.NOT_FOUND, str(exc))
                         return
                     raise
@@ -373,6 +645,74 @@ class _Handler(BaseHTTPRequestHandler):
                     HTTPStatus.OK,
                     self.transport.choose_tool_option(segments[2], segments[4], option_index),
                 )
+                return
+            self._reply_error(HTTPStatus.NOT_FOUND, "not found")
+        except ValueError as exc:
+            self._reply_error(HTTPStatus.BAD_REQUEST, str(exc))
+        except Exception as exc:
+            self._reply_error(HTTPStatus.INTERNAL_SERVER_ERROR, str(exc))
+
+    def do_PUT(self) -> None:
+        if not self._request_boundary_allowed():
+            self._reply_error(HTTPStatus.FORBIDDEN, "request origin is not allowed")
+            return
+        if not self._binary_content_type_allowed():
+            self._reply_error(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, "resource upload requires application/octet-stream")
+            return
+        segments, query = self._route()
+        if query:
+            self._reply_error(HTTPStatus.BAD_REQUEST, "PUT query parameters are not supported")
+            return
+        try:
+            if len(segments) == 6 and segments[:2] == ["v1", "conversations"] and segments[3] == "resources" and segments[5] == "content":
+                try:
+                    data = self._read_binary(self.transport.resource_upload_limit())
+                    payload = self.transport.upload_resource(segments[2], segments[4], data)
+                except PayloadTooLargeError as exc:
+                    self._reply_error(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, str(exc))
+                    return
+                except ValueError as exc:
+                    self._reply_error(
+                        HTTPStatus.NOT_FOUND if _resource_missing(exc) else HTTPStatus.BAD_REQUEST,
+                        str(exc),
+                    )
+                    return
+                except RuntimeError as exc:
+                    self._reply_error(HTTPStatus.SERVICE_UNAVAILABLE, str(exc))
+                    return
+                self._reply_json(HTTPStatus.OK, payload)
+                return
+            self._reply_error(HTTPStatus.NOT_FOUND, "not found")
+        except ValueError as exc:
+            self._reply_error(HTTPStatus.BAD_REQUEST, str(exc))
+        except Exception as exc:
+            self._reply_error(HTTPStatus.INTERNAL_SERVER_ERROR, str(exc))
+
+    def do_DELETE(self) -> None:
+        if not self._request_boundary_allowed():
+            self._reply_error(HTTPStatus.FORBIDDEN, "request origin is not allowed")
+            return
+        segments, query = self._route()
+        if query:
+            self._reply_error(HTTPStatus.BAD_REQUEST, "DELETE query parameters are not supported")
+            return
+        try:
+            if len(segments) == 5 and segments[:2] == ["v1", "conversations"] and segments[3] == "resources":
+                try:
+                    payload = self.transport.delete_resource(segments[2], segments[4])
+                except ValueError as exc:
+                    self._reply_error(
+                        HTTPStatus.NOT_FOUND if _resource_missing(exc) else HTTPStatus.BAD_REQUEST,
+                        str(exc),
+                    )
+                    return
+                except RuntimeError as exc:
+                    self._reply_error(HTTPStatus.SERVICE_UNAVAILABLE, str(exc))
+                    return
+                self._reply_json(HTTPStatus.OK, payload)
+                return
+            if len(segments) == 3 and segments[:2] == ["v1", "memories"]:
+                self._reply_json(HTTPStatus.OK, self.transport.delete_memory(segments[2]))
                 return
             self._reply_error(HTTPStatus.NOT_FOUND, "not found")
         except ValueError as exc:

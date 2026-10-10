@@ -5,11 +5,21 @@ from meo.adapters.legacy_chat import LegacyChatInterfaceAdapter
 from meo.service.backend_adapter import BackendCallbacks
 
 
+class FakeSettings:
+    def get_string(self, key):
+        if key == "language-model":
+            return "fake"
+        if key == "llm-settings":
+            return "{}"
+        return ""
+
+
 class FakeController:
     def __init__(self):
         self.cancelled = []
         self.chats = {}
         self.saved = 0
+        self.settings = FakeSettings()
 
     def workspace_chats(self):
         return self.chats

@@ -54,8 +54,11 @@ void AgentClient::fetchServiceMetadataStep(int step, bool hadError) {
     static const QStringList paths{
         QStringLiteral("/v1/agent-state"),
         QStringLiteral("/v1/models"),
+        QStringLiteral("/v1/model-roles"),
         QStringLiteral("/v1/skills"),
         QStringLiteral("/v1/mcp-servers"),
+        QStringLiteral("/v1/controls"),
+        QStringLiteral("/v1/memory"),
     };
     if (step >= paths.size()) {
         if (!hadError) m_metadataStatus = tr("Ready");
@@ -98,9 +101,19 @@ void AgentClient::fetchServiceMetadataStep(int step, bool hadError) {
             } else if (step == 1) {
                 m_models = object.value("models").toArray().toVariantList();
             } else if (step == 2) {
-                m_skills = object.value("skills").toArray().toVariantList();
+                m_modelRoles = object.value("model_roles").toArray().toVariantList();
             } else if (step == 3) {
+                m_skills = object.value("skills").toArray().toVariantList();
+            } else if (step == 4) {
                 m_mcpServers = object.value("mcp_servers").toArray().toVariantList();
+            } else if (step == 5) {
+                m_controls = object.value("controls").toArray().toVariantList();
+            } else if (step == 6) {
+                auto state = object.toVariantMap();
+                state.remove("memories");
+                m_memoryState = state;
+                if (m_memoryQuery.isEmpty())
+                    m_memories = object.value("memories").toArray().toVariantList();
             }
         }
         reply->deleteLater();
@@ -109,8 +122,159 @@ void AgentClient::fetchServiceMetadataStep(int step, bool hadError) {
     });
 }
 
+void AgentClient::refreshMemory(const QString &query) {
+    if (!m_serviceMode || actionBusy()) return;
+    QUrl base = validatedOrigin("MEO_AI_SERVICE_ENDPOINT");
+    if (!base.isValid()) {
+        m_status = tr("MEO_AI_SERVICE_ENDPOINT must be a loopback HTTP origin.");
+        emit changed();
+        return;
+    }
+
+    m_memoryQuery = query.trimmed();
+    QUrl url = base;
+    url.setPath("/v1/memory");
+    if (!m_memoryQuery.isEmpty()) {
+        QUrlQuery urlQuery;
+        urlQuery.addQueryItem("q", m_memoryQuery);
+        url.setQuery(urlQuery);
+    }
+    QNetworkRequest request(url);
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
+    m_actionReply = m_network.get(request);
+    emit changed();
+    connect(m_actionReply, &QNetworkReply::finished, this, [this] {
+        QNetworkReply *reply = m_actionReply;
+        m_actionReply = nullptr;
+        const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        QJsonParseError parseError;
+        const auto document = QJsonDocument::fromJson(reply->readAll(), &parseError);
+        if (reply->error() != QNetworkReply::NoError || code != 200 ||
+            parseError.error != QJsonParseError::NoError || !document.isObject()) {
+            m_status = tr("Memory could not be refreshed (HTTP %1).").arg(code);
+        } else {
+            const auto object = document.object();
+            auto state = object.toVariantMap();
+            state.remove("memories");
+            m_memoryState = state;
+            m_memories = object.value("memories").toArray().toVariantList();
+        }
+        reply->deleteLater();
+        emit changed();
+    });
+}
+
+void AgentClient::setModelRole(const QString &roleId, const QString &modelId) {
+    if (!m_serviceMode || actionBusy() || roleId.trimmed().isEmpty()) return;
+    QUrl base = validatedOrigin("MEO_AI_SERVICE_ENDPOINT");
+    if (!base.isValid()) {
+        m_status = tr("MEO_AI_SERVICE_ENDPOINT must be a loopback HTTP origin.");
+        emit changed();
+        return;
+    }
+    QUrl url = base;
+    url.setPath(QString("/v1/model-roles/%1").arg(roleId));
+    QJsonObject body;
+    if (modelId.trimmed().isEmpty()) body.insert("model_id", QJsonValue::Null);
+    else body.insert("model_id", modelId);
+    postServiceAction(url, QJsonDocument(body).toJson(QJsonDocument::Compact), [this](QNetworkReply *) {
+        m_status = tr("Model role saved");
+        QTimer::singleShot(0, this, [this] { refreshServiceMetadata(); });
+    });
+}
+
+void AgentClient::setControl(const QString &controlId, const QVariant &value) {
+    if (!m_serviceMode || actionBusy() || controlId.trimmed().isEmpty()) return;
+    QUrl base = validatedOrigin("MEO_AI_SERVICE_ENDPOINT");
+    if (!base.isValid()) {
+        m_status = tr("MEO_AI_SERVICE_ENDPOINT must be a loopback HTTP origin.");
+        emit changed();
+        return;
+    }
+    QUrl url = base;
+    url.setPath(QString("/v1/controls/%1").arg(controlId));
+    QJsonObject body{{"value", QJsonValue::fromVariant(value)}};
+    postServiceAction(url, QJsonDocument(body).toJson(QJsonDocument::Compact), [this](QNetworkReply *) {
+        m_status = tr("AI setting saved");
+        QTimer::singleShot(0, this, [this] { refreshServiceMetadata(); });
+    });
+}
+
+void AgentClient::setMemoryEnabled(bool enabled) {
+    if (!m_serviceMode || actionBusy()) return;
+    QUrl base = validatedOrigin("MEO_AI_SERVICE_ENDPOINT");
+    if (!base.isValid()) {
+        m_status = tr("MEO_AI_SERVICE_ENDPOINT must be a loopback HTTP origin.");
+        emit changed();
+        return;
+    }
+    QUrl url = base;
+    url.setPath("/v1/memory/settings");
+    QJsonObject body{{"enabled", enabled}};
+    postServiceAction(url, QJsonDocument(body).toJson(QJsonDocument::Compact), [this](QNetworkReply *) {
+        m_status = tr("Memory setting saved");
+        QTimer::singleShot(0, this, [this] { refreshMemory(m_memoryQuery); });
+    });
+}
+
+void AgentClient::createMemory(const QString &text, bool pinned) {
+    const QString value = text.trimmed();
+    if (!m_serviceMode || actionBusy() || value.isEmpty()) return;
+    QUrl base = validatedOrigin("MEO_AI_SERVICE_ENDPOINT");
+    if (!base.isValid()) {
+        m_status = tr("MEO_AI_SERVICE_ENDPOINT must be a loopback HTTP origin.");
+        emit changed();
+        return;
+    }
+    QUrl url = base;
+    url.setPath("/v1/memory");
+    QJsonObject body{{"text", value}, {"pinned", pinned}};
+    postServiceAction(url, QJsonDocument(body).toJson(QJsonDocument::Compact), [this](QNetworkReply *) {
+        m_status = tr("Memory saved");
+        QTimer::singleShot(0, this, [this] { refreshMemory(m_memoryQuery); });
+    });
+}
+
+void AgentClient::updateMemory(const QString &memoryId, const QString &text, bool pinned) {
+    const QString id = memoryId.trimmed();
+    const QString value = text.trimmed();
+    if (!m_serviceMode || actionBusy() || !id.startsWith("memory:") || id.contains('/') || value.isEmpty()) return;
+    QUrl base = validatedOrigin("MEO_AI_SERVICE_ENDPOINT");
+    if (!base.isValid()) {
+        m_status = tr("MEO_AI_SERVICE_ENDPOINT must be a loopback HTTP origin.");
+        emit changed();
+        return;
+    }
+    QUrl url = base;
+    url.setPath(QString("/v1/memory/%1").arg(id));
+    QJsonObject body{{"text", value}, {"pinned", pinned}};
+    postServiceAction(url, QJsonDocument(body).toJson(QJsonDocument::Compact), [this](QNetworkReply *) {
+        m_status = tr("Memory updated");
+        QTimer::singleShot(0, this, [this] { refreshMemory(m_memoryQuery); });
+    });
+}
+
+void AgentClient::deleteMemory(const QString &memoryId) {
+    const QString id = memoryId.trimmed();
+    if (!m_serviceMode || actionBusy() || !id.startsWith("memory:") || id.contains('/')) return;
+    QUrl base = validatedOrigin("MEO_AI_SERVICE_ENDPOINT");
+    if (!base.isValid()) {
+        m_status = tr("MEO_AI_SERVICE_ENDPOINT must be a loopback HTTP origin.");
+        emit changed();
+        return;
+    }
+    QUrl url = base;
+    url.setPath(QString("/v1/memory/%1").arg(id));
+    deleteServiceAction(url, [this](QNetworkReply *) {
+        m_status = tr("Memory deleted");
+        QTimer::singleShot(0, this, [this] { refreshMemory(m_memoryQuery); });
+    });
+}
+
 void AgentClient::send(const QString &text) {
     if (busy() || actionBusy() || !m_options.isEmpty() || text.trimmed().isEmpty()) return;
+    m_responseMetadata.clear();
+    emit changed();
     emit message("user", text);
     if (m_serviceMode) {
         ensureServiceConversation([this, text] { sendService(text); });
@@ -178,6 +342,7 @@ void AgentClient::submitServiceCancel() {
 
 void AgentClient::newChat() {
     if (busy() || actionBusy() || !m_options.isEmpty()) return;
+    m_responseMetadata.clear();
     emit resetChat();
     if (!m_serviceMode) {
         requestLegacy("/new");
@@ -504,6 +669,12 @@ void AgentClient::consumeService() {
             }
         } else if (type == "tool.completed") {
             emit toolEvent(event.toVariantMap());
+        } else if (type == "presentation.card") {
+            emit presentationEvent(event.toVariantMap());
+        } else if (type == "response.meta") {
+            m_responseMetadata = event.toVariantMap();
+            emit responseMetaEvent(m_responseMetadata);
+            emit changed();
         } else if (type == "request.completed") {
             m_done = true;
             m_pendingServiceText.clear();
@@ -549,6 +720,26 @@ void AgentClient::postServiceAction(const QUrl &url, const QByteArray &body, con
                 m_options.clear();
                 m_cancelPending = false;
             }
+        } else {
+            onSuccess(reply);
+        }
+        reply->deleteLater();
+        emit changed();
+    });
+}
+
+void AgentClient::deleteServiceAction(const QUrl &url, const std::function<void(QNetworkReply *)> &onSuccess) {
+    if (m_actionReply) return;
+    QNetworkRequest request(url);
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
+    m_actionReply = m_network.sendCustomRequest(request, QByteArrayLiteral("DELETE"));
+    emit changed();
+    connect(m_actionReply, &QNetworkReply::finished, this, [this, onSuccess] {
+        QNetworkReply *reply = m_actionReply;
+        m_actionReply = nullptr;
+        const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        if (reply->error() != QNetworkReply::NoError || code < 200 || code >= 300) {
+            m_status = tr("AgentService action was rejected (HTTP %1).").arg(code);
         } else {
             onSuccess(reply);
         }
@@ -622,11 +813,15 @@ void AgentClient::consumeLegacy() {
         const auto chunk = choices.at(0).toObject().value("delta").toObject();
         const auto event = chunk.value("meo_event").toObject();
         if (!event.isEmpty()) {
-            emit toolEvent(event.toVariantMap());
-            if (event.value("type") == "tool_interaction") {
-                m_options = event.value("options").toArray().toVariantList();
-                emit changed();
+            if (event.value("type").toString() == "response.meta") {
+                m_responseMetadata = event.toVariantMap();
+                emit responseMetaEvent(m_responseMetadata);
+            } else {
+                emit toolEvent(event.toVariantMap());
+                if (event.value("type") == "tool_interaction")
+                    m_options = event.value("options").toArray().toVariantList();
             }
+            emit changed();
         }
         const auto content = chunk.value("content").toString();
         if (!content.isEmpty()) emit delta(content);

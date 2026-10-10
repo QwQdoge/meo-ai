@@ -6,9 +6,11 @@ import os
 from typing import Callable
 
 from meo.runtime.headless_probe import require_headless
-from meo.runtime.http_transport import create_http_server
+from meo.runtime.native_http_transport import create_native_http_server
 from meo.service.core import AgentServiceCore
 from meo.service.backend_adapter import AgentBackendAdapter
+from meo.service.model_roles import ModelRoleRegistry, default_model_role_path
+from meo.service.resources import ConversationResourceStore, default_resource_root
 
 
 BackendFactory = Callable[[], AgentBackendAdapter]
@@ -33,7 +35,11 @@ def build_service(spec: str) -> AgentServiceCore:
     factory = load_backend_factory(spec)
     backend = factory()
     require_headless()
-    return AgentServiceCore(backend=backend)
+    return AgentServiceCore(
+        backend=backend,
+        model_roles=ModelRoleRegistry(default_model_role_path()),
+        resource_store=ConversationResourceStore(default_resource_root()),
+    )
 
 
 def parser() -> argparse.ArgumentParser:
@@ -78,7 +84,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Meo AgentService backend ready: {type(service.backend).__name__}")
         return 0
 
-    server = create_http_server(service, host=args.host, port=args.port)
+    server = create_native_http_server(service, host=args.host, port=args.port)
     host, port = server.server_address[:2]
     print(f"Meo AgentService listening on http://{host}:{port}")
     try:
