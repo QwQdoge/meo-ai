@@ -139,26 +139,26 @@ class MemoryHttpTests(unittest.TestCase):
     def test_state_list_and_search(self):
         status, payload = self.request("GET", "/v1/memory")
         self.assertEqual(status, 200)
-        self.assertTrue(payload["supported"])
-        self.assertTrue(payload["enabled"])
+        self.assertEqual(payload, {"supported": True, "enabled": True})
+
+        status, payload = self.request("GET", "/v1/memories")
+        self.assertEqual(status, 200)
         self.assertEqual(len(payload["memories"]), 1)
 
         query = urllib.parse.urlencode({"scope": "account", "q": "compact"})
-        status, payload = self.request("GET", "/v1/memory?" + query)
+        status, payload = self.request("GET", "/v1/memories?" + query)
         self.assertEqual(status, 200)
-        self.assertEqual(payload["scope"], "account")
-        self.assertEqual(payload["query"], "compact")
         self.assertEqual(len(payload["memories"]), 1)
         self.assertEqual(payload["memories"][0]["memory_id"], "memory:one")
 
     def test_toggle_create_update_pin_and_delete(self):
-        status, state = self.request("POST", "/v1/memory/settings", {"enabled": False})
+        status, state = self.request("POST", "/v1/memory/state", {"enabled": False})
         self.assertEqual(status, 200)
         self.assertTrue(state["accepted"])
         self.assertFalse(state["enabled"])
 
         status, created = self.request(
-            "POST", "/v1/memory", {"text": "Remember native cards", "pinned": True}
+            "POST", "/v1/memories", {"text": "Remember native cards", "pinned": True}
         )
         self.assertEqual(status, 201)
         self.assertTrue(created["accepted"])
@@ -166,25 +166,25 @@ class MemoryHttpTests(unittest.TestCase):
         self.assertTrue(created["memory"]["pinned"])
 
         status, updated = self.request(
-            "POST", "/v1/memory/memory%3Acreated", {"text": "Remember cards", "pinned": False}
+            "POST", "/v1/memories/memory%3Acreated", {"text": "Remember cards", "pinned": False}
         )
         self.assertEqual(status, 200)
         self.assertTrue(updated["accepted"])
         self.assertEqual(updated["memory"]["text"], "Remember cards")
         self.assertFalse(updated["memory"]["pinned"])
 
-        status, deleted = self.request("DELETE", "/v1/memory/memory%3Acreated")
+        status, deleted = self.request("DELETE", "/v1/memories/memory%3Acreated")
         self.assertEqual(status, 200)
         self.assertTrue(deleted["accepted"])
         self.assertTrue(deleted["deleted"])
 
     def test_rejects_unsupported_query_and_empty_updates(self):
         with self.assertRaises(urllib.error.HTTPError) as bad_query:
-            self.request("GET", "/v1/memory?unknown=1")
+            self.request("GET", "/v1/memories?unknown=1")
         self.assertEqual(bad_query.exception.code, 400)
 
         with self.assertRaises(urllib.error.HTTPError) as empty_update:
-            self.request("POST", "/v1/memory/memory%3Aone", {})
+            self.request("POST", "/v1/memories/memory%3Aone", {})
         self.assertEqual(empty_update.exception.code, 400)
 
 
