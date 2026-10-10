@@ -20,6 +20,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: docker build -f meo/cloud/Dockerfile -t meo-ai-cloud:ci .
+      - run: |
+          cd meo/cloud/deploy/local
+          cp .env.example .env
+          docker compose config -q
   packaging:
     runs-on: ubuntu-latest
     container: archlinux:base-devel
