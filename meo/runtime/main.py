@@ -10,6 +10,7 @@ from meo.runtime.http_transport import create_http_server
 from meo.service.core import AgentServiceCore
 from meo.service.backend_adapter import AgentBackendAdapter
 from meo.service.model_roles import ModelRoleRegistry, default_model_role_path
+from meo.service.resources import ConversationResourceStore, default_resource_root
 
 
 BackendFactory = Callable[[], AgentBackendAdapter]
@@ -37,6 +38,7 @@ def build_service(spec: str) -> AgentServiceCore:
     return AgentServiceCore(
         backend=backend,
         model_roles=ModelRoleRegistry(default_model_role_path()),
+        resource_store=ConversationResourceStore(default_resource_root()),
     )
 
 
