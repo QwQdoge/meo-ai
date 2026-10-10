@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import unittest
 
-from meo.service.response_meta import json_safe, normalize_response_meta, normalize_usage
+from meo.service.response_meta import (
+    configured_context_from_usage,
+    json_safe,
+    normalize_response_meta,
+    normalize_usage,
+)
 
 
 class ResponseMetaTests(unittest.TestCase):
@@ -21,6 +26,25 @@ class ResponseMetaTests(unittest.TestCase):
         self.assertEqual(usage["cache_read_tokens"], 80)
         self.assertEqual(usage["raw"]["provider_unit"], "tokens")
 
+    def test_configured_context_uses_real_input_usage_and_labels_budget(self):
+        context = configured_context_from_usage(
+            {"prompt_tokens": 42000, "completion_tokens": 1000},
+            configured_budget=128000,
+            reserved_output_tokens=8192,
+        )
+        self.assertEqual(context["window_tokens"], 128000)
+        self.assertEqual(context["used_tokens"], 42000)
+        self.assertEqual(context["remaining_tokens"], 86000)
+        self.assertEqual(context["max_output_tokens"], 8192)
+        self.assertEqual(context["status"], "runtime_budget")
+        self.assertEqual(context["strategy"], "configured_context_budget")
+
+    def test_configured_context_does_not_invent_usage_when_provider_has_none(self):
+        context = configured_context_from_usage({}, configured_budget=32000, reserved_output_tokens=None)
+        self.assertEqual(context["window_tokens"], 32000)
+        self.assertNotIn("used_tokens", context)
+        self.assertNotIn("remaining_tokens", context)
+
     def test_provider_metadata_is_preserved_but_secrets_are_redacted(self):
         normalized = normalize_response_meta({
             "type": "response_meta",
@@ -38,10 +62,25 @@ class ResponseMetaTests(unittest.TestCase):
                 "new_future_field": {"a": 1},
             },
         })
+        self.assertEqual(normalized["response_id"], "resp_123")
+        self.assertEqual(normalized["finish_reason"], "stop")
+        self.assertEqual(normalized["request_id_provider"], "req_1")
         self.assertEqual(normalized["provider_metadata"]["id"], "resp_123")
         self.assertEqual(normalized["provider_metadata"]["new_future_field"], {"a": 1})
         self.assertEqual(normalized["provider_metadata"]["headers"]["Authorization"], "<redacted>")
         self.assertEqual(normalized["provider_metadata"]["headers"]["set-cookie"], "<redacted>")
+
+    def test_provider_field_aliases_support_nested_choices(self):
+        normalized = normalize_response_meta({
+            "provider_metadata": {
+                "choices": [{"finish_reason": "length"}],
+                "service_tier": "priority",
+                "system_fingerprint": "fp_1",
+            }
+        })
+        self.assertEqual(normalized["finish_reason"], "length")
+        self.assertEqual(normalized["service_tier"], "priority")
+        self.assertEqual(normalized["system_fingerprint"], "fp_1")
 
     def test_reasoning_is_only_exposed_when_provider_returned_it(self):
         hidden = normalize_response_meta({"provider_metadata": {"message": "ordinary answer"}})
