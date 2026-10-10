@@ -1,4 +1,5 @@
 #include "nativeagentclient.h"
+#include "usagebackend.h"
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
@@ -34,7 +35,6 @@ void seedUiDemo(AgentClient &client)
                    QStringLiteral("Check the current MeoArch project and show only what needs attention."));
     client.message(QStringLiteral("assistant"),
                    QStringLiteral("Here is a sample project review.\n\n### What needs attention\n\n1. **Router policy** — system actions require an explicit decision before execution.\n2. **Build warnings** — review nonblocking diagnostics after a successful build.\n3. **Documentation** — add usage examples where the interface has changed.\n\nThe cards below illustrate how structured results sit alongside a response."));
-    // Deterministic presentation fixtures, never a claim about this machine.
     client.toolEvent(QVariantMap{{"type", "tool.completed"}, {"request_id", "preview"},
                                {"tool_name", "Read project documents"},
                                {"display_text", "Sample activity · no files were read"}});
@@ -89,11 +89,6 @@ int main(int argc, char **argv) {
     QGuiApplication app(argc, argv);
     app.setOrganizationName("MeoArch"); app.setApplicationName("MeoAI");
 
-    // Phase B is the default native path. Preserve the Phase A API only as an
-    // explicit compatibility fallback: setting MEO_AI_ENDPOINT keeps the
-    // legacy client, while MEO_AI_SERVICE_ENDPOINT always takes precedence.
-    // Never fall back after a request has been submitted, because replaying a
-    // message across transports could duplicate tool or system side effects.
     if (qEnvironmentVariableIsEmpty("MEO_AI_SERVICE_ENDPOINT") &&
         qEnvironmentVariableIsEmpty("MEO_AI_ENDPOINT")) {
         qputenv("MEO_AI_SERVICE_ENDPOINT", "http://127.0.0.1:8765");
@@ -105,9 +100,11 @@ int main(int argc, char **argv) {
         return 0;
     }
 
+    UsageBackend usageBackend;
     QQmlApplicationEngine engine;
     engine.addImportPath(QStringLiteral(MEOUI_IMPORT_PATH));
     engine.rootContext()->setContextProperty("agent", &client);
+    engine.rootContext()->setContextProperty("usage", &usageBackend);
     engine.rootContext()->setContextProperty("uiPreview", app.arguments().contains("--ui-demo"));
     engine.load(QUrl("qrc:/meo/app/qml/Main.qml"));
     if (engine.rootObjects().isEmpty()) return 1;
