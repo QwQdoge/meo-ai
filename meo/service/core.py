@@ -8,7 +8,6 @@ from .backend_adapter import (
     AgentBackendAdapter,
     BackendCallbacks,
     InputResource,
-    ResourceInputBackend,
 )
 from .content_blocks import legacy_text_block
 from .legacy_v2_bridge import LegacyV2ToolBridge
@@ -216,6 +215,20 @@ class AgentServiceCore:
             for item in self._require_backend().list_mcp_servers()
         ]
 
+    def list_controls(self) -> list[dict]:
+        method = getattr(self._require_backend(), "list_controls", None)
+        if not callable(method):
+            return []
+        return [item.public_dict() for item in method()]
+
+    def set_control(self, control_id: str, value) -> dict:
+        if not isinstance(control_id, str) or not control_id.strip():
+            raise ValueError("control_id is required")
+        method = getattr(self._require_backend(), "set_control", None)
+        if not callable(method):
+            raise ValueError("selected backend does not expose AI controls")
+        return method(control_id, value).public_dict()
+
     def start_request(self, conversation_id: str) -> RequestContext:
         if not isinstance(conversation_id, str) or not conversation_id.strip():
             raise ValueError("conversation_id is required")
@@ -240,8 +253,9 @@ class AgentServiceCore:
             raise ValueError("resource_ids must be a tuple")
 
         resources: tuple[InputResource, ...] = ()
+        send_with_resources = getattr(backend, "send_message_with_resources", None)
         if resource_ids:
-            if not isinstance(backend, ResourceInputBackend):
+            if not callable(send_with_resources):
                 raise ValueError("selected backend does not support resource inputs")
             resources = self._resolve_input_resources(conversation_id, resource_ids)
 
@@ -270,7 +284,7 @@ class AgentServiceCore:
         )
         try:
             if resources:
-                handle = backend.send_message_with_resources(conversation_id, text, resources, wrapped)
+                handle = send_with_resources(conversation_id, text, resources, wrapped)
             else:
                 handle = backend.send_message(conversation_id, text, wrapped)
         except Exception as exc:
