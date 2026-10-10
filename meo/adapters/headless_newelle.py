@@ -8,7 +8,7 @@ import sys
 import types
 import threading
 
-from meo.adapters.legacy_chat import LegacyChatInterfaceAdapter
+from meo.adapters.presentation_legacy_chat import MeoLegacyChatInterfaceAdapter
 from meo.runtime.headless_probe import require_headless
 
 
@@ -111,6 +111,21 @@ def _system_tools_enabled() -> bool:
     }
 
 
+def _install_presentation_tools(controller, backend) -> None:
+    """Install the Meo data-only native presentation tool.
+
+    The tool has no OS authority and only emits a bounded card payload. It is
+    available by default so a model can present useful structured results even
+    while the compatibility runtime is being extracted.
+    """
+
+    from meo.adapters.presentation_tools import NewellePresentationToolAdapter
+
+    adapter = NewellePresentationToolAdapter()
+    adapter.install(controller)
+    backend._meo_presentation_tool_adapter = adapter
+
+
 def _install_system_tools(controller, backend) -> None:
     """Install the Router-backed Newelle compatibility tools when explicitly enabled.
 
@@ -164,8 +179,9 @@ def create_backend():
     interface_path = os.path.join(controller.config_dir, "meo-agent-service", "chat")
     interface = ChatInterface(controller.settings, interface_path)
     interface.set_controller(controller)
-    backend = LegacyChatInterfaceAdapter(interface)
+    backend = MeoLegacyChatInterfaceAdapter(interface)
     backend._meo_controller = controller  # keep the runtime owner alive explicitly
+    _install_presentation_tools(controller, backend)
     _install_system_tools(controller, backend)
     require_headless()
     # Compatibility tools dispatch through GLib idle callbacks. The HTTP server
