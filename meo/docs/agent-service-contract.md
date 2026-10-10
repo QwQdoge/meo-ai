@@ -45,6 +45,7 @@ The stable semantic surface is:
 - `GetRequest(requestId)`
 - `ChooseToolOption(requestId, decisionId, option)`
 - `GetModels()` / `SetModel(conversationId, modelId)`
+- `GetModelRoles()` / `SetModelRole(roleId, modelIdOrNull)`
 - `ListSkills()` / `SetSkillEnabled(skillId, enabled)`
 - `ListMcpServers()`
 - `GetAgentState()`
@@ -70,6 +71,8 @@ The Phase B HTTP implementation currently maps those semantics to:
 - `POST /v1/requests/{requestId}/decisions/{decisionId}` with `{"option_index": N}`
 - `GET /v1/models`
 - `POST /v1/conversations/{conversationId}/model` with `{"model_id": "..."}`
+- `GET /v1/model-roles`
+- `POST /v1/model-roles/{roleId}` with `{"model_id": "..."}` or `{"model_id": null}`
 - `GET /v1/skills`
 - `POST /v1/skills/{skillId}` with `{"enabled": true|false}`
 - `GET /v1/mcp-servers`
@@ -101,6 +104,7 @@ The current stream emits:
 - `message.delta`
 - `tool.requested`
 - `tool.completed`
+- `presentation.card`
 - `request.completed`
 - `request.cancelled`
 - `request.failed`
@@ -117,17 +121,23 @@ Events carry `request_id`; conversation-scoped events also carry `conversation_i
 
 A non-interactive inherited `tool_result` is normalized as `tool.completed`; it must not be mistaken for an interactive approval request or fail the whole AgentService request after the tool already succeeded.
 
+`presentation.card` is data-only presentation. The compatibility backend may emit `presentation_card` containing a bounded native card payload; AgentService normalizes it before the frontend sees it. The current schema accepts only the registered kinds `info`, `status`, `metric`, `file` and `system`, and only `card_id`, `kind`, `title`, `subtitle`, `value` and `detail` reach QML. Arbitrary QML, HTML, JavaScript, commands, URLs and action payloads are not part of this contract. Presentation cards carry no approval or capability authority.
+
 ## Tool pause semantics
 
 `tool.requested` is a pause, not approval. The service waits for an explicit matching decision. Closing the frontend, losing the transport, timing out, or receiving malformed input must never be interpreted as approval.
 
 Phase B continues to reuse upstream Newelle tool behavior while extracting the runtime, but the stable service contract never exposes `/option N`. Legacy Newelle `interaction_id` values are compatibility metadata only; they are never accepted as AgentService decision authority.
 
-## Models, Skills and MCP
+## Models, model roles, Skills and MCP
 
 Models and Skills are exposed as structured data from their owning Newelle managers/handlers rather than by parsing slash-command presentation output.
 
 Each model record carries `selection_scope`. `conversation` means switching that model is local to the addressed conversation. `profile` means the backend stores the selection at profile/process scope. The current Newelle compatibility adapter reports `profile` because Newelle provider/model settings are shared.
+
+AgentService also stores non-secret model-role preferences for `title`, `judge`, `reasoning` and `execution`. A role record includes a preferred model, fallback model, workload class and whether true role-specific runtime routing is active. The current compatibility backend cannot safely run concurrent per-call model selections, so these records deliberately report `runtime_supported=false` and `routing_status=preference_only`. The UI may configure the future routing preference but must not claim the role is active until the extracted AgentCore/provider broker supports request-local model choice.
+
+`title` is intended for cheap background naming/label work. `judge` is intended for structured classification, ranking and routing decisions. `reasoning` is the main planner/answer model. `execution` is the tool-capable implementation model. The Judge role is not a security authority: it must never authorize privileged operations, replace deterministic policy, grant capabilities or bypass human confirmation. Model selection also never changes tool permissions.
 
 Each Skill record carries both `enabled` and `configured_enabled`. `configured_enabled` is the persisted profile preference; `enabled` is the current effective state after runtime/Mode overlays. If a Mode overrides the profile preference, `override_source` is `mode`.
 
@@ -142,6 +152,8 @@ Conversation history is durable according to inherited Newelle storage. Meo-owne
 Conversation identity must be unambiguous. If more than one inherited chat carries the same `meo_conversation_id`, the adapter does not guess ownership; the ambiguous identity is excluded until metadata is repaired.
 
 The native client stores its current AgentService conversation id. On startup it requests the presentation-safe history and replays those messages into QML. A 404 clears the stale saved conversation id so the next send can create a new conversation instead of trapping the UI on a dead identity.
+
+Model-role preferences persist separately as non-secret local configuration. They contain model identifiers only, not provider credentials. Provider/API credentials remain an Account/provider-broker responsibility and must not be persisted by QML or embedded in prompts.
 
 Request execution state and event journals are not automatically durable. After a service crash/restart:
 
@@ -159,6 +171,8 @@ Distro packaging may decide default activation only after live session acceptanc
 
 Phase B is accepted only when the runtime service can start and serve the contract without constructing a GTK/Adwaita/WebKit frontend. Legacy GTK frontend code may remain in the repository until parity removal; the headless runtime package/import graph itself must not depend on those UI modules.
 
-CI statically checks stable headless layers for forbidden UI imports and dynamically checks the runtime shell. Meson staged-install CI verifies the launcher, runtime modules and user unit. Native CI covers transport, early cancellation, request recovery, conversation-history restore and QML smoke behavior.
+CI statically checks stable headless layers for forbidden UI imports and dynamically checks the runtime shell. Meson staged-install CI verifies the launcher, runtime modules and user unit. Native CI covers transport, early cancellation, request recovery, conversation-history restore, structured service metadata and QML smoke behavior. Python protocol tests cover model-role persistence/HTTP semantics and presentation-card normalization.
 
 These gates do not yet prove that a real provider and every real tool can execute headlessly on a live MeoArch session. Memory remains intentionally outside the stable frontend contract until an authoritative, non-UI Newelle memory surface is selected. The full live acceptance suite still covers real provider send/stream, tool pause/deny/approve, cancel in model wait, cancel while awaiting a tool decision, disconnect/reconnect, runtime crash/restart, conversation resume, invalid/stale decisions, systemd user-session start/restart and Plasma-session behavior.
+
+See `presentation-model-routing.md` for the presentation block and multi-model evolution plan.
