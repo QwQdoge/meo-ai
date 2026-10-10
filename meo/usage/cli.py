@@ -12,6 +12,12 @@ from .collector import UsageCollector
 
 
 def _cloud_config() -> tuple[str, str, str] | None:
+    """Development-only direct cloud configuration.
+
+    The installed Meo AI UI does not use this path. Native Meo AI exports
+    normalized local events and asks the Meo Account broker to sync them so the
+    account access token never crosses into the application process.
+    """
     url = os.environ.get("MEO_SUPABASE_URL", "").strip().rstrip("/")
     key = os.environ.get("MEO_SUPABASE_PUBLISHABLE_KEY", "").strip()
     token = os.environ.get("MEO_ACCOUNT_ACCESS_TOKEN", "").strip()
@@ -101,13 +107,25 @@ def cloud_dashboard(days: int) -> dict[str, Any] | None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m meo.usage.cli")
-    parser.add_argument("command", choices=("dashboard", "import", "sync", "refresh"))
+    parser.add_argument("command", choices=("dashboard", "import", "sync", "refresh", "export"))
     parser.add_argument("--days", type=int, default=365)
     parser.add_argument("--local-only", action="store_true")
     args = parser.parse_args(argv)
 
     collector = UsageCollector()
     try:
+        if args.command == "export":
+            # The native frontend forwards these rows to the capability-scoped
+            # Meo Account D-Bus broker. No account credential is included.
+            print(
+                json.dumps(
+                    {"events": collector.cloud_rows(), "data_source": "local"},
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                )
+            )
+            return 0
+
         imported: dict[str, int] | None = None
         sync_result: dict[str, Any] | None = None
         if args.command in {"import", "refresh"}:
