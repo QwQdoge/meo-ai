@@ -38,6 +38,8 @@ install_data(
   '../service/backend_adapter.py',
   '../service/core.py',
   '../service/legacy_v2_bridge.py',
+  '../service/model_roles.py',
+  '../service/presentation.py',
   '../service/request_registry.py',
   '../service/request_state.py',
   '../service/tool_decision.py',
