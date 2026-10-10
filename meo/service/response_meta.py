@@ -160,8 +160,6 @@ def normalize_usage(usage: Mapping[str, Any] | None) -> dict[str, Any]:
         if isinstance(input_tokens, (int, float)) and isinstance(output_tokens, (int, float)):
             result["total_tokens"] = input_tokens + output_tokens
 
-    # Preserve the complete provider usage object as well. This is important for
-    # APIs that add new counters before Meo AI knows their canonical names.
     safe_raw = json_safe(usage)
     if safe_raw:
         result["raw"] = safe_raw
@@ -172,14 +170,14 @@ def configured_context_from_usage(
     usage: Mapping[str, Any] | None,
     *,
     configured_budget: int | None,
-    reserved_output_tokens: int | None = None,
+    suggested_target: int | None = None,
 ) -> dict[str, Any]:
     """Describe the runtime's configured context budget without overstating it.
 
-    ``context-max`` in the inherited runtime is an application budget, not a
-    provider-certified model context-window size. We expose it with an explicit
-    status/strategy so the UI can label it as a configured budget. Prompt/input
-    tokens are provider/runtime usage for the actual request when available.
+    ``context-max`` is an application budget, not a provider-certified model
+    context-window size. ``context-suggested`` is a preferred working target,
+    not an output-token limit. Prompt/input tokens are included only when the
+    provider/runtime reported them for the actual request.
     """
 
     result: dict[str, Any] = {}
@@ -187,12 +185,8 @@ def configured_context_from_usage(
         result["window_tokens"] = configured_budget
         result["strategy"] = "configured_context_budget"
         result["status"] = "runtime_budget"
-    if (
-        isinstance(reserved_output_tokens, int)
-        and not isinstance(reserved_output_tokens, bool)
-        and reserved_output_tokens >= 0
-    ):
-        result["max_output_tokens"] = reserved_output_tokens
+    if isinstance(suggested_target, int) and not isinstance(suggested_target, bool) and suggested_target > 0:
+        result["target_tokens"] = suggested_target
 
     normalized = normalize_usage(usage)
     input_tokens = normalized.get("input_tokens")
@@ -204,14 +198,6 @@ def configured_context_from_usage(
 
 
 def _reasoning_from_metadata(metadata: Mapping[str, Any]) -> dict[str, Any]:
-    """Expose only reasoning material the provider explicitly returned.
-
-    This never attempts to reconstruct hidden chain-of-thought from answer text.
-    Providers may return a reasoning summary, reasoning_content field, encrypted
-    reasoning metadata, or nothing at all; the raw safe payload remains visible
-    under provider_metadata for inspection.
-    """
-
     raw = _pick(
         metadata,
         "reasoning",
@@ -243,12 +229,7 @@ def _safe_mapping(value: Any) -> dict[str, Any]:
 
 
 def normalize_response_meta(event: Mapping[str, Any]) -> dict[str, Any]:
-    """Normalize provider/runtime metadata while retaining future API fields.
-
-    Stable fields power native UI. The full JSON-safe provider payload remains
-    available so Meo AI does not discard new API metadata simply because the UI
-    has not learned a dedicated renderer for it yet.
-    """
+    """Normalize provider/runtime metadata while retaining future API fields."""
 
     metadata_raw = event.get("provider_metadata")
     metadata = metadata_raw if isinstance(metadata_raw, Mapping) else {}
@@ -304,6 +285,7 @@ def normalize_response_meta(event: Mapping[str, Any]) -> dict[str, Any]:
     if isinstance(context, Mapping):
         for key in (
             "window_tokens",
+            "target_tokens",
             "used_tokens",
             "remaining_tokens",
             "max_output_tokens",
