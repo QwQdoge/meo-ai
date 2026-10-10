@@ -30,17 +30,18 @@ class ResponseMetaTests(unittest.TestCase):
         context = configured_context_from_usage(
             {"prompt_tokens": 42000, "completion_tokens": 1000},
             configured_budget=128000,
-            reserved_output_tokens=8192,
+            suggested_target=30000,
         )
         self.assertEqual(context["window_tokens"], 128000)
+        self.assertEqual(context["target_tokens"], 30000)
         self.assertEqual(context["used_tokens"], 42000)
         self.assertEqual(context["remaining_tokens"], 86000)
-        self.assertEqual(context["max_output_tokens"], 8192)
         self.assertEqual(context["status"], "runtime_budget")
         self.assertEqual(context["strategy"], "configured_context_budget")
+        self.assertNotIn("max_output_tokens", context)
 
     def test_configured_context_does_not_invent_usage_when_provider_has_none(self):
-        context = configured_context_from_usage({}, configured_budget=32000, reserved_output_tokens=None)
+        context = configured_context_from_usage({}, configured_budget=32000, suggested_target=None)
         self.assertEqual(context["window_tokens"], 32000)
         self.assertNotIn("used_tokens", context)
         self.assertNotIn("remaining_tokens", context)
@@ -104,6 +105,7 @@ class ResponseMetaTests(unittest.TestCase):
             },
             "context": {
                 "window_tokens": 128000,
+                "target_tokens": 30000,
                 "used_tokens": 42000,
                 "remaining_tokens": 86000,
                 "trimmed_messages": 3,
@@ -125,6 +127,7 @@ class ResponseMetaTests(unittest.TestCase):
             "citations": [{"title": "Example", "url": "https://example.invalid"}],
         })
         self.assertEqual(normalized["timing"]["total_ms"], 1234.5)
+        self.assertEqual(normalized["context"]["target_tokens"], 30000)
         self.assertEqual(normalized["context"]["remaining_tokens"], 86000)
         self.assertAlmostEqual(normalized["context"]["percent_used"], 32.81)
         self.assertTrue(normalized["activity"]["memory"]["used"])
