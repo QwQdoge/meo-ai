@@ -6,7 +6,6 @@ import json
 import os
 from pathlib import Path
 import tempfile
-from typing import Iterable
 from uuid import uuid4
 
 
@@ -87,7 +86,7 @@ class ConversationResourceStore:
             raise ResourceError("resource name is required")
         if len(name) > _MAX_NAME:
             raise ResourceError("resource name is too long")
-        if Path(name).name != name or name in {".", ".."}:
+        if "/" in name or "\\" in name or Path(name).name != name or name in {".", ".."}:
             raise ResourceError("resource name must not contain a path")
         if any(ord(char) < 32 for char in name):
             raise ResourceError("resource name contains control characters")
@@ -129,15 +128,6 @@ class ConversationResourceStore:
     def _object_path(self, resource_id: str) -> Path:
         return self.objects / self._token(resource_id)
 
-    @staticmethod
-    def _write_private(path: Path, data: bytes) -> None:
-        with open(path, "wb") as handle:
-            handle.write(data)
-        try:
-            path.chmod(0o600)
-        except OSError:
-            pass
-
     def _write_metadata(self, record: ResourceRecord) -> None:
         target = self._metadata_path(record.resource_id)
         raw = json.dumps(asdict(record), ensure_ascii=False, separators=(",", ":")).encode("utf-8")
@@ -168,7 +158,6 @@ class ConversationResourceStore:
             record = ResourceRecord(**value)
         except TypeError as exc:
             raise ResourceError("resource metadata is invalid") from exc
-        # Re-run externally meaningful validation when loading persisted data.
         self._token(record.resource_id)
         self._validate_conversation_id(record.conversation_id)
         self._validate_kind(record.kind)
@@ -293,3 +282,9 @@ class ConversationResourceStore:
                 path.unlink()
             except FileNotFoundError:
                 pass
+
+
+def default_resource_root() -> Path:
+    configured = os.environ.get("XDG_DATA_HOME")
+    base = Path(configured).expanduser() if configured else Path.home() / ".local" / "share"
+    return base / "meo-ai" / "resources"
