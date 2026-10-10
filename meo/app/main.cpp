@@ -1,5 +1,10 @@
 #include "nativeagentclient.h"
 #include "usagebackend.h"
+#include <QCoreApplication>
+#include <QDBusConnection>
+#include <QDBusInterface>
+#include <QDBusObjectPath>
+#include <QDBusReply>
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
@@ -27,6 +32,45 @@ QSize requestedWindowSize(const QStringList &arguments)
     if (!widthOk || !heightOk || width < 1 || height < 1)
         return {};
     return QSize(width, height);
+}
+
+bool shouldActivatePackagedAgentService(const QStringList &arguments)
+{
+    if (!qEnvironmentVariableIsEmpty("MEO_AI_SERVICE_ENDPOINT")
+        || !qEnvironmentVariableIsEmpty("MEO_AI_ENDPOINT"))
+        return false;
+
+    // Preview/smoke/transport probes are deliberately side-effect free. A
+    // custom endpoint also remains entirely caller-owned; only the installed
+    // default loopback service is eligible for on-demand activation.
+    return !arguments.contains(QStringLiteral("--ui-demo"))
+        && !arguments.contains(QStringLiteral("--smoke"))
+        && !arguments.contains(QStringLiteral("--print-transport"))
+        && !arguments.contains(QStringLiteral("--screenshot"));
+}
+
+bool requestPackagedAgentService()
+{
+    const QDBusConnection bus = QDBusConnection::sessionBus();
+    if (!bus.isConnected())
+        return false;
+
+    QDBusInterface manager(
+        QStringLiteral("org.freedesktop.systemd1"),
+        QStringLiteral("/org/freedesktop/systemd1"),
+        QStringLiteral("org.freedesktop.systemd1.Manager"),
+        bus);
+    if (!manager.isValid())
+        return false;
+
+    // Start, do not enable. Packaging intentionally leaves the service
+    // disabled so merely installing Meo AI does not create a persistent
+    // background process. systemd owns process lifetime/restart policy.
+    const QDBusReply<QDBusObjectPath> reply = manager.call(
+        QStringLiteral("StartUnit"),
+        QStringLiteral("meo-agent-service.service"),
+        QStringLiteral("replace"));
+    return reply.isValid();
 }
 
 void seedUiDemo(AgentClient &client)
@@ -89,10 +133,13 @@ int main(int argc, char **argv) {
     QGuiApplication app(argc, argv);
     app.setOrganizationName("MeoArch"); app.setApplicationName("MeoAI");
 
+    const bool activatePackagedService = shouldActivatePackagedAgentService(app.arguments());
     if (qEnvironmentVariableIsEmpty("MEO_AI_SERVICE_ENDPOINT") &&
         qEnvironmentVariableIsEmpty("MEO_AI_ENDPOINT")) {
         qputenv("MEO_AI_SERVICE_ENDPOINT", "http://127.0.0.1:8765");
     }
+    if (activatePackagedService)
+        requestPackagedAgentService();
 
     NativeAgentClient client;
     if (app.arguments().contains("--print-transport")) {
