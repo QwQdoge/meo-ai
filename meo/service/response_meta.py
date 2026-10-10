@@ -51,6 +51,33 @@ _USAGE_ALIASES: dict[str, tuple[str, ...]] = {
     ),
 }
 
+_PROVIDER_FIELD_ALIASES: dict[str, tuple[str, ...]] = {
+    "finish_reason": (
+        "finish_reason",
+        "choices.0.finish_reason",
+        "output.finish_reason",
+    ),
+    "response_id": (
+        "id",
+        "response_id",
+        "response.id",
+    ),
+    "request_id_provider": (
+        "request_id",
+        "request-id",
+        "headers.x-request-id",
+        "headers.request-id",
+    ),
+    "service_tier": (
+        "service_tier",
+        "serviceTier",
+    ),
+    "system_fingerprint": (
+        "system_fingerprint",
+        "systemFingerprint",
+    ),
+}
+
 
 def _sensitive_key(key: str) -> bool:
     lowered = key.casefold().replace("-", "_")
@@ -101,10 +128,17 @@ def _pick(mapping: Mapping[str, Any], *paths: str) -> Any:
         current: Any = mapping
         found = True
         for part in path.split("."):
-            if not isinstance(current, Mapping) or part not in current:
+            if isinstance(current, Sequence) and not isinstance(current, (str, bytes, bytearray)):
+                try:
+                    current = current[int(part)]
+                except (ValueError, IndexError):
+                    found = False
+                    break
+            elif isinstance(current, Mapping) and part in current:
+                current = current[part]
+            else:
                 found = False
                 break
-            current = current[part]
         if found and current not in (None, ""):
             return current
     return None
@@ -131,6 +165,41 @@ def normalize_usage(usage: Mapping[str, Any] | None) -> dict[str, Any]:
     safe_raw = json_safe(usage)
     if safe_raw:
         result["raw"] = safe_raw
+    return result
+
+
+def configured_context_from_usage(
+    usage: Mapping[str, Any] | None,
+    *,
+    configured_budget: int | None,
+    reserved_output_tokens: int | None = None,
+) -> dict[str, Any]:
+    """Describe the runtime's configured context budget without overstating it.
+
+    ``context-max`` in the inherited runtime is an application budget, not a
+    provider-certified model context-window size. We expose it with an explicit
+    status/strategy so the UI can label it as a configured budget. Prompt/input
+    tokens are provider/runtime usage for the actual request when available.
+    """
+
+    result: dict[str, Any] = {}
+    if isinstance(configured_budget, int) and not isinstance(configured_budget, bool) and configured_budget > 0:
+        result["window_tokens"] = configured_budget
+        result["strategy"] = "configured_context_budget"
+        result["status"] = "runtime_budget"
+    if (
+        isinstance(reserved_output_tokens, int)
+        and not isinstance(reserved_output_tokens, bool)
+        and reserved_output_tokens >= 0
+    ):
+        result["max_output_tokens"] = reserved_output_tokens
+
+    normalized = normalize_usage(usage)
+    input_tokens = normalized.get("input_tokens")
+    if isinstance(input_tokens, (int, float)):
+        result["used_tokens"] = input_tokens
+        if "window_tokens" in result:
+            result["remaining_tokens"] = max(result["window_tokens"] - input_tokens, 0)
     return result
 
 
@@ -200,16 +269,15 @@ def normalize_response_meta(event: Mapping[str, Any]) -> dict[str, Any]:
         "provider_metadata": json_safe(metadata),
     }
 
-    for key in (
-        "provider",
-        "model",
-        "finish_reason",
-        "response_id",
-        "request_id_provider",
-        "service_tier",
-        "system_fingerprint",
-    ):
+    for key in ("provider", "model"):
         value = event.get(key)
+        if value not in (None, ""):
+            result[key] = json_safe(value)
+
+    for key, aliases in _PROVIDER_FIELD_ALIASES.items():
+        value = event.get(key)
+        if value in (None, ""):
+            value = _pick(metadata, *aliases)
         if value not in (None, ""):
             result[key] = json_safe(value)
 
