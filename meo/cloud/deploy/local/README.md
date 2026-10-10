@@ -89,29 +89,18 @@ docker compose up -d meo-ai-cloud
 docker compose ps
 ```
 
-The container has an internal health check. Inspect it with:
+The service intentionally has no published host port. Validate its internal health endpoint without exposing one:
 
 ```bash
-docker inspect --format '{{json .State.Health}}' local-meo-ai-cloud-1
+docker compose exec -T meo-ai-cloud \
+  python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3).read().decode())"
 ```
 
-If your Compose project name differs, get the actual container name from `docker compose ps`.
+Expected response:
 
-The service intentionally has no published host port. To test the health endpoint through the Compose network:
-
-```bash
-docker compose run --rm --no-deps cloudflared \
-  access curl http://meo-ai-cloud:8080/health
+```json
+{"ok":true,"service":"meo-ai-cloud"}
 ```
-
-If the installed cloudflared image does not provide `access curl`, use:
-
-```bash
-docker run --rm --network local_meo-cloud curlimages/curl:latest \
-  -fsS http://meo-ai-cloud:8080/health
-```
-
-Adjust the Docker network name if Compose chose a different project prefix.
 
 ## 6. Start the tunnel
 
