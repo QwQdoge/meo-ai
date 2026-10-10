@@ -44,6 +44,58 @@ ApplicationWindow {
         composer.text = ""
     }
 
+    function metaNumber(value) {
+        return typeof value === "number" && isFinite(value) ? value : null
+    }
+
+    function formatTokens(value) {
+        const n = metaNumber(value)
+        if (n === null)
+            return ""
+        if (n >= 1000000)
+            return (n / 1000000).toFixed(n >= 10000000 ? 0 : 1) + "M"
+        if (n >= 1000)
+            return (n / 1000).toFixed(n >= 10000 ? 0 : 1) + "k"
+        return String(Math.round(n))
+    }
+
+    function formatDuration(value) {
+        const n = metaNumber(value)
+        if (n === null)
+            return ""
+        if (n >= 1000)
+            return (n / 1000).toFixed(n >= 10000 ? 1 : 2) + " s"
+        return Math.round(n) + " ms"
+    }
+
+    function responseMetaSummary(meta) {
+        if (!meta || typeof meta !== "object")
+            return qsTr("Response details")
+        const parts = []
+        const timing = meta.timing || {}
+        const usage = meta.usage || {}
+        const context = meta.context || {}
+        const activity = meta.activity || {}
+        const reasoning = meta.reasoning || {}
+        if (timing.total_ms !== undefined)
+            parts.push(formatDuration(timing.total_ms))
+        if (usage.total_tokens !== undefined)
+            parts.push(qsTr("%1 tokens").arg(formatTokens(usage.total_tokens)))
+        if (context.percent_used !== undefined)
+            parts.push(qsTr("%1% context").arg(Number(context.percent_used).toFixed(1)))
+        if (activity.search || activity.web || activity.retrieval)
+            parts.push(qsTr("Search"))
+        if (activity.memory)
+            parts.push(qsTr("Memory"))
+        if (activity.tools)
+            parts.push(qsTr("Tools"))
+        if (activity.mcp)
+            parts.push(qsTr("MCP"))
+        if (reasoning.available === true)
+            parts.push(qsTr("Reasoning"))
+        return parts.length ? parts.join(" · ") : qsTr("Response details")
+    }
+
     function cardIndexById(cardId) {
         const wanted = String(cardId || "")
         if (!wanted.length)
@@ -92,7 +144,7 @@ ApplicationWindow {
         target: agent
 
         function onMessage(role, text) {
-            messages.append({speaker: role, body: text})
+            messages.append({speaker: role, body: text, responseMeta: ({})})
             Qt.callLater(function() { history.positionViewAtEnd() })
         }
 
@@ -104,6 +156,15 @@ ApplicationWindow {
             messages.setProperty(index, "body", messages.get(index).body + text)
             if (follow)
                 Qt.callLater(function() { history.positionViewAtEnd() })
+        }
+
+        function onResponseMetaEvent(event) {
+            for (let i = messages.count - 1; i >= 0; --i) {
+                if (messages.get(i).speaker === "assistant") {
+                    messages.setProperty(i, "responseMeta", event)
+                    break
+                }
+            }
         }
 
         function onToolEvent(event) {
@@ -162,7 +223,7 @@ ApplicationWindow {
                     Layout.bottomMargin: 8 * window.scale
                     spacing: 10 * window.scale
 
-                    MeoAiMark {
+                    AiLogo {
                         Layout.preferredWidth: 28 * window.scale
                         Layout.preferredHeight: 28 * window.scale
                     }
@@ -229,6 +290,16 @@ ApplicationWindow {
                 Item { Layout.fillHeight: true }
 
                 MeoButton {
+                    visible: agent.serviceMode && agent.controls.length > 0
+                    Layout.fillWidth: true
+                    text: qsTr("AI controls")
+                    type: "text"
+                    size: "s"
+                    enabled: !agent.actionBusy && !agent.metadataBusy
+                    onClicked: aiControlsPopup.open()
+                }
+
+                MeoButton {
                     visible: agent.serviceMode
                     Layout.fillWidth: true
                     text: qsTr("Models by job")
@@ -283,7 +354,7 @@ ApplicationWindow {
                     anchors.rightMargin: window.pageMargin
                     spacing: 8 * window.scale
 
-                    MeoAiMark {
+                    AiLogo {
                         visible: !window.showSidebar
                         Layout.preferredWidth: 26 * window.scale
                         Layout.preferredHeight: 26 * window.scale
@@ -304,6 +375,15 @@ ApplicationWindow {
                         typeRole: "label"
                         typeSize: "small"
                         color: MeoTheme.primary
+                    }
+
+                    MeoButton {
+                        visible: !window.showSidebar && agent.serviceMode && agent.controls.length > 0
+                        text: qsTr("Controls")
+                        type: "text"
+                        size: "xs"
+                        enabled: !agent.actionBusy && !agent.metadataBusy
+                        onClicked: aiControlsPopup.open()
                     }
 
                     MeoButton {
@@ -346,7 +426,9 @@ ApplicationWindow {
                     id: messageDelegate
                     required property string speaker
                     required property string body
+                    required property var responseMeta
                     readonly property bool fromUser: speaker === "user"
+                    readonly property bool hasResponseMeta: !fromUser && responseMeta && Object.keys(responseMeta).length > 0
                     width: history.width
                     implicitHeight: messageBody.implicitHeight
 
@@ -357,6 +439,7 @@ ApplicationWindow {
                             : messageDelegate.width
                         implicitHeight: messageText.implicitHeight
                             + (messageDelegate.fromUser ? 20 : 4) * window.scale
+                            + (responseMetaButton.visible ? responseMetaButton.implicitHeight + 7 * window.scale : 0)
                         anchors.right: messageDelegate.fromUser ? parent.right : undefined
                         anchors.left: messageDelegate.fromUser ? undefined : parent.left
 
@@ -383,6 +466,21 @@ ApplicationWindow {
                             fontScaleOverride: 1.04
                             color: MeoTheme.contentOnSurface
                             linkColor: MeoTheme.primary
+                        }
+
+                        MeoButton {
+                            id: responseMetaButton
+                            visible: messageDelegate.hasResponseMeta
+                            anchors.left: parent.left
+                            anchors.top: messageText.bottom
+                            anchors.topMargin: 4 * window.scale
+                            text: window.responseMetaSummary(messageDelegate.responseMeta)
+                            type: "text"
+                            size: "xs"
+                            onClicked: {
+                                responseDetails.metadata = messageDelegate.responseMeta
+                                responseDetails.open()
+                            }
                         }
                     }
                 }
@@ -655,6 +753,15 @@ ApplicationWindow {
                             onClicked: modelRolesPopup.open()
                         }
 
+                        MeoButton {
+                            visible: agent.serviceMode && agent.controls.length > 0
+                            text: qsTr("Controls")
+                            type: "text"
+                            size: "xs"
+                            enabled: !agent.actionBusy && !agent.metadataBusy
+                            onClicked: aiControlsPopup.open()
+                        }
+
                         MeoText {
                             visible: !window.compact
                             Layout.maximumWidth: 220 * window.scale
@@ -727,6 +834,25 @@ ApplicationWindow {
                     onClicked: window.submit(qsTr("Help me diagnose my MeoArch system safely."))
                 }
             }
+        }
+    }
+
+    ResponseDetails {
+        id: responseDetails
+        parent: Overlay.overlay
+        metadata: agent.responseMetadata
+        x: parent ? Math.round((parent.width - width) / 2) : 0
+        y: parent ? Math.round((parent.height - height) / 2) : 0
+    }
+
+    AiControlsPopup {
+        id: aiControlsPopup
+        parent: Overlay.overlay
+        controls: agent.controls
+        x: parent ? Math.round((parent.width - width) / 2) : 0
+        y: parent ? Math.round((parent.height - height) / 2) : 0
+        onChangeRequested: function(controlId, value) {
+            agent.setControl(controlId, value)
         }
     }
 
