@@ -44,6 +44,7 @@ install_data(
   '../service/request_registry.py',
   '../service/request_state.py',
   '../service/resources.py',
+  '../service/response_meta.py',
   '../service/tool_decision.py',
   install_dir: join_paths(meo_moduledir, 'service')
 )
