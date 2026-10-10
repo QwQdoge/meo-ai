@@ -89,6 +89,7 @@ private:
     QString m_pendingServiceText;
     QString m_status;
     QString m_metadataStatus;
+    QString m_memoryQuery;
     QVariantList m_options;
     QVariantMap m_agentState;
     QVariantList m_models;
