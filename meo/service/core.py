@@ -17,6 +17,7 @@ from .presentation import normalize_presentation_card
 from .request_registry import RequestRegistry
 from .request_state import RequestLifecycle, RequestState
 from .resources import ConversationResourceStore
+from .response_meta import normalize_response_meta
 
 
 _MAX_REQUEST_RESOURCES = 16
@@ -30,13 +31,6 @@ class RequestContext:
 
 
 class AgentServiceCore:
-    """Transport-independent Phase B request orchestration.
-
-    A backend adapter may wrap the current Newelle-derived controller or a later
-    extracted headless core. HTTP, D-Bus, QML and legacy controller code should
-    translate to these operations instead of owning request/decision state.
-    """
-
     def __init__(
         self,
         backend: AgentBackendAdapter | None = None,
@@ -68,7 +62,6 @@ class AgentServiceCore:
         return backend
 
     def get_agent_state(self) -> dict:
-        """Return only service-owned state; do not infer provider health."""
         return {
             "ready": self.backend is not None,
             "resources_ready": self.resource_store is not None,
@@ -86,14 +79,6 @@ class AgentServiceCore:
         return conversation_id
 
     def list_messages(self, conversation_id: str) -> list[dict]:
-        """Return presentation-safe history with a typed-block compatibility view.
-
-        `text` remains during the migration so older native clients can restore
-        history unchanged. New clients should prefer `blocks`. Legacy Newelle
-        history only contains visible user/assistant strings, therefore each
-        message currently projects to exactly one safe text/markdown block.
-        """
-
         backend = self._require_conversation(conversation_id)
         messages = []
         for index, item in enumerate(backend.list_messages(conversation_id)):
@@ -115,18 +100,11 @@ class AgentServiceCore:
 
     def list_resources(self, conversation_id: str) -> list[dict]:
         self._require_conversation(conversation_id)
-        return [
-            record.public_dict()
-            for record in self._require_resource_store().list_resources(conversation_id)
-        ]
+        return [record.public_dict() for record in self._require_resource_store().list_resources(conversation_id)]
 
     def create_text_resource(self, conversation_id: str, *, name: str, text: str) -> dict:
         self._require_conversation(conversation_id)
-        record = self._require_resource_store().put_text(
-            conversation_id,
-            name=name,
-            text=text,
-        )
+        record = self._require_resource_store().put_text(conversation_id, name=name, text=text)
         return record.public_dict()
 
     def reserve_resource(
@@ -150,11 +128,7 @@ class AgentServiceCore:
 
     def upload_resource(self, conversation_id: str, resource_id: str, data: bytes) -> dict:
         self._require_conversation(conversation_id)
-        record = self._require_resource_store().finalize_upload(
-            conversation_id,
-            resource_id,
-            data,
-        )
+        record = self._require_resource_store().finalize_upload(conversation_id, resource_id, data)
         return record.public_dict()
 
     def resource_upload_limit(self) -> int:
@@ -208,8 +182,7 @@ class AgentServiceCore:
         ]
 
     def set_model(self, conversation_id: str, model_id: str) -> None:
-        backend = self._require_conversation(conversation_id)
-        backend.set_model(conversation_id, model_id)
+        self._require_conversation(conversation_id).set_model(conversation_id, model_id)
 
     def list_model_roles(self) -> list[dict]:
         models = list(self._require_backend().list_models())
@@ -297,12 +270,7 @@ class AgentServiceCore:
         )
         try:
             if resources:
-                handle = backend.send_message_with_resources(
-                    conversation_id,
-                    text,
-                    resources,
-                    wrapped,
-                )
+                handle = backend.send_message_with_resources(conversation_id, text, resources, wrapped)
             else:
                 handle = backend.send_message(conversation_id, text, wrapped)
         except Exception as exc:
@@ -331,6 +299,10 @@ class AgentServiceCore:
             normalized["conversation_id"] = self.get_context(request_id).conversation_id
         elif event_type == "presentation_card":
             normalized = normalize_presentation_card(event)
+            normalized["request_id"] = request_id
+            normalized["conversation_id"] = self.get_context(request_id).conversation_id
+        elif event_type == "response_meta":
+            normalized = normalize_response_meta(event)
             normalized["request_id"] = request_id
             normalized["conversation_id"] = self.get_context(request_id).conversation_id
         else:
