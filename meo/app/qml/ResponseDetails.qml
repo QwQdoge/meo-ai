@@ -255,7 +255,7 @@ Popup {
                         wrapMode: TextEdit.Wrap
                         text: root.safeJson(root.activity)
                         color: MeoTheme.contentOnSurfaceVariant
-                        font.family: MeoTheme.typefaceMono
+                        font.family: "monospace"
                         background: null
                     }
                 }
@@ -288,7 +288,7 @@ Popup {
                         wrapMode: TextEdit.Wrap
                         text: root.safeJson({controls: root.controlsInfo, cost: root.costInfo, rate_limits: root.rateLimits})
                         color: MeoTheme.contentOnSurfaceVariant
-                        font.family: MeoTheme.typefaceMono
+                        font.family: "monospace"
                         background: null
                     }
                 }
@@ -313,7 +313,7 @@ Popup {
                         wrapMode: TextEdit.NoWrap
                         text: root.safeJson(root.metadata.provider_metadata || {})
                         color: MeoTheme.contentOnSurfaceVariant
-                        font.family: MeoTheme.typefaceMono
+                        font.family: "monospace"
                         background: Rectangle {
                             radius: 14 * root.uiScale
                             color: MeoTheme.surfaceContainerLow
