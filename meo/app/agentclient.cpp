@@ -54,6 +54,7 @@ void AgentClient::fetchServiceMetadataStep(int step, bool hadError) {
     static const QStringList paths{
         QStringLiteral("/v1/agent-state"),
         QStringLiteral("/v1/models"),
+        QStringLiteral("/v1/model-roles"),
         QStringLiteral("/v1/skills"),
         QStringLiteral("/v1/mcp-servers"),
     };
@@ -98,14 +99,35 @@ void AgentClient::fetchServiceMetadataStep(int step, bool hadError) {
             } else if (step == 1) {
                 m_models = object.value("models").toArray().toVariantList();
             } else if (step == 2) {
-                m_skills = object.value("skills").toArray().toVariantList();
+                m_modelRoles = object.value("model_roles").toArray().toVariantList();
             } else if (step == 3) {
+                m_skills = object.value("skills").toArray().toVariantList();
+            } else if (step == 4) {
                 m_mcpServers = object.value("mcp_servers").toArray().toVariantList();
             }
         }
         reply->deleteLater();
         emit changed();
         fetchServiceMetadataStep(step + 1, nextHadError);
+    });
+}
+
+void AgentClient::setModelRole(const QString &roleId, const QString &modelId) {
+    if (!m_serviceMode || actionBusy() || roleId.trimmed().isEmpty()) return;
+    QUrl base = validatedOrigin("MEO_AI_SERVICE_ENDPOINT");
+    if (!base.isValid()) {
+        m_status = tr("MEO_AI_SERVICE_ENDPOINT must be a loopback HTTP origin.");
+        emit changed();
+        return;
+    }
+    QUrl url = base;
+    url.setPath(QString("/v1/model-roles/%1").arg(roleId));
+    QJsonObject body;
+    if (modelId.trimmed().isEmpty()) body.insert("model_id", QJsonValue::Null);
+    else body.insert("model_id", modelId);
+    postServiceAction(url, QJsonDocument(body).toJson(QJsonDocument::Compact), [this](QNetworkReply *) {
+        m_status = tr("Model role saved");
+        QTimer::singleShot(0, this, [this] { refreshServiceMetadata(); });
     });
 }
 
@@ -504,6 +526,8 @@ void AgentClient::consumeService() {
             }
         } else if (type == "tool.completed") {
             emit toolEvent(event.toVariantMap());
+        } else if (type == "presentation.card") {
+            emit presentationEvent(event.toVariantMap());
         } else if (type == "request.completed") {
             m_done = true;
             m_pendingServiceText.clear();
