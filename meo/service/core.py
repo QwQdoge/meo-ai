@@ -11,6 +11,7 @@ from .model_roles import ModelRoleRegistry
 from .presentation import normalize_presentation_card
 from .request_registry import RequestRegistry
 from .request_state import RequestLifecycle, RequestState
+from .resources import ConversationResourceStore
 
 
 @dataclass(frozen=True)
@@ -31,9 +32,11 @@ class AgentServiceCore:
         self,
         backend: AgentBackendAdapter | None = None,
         model_roles: ModelRoleRegistry | None = None,
+        resource_store: ConversationResourceStore | None = None,
     ) -> None:
         self.backend = backend
         self.model_roles = model_roles or ModelRoleRegistry()
+        self.resource_store = resource_store
         self.requests = RequestRegistry()
         self.tool_bridge = LegacyV2ToolBridge()
         self._contexts: Dict[str, RequestContext] = {}
@@ -44,10 +47,22 @@ class AgentServiceCore:
             raise RuntimeError("AgentServiceCore has no backend adapter")
         return self.backend
 
+    def _require_resource_store(self) -> ConversationResourceStore:
+        if self.resource_store is None:
+            raise RuntimeError("AgentServiceCore has no resource store")
+        return self.resource_store
+
+    def _require_conversation(self, conversation_id: str) -> AgentBackendAdapter:
+        backend = self._require_backend()
+        if not backend.conversation_exists(conversation_id):
+            raise ValueError("unknown conversation_id")
+        return backend
+
     def get_agent_state(self) -> dict:
         """Return only service-owned state; do not infer provider health."""
         return {
             "ready": self.backend is not None,
+            "resources_ready": self.resource_store is not None,
             "active_requests": self.requests.active_count(),
             "request_states": self.requests.state_counts(),
         }
@@ -70,9 +85,7 @@ class AgentServiceCore:
         message currently projects to exactly one safe text/markdown block.
         """
 
-        backend = self._require_backend()
-        if not backend.conversation_exists(conversation_id):
-            raise ValueError("unknown conversation_id")
+        backend = self._require_conversation(conversation_id)
         messages = []
         for index, item in enumerate(backend.list_messages(conversation_id)):
             if item.role not in {"user", "assistant"}:
@@ -91,6 +104,26 @@ class AgentServiceCore:
             })
         return messages
 
+    def list_resources(self, conversation_id: str) -> list[dict]:
+        self._require_conversation(conversation_id)
+        return [
+            record.public_dict()
+            for record in self._require_resource_store().list_resources(conversation_id)
+        ]
+
+    def create_text_resource(self, conversation_id: str, *, name: str, text: str) -> dict:
+        self._require_conversation(conversation_id)
+        record = self._require_resource_store().put_text(
+            conversation_id,
+            name=name,
+            text=text,
+        )
+        return record.public_dict()
+
+    def delete_resource(self, conversation_id: str, resource_id: str) -> None:
+        self._require_conversation(conversation_id)
+        self._require_resource_store().delete(conversation_id, resource_id)
+
     def list_models(self) -> list[dict]:
         return [
             {
@@ -104,9 +137,7 @@ class AgentServiceCore:
         ]
 
     def set_model(self, conversation_id: str, model_id: str) -> None:
-        backend = self._require_backend()
-        if not backend.conversation_exists(conversation_id):
-            raise ValueError("unknown conversation_id")
+        backend = self._require_conversation(conversation_id)
         backend.set_model(conversation_id, model_id)
 
     def list_model_roles(self) -> list[dict]:
@@ -157,9 +188,7 @@ class AgentServiceCore:
         callbacks: BackendCallbacks,
         on_started: Callable[[RequestContext], None] | None = None,
     ) -> RequestContext:
-        backend = self._require_backend()
-        if not backend.conversation_exists(conversation_id):
-            raise ValueError("unknown conversation_id")
+        backend = self._require_conversation(conversation_id)
         if not isinstance(text, str) or not text.strip():
             raise ValueError("message text is required")
 
