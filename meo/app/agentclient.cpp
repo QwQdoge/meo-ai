@@ -133,6 +133,8 @@ void AgentClient::setModelRole(const QString &roleId, const QString &modelId) {
 
 void AgentClient::send(const QString &text) {
     if (busy() || actionBusy() || !m_options.isEmpty() || text.trimmed().isEmpty()) return;
+    m_responseMetadata.clear();
+    emit changed();
     emit message("user", text);
     if (m_serviceMode) {
         ensureServiceConversation([this, text] { sendService(text); });
@@ -200,6 +202,7 @@ void AgentClient::submitServiceCancel() {
 
 void AgentClient::newChat() {
     if (busy() || actionBusy() || !m_options.isEmpty()) return;
+    m_responseMetadata.clear();
     emit resetChat();
     if (!m_serviceMode) {
         requestLegacy("/new");
@@ -528,6 +531,10 @@ void AgentClient::consumeService() {
             emit toolEvent(event.toVariantMap());
         } else if (type == "presentation.card") {
             emit presentationEvent(event.toVariantMap());
+        } else if (type == "response.meta") {
+            m_responseMetadata = event.toVariantMap();
+            emit responseMetaEvent(m_responseMetadata);
+            emit changed();
         } else if (type == "request.completed") {
             m_done = true;
             m_pendingServiceText.clear();
@@ -646,11 +653,15 @@ void AgentClient::consumeLegacy() {
         const auto chunk = choices.at(0).toObject().value("delta").toObject();
         const auto event = chunk.value("meo_event").toObject();
         if (!event.isEmpty()) {
-            emit toolEvent(event.toVariantMap());
-            if (event.value("type") == "tool_interaction") {
-                m_options = event.value("options").toArray().toVariantList();
-                emit changed();
+            if (event.value("type").toString() == "response.meta") {
+                m_responseMetadata = event.toVariantMap();
+                emit responseMetaEvent(m_responseMetadata);
+            } else {
+                emit toolEvent(event.toVariantMap());
+                if (event.value("type") == "tool_interaction")
+                    m_options = event.value("options").toArray().toVariantList();
             }
+            emit changed();
         }
         const auto content = chunk.value("content").toString();
         if (!content.isEmpty()) emit delta(content);
