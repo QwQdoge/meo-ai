@@ -46,6 +46,7 @@ private slots:
         QVERIFY(client.serviceMode());
         QVERIFY(client.models().isEmpty());
         QVERIFY(client.modelRoles().isEmpty());
+        QVERIFY(client.controls().isEmpty());
         client.refreshServiceMetadata();
 
         struct Exchange { QByteArray path; QByteArray body; };
@@ -55,6 +56,7 @@ private slots:
             {"GET /v1/model-roles ", "{\"model_roles\":[{\"role_id\":\"title\",\"label\":\"Title\",\"description\":\"Chat titles\",\"workload\":\"auxiliary\",\"preferred_model_id\":\"local:tiny\",\"preferred_available\":true,\"fallback_model_id\":\"local:tiny\",\"runtime_supported\":false,\"routing_status\":\"preference_only\",\"selection_scope\":\"profile\"}]}"},
             {"GET /v1/skills ", "{\"skills\":[{\"skill_id\":\"diagnostics\",\"label\":\"Diagnostics\",\"enabled\":true,\"configured_enabled\":true,\"selection_scope\":\"profile\",\"override_source\":\"\"}]}"},
             {"GET /v1/mcp-servers ", "{\"mcp_servers\":[{\"server_id\":\"mcp:files\",\"label\":\"Files\",\"enabled\":false}]}"},
+            {"GET /v1/controls ", "{\"controls\":[{\"control_id\":\"memory.enabled\",\"label\":\"Memory\",\"kind\":\"toggle\",\"value\":true,\"scope\":\"profile\",\"writable\":true,\"restart_required\":false}]}"},
         };
 
         for (const auto &exchange : exchanges) {
@@ -80,6 +82,9 @@ private slots:
         QCOMPARE(client.skills().at(0).toMap().value("skill_id").toString(), QString("diagnostics"));
         QCOMPARE(client.mcpServers().size(), 1);
         QCOMPARE(client.mcpServers().at(0).toMap().value("server_id").toString(), QString("mcp:files"));
+        QCOMPARE(client.controls().size(), 1);
+        QCOMPARE(client.controls().at(0).toMap().value("control_id").toString(), QString("memory.enabled"));
+        QCOMPARE(client.controls().at(0).toMap().value("value").toBool(), true);
     }
 };
 
