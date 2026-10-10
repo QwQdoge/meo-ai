@@ -61,6 +61,7 @@ Popup {
     readonly property var controlsInfo: map(metadata.controls)
     readonly property var costInfo: map(metadata.cost)
     readonly property var rateLimits: map(metadata.rate_limits)
+    readonly property bool contextIsRuntimeBudget: contextInfo.status === "runtime_budget"
 
     background: Rectangle {
         radius: 24 * root.uiScale
@@ -174,9 +175,40 @@ Popup {
                             anchors.fill: parent
                             anchors.margins: 11 * root.uiScale
                             spacing: 2 * root.uiScale
-                            MeoText { text: qsTr("Context"); typeRole: "label"; typeSize: "small"; color: MeoTheme.contentOnSurfaceVariant }
+                            MeoText {
+                                text: root.contextIsRuntimeBudget ? qsTr("Context budget") : qsTr("Context")
+                                typeRole: "label"
+                                typeSize: "small"
+                                color: MeoTheme.contentOnSurfaceVariant
+                            }
                             MeoText { text: Number(root.contextInfo.percent_used).toFixed(1) + "%"; typeRole: "title"; typeSize: "small"; color: MeoTheme.contentOnSurface }
                         }
+                    }
+                }
+
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    visible: root.metadata.finish_reason !== undefined
+                        || root.metadata.response_id !== undefined
+                        || root.metadata.request_id_provider !== undefined
+                        || root.metadata.service_tier !== undefined
+                        || root.metadata.system_fingerprint !== undefined
+                    spacing: 5 * root.uiScale
+                    MeoText { text: qsTr("Response identity"); typeRole: "label"; typeSize: "medium"; color: MeoTheme.contentOnSurface }
+                    MeoText {
+                        Layout.fillWidth: true
+                        text: [
+                            root.metadata.finish_reason !== undefined ? qsTr("Finish %1").arg(String(root.metadata.finish_reason)) : "",
+                            root.metadata.response_id !== undefined ? qsTr("Response %1").arg(String(root.metadata.response_id)) : "",
+                            root.metadata.request_id_provider !== undefined ? qsTr("Request %1").arg(String(root.metadata.request_id_provider)) : "",
+                            root.metadata.service_tier !== undefined ? qsTr("Tier %1").arg(String(root.metadata.service_tier)) : "",
+                            root.metadata.system_fingerprint !== undefined ? qsTr("Fingerprint %1").arg(String(root.metadata.system_fingerprint)) : ""
+                        ].filter(function(value) { return value.length > 0 }).join(" · ")
+                        textFormat: Text.PlainText
+                        wrapMode: Text.Wrap
+                        typeRole: "body"
+                        typeSize: "small"
+                        color: MeoTheme.contentOnSurfaceVariant
                     }
                 }
 
@@ -192,7 +224,9 @@ Popup {
                             root.usage.output_tokens !== undefined ? qsTr("Output %1").arg(root.tokenText(root.usage.output_tokens)) : "",
                             root.usage.reasoning_tokens !== undefined ? qsTr("Reasoning %1").arg(root.tokenText(root.usage.reasoning_tokens)) : "",
                             root.usage.cache_read_tokens !== undefined ? qsTr("Cache read %1").arg(root.tokenText(root.usage.cache_read_tokens)) : "",
-                            root.usage.cache_write_tokens !== undefined ? qsTr("Cache write %1").arg(root.tokenText(root.usage.cache_write_tokens)) : ""
+                            root.usage.cache_write_tokens !== undefined ? qsTr("Cache write %1").arg(root.tokenText(root.usage.cache_write_tokens)) : "",
+                            root.usage.audio_input_tokens !== undefined ? qsTr("Audio in %1").arg(root.tokenText(root.usage.audio_input_tokens)) : "",
+                            root.usage.audio_output_tokens !== undefined ? qsTr("Audio out %1").arg(root.tokenText(root.usage.audio_output_tokens)) : ""
                         ].filter(function(value) { return value.length > 0 }).join(" · ")
                         wrapMode: Text.Wrap
                         typeRole: "body"
@@ -205,20 +239,39 @@ Popup {
                     Layout.fillWidth: true
                     visible: Object.keys(root.contextInfo).length > 0
                     spacing: 5 * root.uiScale
-                    MeoText { text: qsTr("Context"); typeRole: "label"; typeSize: "medium"; color: MeoTheme.contentOnSurface }
+                    MeoText {
+                        text: root.contextIsRuntimeBudget ? qsTr("Context budget") : qsTr("Context")
+                        typeRole: "label"
+                        typeSize: "medium"
+                        color: MeoTheme.contentOnSurface
+                    }
                     MeoText {
                         Layout.fillWidth: true
                         text: [
-                            root.contextInfo.used_tokens !== undefined ? qsTr("Used %1").arg(root.tokenText(root.contextInfo.used_tokens)) : "",
-                            root.contextInfo.window_tokens !== undefined ? qsTr("Window %1").arg(root.tokenText(root.contextInfo.window_tokens)) : "",
+                            root.contextInfo.used_tokens !== undefined ? qsTr("Input used %1").arg(root.tokenText(root.contextInfo.used_tokens)) : "",
+                            root.contextInfo.window_tokens !== undefined
+                                ? (root.contextIsRuntimeBudget ? qsTr("Budget %1").arg(root.tokenText(root.contextInfo.window_tokens)) : qsTr("Window %1").arg(root.tokenText(root.contextInfo.window_tokens)))
+                                : "",
+                            root.contextInfo.target_tokens !== undefined ? qsTr("Target %1").arg(root.tokenText(root.contextInfo.target_tokens)) : "",
                             root.contextInfo.remaining_tokens !== undefined ? qsTr("Remaining %1").arg(root.tokenText(root.contextInfo.remaining_tokens)) : "",
+                            root.contextInfo.max_output_tokens !== undefined ? qsTr("Max output %1").arg(root.tokenText(root.contextInfo.max_output_tokens)) : "",
                             root.contextInfo.trimmed_messages !== undefined ? qsTr("Trimmed %1 messages").arg(root.contextInfo.trimmed_messages) : "",
-                            root.contextInfo.strategy ? String(root.contextInfo.strategy) : ""
+                            root.contextInfo.trimmed_tokens !== undefined ? qsTr("Trimmed %1 tokens").arg(root.tokenText(root.contextInfo.trimmed_tokens)) : ""
                         ].filter(function(value) { return value.length > 0 }).join(" · ")
                         wrapMode: Text.Wrap
                         typeRole: "body"
                         typeSize: "small"
                         color: MeoTheme.contentOnSurfaceVariant
+                    }
+                    MeoText {
+                        visible: root.contextIsRuntimeBudget
+                        Layout.fillWidth: true
+                        text: qsTr("This is Meo AI's configured runtime budget, not a provider-certified model context-window size.")
+                        wrapMode: Text.Wrap
+                        typeRole: "label"
+                        typeSize: "small"
+                        color: MeoTheme.contentOnSurfaceVariant
+                        opacity: 0.72
                     }
                 }
 
@@ -233,6 +286,7 @@ Popup {
                             root.timing.first_token_ms !== undefined ? qsTr("First token %1").arg(root.durationText(root.timing.first_token_ms)) : "",
                             root.timing.first_visible_token_ms !== undefined ? qsTr("First visible %1").arg(root.durationText(root.timing.first_visible_token_ms)) : "",
                             root.timing.queue_ms !== undefined ? qsTr("Queue %1").arg(root.durationText(root.timing.queue_ms)) : "",
+                            root.timing.network_ms !== undefined ? qsTr("Network %1").arg(root.durationText(root.timing.network_ms)) : "",
                             root.timing.tool_ms !== undefined ? qsTr("Tools %1").arg(root.durationText(root.timing.tool_ms)) : "",
                             root.timing.reasoning_ms !== undefined ? qsTr("Reasoning %1").arg(root.durationText(root.timing.reasoning_ms)) : ""
                         ].filter(function(value) { return value.length > 0 }).join(" · ")
@@ -299,7 +353,7 @@ Popup {
                     MeoText { text: qsTr("Raw provider metadata"); typeRole: "label"; typeSize: "medium"; color: MeoTheme.contentOnSurface }
                     MeoText {
                         Layout.fillWidth: true
-                        text: qsTr("Secret-shaped fields are redacted by AgentService before they reach this view.")
+                        text: qsTr("Unknown provider fields are preserved when safe. Secret-shaped fields are redacted by AgentService before this view.")
                         wrapMode: Text.Wrap
                         typeRole: "body"
                         typeSize: "small"
