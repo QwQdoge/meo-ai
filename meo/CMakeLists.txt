@@ -23,8 +23,17 @@ set(MEO_AGENT_CLIENT_SOURCES
     app/agentclient.h
 )
 
+set(MEO_APP_QML
+    app/qml/Main.qml
+    app/qml/AiLogo.qml
+    app/qml/ResponseDetails.qml
+    app/qml/AiControlsPopup.qml
+    app/qml/MemoryPanel.qml
+    app/qml/LongPastePanel.qml
+)
+
 qt_add_executable(meo-ai app/main.cpp ${MEO_AGENT_CLIENT_SOURCES})
-qt_add_resources(meo-ai "meo_app" PREFIX "/meo" FILES app/qml/Main.qml app/qml/AiLogo.qml app/qml/ResponseDetails.qml app/qml/AiControlsPopup.qml app/qml/MemoryPanel.qml)
+qt_add_resources(meo-ai "meo_app" PREFIX "/meo" FILES ${MEO_APP_QML})
 add_dependencies(meo-ai meoui_moduleplugin)
 target_link_libraries(meo-ai PRIVATE Qt6::Quick Qt6::QuickControls2 Qt6::Network)
 if(BUILD_TESTING)
@@ -34,7 +43,7 @@ if(BUILD_TESTING)
     target_include_directories(meo-ai-live-client PRIVATE app)
     target_link_libraries(meo-ai-live-client PRIVATE Qt6::Quick Qt6::QuickControls2 Qt6::Network)
     add_dependencies(meo-ai-live-client meoui_moduleplugin)
-    qt_add_resources(meo-ai-live-client "meo_live_app" PREFIX "/meo" FILES app/qml/Main.qml app/qml/AiLogo.qml app/qml/ResponseDetails.qml app/qml/AiControlsPopup.qml app/qml/MemoryPanel.qml)
+    qt_add_resources(meo-ai-live-client "meo_live_app" PREFIX "/meo" FILES ${MEO_APP_QML})
     target_compile_definitions(meo-ai-live-client PRIVATE MEOUI_IMPORT_PATH="${CMAKE_CURRENT_BINARY_DIR}/meoui")
     qt_add_executable(meo-ai-client-test tests/client-test.cpp ${MEO_AGENT_CLIENT_SOURCES})
     target_include_directories(meo-ai-client-test PRIVATE app)
