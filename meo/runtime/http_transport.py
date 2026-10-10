@@ -59,6 +59,35 @@ class AgentHttpTransport:
             ),
         }
 
+    def reserve_resource(
+        self,
+        conversation_id: str,
+        *,
+        kind: str,
+        name: str,
+        mime_type: str,
+        size_bytes: int,
+    ) -> dict:
+        return {
+            "conversation_id": conversation_id,
+            "resource": self.service.reserve_resource(
+                conversation_id,
+                kind=kind,
+                name=name,
+                mime_type=mime_type,
+                size_bytes=size_bytes,
+            ),
+        }
+
+    def upload_resource(self, conversation_id: str, resource_id: str, data: bytes) -> dict:
+        return {
+            "conversation_id": conversation_id,
+            "resource": self.service.upload_resource(conversation_id, resource_id, data),
+        }
+
+    def resource_upload_limit(self) -> int:
+        return self.service.resource_upload_limit()
+
     def delete_resource(self, conversation_id: str, resource_id: str) -> dict:
         self.service.delete_resource(conversation_id, resource_id)
         return {
@@ -146,8 +175,6 @@ class AgentHttpTransport:
                 self._journals.pop(request_id, None)
 
     def get_event_journal(self, request_id: str) -> RequestEventJournal:
-        # Validate service request identity first so a pruned/unknown event
-        # journal never becomes an alternate request-existence oracle.
         self.service.get_request(request_id)
         with self._lock:
             journal = self._journals.get(request_id)
@@ -223,6 +250,10 @@ def _resource_missing(error: ValueError) -> bool:
     }
 
 
+class PayloadTooLargeError(ValueError):
+    pass
+
+
 class _Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = "MeoAgentService/0"
@@ -241,11 +272,21 @@ class _Handler(BaseHTTPRequestHandler):
         content_type = self.headers.get("Content-Type", "")
         return content_type.split(";", 1)[0].strip().lower() == "application/json"
 
-    def _read_json(self, *, allow_empty: bool = False) -> dict:
+    def _binary_content_type_allowed(self) -> bool:
+        content_type = self.headers.get("Content-Type", "")
+        return content_type.split(";", 1)[0].strip().lower() == "application/octet-stream"
+
+    def _content_length(self) -> int:
         try:
             length = int(self.headers.get("Content-Length", "0"))
         except ValueError as exc:
             raise ValueError("invalid Content-Length") from exc
+        if length < 0:
+            raise ValueError("invalid Content-Length")
+        return length
+
+    def _read_json(self, *, allow_empty: bool = False) -> dict:
+        length = self._content_length()
         if length == 0 and allow_empty:
             return {}
         if length <= 0 or length > 1024 * 1024:
@@ -258,6 +299,12 @@ class _Handler(BaseHTTPRequestHandler):
         if not isinstance(value, dict):
             raise ValueError("JSON body must be an object")
         return value
+
+    def _read_binary(self, max_bytes: int) -> bytes:
+        length = self._content_length()
+        if length > max_bytes:
+            raise PayloadTooLargeError("resource exceeds configured size limit")
+        return self.rfile.read(length)
 
     def _reply_json(self, status: int, value: Any) -> None:
         body = _json_bytes(value)
@@ -290,7 +337,6 @@ class _Handler(BaseHTTPRequestHandler):
                 self.wfile.write(b"data: " + _json_bytes(event) + b"\n\n")
                 self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError):
-            # Transport disconnect is not cancellation.
             pass
         self.close_connection = True
 
@@ -384,6 +430,43 @@ class _Handler(BaseHTTPRequestHandler):
                 self._read_json(allow_empty=True)
                 self._reply_json(HTTPStatus.CREATED, self.transport.create_conversation())
                 return
+            if len(segments) == 4 and segments[:2] == ["v1", "conversations"] and segments[3] == "resources":
+                body = self._read_json()
+                kind = body.get("kind")
+                name = body.get("name")
+                mime_type = body.get("mime_type", "")
+                size_bytes = body.get("size_bytes")
+                if kind not in {"attachment", "image"}:
+                    raise ValueError("binary upload kind must be attachment or image")
+                if not isinstance(name, str) or not name.strip():
+                    raise ValueError("name is required")
+                if not isinstance(mime_type, str):
+                    raise ValueError("mime_type must be a string")
+                if isinstance(size_bytes, bool) or not isinstance(size_bytes, int) or size_bytes < 0:
+                    raise ValueError("size_bytes must be a non-negative integer")
+                try:
+                    limit = self.transport.resource_upload_limit()
+                    if size_bytes > limit:
+                        self._reply_error(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "resource exceeds configured size limit")
+                        return
+                    payload = self.transport.reserve_resource(
+                        segments[2],
+                        kind=kind,
+                        name=name,
+                        mime_type=mime_type,
+                        size_bytes=size_bytes,
+                    )
+                except ValueError as exc:
+                    self._reply_error(
+                        HTTPStatus.NOT_FOUND if _resource_missing(exc) else HTTPStatus.BAD_REQUEST,
+                        str(exc),
+                    )
+                    return
+                except RuntimeError as exc:
+                    self._reply_error(HTTPStatus.SERVICE_UNAVAILABLE, str(exc))
+                    return
+                self._reply_json(HTTPStatus.CREATED, payload)
+                return
             if len(segments) == 5 and segments[:2] == ["v1", "conversations"] and segments[3:] == ["resources", "text"]:
                 body = self._read_json()
                 name = body.get("name")
@@ -435,10 +518,6 @@ class _Handler(BaseHTTPRequestHandler):
                     request_id, journal = self.transport.send_message(segments[2], text)
                 except ValueError as exc:
                     if str(exc) == "unknown conversation_id":
-                        # This response is intentionally emitted before a request
-                        # ID or execution handle exists. A native client may use
-                        # this precise 404 to recreate a stale persisted
-                        # conversation once without risking duplicate execution.
                         self._reply_error(HTTPStatus.NOT_FOUND, str(exc))
                         return
                     raise
@@ -457,6 +536,42 @@ class _Handler(BaseHTTPRequestHandler):
                     HTTPStatus.OK,
                     self.transport.choose_tool_option(segments[2], segments[4], option_index),
                 )
+                return
+            self._reply_error(HTTPStatus.NOT_FOUND, "not found")
+        except ValueError as exc:
+            self._reply_error(HTTPStatus.BAD_REQUEST, str(exc))
+        except Exception as exc:
+            self._reply_error(HTTPStatus.INTERNAL_SERVER_ERROR, str(exc))
+
+    def do_PUT(self) -> None:
+        if not self._request_boundary_allowed():
+            self._reply_error(HTTPStatus.FORBIDDEN, "request origin is not allowed")
+            return
+        if not self._binary_content_type_allowed():
+            self._reply_error(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, "resource upload requires application/octet-stream")
+            return
+        segments, query = self._route()
+        if query:
+            self._reply_error(HTTPStatus.BAD_REQUEST, "PUT query parameters are not supported")
+            return
+        try:
+            if len(segments) == 6 and segments[:2] == ["v1", "conversations"] and segments[3] == "resources" and segments[5] == "content":
+                try:
+                    data = self._read_binary(self.transport.resource_upload_limit())
+                    payload = self.transport.upload_resource(segments[2], segments[4], data)
+                except PayloadTooLargeError as exc:
+                    self._reply_error(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, str(exc))
+                    return
+                except ValueError as exc:
+                    self._reply_error(
+                        HTTPStatus.NOT_FOUND if _resource_missing(exc) else HTTPStatus.BAD_REQUEST,
+                        str(exc),
+                    )
+                    return
+                except RuntimeError as exc:
+                    self._reply_error(HTTPStatus.SERVICE_UNAVAILABLE, str(exc))
+                    return
+                self._reply_json(HTTPStatus.OK, payload)
                 return
             self._reply_error(HTTPStatus.NOT_FOUND, "not found")
         except ValueError as exc:
