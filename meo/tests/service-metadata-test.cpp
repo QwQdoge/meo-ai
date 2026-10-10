@@ -47,6 +47,8 @@ private slots:
         QVERIFY(client.models().isEmpty());
         QVERIFY(client.modelRoles().isEmpty());
         QVERIFY(client.controls().isEmpty());
+        QVERIFY(client.memoryState().isEmpty());
+        QVERIFY(client.memories().isEmpty());
         client.refreshServiceMetadata();
 
         struct Exchange { QByteArray path; QByteArray body; };
@@ -57,6 +59,8 @@ private slots:
             {"GET /v1/skills ", "{\"skills\":[{\"skill_id\":\"diagnostics\",\"label\":\"Diagnostics\",\"enabled\":true,\"configured_enabled\":true,\"selection_scope\":\"profile\",\"override_source\":\"\"}]}"},
             {"GET /v1/mcp-servers ", "{\"mcp_servers\":[{\"server_id\":\"mcp:files\",\"label\":\"Files\",\"enabled\":false}]}"},
             {"GET /v1/controls ", "{\"controls\":[{\"control_id\":\"memory.enabled\",\"label\":\"Memory\",\"kind\":\"toggle\",\"value\":true,\"scope\":\"profile\",\"writable\":true,\"restart_required\":false}]}"},
+            {"GET /v1/memory ", "{\"supported\":true,\"enabled\":true}"},
+            {"GET /v1/memories ", "{\"memories\":[{\"memory_id\":\"memory:one\",\"text\":\"Compact native UI\",\"scope\":\"account\",\"source\":\"test\",\"created_at\":\"2026-10-10T00:00:00Z\",\"updated_at\":\"2026-10-10T00:00:00Z\",\"state\":\"active\",\"pinned\":true,\"sync_state\":\"local\",\"workspace_id\":\"\",\"conversation_id\":\"\"}]}"},
         };
 
         for (const auto &exchange : exchanges) {
@@ -85,6 +89,11 @@ private slots:
         QCOMPARE(client.controls().size(), 1);
         QCOMPARE(client.controls().at(0).toMap().value("control_id").toString(), QString("memory.enabled"));
         QCOMPARE(client.controls().at(0).toMap().value("value").toBool(), true);
+        QCOMPARE(client.memoryState().value("supported").toBool(), true);
+        QCOMPARE(client.memoryState().value("enabled").toBool(), true);
+        QCOMPARE(client.memories().size(), 1);
+        QCOMPARE(client.memories().at(0).toMap().value("memory_id").toString(), QString("memory:one"));
+        QCOMPARE(client.memories().at(0).toMap().value("pinned").toBool(), true);
     }
 };
 
