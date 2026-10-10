@@ -48,6 +48,7 @@ public:
     Q_INVOKABLE void cancel();
     Q_INVOKABLE void newChat();
     Q_INVOKABLE void refreshServiceMetadata();
+    Q_INVOKABLE void refreshMemory(const QString &query = QString());
     Q_INVOKABLE void setModelRole(const QString &roleId, const QString &modelId);
     Q_INVOKABLE void setControl(const QString &controlId, const QVariant &value);
     Q_INVOKABLE void setMemoryEnabled(bool enabled);
