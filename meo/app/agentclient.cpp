@@ -57,6 +57,7 @@ void AgentClient::fetchServiceMetadataStep(int step, bool hadError) {
         QStringLiteral("/v1/model-roles"),
         QStringLiteral("/v1/skills"),
         QStringLiteral("/v1/mcp-servers"),
+        QStringLiteral("/v1/controls"),
     };
     if (step >= paths.size()) {
         if (!hadError) m_metadataStatus = tr("Ready");
@@ -104,6 +105,8 @@ void AgentClient::fetchServiceMetadataStep(int step, bool hadError) {
                 m_skills = object.value("skills").toArray().toVariantList();
             } else if (step == 4) {
                 m_mcpServers = object.value("mcp_servers").toArray().toVariantList();
+            } else if (step == 5) {
+                m_controls = object.value("controls").toArray().toVariantList();
             }
         }
         reply->deleteLater();
@@ -127,6 +130,23 @@ void AgentClient::setModelRole(const QString &roleId, const QString &modelId) {
     else body.insert("model_id", modelId);
     postServiceAction(url, QJsonDocument(body).toJson(QJsonDocument::Compact), [this](QNetworkReply *) {
         m_status = tr("Model role saved");
+        QTimer::singleShot(0, this, [this] { refreshServiceMetadata(); });
+    });
+}
+
+void AgentClient::setControl(const QString &controlId, const QVariant &value) {
+    if (!m_serviceMode || actionBusy() || controlId.trimmed().isEmpty()) return;
+    QUrl base = validatedOrigin("MEO_AI_SERVICE_ENDPOINT");
+    if (!base.isValid()) {
+        m_status = tr("MEO_AI_SERVICE_ENDPOINT must be a loopback HTTP origin.");
+        emit changed();
+        return;
+    }
+    QUrl url = base;
+    url.setPath(QString("/v1/controls/%1").arg(controlId));
+    QJsonObject body{{"value", QJsonValue::fromVariant(value)}};
+    postServiceAction(url, QJsonDocument(body).toJson(QJsonDocument::Compact), [this](QNetworkReply *) {
+        m_status = tr("AI setting saved");
         QTimer::singleShot(0, this, [this] { refreshServiceMetadata(); });
     });
 }
