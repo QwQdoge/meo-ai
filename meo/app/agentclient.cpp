@@ -58,6 +58,8 @@ void AgentClient::fetchServiceMetadataStep(int step, bool hadError) {
         QStringLiteral("/v1/skills"),
         QStringLiteral("/v1/mcp-servers"),
         QStringLiteral("/v1/controls"),
+        QStringLiteral("/v1/memory"),
+        QStringLiteral("/v1/memories"),
     };
     if (step >= paths.size()) {
         if (!hadError) m_metadataStatus = tr("Ready");
@@ -107,6 +109,10 @@ void AgentClient::fetchServiceMetadataStep(int step, bool hadError) {
                 m_mcpServers = object.value("mcp_servers").toArray().toVariantList();
             } else if (step == 5) {
                 m_controls = object.value("controls").toArray().toVariantList();
+            } else if (step == 6) {
+                m_memoryState = object.toVariantMap();
+            } else if (step == 7) {
+                m_memories = object.value("memories").toArray().toVariantList();
             }
         }
         reply->deleteLater();
@@ -147,6 +153,77 @@ void AgentClient::setControl(const QString &controlId, const QVariant &value) {
     QJsonObject body{{"value", QJsonValue::fromVariant(value)}};
     postServiceAction(url, QJsonDocument(body).toJson(QJsonDocument::Compact), [this](QNetworkReply *) {
         m_status = tr("AI setting saved");
+        QTimer::singleShot(0, this, [this] { refreshServiceMetadata(); });
+    });
+}
+
+void AgentClient::setMemoryEnabled(bool enabled) {
+    if (!m_serviceMode || actionBusy()) return;
+    QUrl base = validatedOrigin("MEO_AI_SERVICE_ENDPOINT");
+    if (!base.isValid()) {
+        m_status = tr("MEO_AI_SERVICE_ENDPOINT must be a loopback HTTP origin.");
+        emit changed();
+        return;
+    }
+    QUrl url = base;
+    url.setPath("/v1/memory/state");
+    QJsonObject body{{"enabled", enabled}};
+    postServiceAction(url, QJsonDocument(body).toJson(QJsonDocument::Compact), [this](QNetworkReply *) {
+        m_status = tr("Memory setting saved");
+        QTimer::singleShot(0, this, [this] { refreshServiceMetadata(); });
+    });
+}
+
+void AgentClient::createMemory(const QString &text, bool pinned) {
+    const QString value = text.trimmed();
+    if (!m_serviceMode || actionBusy() || value.isEmpty()) return;
+    QUrl base = validatedOrigin("MEO_AI_SERVICE_ENDPOINT");
+    if (!base.isValid()) {
+        m_status = tr("MEO_AI_SERVICE_ENDPOINT must be a loopback HTTP origin.");
+        emit changed();
+        return;
+    }
+    QUrl url = base;
+    url.setPath("/v1/memories");
+    QJsonObject body{{"text", value}, {"pinned", pinned}};
+    postServiceAction(url, QJsonDocument(body).toJson(QJsonDocument::Compact), [this](QNetworkReply *) {
+        m_status = tr("Memory saved");
+        QTimer::singleShot(0, this, [this] { refreshServiceMetadata(); });
+    });
+}
+
+void AgentClient::updateMemory(const QString &memoryId, const QString &text, bool pinned) {
+    const QString id = memoryId.trimmed();
+    const QString value = text.trimmed();
+    if (!m_serviceMode || actionBusy() || !id.startsWith("memory:") || id.contains('/') || value.isEmpty()) return;
+    QUrl base = validatedOrigin("MEO_AI_SERVICE_ENDPOINT");
+    if (!base.isValid()) {
+        m_status = tr("MEO_AI_SERVICE_ENDPOINT must be a loopback HTTP origin.");
+        emit changed();
+        return;
+    }
+    QUrl url = base;
+    url.setPath(QString("/v1/memories/%1").arg(id));
+    QJsonObject body{{"text", value}, {"pinned", pinned}};
+    postServiceAction(url, QJsonDocument(body).toJson(QJsonDocument::Compact), [this](QNetworkReply *) {
+        m_status = tr("Memory updated");
+        QTimer::singleShot(0, this, [this] { refreshServiceMetadata(); });
+    });
+}
+
+void AgentClient::deleteMemory(const QString &memoryId) {
+    const QString id = memoryId.trimmed();
+    if (!m_serviceMode || actionBusy() || !id.startsWith("memory:") || id.contains('/')) return;
+    QUrl base = validatedOrigin("MEO_AI_SERVICE_ENDPOINT");
+    if (!base.isValid()) {
+        m_status = tr("MEO_AI_SERVICE_ENDPOINT must be a loopback HTTP origin.");
+        emit changed();
+        return;
+    }
+    QUrl url = base;
+    url.setPath(QString("/v1/memories/%1").arg(id));
+    deleteServiceAction(url, [this](QNetworkReply *) {
+        m_status = tr("Memory deleted");
         QTimer::singleShot(0, this, [this] { refreshServiceMetadata(); });
     });
 }
@@ -600,6 +677,26 @@ void AgentClient::postServiceAction(const QUrl &url, const QByteArray &body, con
                 m_options.clear();
                 m_cancelPending = false;
             }
+        } else {
+            onSuccess(reply);
+        }
+        reply->deleteLater();
+        emit changed();
+    });
+}
+
+void AgentClient::deleteServiceAction(const QUrl &url, const std::function<void(QNetworkReply *)> &onSuccess) {
+    if (m_actionReply) return;
+    QNetworkRequest request(url);
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
+    m_actionReply = m_network.sendCustomRequest(request, QByteArrayLiteral("DELETE"));
+    emit changed();
+    connect(m_actionReply, &QNetworkReply::finished, this, [this, onSuccess] {
+        QNetworkReply *reply = m_actionReply;
+        m_actionReply = nullptr;
+        const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        if (reply->error() != QNetworkReply::NoError || code < 200 || code >= 300) {
+            m_status = tr("AgentService action was rejected (HTTP %1).").arg(code);
         } else {
             onSuccess(reply);
         }
