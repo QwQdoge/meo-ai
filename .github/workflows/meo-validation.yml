@@ -56,9 +56,9 @@ jobs:
       - name: Capture responsive UI previews
         run: |
           mkdir -p build/ui-previews
-          QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software build/meo/meo-ai --size 1180x780 --screenshot build/ui-previews/wide.png
-          QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software build/meo/meo-ai --size 960x720 --screenshot build/ui-previews/medium.png
-          QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software build/meo/meo-ai --size 720x640 --screenshot build/ui-previews/compact.png
+          QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software build/meo/meo-ai --ui-demo --size 1180x780 --screenshot build/ui-previews/wide.png
+          QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software build/meo/meo-ai --ui-demo --size 960x720 --screenshot build/ui-previews/medium.png
+          QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software build/meo/meo-ai --ui-demo --size 720x640 --screenshot build/ui-previews/compact.png
           test -s build/ui-previews/wide.png
           test -s build/ui-previews/medium.png
           test -s build/ui-previews/compact.png
