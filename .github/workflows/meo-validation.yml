@@ -28,6 +28,8 @@ jobs:
           test -f build/stage/usr/share/newelle/meo/runtime/main.py
           test -f build/stage/usr/share/newelle/meo/runtime/http_transport.py
           test -f build/stage/usr/share/newelle/meo/runtime/event_journal.py
+          test -f build/stage/usr/share/newelle/meo/service/backend_adapter.py
+          test -f build/stage/usr/share/newelle/meo/service/content_blocks.py
           test -f build/stage/usr/share/newelle/meo/service/core.py
           test -f build/stage/usr/share/newelle/meo/service/model_roles.py
           test -f build/stage/usr/share/newelle/meo/service/presentation.py
