@@ -30,6 +30,60 @@ class ResourceStoreTests(unittest.TestCase):
             self.assertEqual(restored.sha256, record.sha256)
             self.assertEqual(restored.size_bytes, len("你好\nhello".encode("utf-8")))
 
+    def test_binary_upload_is_reserved_then_finalized(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = ConversationResourceStore(directory)
+            reserved = store.reserve(
+                "conversation:1",
+                kind="image",
+                name="截图.png",
+                mime_type="image/png",
+                size_bytes=8,
+            )
+            self.assertEqual(reserved.state, "uploading")
+            self.assertEqual(reserved.sha256, "")
+            with self.assertRaisesRegex(ResourceError, "not ready"):
+                store.read_bytes("conversation:1", reserved.resource_id)
+
+            ready = store.finalize_upload(
+                "conversation:1",
+                reserved.resource_id,
+                b"png-data",
+            )
+            self.assertEqual(ready.state, "ready")
+            self.assertEqual(len(ready.sha256), 64)
+            self.assertEqual(
+                store.read_bytes("conversation:1", ready.resource_id),
+                b"png-data",
+            )
+
+    def test_binary_upload_must_match_reserved_size(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = ConversationResourceStore(directory)
+            reserved = store.reserve(
+                "conversation:1",
+                kind="attachment",
+                name="notes.txt",
+                mime_type="text/plain",
+                size_bytes=5,
+            )
+            with self.assertRaisesRegex(ResourceError, "reserved size"):
+                store.finalize_upload("conversation:1", reserved.resource_id, b"four")
+            self.assertEqual(store.get("conversation:1", reserved.resource_id).state, "uploading")
+
+    def test_ready_resource_cannot_be_uploaded_again(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = ConversationResourceStore(directory)
+            record = store.put_bytes(
+                "conversation:1",
+                kind="attachment",
+                name="notes.txt",
+                mime_type="text/plain",
+                data=b"hello",
+            )
+            with self.assertRaisesRegex(ResourceError, "not awaiting upload"):
+                store.finalize_upload("conversation:1", record.resource_id, b"hello")
+
     def test_resource_identity_is_conversation_scoped(self):
         with tempfile.TemporaryDirectory() as directory:
             store = ConversationResourceStore(directory)
@@ -48,14 +102,16 @@ class ResourceStoreTests(unittest.TestCase):
     def test_name_cannot_smuggle_a_path(self):
         with tempfile.TemporaryDirectory() as directory:
             store = ConversationResourceStore(directory)
-            with self.assertRaisesRegex(ResourceError, "must not contain a path"):
-                store.put_bytes(
-                    "conversation:1",
-                    kind="attachment",
-                    name="../secret.txt",
-                    mime_type="text/plain",
-                    data=b"x",
-                )
+            for name in ("../secret.txt", "folder/file.txt", "folder\\file.txt"):
+                with self.subTest(name=name):
+                    with self.assertRaisesRegex(ResourceError, "must not contain a path"):
+                        store.put_bytes(
+                            "conversation:1",
+                            kind="attachment",
+                            name=name,
+                            mime_type="text/plain",
+                            data=b"x",
+                        )
 
     def test_resource_size_limit_is_enforced(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -67,6 +123,14 @@ class ResourceStoreTests(unittest.TestCase):
                     name="large.bin",
                     mime_type="application/octet-stream",
                     data=b"12345",
+                )
+            with self.assertRaisesRegex(ResourceError, "size limit"):
+                store.reserve(
+                    "conversation:1",
+                    kind="attachment",
+                    name="large.bin",
+                    mime_type="application/octet-stream",
+                    size_bytes=5,
                 )
 
     def test_integrity_failure_is_detected(self):
