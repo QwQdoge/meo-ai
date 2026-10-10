@@ -5,6 +5,7 @@ import MeoUI 1.0
 
 ApplicationWindow {
     id: window
+    objectName: "meoAiMainWindow"
     width: 1180
     height: 780
     minimumWidth: 640
@@ -53,12 +54,53 @@ ApplicationWindow {
 
     function cardKindLabel(kind) {
         switch (String(kind || "")) {
-        case "status": return qsTr("STATUS")
-        case "metric": return qsTr("METRIC")
-        case "file": return qsTr("FILE")
-        case "system": return qsTr("SYSTEM")
-        default: return qsTr("INFO")
+        case "status": return qsTr("Status")
+        case "metric": return qsTr("Metric")
+        case "file": return qsTr("File")
+        case "system": return qsTr("System")
+        default: return qsTr("Info")
         }
+    }
+
+    function historyShouldFollow() {
+        const threshold = 64 * window.scale
+        return history.atYEnd
+            || history.contentHeight <= history.height
+            || history.contentY + history.height >= history.contentHeight - threshold
+    }
+
+    function cardIndexById(cardId) {
+        const wanted = String(cardId || "")
+        if (!wanted.length)
+            return -1
+        for (let i = 0; i < presentationCards.count; ++i) {
+            if (String(presentationCards.get(i).cardId || "") === wanted)
+                return i
+        }
+        return -1
+    }
+
+    function upsertPresentationCard(card) {
+        const item = {
+            cardId: String(card.card_id || ""),
+            kind: String(card.kind || "info"),
+            title: String(card.title || ""),
+            subtitle: String(card.subtitle || ""),
+            cardValue: String(card.value || ""),
+            detail: String(card.detail || "")
+        }
+        const existing = cardIndexById(item.cardId)
+        if (existing >= 0) {
+            presentationCards.set(existing, item)
+            return
+        }
+        if (presentationCards.count >= 6)
+            presentationCards.remove(0)
+        presentationCards.append(item)
+        Qt.callLater(function() {
+            if (cardFlick.contentWidth > cardFlick.width)
+                cardFlick.contentX = Math.max(0, cardFlick.contentWidth - cardFlick.width)
+        })
     }
 
     ListModel { id: messages }
@@ -69,15 +111,17 @@ ApplicationWindow {
 
         function onMessage(role, text) {
             messages.append({speaker: role, body: text})
-            history.positionViewAtEnd()
+            Qt.callLater(function() { history.positionViewAtEnd() })
         }
 
         function onDelta(text) {
             if (!messages.count)
                 return
+            const follow = window.historyShouldFollow()
             const index = messages.count - 1
             messages.setProperty(index, "body", messages.get(index).body + text)
-            history.positionViewAtEnd()
+            if (follow)
+                Qt.callLater(function() { history.positionViewAtEnd() })
         }
 
         function onToolEvent(event) {
@@ -93,16 +137,7 @@ ApplicationWindow {
             const card = event.card
             if (!card || !card.title)
                 return
-            if (presentationCards.count >= 6)
-                presentationCards.remove(0)
-            presentationCards.append({
-                cardId: String(card.card_id || ""),
-                kind: String(card.kind || "info"),
-                title: String(card.title || ""),
-                subtitle: String(card.subtitle || ""),
-                cardValue: String(card.value || ""),
-                detail: String(card.detail || "")
-            })
+            window.upsertPresentationCard(card)
         }
 
         function onResetChat() {
@@ -112,12 +147,19 @@ ApplicationWindow {
         }
     }
 
+    Shortcut {
+        sequence: "Ctrl+N"
+        enabled: !agent.busy && !agent.actionBusy && !agent.options.length
+        onActivated: agent.newChat()
+    }
+
     RowLayout {
         anchors.fill: parent
         spacing: 0
 
         Rectangle {
             id: sidebar
+            objectName: "meoAiSidebar"
             visible: !window.compact
             Layout.fillHeight: true
             Layout.preferredWidth: window.wideSidebar ? 236 * window.scale : 78 * window.scale
@@ -402,6 +444,7 @@ ApplicationWindow {
 
                     ListView {
                         id: history
+                        objectName: "meoAiHistory"
                         anchors.fill: parent
                         anchors.leftMargin: window.pageMargin
                         anchors.rightMargin: window.pageMargin
@@ -573,6 +616,7 @@ ApplicationWindow {
 
                 Item {
                     id: presentationShelf
+                    objectName: "meoAiPresentationShelf"
                     visible: presentationCards.count > 0
                     Layout.fillWidth: true
                     Layout.leftMargin: window.pageMargin
@@ -581,12 +625,14 @@ ApplicationWindow {
                     Layout.preferredHeight: visible ? 154 * window.scale : 0
 
                     Flickable {
+                        id: cardFlick
                         anchors.fill: parent
                         clip: true
                         contentWidth: cardRow.width
                         contentHeight: height
                         boundsBehavior: Flickable.StopAtBounds
                         flickableDirection: Flickable.HorizontalFlick
+                        interactive: contentWidth > width
 
                         Row {
                             id: cardRow
@@ -687,6 +733,8 @@ ApplicationWindow {
                 MeoCard {
                     visible: agent.options.length > 0 && window.pendingToolDisplay.length > 0
                     Layout.fillWidth: true
+                    Layout.maximumWidth: window.contentMaxWidth
+                    Layout.alignment: Qt.AlignHCenter
                     Layout.leftMargin: window.pageMargin
                     Layout.rightMargin: window.pageMargin
                     Layout.bottomMargin: 10 * window.scale
@@ -764,10 +812,9 @@ ApplicationWindow {
 
                     Rectangle {
                         id: composerShell
-                        anchors.left: parent.left
-                        anchors.right: parent.right
-                        anchors.leftMargin: window.pageMargin
-                        anchors.rightMargin: window.pageMargin
+                        objectName: "meoAiComposerShell"
+                        width: Math.min(parent.width - 2 * window.pageMargin, window.contentMaxWidth)
+                        anchors.horizontalCenter: parent.horizontalCenter
                         anchors.verticalCenter: parent.verticalCenter
                         implicitHeight: composerColumn.implicitHeight + 16 * window.scale
                         radius: 24 * window.scale
@@ -791,14 +838,17 @@ ApplicationWindow {
 
                                 MeoTextArea {
                                     id: composer
+                                    objectName: "meoAiComposer"
                                     label: qsTr("Message Meo AI")
+                                    placeholder: qsTr("Ask, plan, or run a task")
                                     Layout.fillWidth: true
                                     Layout.preferredHeight: 68 * window.scale
                                     enabled: !agent.busy && !agent.actionBusy && !agent.options.length
 
                                     Keys.onPressed: function(event) {
-                                        if (event.key === Qt.Key_Return
-                                                && (event.modifiers & Qt.ControlModifier)) {
+                                        const enter = event.key === Qt.Key_Return || event.key === Qt.Key_Enter
+                                        const newline = event.modifiers & Qt.ShiftModifier
+                                        if (enter && !newline && !inputMethodComposing) {
                                             window.submit(text)
                                             event.accepted = true
                                         }
@@ -824,10 +874,11 @@ ApplicationWindow {
                                         ? qsTr("Choose an option above to continue.")
                                         : (agent.busy
                                             ? qsTr("Meo AI is working…")
-                                            : qsTr("Ctrl+Enter to send"))
+                                            : qsTr("Enter to send · Shift+Enter for a new line"))
                                     color: MeoTheme.contentOnSurfaceVariant
                                     font.pixelSize: MeoTheme.labelSmall.size * window.scale
                                     opacity: 0.75
+                                    elide: Text.ElideRight
                                 }
 
                                 Text {
@@ -849,6 +900,7 @@ ApplicationWindow {
 
     Popup {
         id: modelRolesPopup
+        objectName: "meoAiModelRolesPopup"
         modal: true
         focus: true
         x: Math.round((window.width - width) / 2)
@@ -940,7 +992,7 @@ ApplicationWindow {
                         delegate: MeoCard {
                             required property var modelData
                             width: parent.width
-                            type: "outlined"
+                            type: modelData.workload === "auxiliary" ? "outlined" : "filled"
                             compact: true
 
                             contentItem: ColumnLayout {
@@ -994,23 +1046,24 @@ ApplicationWindow {
                                     font.pixelSize: MeoTheme.bodySmall.size * window.scale
                                 }
 
-                                ComboBox {
+                                MeoExposedDropdown {
                                     Layout.fillWidth: true
+                                    label: qsTr("Model")
                                     model: agent.models
                                     textRole: "label"
                                     valueRole: "model_id"
+                                    type: "outlined"
                                     enabled: agent.models.length > 0 && !agent.actionBusy
-                                    currentIndex: window.modelIndex(
-                                        String(modelData.preferred_model_id
-                                            || modelData.fallback_model_id
-                                            || ""))
+                                    currentValue: String(modelData.preferred_model_id
+                                        || modelData.fallback_model_id
+                                        || "")
 
-                                    onActivated: function(index) {
-                                        if (index < 0 || index >= agent.models.length)
+                                    onSelected: function(index, value) {
+                                        if (index < 0 || index >= agent.models.length || !String(value).length)
                                             return
                                         agent.setModelRole(
                                             String(modelData.role_id || ""),
-                                            String(agent.models[index].model_id || ""))
+                                            String(value))
                                     }
                                 }
 
