@@ -18,6 +18,7 @@ class AgentClient : public QObject {
     Q_PROPERTY(QVariantList options READ options NOTIFY changed)
     Q_PROPERTY(QVariantMap agentState READ agentState NOTIFY changed)
     Q_PROPERTY(QVariantList models READ models NOTIFY changed)
+    Q_PROPERTY(QVariantList modelRoles READ modelRoles NOTIFY changed)
     Q_PROPERTY(QVariantList skills READ skills NOTIFY changed)
     Q_PROPERTY(QVariantList mcpServers READ mcpServers NOTIFY changed)
 public:
@@ -31,6 +32,7 @@ public:
     QVariantList options() const { return m_options; }
     QVariantMap agentState() const { return m_agentState; }
     QVariantList models() const { return m_models; }
+    QVariantList modelRoles() const { return m_modelRoles; }
     QVariantList skills() const { return m_skills; }
     QVariantList mcpServers() const { return m_mcpServers; }
     Q_INVOKABLE void send(const QString &text);
@@ -38,11 +40,13 @@ public:
     Q_INVOKABLE void cancel();
     Q_INVOKABLE void newChat();
     Q_INVOKABLE void refreshServiceMetadata();
+    Q_INVOKABLE void setModelRole(const QString &roleId, const QString &modelId);
 signals:
     void changed();
     void message(const QString &role, const QString &text);
     void delta(const QString &text);
     void toolEvent(const QVariantMap &event);
+    void presentationEvent(const QVariantMap &event);
     void resetChat();
 private:
     void requestLegacy(const QString &text);
@@ -72,6 +76,7 @@ private:
     QVariantList m_options;
     QVariantMap m_agentState;
     QVariantList m_models;
+    QVariantList m_modelRoles;
     QVariantList m_skills;
     QVariantList m_mcpServers;
     bool m_done = false;
