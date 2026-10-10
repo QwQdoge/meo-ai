@@ -9,6 +9,11 @@ meo_conf.set('PYTHON', meo_python.path())
 meo_conf.set('pkgdatadir', meo_pkgdatadir)
 meo_conf.set('bindir', meo_bindir)
 
+install_data(
+  'org.meo.MeoAI.account-client.json',
+  install_dir: join_paths(get_option('datadir'), 'meo-account', 'clients')
+)
+
 configure_file(
   input: 'meo-agent-service.in',
   output: 'meo-agent-service',
