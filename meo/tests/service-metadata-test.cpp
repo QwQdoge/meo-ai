@@ -59,8 +59,7 @@ private slots:
             {"GET /v1/skills ", "{\"skills\":[{\"skill_id\":\"diagnostics\",\"label\":\"Diagnostics\",\"enabled\":true,\"configured_enabled\":true,\"selection_scope\":\"profile\",\"override_source\":\"\"}]}"},
             {"GET /v1/mcp-servers ", "{\"mcp_servers\":[{\"server_id\":\"mcp:files\",\"label\":\"Files\",\"enabled\":false}]}"},
             {"GET /v1/controls ", "{\"controls\":[{\"control_id\":\"memory.enabled\",\"label\":\"Memory\",\"kind\":\"toggle\",\"value\":true,\"scope\":\"profile\",\"writable\":true,\"restart_required\":false}]}"},
-            {"GET /v1/memory ", "{\"supported\":true,\"enabled\":true}"},
-            {"GET /v1/memories ", "{\"memories\":[{\"memory_id\":\"memory:one\",\"text\":\"Compact native UI\",\"scope\":\"account\",\"source\":\"test\",\"created_at\":\"2026-10-10T00:00:00Z\",\"updated_at\":\"2026-10-10T00:00:00Z\",\"state\":\"active\",\"pinned\":true,\"sync_state\":\"local\",\"workspace_id\":\"\",\"conversation_id\":\"\"}]}"},
+            {"GET /v1/memory ", "{\"supported\":true,\"enabled\":true,\"scope\":null,\"query\":\"\",\"memories\":[{\"memory_id\":\"memory:one\",\"text\":\"Compact native UI\",\"scope\":\"account\",\"source\":\"test\",\"created_at\":\"2026-10-10T00:00:00Z\",\"updated_at\":\"2026-10-10T00:00:00Z\",\"state\":\"active\",\"pinned\":true,\"sync_state\":\"local\",\"workspace_id\":\"\",\"conversation_id\":\"\"}]}"},
         };
 
         for (const auto &exchange : exchanges) {
