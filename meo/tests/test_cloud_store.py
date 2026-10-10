@@ -6,6 +6,21 @@ from meo.cloud.store import SupabaseRestConfig, SupabaseRestStore
 
 
 class SupabaseRestStoreTests(unittest.IsolatedAsyncioTestCase):
+    async def test_event_replay_query_is_owned_ordered_and_bounded(self):
+        await self.store.list_agent_events(user_id="user-1", run_id="run-1", after=4)
+        from urllib.parse import parse_qs, urlsplit
+        method, path, body, _prefer = self.calls[-1]
+        query = parse_qs(urlsplit(path).query)
+        self.assertEqual(method, "GET")
+        self.assertIsNone(body)
+        self.assertEqual(query["user_id"], ["eq.user-1"])
+        self.assertEqual(query["run_id"], ["eq.run-1"])
+        self.assertEqual(query["seq"], ["gt.4"])
+        self.assertEqual(query["order"], ["seq.asc"])
+        self.assertEqual(query["limit"], ["100"])
+        for after in (-2, True):
+            with self.assertRaises(ValueError):
+                await self.store.list_agent_events(user_id="user-1", run_id="run-1", after=after)
     def setUp(self) -> None:
         self.calls: list[tuple[str, str, dict | None, str | None]] = []
 

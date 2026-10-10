@@ -58,6 +58,7 @@ Popup {
     readonly property var contextInfo: map(metadata.context)
     readonly property var activity: map(metadata.activity)
     readonly property var searchInfo: map(activity.search)
+    readonly property var searchQueries: Array.isArray(searchInfo.queries) ? searchInfo.queries : []
     readonly property var reasoning: map(metadata.reasoning)
     readonly property var controlsInfo: map(metadata.controls)
     readonly property var costInfo: map(metadata.cost)
@@ -313,8 +314,8 @@ Popup {
 
                     MeoText {
                         Layout.fillWidth: true
-                        visible: Array.isArray(root.searchInfo.queries) && root.searchInfo.queries.length > 0
-                        text: qsTr("Queries: %1").arg(root.searchInfo.queries.join(" · "))
+                        visible: root.searchQueries.length > 0
+                        text: qsTr("Queries: %1").arg(root.searchQueries.join(" · "))
                         textFormat: Text.PlainText
                         wrapMode: Text.Wrap
                         typeRole: "body"
@@ -359,14 +360,17 @@ Popup {
                                     color: MeoTheme.contentOnSurface
                                 }
 
-                                MeoText {
+                                TextArea {
                                     Layout.fillWidth: true
                                     visible: String(modelData.uri || "").length > 0
                                     text: String(modelData.uri || "")
-                                    textFormat: Text.PlainText
-                                    wrapMode: Text.WrapAnywhere
-                                    typeRole: "body"
-                                    typeSize: "small"
+                                    textFormat: TextEdit.PlainText
+                                    wrapMode: TextEdit.WrapAnywhere
+                                    readOnly: true
+                                    padding: 0
+                                    background: null
+                                    font.family: MeoTheme.typefacePlain
+                                    font.pixelSize: MeoTheme.typeToken("body", "small", false).size * root.uiScale
                                     color: MeoTheme.primary
                                     selectByMouse: true
                                 }

@@ -61,10 +61,10 @@ class AgentServiceExecutor:
 
         def on_tool_event(event: dict) -> None:
             event_type = event.get("type")
-            if event_type == "tool_interaction":
+            if event_type == "tool.requested":
                 if run.status is AgentRunStatus.RUNNING:
                     run.transition(AgentRunStatus.AWAITING_APPROVAL)
-            elif event_type == "tool_result":
+            elif event_type == "tool.completed":
                 if run.status is AgentRunStatus.AWAITING_APPROVAL:
                     run.transition(AgentRunStatus.RUNNING)
             emit("tool_event", {"event": event})

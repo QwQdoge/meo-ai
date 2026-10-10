@@ -37,8 +37,12 @@ int main(int argc, char **argv) {
     bool submitted = false, cancelled = false, finishing = false;
     QString answer;
     QJsonArray toolEvents;
+    QJsonArray metadataEvents;
     QObject::connect(&client, &AgentClient::toolEvent, &app, [&](const QVariantMap &event) {
         toolEvents.append(QJsonObject::fromVariantMap(event));
+    });
+    QObject::connect(&client, &AgentClient::responseMetaEvent, &app, [&](const QVariantMap &event) {
+        metadataEvents.append(QJsonObject::fromVariantMap(event));
     });
     QObject::connect(&client, &AgentClient::message, &app,
                      [&](const QString &, const QString &) { ++messages; });
@@ -60,9 +64,11 @@ int main(int argc, char **argv) {
             const bool captured = screenshot.isEmpty() || (window && window->grabWindow().save(screenshot));
             const bool passed = client.agentState().value("ready").toBool() && captured &&
                 (historyOnly ? messages >= 2 : (deltas > 0 && client.status() == (stop ? "Stopped" : "Ready"))) &&
-                (!args.contains("--require-tool") || !toolEvents.isEmpty());
+                (!args.contains("--require-tool") || !toolEvents.isEmpty()) &&
+                (!args.contains("--require-meta") || !metadataEvents.isEmpty());
             const auto report = QJsonDocument(QJsonObject{
-                {"tool_events", toolEvents}, {"passed", passed}, {"status", client.status()}, {"messages", messages},
+                {"tool_events", toolEvents}, {"metadata_events", metadataEvents},
+                {"passed", passed}, {"status", client.status()}, {"messages", messages},
                 {"deltas", deltas}, {"cancel_requested", cancelled}, {"answer", answer},
                 {"screenshot_saved", captured}, {"history_only", historyOnly}}).toJson();
             std::fwrite(report.constData(), 1, report.size(), stdout);

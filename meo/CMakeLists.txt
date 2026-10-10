@@ -38,13 +38,20 @@ add_dependencies(meo-ai meoui_moduleplugin)
 target_link_libraries(meo-ai PRIVATE Qt6::Quick Qt6::QuickControls2 Qt6::Network)
 if(BUILD_TESTING)
     find_package(Qt6 REQUIRED COMPONENTS Test)
-    # Not a CTest: this explicitly opted-in target calls a real provider/service.
-    qt_add_executable(meo-ai-live-client EXCLUDE_FROM_ALL tests/live-native-client.cpp ${MEO_AGENT_CLIENT_SOURCES})
+    # Live use still requires an explicit endpoint. CTest only runs this client
+    # against a local Python stub; it never uses a configured provider/profile.
+    qt_add_executable(meo-ai-live-client tests/live-native-client.cpp ${MEO_AGENT_CLIENT_SOURCES})
     target_include_directories(meo-ai-live-client PRIVATE app)
     target_link_libraries(meo-ai-live-client PRIVATE Qt6::Quick Qt6::QuickControls2 Qt6::Network)
     add_dependencies(meo-ai-live-client meoui_moduleplugin)
     qt_add_resources(meo-ai-live-client "meo_live_app" PREFIX "/meo" FILES ${MEO_APP_QML})
     target_compile_definitions(meo-ai-live-client PRIVATE MEOUI_IMPORT_PATH="${CMAKE_CURRENT_BINARY_DIR}/meoui")
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_test(NAME meo-ai.service-integration
+        COMMAND ${CMAKE_COMMAND} -E env
+            MEO_AI_NATIVE_TEST_CLIENT=$<TARGET_FILE:meo-ai-live-client>
+            ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_native_service_integration.py)
+    set_tests_properties(meo-ai.service-integration PROPERTIES TIMEOUT 60)
     qt_add_executable(meo-ai-client-test tests/client-test.cpp ${MEO_AGENT_CLIENT_SOURCES})
     target_include_directories(meo-ai-client-test PRIVATE app)
     target_link_libraries(meo-ai-client-test PRIVATE Qt6::Network Qt6::Test)

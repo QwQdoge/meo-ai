@@ -115,6 +115,13 @@ class AgentRunOrchestrator:
             requested_capabilities=("agent.chat",),
         )
 
+        # Record dispatch before sending: a fast device may publish running or
+        # terminal events as soon as the relay yields to the network.
+        await self.store.update_agent_run(
+            user_id=user_id,
+            run_id=run_id,
+            values={"status": "dispatching"},
+        )
         try:
             await self.relay.dispatch_agent_run(
                 account_user_id=user_id,
@@ -147,11 +154,6 @@ class AgentRunOrchestrator:
             )
             raise
 
-        await self.store.update_agent_run(
-            user_id=user_id,
-            run_id=run_id,
-            values={"status": "dispatching"},
-        )
         return AgentRunCreated(
             run_id=run_id,
             device_id=resolved.device_id,

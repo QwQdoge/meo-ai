@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import time
@@ -390,6 +391,50 @@ def build_application(config: CloudServerConfig):
         )
         return web.json_response(result)
 
+    async def agent_run_events(request):
+        account = await identity(request)
+        run_id = request.query.get("run_id", "").strip()
+        try:
+            after = int(request.query.get("after", "-1"))
+        except ValueError as exc:
+            raise ApiError("invalid_cursor", "after must be an integer >= -1.") from exc
+        if not run_id or after < -1:
+            raise ApiError("invalid_request", "run_id and an event cursor >= -1 are required.")
+        run = await store.get_agent_run(user_id=account.user_id, run_id=run_id)
+        if run is None:
+            raise ApiError("run_not_found", "Agent task not found.", status=404)
+        response = web.StreamResponse(headers={
+            "Content-Type": "text/event-stream", "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff", "X-Accel-Buffering": "no",
+        })
+        apply_cors(request, response)
+        await response.prepare(request)
+        try:
+            # Bound each connection; the client resumes the same run/cursor.
+            deadline = time.monotonic() + 60
+            while time.monotonic() < deadline:
+                rows = await store.list_agent_events(user_id=account.user_id, run_id=run_id, after=after)
+                for row in rows:
+                    seq = row["seq"]
+                    if seq != after + 1:
+                        await response.write(b'event: error\ndata: {"code":"event_gap"}\n\n')
+                        return response
+                    data = json.dumps(row["payload"], separators=(",", ":"))
+                    frame = f'id: {seq}\nevent: {row["event_type"]}\ndata: {data}\n\n'
+                    await response.write(frame.encode("utf-8"))
+                    after = seq
+                run = await store.get_agent_run(user_id=account.user_id, run_id=run_id)
+                if run is None or (run.get("status") in {"completed", "cancelled", "failed"}
+                                   and after >= run.get("last_event_seq", -1) and len(rows) < 100):
+                    break
+                if not rows:
+                    await response.write(b": keepalive\n\n")
+                    await asyncio.sleep(0.25)
+        except (ConnectionError, asyncio.CancelledError):
+            # Disconnecting an event subscriber never cancels or resubmits work.
+            raise
+        return response
+
     async def device_relay(request):
         authorization = request.headers.get("Authorization", "")
         if not authorization.startswith("Bearer "):
@@ -440,6 +485,7 @@ def build_application(config: CloudServerConfig):
             web.get("/v1/device-enrollments/{user_code}", preview_device_pairing),
             web.post("/v1/device-enrollments/{user_code}/approve", approve_device_pairing),
             web.post("/v1/agent-runs", create_agent_run),
+            web.get("/v1/agent-runs/events", agent_run_events),
             web.post("/v1/agent-runs/{run_id}/cancel", cancel_agent_run),
             web.post(
                 "/v1/agent-runs/{run_id}/decisions/{decision_id}",

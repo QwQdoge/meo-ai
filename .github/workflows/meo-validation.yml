@@ -1,7 +1,7 @@
 name: Meo AI preview validation
 on:
   push:
-    branches: [master, 'meo/**']
+    branches: [main, master, 'meo/**']
   pull_request:
     paths: ['meo/**', 'src/**', 'meson.build', '.github/workflows/meo-validation.yml']
 permissions:
@@ -14,10 +14,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: python3 -m pip install -r meo/cloud/requirements.txt
       - run: python3 -m compileall -q src meo/service meo/system meo/adapters meo/runtime meo/tools meo/cloud meo/device
       - run: python3 meo/tools/check_headless_imports.py
       - run: python3 -m meo.runtime.main --self-check
-      - run: python3 -m unittest discover -s meo/tests -p 'test_*.py' -v
+      - run: MEO_AI_RUN_CLOUD_NETWORK_TEST=1 python3 -m unittest discover -s meo/tests -p 'test_*.py' -v
   cloud-image:
     runs-on: ubuntu-latest
     steps:

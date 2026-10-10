@@ -140,13 +140,9 @@ class RelayWebSocketServer:
         if message_type == "dispatch_ack":
             run_id = self._required_text(message, "run_id")
             status = self._run_status(message.get("status"))
-            values: dict[str, Any] = {
-                "status": status,
-                "last_event_seq": self._event_seq_or_default(
-                    message.get("last_event_seq"),
-                    -1,
-                ),
-            }
+            # Only persisted events advance the cloud cursor. A dispatch ack
+            # can carry -1 before any event is delivered, including on replay.
+            values: dict[str, Any] = {"status": status}
             await self.store.update_agent_run(
                 user_id=session.account_user_id,
                 run_id=run_id,
@@ -198,9 +194,9 @@ class RelayWebSocketServer:
                     values["error_code"] = code.strip()
             elif event_type == "tool_event":
                 event = payload.get("event")
-                if isinstance(event, dict) and event.get("type") == "tool_interaction":
+                if isinstance(event, dict) and event.get("type") == "tool.requested":
                     values["status"] = "awaiting_approval"
-                elif isinstance(event, dict) and event.get("type") == "tool_result":
+                elif isinstance(event, dict) and event.get("type") == "tool.completed":
                     values["status"] = "running"
 
             await self.store.update_agent_run(

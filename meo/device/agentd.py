@@ -270,8 +270,15 @@ class MeoAgentd:
             raise ValueError("option_index must be a non-negative integer")
         if run.status is not AgentRunStatus.AWAITING_APPROVAL:
             raise ValueError("AgentRun is not awaiting approval")
-        await self.executor.decide(run, decision_id, option_index)
+        # The backend may synchronously finish or request another approval while
+        # consuming this choice. Preserve the state reported by those callbacks.
         run.transition(AgentRunStatus.RUNNING)
+        try:
+            await self.executor.decide(run, decision_id, option_index)
+        except Exception:
+            if run.status is AgentRunStatus.RUNNING:
+                run.transition(AgentRunStatus.AWAITING_APPROVAL)
+            raise
         await connection.send_json(
             {"type": "decision_ack", "run_id": run.run_id, "decision_id": decision_id}
         )

@@ -96,13 +96,18 @@ export class MeoAgentClient {
           const block = buffer.slice(0, boundary);
           buffer = buffer.slice(boundary + 2);
           const parsed = parseSseBlock(block);
+          if (parsed?.event === "error") throw new Error("Meo Agent event stream could not be resumed safely");
           if (parsed) yield parsed;
           boundary = buffer.indexOf("\n\n");
         }
         if (done) break;
       }
     } finally {
-      reader.releaseLock();
+      try {
+        await reader.cancel();
+      } finally {
+        reader.releaseLock();
+      }
     }
   }
 

@@ -4,7 +4,8 @@ This roadmap extends the current native AgentService work. It does not replace t
 
 ## U0 — repository/product boundary
 
-Status: started on `meo/unified-web-device-platform`.
+Status: unified on `main`; the merged presentation/runtime/cloud/device branches
+have been removed. Ordinary development and CI now target `main`.
 
 - keep all AI product orchestration in `meo-ai/meo/`;
 - keep Meo Account as external identity/credential authority;
@@ -113,3 +114,28 @@ school/phone browser
 ```
 
 That path is the priority over feature count.
+
+## Current verification boundary
+
+The maintained offline acceptance path uses a deterministic AI stub, never a
+configured provider or user profile:
+
+- CTest `meo-ai.service-integration` loads the production QML/C++ client and
+  drives real loopback HTTP/SSE through AgentServiceCore. It checks streaming,
+  tool completion, response metadata and cancellation of the original request.
+- `test_remote_service_integration.py` connects actual cloud API/orchestrator,
+  relay, device executor and AgentServiceCore using in-memory IO/storage. It
+  checks normalized approvals, denial, stop, account ownership and duplicate
+  dispatch/unacknowledged-event replay without another backend submission.
+- `test_cloud_network_integration.py`, enabled with
+  `MEO_AI_RUN_CLOUD_NETWORK_TEST=1`, additionally runs the production TypeScript
+  client (Node 24+), cloud HTTP routes and device WebSocket relay on loopback.
+  AI, Account verification and database remain explicit test substitutes.
+  It checks approval/denial/stop, stream disconnect/cursor resume, ordered events,
+  and rejection of missing/invalid credentials or another account's event read.
+
+These validate U4/U5 wiring and protocol behavior; they do not complete the
+live U1/U2/U3/U5/U7 exit gates. Real provider inference/search, browser OAuth,
+KWallet enrollment, public-network reconnect, durable execution across process
+restart, native/web conversation sync and real Plasma/Router actions still need
+separate acceptance. Workspaces remain local; the tests do not upload files.

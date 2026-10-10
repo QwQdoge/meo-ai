@@ -15,6 +15,27 @@ class FakeConnection:
 
 
 class RelayEventQueueTests(unittest.IsolatedAsyncioTestCase):
+    async def test_provider_thread_wakes_blocked_relay_loop(self) -> None:
+        queue = RelayEventQueue("legion")
+        delivered = asyncio.Event()
+
+        class Connection(FakeConnection):
+            async def send_json(self, payload):
+                await super().send_json(payload)
+                delivered.set()
+
+        connection = Connection()
+        task = asyncio.create_task(queue.send_loop(connection))
+        try:
+            await asyncio.sleep(0)
+            await asyncio.to_thread(queue.publish, "run-1", {"type": "text_delta", "text": "worker"})
+            await asyncio.wait_for(delivered.wait(), timeout=2)
+            self.assertEqual(connection.sent[0]["seq"], 0)
+        finally:
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+
     async def test_publish_assigns_ordered_per_run_sequence(self) -> None:
         queue = RelayEventQueue("legion")
         queue.publish("run-1", {"type": "text_delta", "text": "a"})

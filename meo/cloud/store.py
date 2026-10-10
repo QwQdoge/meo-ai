@@ -11,6 +11,10 @@ from urllib.request import Request, urlopen
 
 
 class CloudStore(Protocol):
+    async def list_agent_events(
+        self, *, user_id: str, run_id: str, after: int, limit: int = 100,
+    ) -> tuple[dict, ...]: ...
+
     async def touch_device(
         self,
         *,
@@ -305,6 +309,23 @@ class SupabaseRestStore:
         )
         result = await self._request("GET", f"/rest/v1/ai_agent_runs?{query}", None)
         return self._single_row(result, "Supabase AgentRun response is invalid")
+
+    async def list_agent_events(
+        self, *, user_id: str, run_id: str, after: int, limit: int = 100,
+    ) -> tuple[dict, ...]:
+        if not isinstance(after, int) or isinstance(after, bool) or after < -1:
+            raise ValueError("event cursor must be >= -1")
+        if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 100:
+            raise ValueError("event limit must be between 1 and 100")
+        query = urlencode({
+            "select": "seq,event_type,payload", "user_id": f"eq.{user_id}",
+            "run_id": f"eq.{run_id}", "seq": f"gt.{after}",
+            "order": "seq.asc", "limit": str(limit),
+        })
+        result = await self._request("GET", f"/rest/v1/ai_agent_events?{query}", None)
+        if not isinstance(result, list) or any(not isinstance(row, dict) for row in result):
+            raise RuntimeError("Supabase AgentRun events response is invalid")
+        return tuple(result)
 
     async def get_device_credential_by_hash(self, *, token_hash: str) -> dict | None:
         token_hash = self._sha256_hex(token_hash)

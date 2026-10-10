@@ -428,7 +428,7 @@ ApplicationWindow {
                     required property string body
                     required property var responseMeta
                     readonly property bool fromUser: speaker === "user"
-                    readonly property bool hasResponseMeta: !fromUser && responseMeta && Object.keys(responseMeta).length > 0
+                    readonly property bool hasResponseMeta: !fromUser && !!responseMeta && Object.keys(responseMeta).length > 0
                     width: history.width
                     implicitHeight: messageBody.implicitHeight
 
@@ -699,7 +699,7 @@ ApplicationWindow {
                 Behavior on y {
                     enabled: !MeoTheme.reduceMotion
                     NumberAnimation {
-                        duration: MeoTheme.motionDurationSpatialMedium
+                        duration: MeoTheme.motionDurationSpatialDefault
                         easing.type: Easing.OutCubic
                     }
                 }

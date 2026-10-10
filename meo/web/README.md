@@ -31,3 +31,24 @@ Meo-specific product logic should stay behind stable APIs where possible. Stylin
 ## First acceptance
 
 A browser session should be able to sign in with Meo Account, create a conversation, send a message through one configured provider, reload the page, and recover the same conversation.
+
+## AgentRun event transport
+
+Configure `MeoAgentClient.eventsUrl` as the cloud origin plus
+`/v1/agent-runs/events`. The authenticated SSE endpoint takes `run_id` and
+`after` (default `-1`); SSE IDs are the persisted per-run event sequence starting
+at zero. Reads are scoped to the verified account and the run owner. A stream
+can close after 60 seconds; reopen `events(runId, lastEventId)` to continue the
+same run, without calling `createRun` again. Cursor gaps surface an error instead
+of silently skipping work. Closing a subscriber does not stop the AgentRun.
+
+For offline network acceptance, install `meo/cloud/requirements.txt` and use
+Node 24+, then run from the repository root:
+
+```sh
+MEO_AI_RUN_CLOUD_NETWORK_TEST=1 python3 -B -m unittest discover -s meo/tests -p test_cloud_network_integration.py -v
+```
+
+This runs the production client and HTTP/WebSocket transport with test AI,
+identity verification and storage. It does not prove browser OAuth, production
+database access or provider execution.
