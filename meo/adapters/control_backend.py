@@ -57,7 +57,7 @@ class ControlledLegacyBackend:
         enriched["context"] = configured_context_from_usage(
             usage if isinstance(usage, dict) else {},
             configured_budget=self._setting_int("context-max"),
-            reserved_output_tokens=self._setting_int("suggested-tokens"),
+            suggested_target=self._setting_int("context-suggested"),
         )
         enriched["controls"] = self._effective_control_values()
         return enriched
