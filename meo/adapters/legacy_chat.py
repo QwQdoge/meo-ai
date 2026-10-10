@@ -5,6 +5,7 @@ from html import escape
 import json
 import re
 import threading
+import time
 from typing import Dict
 from uuid import uuid4
 
@@ -150,6 +151,60 @@ class LegacyChatInterfaceAdapter:
                 messages.append(ConversationMessage(role, text))
         return messages
 
+    def _latest_assistant_entry(self, chat_id: int) -> dict:
+        chat = self._workspace_chats().get(chat_id)
+        entries = chat.get("chat", []) if isinstance(chat, dict) else []
+        if not isinstance(entries, list):
+            return {}
+        for entry in reversed(entries):
+            if isinstance(entry, dict) and entry.get("User") == "Assistant":
+                return entry
+        return {}
+
+    def _response_meta_event(
+        self,
+        chat_id: int,
+        *,
+        started_at: float,
+        first_token_at: float | None,
+        tool_names: list[str],
+    ) -> dict:
+        provider, model = self._current_model_selection()
+        assistant = self._latest_assistant_entry(chat_id)
+        usage = assistant.get("LLMUsage")
+        provider_metadata = assistant.get("OpenAIResponse")
+        if not isinstance(usage, dict):
+            usage = {}
+        if not isinstance(provider_metadata, dict):
+            provider_metadata = {}
+
+        finished_at = time.monotonic()
+        activity: dict = {"tools": list(dict.fromkeys(tool_names))}
+        lowered_tools = [name.casefold() for name in tool_names]
+        activity["search"] = {
+            "used": any("search" in name or "web" in name for name in lowered_tools),
+        }
+        activity["memory"] = {
+            "used": any("memory" in name for name in lowered_tools),
+        }
+
+        return {
+            "type": "response_meta",
+            "provider": provider,
+            "model": model,
+            "usage": usage,
+            "timing": {
+                "total_ms": round((finished_at - started_at) * 1000, 3),
+                "first_token_ms": (
+                    round((first_token_at - started_at) * 1000, 3)
+                    if first_token_at is not None
+                    else None
+                ),
+            },
+            "activity": activity,
+            "provider_metadata": provider_metadata,
+        }
+
     def send_message(self, conversation_id: str, text: str, callbacks: BackendCallbacks):
         if not self.conversation_exists(conversation_id):
             raise ValueError("unknown conversation_id")
@@ -157,8 +212,19 @@ class LegacyChatInterfaceAdapter:
             conversation_id=conversation_id,
             chat_id=self._conversations[conversation_id],
         )
+        started_at = time.monotonic()
+        first_token_at: list[float | None] = [None]
+        tool_names: list[str] = []
+
+        def on_text_delta(delta: str) -> None:
+            if delta and first_token_at[0] is None:
+                first_token_at[0] = time.monotonic()
+            callbacks.on_text_delta(delta)
 
         def on_tool_event(event: dict) -> None:
+            tool_name = event.get("tool_name")
+            if isinstance(tool_name, str) and tool_name:
+                tool_names.append(tool_name)
             if event.get("type") == "tool_interaction":
                 interaction_id = event.get("interaction_id")
                 if not isinstance(interaction_id, str) or not interaction_id:
@@ -172,9 +238,15 @@ class LegacyChatInterfaceAdapter:
                 self.interface.process_message(
                     conversation_id,
                     text,
-                    on_chunk=callbacks.on_text_delta,
+                    on_chunk=on_text_delta,
                     on_tool_event=on_tool_event,
                 )
+                callbacks.on_tool_event(self._response_meta_event(
+                    handle.chat_id,
+                    started_at=started_at,
+                    first_token_at=first_token_at[0],
+                    tool_names=tool_names,
+                ))
             except Exception as exc:
                 callbacks.on_error(str(exc))
                 return
@@ -211,8 +283,6 @@ class LegacyChatInterfaceAdapter:
             except UnicodeDecodeError as exc:
                 raise ValueError(f"resource is not valid UTF-8 text: {resource.name}") from exc
 
-            # Keep the compatibility context wrapper well formed even if an
-            # attached text file contains the legacy closing tag literally.
             decoded = decoded.replace("</context>", "<\\/context>")
             sections.append(
                 "\n".join((
