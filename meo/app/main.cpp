@@ -4,7 +4,30 @@
 #include <QQmlContext>
 #include <QTimer>
 #include <QQuickWindow>
+#include <QSize>
 #include <cstdio>
+
+namespace {
+QSize requestedWindowSize(const QStringList &arguments)
+{
+    const int index = arguments.indexOf(QStringLiteral("--size"));
+    if (index < 0 || index + 1 >= arguments.size())
+        return {};
+
+    const QStringList parts = arguments.at(index + 1).toLower().split(QLatin1Char('x'));
+    if (parts.size() != 2)
+        return {};
+
+    bool widthOk = false;
+    bool heightOk = false;
+    const int width = parts.at(0).toInt(&widthOk);
+    const int height = parts.at(1).toInt(&heightOk);
+    if (!widthOk || !heightOk || width < 1 || height < 1)
+        return {};
+    return QSize(width, height);
+}
+}
+
 int main(int argc, char **argv) {
     QGuiApplication app(argc, argv);
     app.setOrganizationName("MeoArch"); app.setApplicationName("MeoAI");
@@ -30,11 +53,16 @@ int main(int argc, char **argv) {
     engine.rootContext()->setContextProperty("agent", &client);
     engine.load(QUrl("qrc:/meo/app/qml/Main.qml"));
     if (engine.rootObjects().isEmpty()) return 1;
+
+    auto window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+    const QSize requestedSize = requestedWindowSize(app.arguments());
+    if (window && requestedSize.isValid())
+        window->resize(requestedSize);
+
     const int screenshot = app.arguments().indexOf("--screenshot");
     if (screenshot >= 0 && screenshot + 1 < app.arguments().size()) {
         const QString path = app.arguments().at(screenshot + 1);
-        QTimer::singleShot(1000, &app, [&] {
-            auto window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        QTimer::singleShot(1000, &app, [&, path] {
             app.exit(window && window->grabWindow().save(path) ? 0 : 2);
         });
         return app.exec();
