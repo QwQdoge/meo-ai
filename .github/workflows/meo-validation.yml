@@ -97,7 +97,7 @@ jobs:
         run: |
           DESTDIR="$PWD/build/native-stage" cmake --install build/meo
           test -x build/native-stage/usr/bin/meo-ai
-          test -f build/native-stage/usr/share/meo-account/clients/org.meo.AI.json
+          test -f build/native-stage/usr/share/meo-account/clients/org.meo.MeoAI.account-client.json
           test -d build/native-stage/usr/share/meo-ai/prompts
           test -d build/native-stage/usr/share/meo-ai/skills
       - name: Capture responsive UI previews
