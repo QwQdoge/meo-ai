@@ -27,12 +27,25 @@ Headless separation rules:
 - Router caller binding requires SubmitRequest/GetRequest/DecideRequest to reuse
   one session-bus connection; do not replace this with per-call subprocesses.
 
+Unified web/cloud/device rules:
+- `meo/web/` owns Meo web integration and upstream policy, not raw provider keys.
+- `meo/cloud/` owns AI-specific conversation/device/AgentRun contracts; Meo
+  Account remains the authentication/session and encrypted BYOK authority.
+- `meo/device/` may bridge authenticated remote work to local AgentService, but
+  it must not become a second agent engine, a generic unauthenticated remote
+  shell, or a privileged System AI Router replacement.
+- a remote AgentRun may bind to one local AgentService request; reconnect must
+  resume that request/event stream rather than submitting a replacement request.
+- local workspaces stay local unless an explicit file-upload path says otherwise.
+- do not vendor a large web upstream merely for physical repository purity;
+  record its exact upstream commit/license and keep the Meo patch surface small.
+
 Do not move/delete the Newelle-derived root tree as incidental cleanup. The split
 gates are defined in `docs/ownership.md`; until those gates are met, reduce coupling
 through adapters rather than creating a second engine copy or breaking the build.
 
 Inspect status and nearest code/tests before changes. Preserve unrelated work.
-For Python changes run `python3 -m compileall -q src meo/service meo/system meo/adapters meo/runtime meo/tools`,
+For Python changes run `python3 -m compileall -q src meo/service meo/system meo/adapters meo/runtime meo/tools meo/device`,
 `python3 meo/tools/check_headless_imports.py`, and
 `python3 -m unittest discover -s meo/tests -p 'test_*.py' -v`.
 For native changes configure/build `meo/` with MeoUI and run CTest offscreen.

@@ -14,10 +14,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: python3 -m compileall -q src meo/service meo/system meo/adapters meo/runtime meo/tools
+      - run: python3 -m compileall -q src meo/service meo/system meo/adapters meo/runtime meo/tools meo/cloud meo/device
       - run: python3 meo/tools/check_headless_imports.py
       - run: python3 -m meo.runtime.main --self-check
       - run: python3 -m unittest discover -s meo/tests -p 'test_*.py' -v
+  cloud-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -f meo/cloud/Dockerfile -t meo-ai-cloud:ci .
+      - run: |
+          cd meo/cloud/deploy/local
+          cp .env.example .env
+          docker compose config -q
   packaging:
     runs-on: ubuntu-latest
     container: archlinux:base-devel
@@ -28,6 +37,8 @@ jobs:
       - run: DESTDIR="$PWD/build/stage" meson install -C build/package
       - run: |
           test -x build/stage/usr/bin/meo-agent-service
+          test -x build/stage/usr/bin/meo-agentd
+          test -x build/stage/usr/bin/meo-connect-device
           test -f build/stage/usr/share/newelle/meo/runtime/main.py
           test -f build/stage/usr/share/newelle/meo/runtime/http_transport.py
           test -f build/stage/usr/share/newelle/meo/runtime/native_http_transport.py
@@ -53,8 +64,15 @@ jobs:
           test -f build/stage/usr/share/newelle/meo/adapters/presentation_legacy_chat.py
           test -f build/stage/usr/share/newelle/meo/adapters/presentation_tools.py
           test -f build/stage/usr/share/newelle/meo/adapters/system_tools.py
+          test -f build/stage/usr/share/newelle/meo/device/main.py
+          test -f build/stage/usr/share/newelle/meo/device/config.py
+          test -f build/stage/usr/share/newelle/meo/device/secrets.py
           test -f build/stage/usr/lib/systemd/user/meo-agent-service.service
+          test -f build/stage/usr/lib/systemd/user/meo-agentd.service
           grep -F 'ExecStart=/usr/bin/meo-agent-service --host 127.0.0.1 --port 8765' build/stage/usr/lib/systemd/user/meo-agent-service.service
+          grep -F 'ExecStart=/usr/bin/meo-agentd' build/stage/usr/lib/systemd/user/meo-agentd.service
+          grep -F 'NoNewPrivileges=true' build/stage/usr/lib/systemd/user/meo-agentd.service
+          grep -F 'ReadWritePaths=%h' build/stage/usr/lib/systemd/user/meo-agentd.service
   native:
     runs-on: ubuntu-latest
     container: archlinux:base-devel

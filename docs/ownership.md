@@ -8,9 +8,23 @@ This repository is a migration repository: the Newelle-derived upstream tree rem
 - `meo/service/`: stable headless assistant/service layer.
 - `meo/system/`: unprivileged System AI Router client/tool layer.
 - `meo/adapters/`: temporary compatibility adapters around Newelle-era objects.
+- `meo/web/`: browser frontend integration, upstream references and Meo-specific web patches/configuration.
+- `meo/cloud/`: AI-specific cloud contracts for conversations, messages, devices and AgentRuns.
+- `meo/device/`: authenticated device registration and remote bridge to the local AgentService.
 - native C++/QML frontend under `meo/`: current desktop UI direction.
 
 New Meo product behavior should land under these boundaries unless it must patch a documented upstream integration seam.
+
+A large third-party web frontend may remain in a separate fork/deployment repository when preserving its independent upstream history materially reduces maintenance cost. In that case `meo-ai` remains the product source of truth for the web integration contract, authentication path, cloud/device protocols and Meo-specific patch policy. Do not vendor a large unrelated upstream tree merely to make the repository physically self-contained.
+
+## External authority boundaries
+
+Keeping all AI product orchestration in `meo-ai` does not move unrelated security authorities into this repository.
+
+- Meo Account remains authoritative for authentication/session identity and encrypted provider credentials.
+- Meo AI may consume the Account OAuth/provider-broker APIs but must not create a second credential authority.
+- The System AI Router and the owning system/application components remain authoritative for privileged or desktop actions.
+- Remote device infrastructure may relay exact AgentService/Router requests, but it must not bypass their existing request, confirmation or verification semantics.
 
 ## Newelle-derived compatibility layer
 

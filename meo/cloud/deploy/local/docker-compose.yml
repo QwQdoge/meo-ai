@@ -1,0 +1,36 @@
+services:
+  meo-ai-cloud:
+    build:
+      context: ../../../..
+      dockerfile: meo/cloud/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    expose:
+      - "8080"
+    networks:
+      - meo-cloud
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate --config /etc/cloudflared/config.yml run
+    depends_on:
+      meo-ai-cloud:
+        condition: service_healthy
+    volumes:
+      - ./cloudflared:/etc/cloudflared:ro
+    networks:
+      - meo-cloud
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+
+networks:
+  meo-cloud:
+    driver: bridge
