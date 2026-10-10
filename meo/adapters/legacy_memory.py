@@ -66,6 +66,11 @@ class LegacyMemoryBridge:
             sync_state="local",
         )
 
+    def _notify(self) -> None:
+        notify = getattr(self._handler(), "_notify", None)
+        if callable(notify):
+            notify()
+
     def supported(self) -> bool:
         store, scope = self._store_and_scope()
         return store is not None and bool(scope)
@@ -99,6 +104,23 @@ class LegacyMemoryBridge:
             result.append(self._convert(record, backend_scope=backend_scope))
         return result
 
+    def create_memory(self, text: str, *, pinned: bool = False) -> MemoryRecord:
+        store, backend_scope = self._store_and_scope()
+        if store is None or not backend_scope:
+            raise ValueError("selected memory provider is not inspectable")
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError("memory text is required")
+        record = store.add(
+            "fact",
+            backend_scope,
+            text.strip(),
+            importance=0.8 if pinned else 0.6,
+            pinned=bool(pinned),
+            source="user",
+        )
+        self._notify()
+        return self._convert(record, backend_scope=backend_scope)
+
     def update_memory(
         self,
         memory_id: str,
@@ -122,9 +144,7 @@ class LegacyMemoryBridge:
             current = store.get(raw_id)
         if current is None:
             raise ValueError("unknown memory_id")
-        notify = getattr(self._handler(), "_notify", None)
-        if callable(notify):
-            notify()
+        self._notify()
         return self._convert(current, backend_scope=backend_scope)
 
     def delete_memory(self, memory_id: str) -> None:
@@ -136,6 +156,4 @@ class LegacyMemoryBridge:
         if current is None or str(getattr(current, "scope", "")) != backend_scope:
             raise ValueError("unknown memory_id")
         store.delete(raw_id)
-        notify = getattr(self._handler(), "_notify", None)
-        if callable(notify):
-            notify()
+        self._notify()
