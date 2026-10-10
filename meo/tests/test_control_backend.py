@@ -35,18 +35,53 @@ class _Settings:
         raise KeyError(key)
 
 
-class _Controller:
+class _SearchIntegration:
+    id = "websearch"
+
     def __init__(self):
+        self.calls = []
+
+    def consume_meo_search_traces(self, chat_id, since_monotonic):
+        self.calls.append((chat_id, since_monotonic))
+        return [{
+            "trace_id": "search:one",
+            "kind": "web",
+            "query": "meo ai latest",
+            "provider": "duckduckgo",
+            "duration_ms": 345.5,
+            "result_count": 2,
+            "sources": [
+                {"title": "Meo docs", "uri": "https://example.test/docs"},
+                {"title": "Meo repo", "uri": "https://example.test/repo"},
+            ],
+            "filters": {"max_results": "5"},
+            "completed": True,
+        }]
+
+
+class _Controller:
+    def __init__(self, with_search=False):
         self.settings = _Settings()
         self.handlers = type("Handlers", (), {"llm": None, "memory": object()})()
+        if with_search:
+            self.search = _SearchIntegration()
+            self.integrationsloader = type(
+                "IntegrationLoader",
+                (),
+                {"extensionsmap": {"websearch": self.search}, "extensions": [self.search]},
+            )()
 
 
 class _Backend:
+    def list_conversations(self):
+        return [{"id": "c1", "legacy_chat_id": 7}]
+
     def send_message(self, conversation_id, text, callbacks):
         callbacks.on_tool_event({
             "type": "response_meta",
             "usage": {"prompt_tokens": 42000, "completion_tokens": 1200},
             "provider_metadata": {"id": "response_1"},
+            "activity": {"search": {"used": True}, "tools": ["search"]},
         })
         callbacks.on_done()
         return object()
@@ -79,6 +114,24 @@ class ControlledLegacyBackendTests(unittest.TestCase):
         self.assertTrue(meta["controls"]["memory.enabled"])
         self.assertTrue(meta["controls"]["search.web_enabled"])
         self.assertEqual(meta["controls"]["tools.max_calls"], 70)
+
+    def test_exact_search_trace_becomes_activity_and_citations(self):
+        events = []
+        controller = _Controller(with_search=True)
+        wrapped = ControlledLegacyBackend(_Backend(), controller)
+        wrapped.send_message("c1", "search", self._callbacks(events))
+
+        meta = events[0]
+        search = meta["activity"]["search"]
+        self.assertTrue(search["used"])
+        self.assertEqual(search["queries"], ["meo ai latest"])
+        self.assertEqual(search["result_count"], 2)
+        self.assertEqual(search["traces"][0]["provider"], "duckduckgo")
+        self.assertEqual(search["traces"][0]["duration_ms"], 345.5)
+        self.assertEqual(search["traces"][0]["sources"][0]["title"], "Meo docs")
+        self.assertEqual(meta["citations"][1]["uri"], "https://example.test/repo")
+        self.assertEqual(controller.search.calls[0][0], 7)
+        self.assertGreater(controller.search.calls[0][1], 0)
 
     def test_resource_path_uses_same_enrichment(self):
         events = []
