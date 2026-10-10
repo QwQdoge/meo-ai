@@ -376,12 +376,13 @@ ApplicationWindow {
                             anchors.rightMargin: messageDelegate.fromUser ? 14 * window.scale : 0
                             anchors.topMargin: messageDelegate.fromUser ? 10 * window.scale : 2 * window.scale
                             text: messageDelegate.body
-                            textFormat: Text.PlainText
+                            textFormat: messageDelegate.fromUser ? Text.PlainText : Text.MarkdownText
                             wrapMode: Text.Wrap
                             typeRole: "body"
                             typeSize: "medium"
                             fontScaleOverride: 1.04
                             color: MeoTheme.contentOnSurface
+                            linkColor: MeoTheme.primary
                         }
                     }
                 }
