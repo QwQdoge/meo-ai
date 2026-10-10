@@ -16,50 +16,57 @@ set(BUILD_TESTING_SAVED ${BUILD_TESTING})
 set(BUILD_TESTING OFF)
 add_subdirectory("${MEO_UI_ROOT}" meoui)
 set(BUILD_TESTING ${BUILD_TESTING_SAVED})
-qt_add_executable(meo-ai app/main.cpp app/agentclient.cpp app/agentclient.h)
+
+set(MEO_AGENT_CLIENT_SOURCES
+    app/agentclient.cpp
+    app/agentclient_resources.cpp
+    app/agentclient.h
+)
+
+qt_add_executable(meo-ai app/main.cpp ${MEO_AGENT_CLIENT_SOURCES})
 qt_add_resources(meo-ai "meo_app" PREFIX "/meo" FILES app/qml/Main.qml app/qml/AiLogo.qml app/qml/ResponseDetails.qml app/qml/AiControlsPopup.qml app/qml/MemoryPanel.qml)
 add_dependencies(meo-ai meoui_moduleplugin)
 target_link_libraries(meo-ai PRIVATE Qt6::Quick Qt6::QuickControls2 Qt6::Network)
 if(BUILD_TESTING)
     find_package(Qt6 REQUIRED COMPONENTS Test)
     # Not a CTest: this explicitly opted-in target calls a real provider/service.
-    qt_add_executable(meo-ai-live-client EXCLUDE_FROM_ALL tests/live-native-client.cpp app/agentclient.cpp app/agentclient.h)
+    qt_add_executable(meo-ai-live-client EXCLUDE_FROM_ALL tests/live-native-client.cpp ${MEO_AGENT_CLIENT_SOURCES})
     target_include_directories(meo-ai-live-client PRIVATE app)
     target_link_libraries(meo-ai-live-client PRIVATE Qt6::Quick Qt6::QuickControls2 Qt6::Network)
     add_dependencies(meo-ai-live-client meoui_moduleplugin)
     qt_add_resources(meo-ai-live-client "meo_live_app" PREFIX "/meo" FILES app/qml/Main.qml app/qml/AiLogo.qml app/qml/ResponseDetails.qml app/qml/AiControlsPopup.qml app/qml/MemoryPanel.qml)
     target_compile_definitions(meo-ai-live-client PRIVATE MEOUI_IMPORT_PATH="${CMAKE_CURRENT_BINARY_DIR}/meoui")
-    qt_add_executable(meo-ai-client-test tests/client-test.cpp app/agentclient.cpp app/agentclient.h)
+    qt_add_executable(meo-ai-client-test tests/client-test.cpp ${MEO_AGENT_CLIENT_SOURCES})
     target_include_directories(meo-ai-client-test PRIVATE app)
     target_link_libraries(meo-ai-client-test PRIVATE Qt6::Network Qt6::Test)
     add_test(NAME meo-ai.transport COMMAND meo-ai-client-test)
 
-    qt_add_executable(meo-ai-early-cancel-test tests/early-cancel-test.cpp app/agentclient.cpp app/agentclient.h)
+    qt_add_executable(meo-ai-early-cancel-test tests/early-cancel-test.cpp ${MEO_AGENT_CLIENT_SOURCES})
     target_include_directories(meo-ai-early-cancel-test PRIVATE app)
     target_link_libraries(meo-ai-early-cancel-test PRIVATE Qt6::Network Qt6::Test)
     add_test(NAME meo-ai.early-cancel COMMAND meo-ai-early-cancel-test)
 
-    qt_add_executable(meo-ai-service-recovery-test tests/service-recovery-test.cpp app/agentclient.cpp app/agentclient.h)
+    qt_add_executable(meo-ai-service-recovery-test tests/service-recovery-test.cpp ${MEO_AGENT_CLIENT_SOURCES})
     target_include_directories(meo-ai-service-recovery-test PRIVATE app)
     target_link_libraries(meo-ai-service-recovery-test PRIVATE Qt6::Network Qt6::Test)
     add_test(NAME meo-ai.service-recovery COMMAND meo-ai-service-recovery-test)
 
-    qt_add_executable(meo-ai-history-restore-test tests/history-restore-test.cpp app/agentclient.cpp app/agentclient.h)
+    qt_add_executable(meo-ai-history-restore-test tests/history-restore-test.cpp ${MEO_AGENT_CLIENT_SOURCES})
     target_include_directories(meo-ai-history-restore-test PRIVATE app)
     target_link_libraries(meo-ai-history-restore-test PRIVATE Qt6::Network Qt6::Test)
     add_test(NAME meo-ai.history-restore COMMAND meo-ai-history-restore-test)
 
-    qt_add_executable(meo-ai-stale-conversation-recovery-test tests/stale-conversation-recovery-test.cpp app/agentclient.cpp app/agentclient.h)
+    qt_add_executable(meo-ai-stale-conversation-recovery-test tests/stale-conversation-recovery-test.cpp ${MEO_AGENT_CLIENT_SOURCES})
     target_include_directories(meo-ai-stale-conversation-recovery-test PRIVATE app)
     target_link_libraries(meo-ai-stale-conversation-recovery-test PRIVATE Qt6::Network Qt6::Test)
     add_test(NAME meo-ai.stale-conversation-recovery COMMAND meo-ai-stale-conversation-recovery-test)
 
-    qt_add_executable(meo-ai-service-metadata-test tests/service-metadata-test.cpp app/agentclient.cpp app/agentclient.h)
+    qt_add_executable(meo-ai-service-metadata-test tests/service-metadata-test.cpp ${MEO_AGENT_CLIENT_SOURCES})
     target_include_directories(meo-ai-service-metadata-test PRIVATE app)
     target_link_libraries(meo-ai-service-metadata-test PRIVATE Qt6::Network Qt6::Test)
     add_test(NAME meo-ai.service-metadata COMMAND meo-ai-service-metadata-test)
 
-    qt_add_executable(meo-ai-presentation-event-test tests/presentation-event-test.cpp app/agentclient.cpp app/agentclient.h)
+    qt_add_executable(meo-ai-presentation-event-test tests/presentation-event-test.cpp ${MEO_AGENT_CLIENT_SOURCES})
     target_include_directories(meo-ai-presentation-event-test PRIVATE app)
     target_link_libraries(meo-ai-presentation-event-test PRIVATE Qt6::Network Qt6::Test)
     add_test(NAME meo-ai.presentation-event COMMAND meo-ai-presentation-event-test)
