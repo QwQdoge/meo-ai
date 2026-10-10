@@ -43,6 +43,30 @@ class AgentHttpTransport:
             "messages": self.service.list_messages(conversation_id),
         }
 
+    def list_resources(self, conversation_id: str) -> dict:
+        return {
+            "conversation_id": conversation_id,
+            "resources": self.service.list_resources(conversation_id),
+        }
+
+    def create_text_resource(self, conversation_id: str, name: str, text: str) -> dict:
+        return {
+            "conversation_id": conversation_id,
+            "resource": self.service.create_text_resource(
+                conversation_id,
+                name=name,
+                text=text,
+            ),
+        }
+
+    def delete_resource(self, conversation_id: str, resource_id: str) -> dict:
+        self.service.delete_resource(conversation_id, resource_id)
+        return {
+            "conversation_id": conversation_id,
+            "resource_id": resource_id,
+            "deleted": True,
+        }
+
     def list_models(self) -> list[dict]:
         return self.service.list_models()
 
@@ -191,6 +215,14 @@ def _loopback_host_header(value: str | None) -> bool:
     return parsed.hostname in {"127.0.0.1", "localhost", "::1"}
 
 
+def _resource_missing(error: ValueError) -> bool:
+    return str(error) in {
+        "unknown conversation_id",
+        "unknown resource_id",
+        "resource does not belong to this conversation",
+    }
+
+
 class _Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = "MeoAgentService/0"
@@ -285,6 +317,20 @@ class _Handler(BaseHTTPRequestHandler):
                     return
                 self._reply_json(HTTPStatus.OK, payload)
                 return
+            if len(segments) == 4 and segments[:2] == ["v1", "conversations"] and segments[3] == "resources" and not query:
+                try:
+                    payload = self.transport.list_resources(segments[2])
+                except ValueError as exc:
+                    self._reply_error(
+                        HTTPStatus.NOT_FOUND if _resource_missing(exc) else HTTPStatus.BAD_REQUEST,
+                        str(exc),
+                    )
+                    return
+                except RuntimeError as exc:
+                    self._reply_error(HTTPStatus.SERVICE_UNAVAILABLE, str(exc))
+                    return
+                self._reply_json(HTTPStatus.OK, payload)
+                return
             if segments == ["v1", "models"] and not query:
                 self._reply_json(HTTPStatus.OK, {"models": self.transport.list_models()})
                 return
@@ -338,6 +384,27 @@ class _Handler(BaseHTTPRequestHandler):
                 self._read_json(allow_empty=True)
                 self._reply_json(HTTPStatus.CREATED, self.transport.create_conversation())
                 return
+            if len(segments) == 5 and segments[:2] == ["v1", "conversations"] and segments[3:] == ["resources", "text"]:
+                body = self._read_json()
+                name = body.get("name")
+                text = body.get("text")
+                if not isinstance(name, str) or not name.strip():
+                    raise ValueError("name is required")
+                if not isinstance(text, str) or not text:
+                    raise ValueError("text is required")
+                try:
+                    payload = self.transport.create_text_resource(segments[2], name, text)
+                except ValueError as exc:
+                    self._reply_error(
+                        HTTPStatus.NOT_FOUND if _resource_missing(exc) else HTTPStatus.BAD_REQUEST,
+                        str(exc),
+                    )
+                    return
+                except RuntimeError as exc:
+                    self._reply_error(HTTPStatus.SERVICE_UNAVAILABLE, str(exc))
+                    return
+                self._reply_json(HTTPStatus.CREATED, payload)
+                return
             if len(segments) == 4 and segments[:2] == ["v1", "conversations"] and segments[3] == "model":
                 body = self._read_json()
                 model_id = body.get("model_id")
@@ -390,6 +457,35 @@ class _Handler(BaseHTTPRequestHandler):
                     HTTPStatus.OK,
                     self.transport.choose_tool_option(segments[2], segments[4], option_index),
                 )
+                return
+            self._reply_error(HTTPStatus.NOT_FOUND, "not found")
+        except ValueError as exc:
+            self._reply_error(HTTPStatus.BAD_REQUEST, str(exc))
+        except Exception as exc:
+            self._reply_error(HTTPStatus.INTERNAL_SERVER_ERROR, str(exc))
+
+    def do_DELETE(self) -> None:
+        if not self._request_boundary_allowed():
+            self._reply_error(HTTPStatus.FORBIDDEN, "request origin is not allowed")
+            return
+        segments, query = self._route()
+        if query:
+            self._reply_error(HTTPStatus.BAD_REQUEST, "DELETE query parameters are not supported")
+            return
+        try:
+            if len(segments) == 5 and segments[:2] == ["v1", "conversations"] and segments[3] == "resources":
+                try:
+                    payload = self.transport.delete_resource(segments[2], segments[4])
+                except ValueError as exc:
+                    self._reply_error(
+                        HTTPStatus.NOT_FOUND if _resource_missing(exc) else HTTPStatus.BAD_REQUEST,
+                        str(exc),
+                    )
+                    return
+                except RuntimeError as exc:
+                    self._reply_error(HTTPStatus.SERVICE_UNAVAILABLE, str(exc))
+                    return
+                self._reply_json(HTTPStatus.OK, payload)
                 return
             self._reply_error(HTTPStatus.NOT_FOUND, "not found")
         except ValueError as exc:
