@@ -30,6 +30,7 @@ install_data(
   '../runtime/main.py',
   '../runtime/headless_probe.py',
   '../runtime/http_transport.py',
+  '../runtime/native_http_transport.py',
   '../runtime/event_journal.py',
   install_dir: join_paths(meo_moduledir, 'runtime')
 )
