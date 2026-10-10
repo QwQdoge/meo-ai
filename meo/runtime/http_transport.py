@@ -126,14 +126,11 @@ class AgentHttpTransport:
     def set_control(self, control_id: str, value: Any) -> dict:
         return {"accepted": True, "control": self.service.set_control(control_id, value)}
 
-    def memory_catalog(self, *, scope: str | None = None, query: str = "") -> dict:
-        state = self.service.memory_state()
-        return {
-            **state,
-            "scope": scope or "",
-            "query": query,
-            "memories": self.service.list_memories(scope=scope, query=query),
-        }
+    def memory_state(self) -> dict:
+        return self.service.memory_state()
+
+    def list_memories(self, *, scope: str | None = None, query: str = "") -> dict:
+        return {"memories": self.service.list_memories(scope=scope, query=query)}
 
     def create_memory(self, text: str, pinned: bool = False) -> dict:
         return {"accepted": True, "memory": self.service.create_memory(text, pinned=pinned)}
@@ -440,7 +437,10 @@ class _Handler(BaseHTTPRequestHandler):
             if segments == ["v1", "controls"] and not query:
                 self._reply_json(HTTPStatus.OK, {"controls": self.transport.list_controls()})
                 return
-            if segments == ["v1", "memory"]:
+            if segments == ["v1", "memory"] and not query:
+                self._reply_json(HTTPStatus.OK, self.transport.memory_state())
+                return
+            if segments == ["v1", "memories"]:
                 unknown = set(query) - {"scope", "q"}
                 if unknown:
                     raise ValueError("unsupported memory query parameter")
@@ -452,7 +452,7 @@ class _Handler(BaseHTTPRequestHandler):
                 search_query = q_values[0].strip()
                 self._reply_json(
                     HTTPStatus.OK,
-                    self.transport.memory_catalog(scope=scope, query=search_query),
+                    self.transport.list_memories(scope=scope, query=search_query),
                 )
                 return
             if len(segments) == 3 and segments[:2] == ["v1", "requests"] and not query:
@@ -581,7 +581,14 @@ class _Handler(BaseHTTPRequestHandler):
                     raise ValueError("value is required")
                 self._reply_json(HTTPStatus.OK, self.transport.set_control(segments[2], body["value"]))
                 return
-            if segments == ["v1", "memory"]:
+            if segments == ["v1", "memory", "state"]:
+                body = self._read_json()
+                enabled = body.get("enabled")
+                if not isinstance(enabled, bool):
+                    raise ValueError("enabled must be a boolean")
+                self._reply_json(HTTPStatus.OK, self.transport.set_memory_enabled(enabled))
+                return
+            if segments == ["v1", "memories"]:
                 body = self._read_json()
                 text = body.get("text")
                 pinned = body.get("pinned", False)
@@ -591,14 +598,7 @@ class _Handler(BaseHTTPRequestHandler):
                     raise ValueError("pinned must be a boolean")
                 self._reply_json(HTTPStatus.CREATED, self.transport.create_memory(text, pinned))
                 return
-            if segments == ["v1", "memory", "settings"]:
-                body = self._read_json()
-                enabled = body.get("enabled")
-                if not isinstance(enabled, bool):
-                    raise ValueError("enabled must be a boolean")
-                self._reply_json(HTTPStatus.OK, self.transport.set_memory_enabled(enabled))
-                return
-            if len(segments) == 3 and segments[:2] == ["v1", "memory"]:
+            if len(segments) == 3 and segments[:2] == ["v1", "memories"]:
                 body = self._read_json()
                 text = body.get("text") if "text" in body else None
                 pinned = body.get("pinned") if "pinned" in body else None
@@ -711,7 +711,7 @@ class _Handler(BaseHTTPRequestHandler):
                     return
                 self._reply_json(HTTPStatus.OK, payload)
                 return
-            if len(segments) == 3 and segments[:2] == ["v1", "memory"]:
+            if len(segments) == 3 and segments[:2] == ["v1", "memories"]:
                 self._reply_json(HTTPStatus.OK, self.transport.delete_memory(segments[2]))
                 return
             self._reply_error(HTTPStatus.NOT_FOUND, "not found")
