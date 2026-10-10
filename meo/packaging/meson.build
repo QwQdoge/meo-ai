@@ -55,6 +55,8 @@ install_data(
 install_data(
   '../adapters/headless_newelle.py',
   '../adapters/legacy_chat.py',
+  '../adapters/presentation_legacy_chat.py',
+  '../adapters/presentation_tools.py',
   '../adapters/system_tools.py',
   install_dir: join_paths(meo_moduledir, 'adapters')
 )
