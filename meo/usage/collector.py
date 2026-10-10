@@ -43,6 +43,7 @@ class UsageEvent:
         )
 
 
+SCHEMA_VERSION = 1
 SCHEMA = """
 create table if not exists usage_events (
   source text not null,
@@ -68,6 +69,20 @@ create table if not exists usage_events (
 create index if not exists usage_events_time_idx on usage_events(occurred_at desc);
 create index if not exists usage_events_model_idx on usage_events(model, occurred_at desc);
 create index if not exists usage_events_project_idx on usage_events(project_key, occurred_at desc);
+
+create table if not exists usage_schema (
+  name text primary key,
+  version integer not null
+);
+
+create table if not exists import_files (
+  source text not null,
+  path text not null,
+  size integer not null,
+  mtime_ns integer not null,
+  imported_at text not null,
+  primary key (source, path)
+);
 """
 
 
@@ -139,13 +154,41 @@ def _first_text(*values: Any) -> str:
     return ""
 
 
+def _local_timezone():
+    return datetime.now().astimezone().tzinfo or timezone.utc
+
+
 class UsageCollector:
     def __init__(self, db_path: Path | None = None) -> None:
         self.db_path = db_path or _default_db_path()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.db = sqlite3.connect(self.db_path)
+        self.db = sqlite3.connect(self.db_path, timeout=5.0)
         self.db.row_factory = sqlite3.Row
+        # WAL keeps dashboard reads responsive while a history import is being
+        # committed. The busy timeout avoids turning a brief second-process
+        # overlap into a user-visible "database is locked" failure.
+        self.db.execute("pragma journal_mode=WAL")
+        self.db.execute("pragma synchronous=NORMAL")
+        self.db.execute("pragma busy_timeout=5000")
         self.db.executescript(SCHEMA)
+        self._ensure_schema_version()
+
+    def _ensure_schema_version(self) -> None:
+        row = self.db.execute(
+            "select version from usage_schema where name='usage'"
+        ).fetchone()
+        if row is None:
+            self.db.execute(
+                "insert into usage_schema(name, version) values('usage', ?)",
+                (SCHEMA_VERSION,),
+            )
+            self.db.commit()
+            return
+        version = int(row["version"])
+        if version != SCHEMA_VERSION:
+            raise RuntimeError(
+                f"Unsupported AI usage database schema {version}; expected {SCHEMA_VERSION}"
+            )
 
     def close(self) -> None:
         self.db.close()
@@ -160,15 +203,82 @@ class UsageCollector:
 
     def upsert(self, event: UsageEvent) -> None:
         payload = asdict(event)
-        payload["metadata"] = json.dumps(event.metadata or {}, separators=(",", ":"), ensure_ascii=False)
+        payload["metadata"] = json.dumps(
+            event.metadata or {}, separators=(",", ":"), ensure_ascii=False
+        )
         columns = tuple(payload)
         placeholders = ",".join("?" for _ in columns)
-        updates = ",".join(f"{name}=excluded.{name}" for name in columns if name not in {"source", "source_event_id"})
+        updates = ",".join(
+            f"{name}=excluded.{name}"
+            for name in columns
+            if name not in {"source", "source_event_id"}
+        )
         self.db.execute(
             f"insert into usage_events ({','.join(columns)}) values ({placeholders}) "
             f"on conflict(source,source_event_id) do update set {updates}",
             tuple(payload[name] for name in columns),
         )
+
+    @staticmethod
+    def _file_key(path: Path) -> str:
+        # The absolute local path is used only inside import bookkeeping. It is
+        # never exported by cloud_rows().
+        return os.path.abspath(os.fspath(path))
+
+    @staticmethod
+    def _fingerprint(path: Path) -> tuple[int, int] | None:
+        try:
+            info = path.stat()
+        except OSError:
+            return None
+        if not path.is_file():
+            return None
+        return int(info.st_size), int(info.st_mtime_ns)
+
+    def _needs_import(
+        self, source: str, path: Path, fingerprint: tuple[int, int]
+    ) -> bool:
+        row = self.db.execute(
+            "select size, mtime_ns from import_files where source=? and path=?",
+            (source, self._file_key(path)),
+        ).fetchone()
+        return row is None or (int(row["size"]), int(row["mtime_ns"])) != fingerprint
+
+    def _mark_imported(
+        self, source: str, path: Path, fingerprint: tuple[int, int]
+    ) -> None:
+        self.db.execute(
+            """
+            insert into import_files(source, path, size, mtime_ns, imported_at)
+            values(?,?,?,?,?)
+            on conflict(source,path) do update set
+              size=excluded.size,
+              mtime_ns=excluded.mtime_ns,
+              imported_at=excluded.imported_at
+            """,
+            (
+                source,
+                self._file_key(path),
+                fingerprint[0],
+                fingerprint[1],
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+
+    def _import_if_changed(
+        self, source: str, path: Path, importer
+    ) -> int:
+        before = self._fingerprint(path)
+        if before is None or not self._needs_import(source, path, before):
+            return 0
+        imported = importer(path)
+        after = self._fingerprint(path)
+        # An agent may append to an active JSONL while we are reading it. Only
+        # mark a file clean when the fingerprint stayed stable; otherwise the
+        # next refresh reparses it idempotently and cannot miss the new tail.
+        if after == before:
+            self._mark_imported(source, path, before)
+        return imported
 
     def import_codex(self, root: Path | None = None) -> int:
         root = root or Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
@@ -182,7 +292,7 @@ class UsageCollector:
 
         count = 0
         for path in sorted(set(files)):
-            count += self._import_codex_file(path)
+            count += self._import_if_changed("codex", path, self._import_codex_file)
         return count
 
     def _import_codex_file(self, path: Path) -> int:
@@ -192,6 +302,10 @@ class UsageCollector:
         provider = "OpenAI"
         previous_total: dict[str, int] | None = None
         imported = 0
+        try:
+            fallback_mtime = path.stat().st_mtime
+        except OSError:
+            return 0
 
         for line_number, row in _read_jsonl(path):
             payload = _dict(row.get("payload"))
@@ -199,7 +313,9 @@ class UsageCollector:
             if row.get("type") == "session_meta" or record_type == "session_meta":
                 session_id = _first_text(payload.get("id"), row.get("id"), session_id)
                 cwd = _first_text(payload.get("cwd"), row.get("cwd"), cwd)
-                provider = _first_text(payload.get("model_provider"), row.get("model_provider"), provider)
+                provider = _first_text(
+                    payload.get("model_provider"), row.get("model_provider"), provider
+                )
                 continue
             if row.get("type") == "turn_context":
                 cwd = _first_text(payload.get("cwd"), cwd)
@@ -218,29 +334,38 @@ class UsageCollector:
                     "input_tokens": _safe_int(cumulative.get("input_tokens")),
                     "cached_input_tokens": _safe_int(cumulative.get("cached_input_tokens")),
                     "output_tokens": _safe_int(cumulative.get("output_tokens")),
-                    "reasoning_output_tokens": _safe_int(cumulative.get("reasoning_output_tokens")),
+                    "reasoning_output_tokens": _safe_int(
+                        cumulative.get("reasoning_output_tokens")
+                    ),
                 }
                 if previous_total is None:
                     usage = current
                 else:
-                    usage = {key: max(0, value - previous_total.get(key, 0)) for key, value in current.items()}
+                    usage = {
+                        key: max(0, value - previous_total.get(key, 0))
+                        for key, value in current.items()
+                    }
                 previous_total = current
             elif cumulative:
                 previous_total = {
                     "input_tokens": _safe_int(cumulative.get("input_tokens")),
                     "cached_input_tokens": _safe_int(cumulative.get("cached_input_tokens")),
                     "output_tokens": _safe_int(cumulative.get("output_tokens")),
-                    "reasoning_output_tokens": _safe_int(cumulative.get("reasoning_output_tokens")),
+                    "reasoning_output_tokens": _safe_int(
+                        cumulative.get("reasoning_output_tokens")
+                    ),
                 }
             if not usage:
                 continue
 
             cached = _safe_int(usage.get("cached_input_tokens"))
             raw_input = _safe_int(usage.get("input_tokens"))
-            reasoning = _safe_int(usage.get("reasoning_output_tokens") or usage.get("reasoning_tokens"))
+            reasoning = _safe_int(
+                usage.get("reasoning_output_tokens") or usage.get("reasoning_tokens")
+            )
             raw_output = _safe_int(usage.get("output_tokens"))
             project_key, project_name = _project(cwd)
-            timestamp = _iso_timestamp(row.get("timestamp"), fallback=path.stat().st_mtime)
+            timestamp = _iso_timestamp(row.get("timestamp"), fallback=fallback_mtime)
             event_id = f"{session_id}:{line_number}"
             event = UsageEvent(
                 source="codex",
@@ -264,12 +389,18 @@ class UsageCollector:
         return imported
 
     def import_claude_code(self, root: Path | None = None) -> int:
-        root = root or Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude")) / "projects"
+        root = (
+            root
+            or Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude"))
+            / "projects"
+        )
         if not root.exists():
             return 0
         count = 0
         for path in sorted(root.rglob("*.jsonl")):
-            count += self._import_claude_file(path)
+            count += self._import_if_changed(
+                "claude_code", path, self._import_claude_file
+            )
         return count
 
     def _import_claude_file(self, path: Path) -> int:
@@ -278,6 +409,10 @@ class UsageCollector:
         # message/request pair before writing to the local store.
         candidates: dict[str, UsageEvent] = {}
         fallback_session = path.stem
+        try:
+            fallback_mtime = path.stat().st_mtime
+        except OSError:
+            return 0
         for line_number, row in _read_jsonl(path):
             if row.get("type") != "assistant":
                 continue
@@ -285,10 +420,14 @@ class UsageCollector:
             usage = _dict(message.get("usage"))
             if not usage:
                 continue
-            message_id = _first_text(message.get("id"), row.get("uuid"), str(line_number))
+            message_id = _first_text(
+                message.get("id"), row.get("uuid"), str(line_number)
+            )
             request_id = _first_text(row.get("requestId"), row.get("request_id"))
             event_key = f"{message_id}:{request_id}" if request_id else message_id
-            session_id = _first_text(row.get("sessionId"), row.get("session_id"), fallback_session)
+            session_id = _first_text(
+                row.get("sessionId"), row.get("session_id"), fallback_session
+            )
             cwd = _first_text(row.get("cwd"))
             project_key, project_name = _project(cwd)
             input_tokens = _safe_int(usage.get("input_tokens"))
@@ -302,9 +441,13 @@ class UsageCollector:
                 project_key=project_key,
                 project_name=project_name,
                 provider="Anthropic",
-                model=_first_text(message.get("model"), row.get("model"), "Claude")[:180],
+                model=_first_text(
+                    message.get("model"), row.get("model"), "Claude"
+                )[:180],
                 model_role="execution",
-                occurred_at=_iso_timestamp(row.get("timestamp"), fallback=path.stat().st_mtime),
+                occurred_at=_iso_timestamp(
+                    row.get("timestamp"), fallback=fallback_mtime
+                ),
                 input_tokens=input_tokens,
                 cached_input_tokens=cached,
                 cache_write_tokens=cache_write,
@@ -327,7 +470,13 @@ class UsageCollector:
         for event in events:
             event["total_tokens"] = sum(
                 _safe_int(event[name])
-                for name in ("input_tokens", "cached_input_tokens", "cache_write_tokens", "output_tokens", "reasoning_tokens")
+                for name in (
+                    "input_tokens",
+                    "cached_input_tokens",
+                    "cache_write_tokens",
+                    "output_tokens",
+                    "reasoning_tokens",
+                )
             )
 
         daily: dict[str, int] = defaultdict(int)
@@ -335,26 +484,66 @@ class UsageCollector:
         projects: dict[str, dict[str, Any]] = {}
         sources: dict[str, dict[str, Any]] = {}
         sessions: dict[tuple[str, str], tuple[datetime, datetime]] = {}
+        local_tz = _local_timezone()
 
         for event in events:
-            stamp = datetime.fromisoformat(event["occurred_at"].replace("Z", "+00:00"))
-            day = stamp.date().isoformat()
+            stamp = datetime.fromisoformat(
+                event["occurred_at"].replace("Z", "+00:00")
+            )
+            if stamp.tzinfo is None:
+                stamp = stamp.replace(tzinfo=timezone.utc)
+            local_stamp = stamp.astimezone(local_tz)
+            day = local_stamp.date().isoformat()
             total = event["total_tokens"]
             daily[day] += total
-            model_key = (event["model"] or "Unknown", event["provider"] or "Unknown")
-            model_row = models.setdefault(model_key, {"name": model_key[0], "provider": model_key[1], "tokens": 0, "events": 0})
+            model_key = (
+                event["model"] or "Unknown",
+                event["provider"] or "Unknown",
+            )
+            model_row = models.setdefault(
+                model_key,
+                {
+                    "name": model_key[0],
+                    "provider": model_key[1],
+                    "tokens": 0,
+                    "events": 0,
+                },
+            )
             model_row["tokens"] += total
             model_row["events"] += 1
             project_key = event["project_key"] or "unassigned"
-            project_row = projects.setdefault(project_key, {"name": event["project_name"] or "Unassigned", "project_key": event["project_key"], "tokens": 0, "sessions_set": set(), "last_used_at": event["occurred_at"]})
+            project_row = projects.setdefault(
+                project_key,
+                {
+                    "name": event["project_name"] or "Unassigned",
+                    "project_key": event["project_key"],
+                    "tokens": 0,
+                    "sessions_set": set(),
+                    "last_used_at": event["occurred_at"],
+                },
+            )
             project_row["tokens"] += total
             if event["session_id"]:
-                project_row["sessions_set"].add((event["source"], event["session_id"]))
-            project_row["last_used_at"] = max(project_row["last_used_at"], event["occurred_at"])
-            source_row = sources.setdefault(event["source"], {"source": event["source"], "tokens": 0, "events": 0, "last_used_at": event["occurred_at"]})
+                project_row["sessions_set"].add(
+                    (event["source"], event["session_id"])
+                )
+            project_row["last_used_at"] = max(
+                project_row["last_used_at"], event["occurred_at"]
+            )
+            source_row = sources.setdefault(
+                event["source"],
+                {
+                    "source": event["source"],
+                    "tokens": 0,
+                    "events": 0,
+                    "last_used_at": event["occurred_at"],
+                },
+            )
             source_row["tokens"] += total
             source_row["events"] += 1
-            source_row["last_used_at"] = max(source_row["last_used_at"], event["occurred_at"])
+            source_row["last_used_at"] = max(
+                source_row["last_used_at"], event["occurred_at"]
+            )
             if event["session_id"]:
                 key = (event["source"], event["session_id"])
                 if key in sessions:
@@ -368,26 +557,42 @@ class UsageCollector:
         streak = 0
         previous: date | None = None
         for active in active_dates:
-            streak = streak + 1 if previous and active == previous + timedelta(days=1) else 1
+            streak = (
+                streak + 1
+                if previous and active == previous + timedelta(days=1)
+                else 1
+            )
             longest_streak = max(longest_streak, streak)
             previous = active
-        if active_dates and active_dates[-1] >= date.today() - timedelta(days=1):
+
+        today = datetime.now(local_tz).date()
+        if active_dates and active_dates[-1] >= today - timedelta(days=1):
             cursor = active_dates[-1]
             lookup = set(active_dates)
             while cursor in lookup:
                 current_streak += 1
                 cursor -= timedelta(days=1)
 
-        cutoff = date.today() - timedelta(days=days - 1)
-        daily_list = [{"date": day, "tokens": tokens} for day, tokens in sorted(daily.items()) if date.fromisoformat(day) >= cutoff]
+        cutoff = today - timedelta(days=days - 1)
+        daily_list = [
+            {"date": day, "tokens": tokens}
+            for day, tokens in sorted(daily.items())
+            if date.fromisoformat(day) >= cutoff
+        ]
         project_list = []
         for row in projects.values():
-            item = {key: value for key, value in row.items() if key != "sessions_set"}
+            item = {
+                key: value for key, value in row.items() if key != "sessions_set"
+            }
             item["sessions"] = len(row["sessions_set"])
             project_list.append(item)
 
         longest_session_ms = max(
-            [int((last - first).total_seconds() * 1000) for first, last in sessions.values()] + [0]
+            [
+                int((last - first).total_seconds() * 1000)
+                for first, last in sessions.values()
+            ]
+            + [0]
         )
         return {
             "summary": {
@@ -396,25 +601,46 @@ class UsageCollector:
                 "active_days": len(active_dates),
                 "longest_streak": longest_streak,
                 "current_streak": current_streak,
+                # This is first-event -> last-event span, not measured active
+                # work time. UI copy must not call it active/task duration.
                 "longest_session_ms": longest_session_ms,
-                "estimated_cost_microusd": sum(_safe_int(event.get("estimated_cost_microusd")) for event in events),
+                "estimated_cost_microusd": sum(
+                    _safe_int(event.get("estimated_cost_microusd"))
+                    for event in events
+                ),
             },
             "token_breakdown": {
                 "input": sum(_safe_int(event["input_tokens"]) for event in events),
-                "cached_input": sum(_safe_int(event["cached_input_tokens"]) for event in events),
-                "cache_write": sum(_safe_int(event["cache_write_tokens"]) for event in events),
-                "output": sum(_safe_int(event["output_tokens"]) for event in events),
-                "reasoning": sum(_safe_int(event["reasoning_tokens"]) for event in events),
+                "cached_input": sum(
+                    _safe_int(event["cached_input_tokens"]) for event in events
+                ),
+                "cache_write": sum(
+                    _safe_int(event["cache_write_tokens"]) for event in events
+                ),
+                "output": sum(
+                    _safe_int(event["output_tokens"]) for event in events
+                ),
+                "reasoning": sum(
+                    _safe_int(event["reasoning_tokens"]) for event in events
+                ),
             },
             "daily": daily_list,
-            "models": sorted(models.values(), key=lambda item: (-item["tokens"], item["name"]))[:16],
-            "projects": sorted(project_list, key=lambda item: (-item["tokens"], item["name"]))[:16],
-            "sources": sorted(sources.values(), key=lambda item: (-item["tokens"], item["source"])),
+            "models": sorted(
+                models.values(), key=lambda item: (-item["tokens"], item["name"])
+            )[:16],
+            "projects": sorted(
+                project_list, key=lambda item: (-item["tokens"], item["name"])
+            )[:16],
+            "sources": sorted(
+                sources.values(), key=lambda item: (-item["tokens"], item["source"])
+            ),
         }
 
     def cloud_rows(self) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
-        for row in self.db.execute("select * from usage_events order by occurred_at"):
+        for row in self.db.execute(
+            "select * from usage_events order by occurred_at"
+        ):
             item = dict(row)
             try:
                 item["metadata"] = json.loads(item["metadata"] or "{}")
