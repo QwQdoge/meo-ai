@@ -60,6 +60,12 @@ class AgentServiceCore:
             raise ValueError("unknown conversation_id")
         return backend
 
+    def _memory_method(self, name: str):
+        method = getattr(self._require_backend(), name, None)
+        if not callable(method):
+            raise ValueError("selected backend does not expose managed memory")
+        return method
+
     def get_agent_state(self) -> dict:
         return {
             "ready": self.backend is not None,
@@ -228,6 +234,60 @@ class AgentServiceCore:
         if not callable(method):
             raise ValueError("selected backend does not expose AI controls")
         return method(control_id, value).public_dict()
+
+    def memory_state(self) -> dict:
+        backend = self._require_backend()
+        supported_method = getattr(backend, "memory_supported", None)
+        enabled_method = getattr(backend, "memory_enabled", None)
+        supported = bool(supported_method()) if callable(supported_method) else False
+        enabled = bool(enabled_method()) if supported and callable(enabled_method) else False
+        return {"supported": supported, "enabled": enabled}
+
+    def list_memories(self, *, scope: str | None = None, query: str = "") -> list[dict]:
+        state = self.memory_state()
+        if not state["supported"]:
+            return []
+        records = self._memory_method("list_memories")(scope=scope, query=query)
+        return [record.public_dict() for record in records]
+
+    def create_memory(self, text: str, *, pinned: bool = False) -> dict:
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError("memory text is required")
+        record = self._memory_method("create_memory")(text.strip(), pinned=bool(pinned))
+        return record.public_dict()
+
+    def set_memory_enabled(self, enabled: bool) -> dict:
+        value = bool(self._memory_method("set_memory_enabled")(bool(enabled)))
+        state = self.memory_state()
+        state["enabled"] = value
+        return state
+
+    def update_memory(
+        self,
+        memory_id: str,
+        *,
+        text: str | None = None,
+        pinned: bool | None = None,
+    ) -> dict:
+        if not isinstance(memory_id, str) or not memory_id.strip():
+            raise ValueError("memory_id is required")
+        if text is None and pinned is None:
+            raise ValueError("memory update requires text or pinned")
+        if text is not None and (not isinstance(text, str) or not text.strip()):
+            raise ValueError("memory text is required")
+        if pinned is not None and not isinstance(pinned, bool):
+            raise ValueError("pinned must be a boolean")
+        record = self._memory_method("update_memory")(
+            memory_id,
+            text=text.strip() if text is not None else None,
+            pinned=pinned,
+        )
+        return record.public_dict()
+
+    def delete_memory(self, memory_id: str) -> None:
+        if not isinstance(memory_id, str) or not memory_id.strip():
+            raise ValueError("memory_id is required")
+        self._memory_method("delete_memory")(memory_id)
 
     def start_request(self, conversation_id: str) -> RequestContext:
         if not isinstance(conversation_id, str) or not conversation_id.strip():
