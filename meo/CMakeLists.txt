@@ -71,6 +71,11 @@ if(BUILD_TESTING)
     target_link_libraries(meo-ai-presentation-event-test PRIVATE Qt6::Network Qt6::Test)
     add_test(NAME meo-ai.presentation-event COMMAND meo-ai-presentation-event-test)
 
+    qt_add_executable(meo-ai-resource-client-test tests/resource-client-test.cpp ${MEO_AGENT_CLIENT_SOURCES})
+    target_include_directories(meo-ai-resource-client-test PRIVATE app)
+    target_link_libraries(meo-ai-resource-client-test PRIVATE Qt6::Network Qt6::Test)
+    add_test(NAME meo-ai.resources COMMAND meo-ai-resource-client-test)
+
     add_test(
         NAME meo-ai.default-transport
         COMMAND ${CMAKE_COMMAND} -E env
