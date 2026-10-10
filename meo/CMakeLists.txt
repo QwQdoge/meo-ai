@@ -23,12 +23,18 @@ set(MEO_AGENT_CLIENT_SOURCES
     app/agentclient.h
 )
 
+set(MEO_USAGE_SOURCES
+    app/usagebackend.cpp
+    app/usagebackend.h
+)
+
 set(MEO_APP_QML
     app/qml/Main.qml
     app/qml/AiLogo.qml
     app/qml/ResponseDetails.qml
     app/qml/ResponseContent.qml
     app/qml/DetailsPane.qml
+    app/qml/ActivityDashboard.qml
     app/qml/PresentationCard.qml
     app/qml/NavigationButton.qml
     app/qml/AiControlsPopup.qml
@@ -36,7 +42,7 @@ set(MEO_APP_QML
     app/qml/LongPastePanel.qml
 )
 
-qt_add_executable(meo-ai app/main.cpp ${MEO_AGENT_CLIENT_SOURCES})
+qt_add_executable(meo-ai app/main.cpp ${MEO_AGENT_CLIENT_SOURCES} ${MEO_USAGE_SOURCES})
 qt_add_resources(meo-ai "meo_app" PREFIX "/meo" FILES ${MEO_APP_QML})
 add_dependencies(meo-ai meoui_moduleplugin)
 target_link_libraries(meo-ai PRIVATE Qt6::Quick Qt6::QuickControls2 Qt6::Network)
