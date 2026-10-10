@@ -28,6 +28,24 @@ Popup {
     padding: 0
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
+    function memoryMatches(item) {
+        const wanted = searchField.text.trim().toLowerCase()
+        if (!wanted.length)
+            return true
+        return String(item.text || "").toLowerCase().indexOf(wanted) >= 0
+            || String(item.source || "").toLowerCase().indexOf(wanted) >= 0
+            || String(item.scope || "").toLowerCase().indexOf(wanted) >= 0
+    }
+
+    function matchingMemoryCount() {
+        let count = 0
+        for (let i = 0; i < root.memories.length; ++i) {
+            if (memoryMatches(root.memories[i]))
+                ++count
+        }
+        return count
+    }
+
     onOpened: refreshRequested(searchField.text)
 
     background: Rectangle {
@@ -143,7 +161,7 @@ Popup {
             }
 
             MeoButton {
-                text: qsTr("Search")
+                text: qsTr("Refresh")
                 type: "tonal"
                 size: "s"
                 enabled: !root.busy && root.memoryState.supported !== false
@@ -209,7 +227,7 @@ Popup {
                 spacing: 8 * root.uiScale
 
                 MeoText {
-                    visible: !root.busy && root.memoryState.supported !== false && root.memories.length === 0
+                    visible: !root.busy && root.memoryState.supported !== false && root.matchingMemoryCount() === 0
                     width: parent.width
                     text: searchField.text.trim().length
                         ? qsTr("No memories match this search.")
@@ -228,8 +246,10 @@ Popup {
 
                     delegate: Rectangle {
                         required property var modelData
+                        readonly property bool matchesSearch: root.memoryMatches(modelData)
                         width: parent.width
-                        implicitHeight: memoryColumn.implicitHeight + 22 * root.uiScale
+                        visible: matchesSearch
+                        implicitHeight: matchesSearch ? memoryColumn.implicitHeight + 22 * root.uiScale : 0
                         radius: 18 * root.uiScale
                         color: MeoTheme.surfaceContainerLow
 
