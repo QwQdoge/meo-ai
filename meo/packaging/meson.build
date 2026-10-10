@@ -19,6 +19,15 @@ configure_file(
 )
 
 configure_file(
+  input: 'meo-ai-usage.in',
+  output: 'meo-ai-usage',
+  configuration: meo_conf,
+  install: true,
+  install_dir: get_option('bindir'),
+  install_mode: 'r-xr--r--'
+)
+
+configure_file(
   input: 'meo-agentd.in',
   output: 'meo-agentd',
   configuration: meo_conf,
@@ -96,6 +105,13 @@ install_data(
   '../adapters/presentation_tools.py',
   '../adapters/system_tools.py',
   install_dir: join_paths(meo_moduledir, 'adapters')
+)
+
+install_data(
+  '../usage/__init__.py',
+  '../usage/collector.py',
+  '../usage/cli.py',
+  install_dir: join_paths(meo_moduledir, 'usage')
 )
 
 install_data(
