@@ -55,6 +55,20 @@ class ConversationRouteTests(unittest.IsolatedAsyncioTestCase):
             patch("meo.cloud.server.SupabaseAccountTokenVerifier", return_value=AccountVerifier()),
         ):
             async with TestClient(TestServer(build_application(config))) as client:
+                unauthenticated = await client.get("/v1/conversations")
+                self.assertEqual(unauthenticated.status, 401)
+                self.assertEqual(
+                    await unauthenticated.json(),
+                    {"error": {"code": "unauthorized", "message": "Sign in with Meo Account."}},
+                )
+
+                missing_route = await client.get("/v1/not-a-route")
+                self.assertEqual(missing_route.status, 404)
+                self.assertEqual(
+                    (await missing_route.json())["error"]["code"],
+                    "not_found",
+                )
+
                 headers = {"Authorization": "Bearer owner-token"}
                 listed = await client.get("/v1/conversations", headers=headers)
                 self.assertEqual(listed.status, 200)

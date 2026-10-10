@@ -239,6 +239,21 @@ def build_application(config: CloudServerConfig):
                 {"error": {"code": "invalid_request", "message": str(exc)}},
                 status=400,
             )
+        except web.HTTPNotFound:
+            response = web.json_response(
+                {"error": {"code": "not_found", "message": "The requested endpoint was not found."}},
+                status=404,
+            )
+        except web.HTTPMethodNotAllowed:
+            response = web.json_response(
+                {"error": {"code": "method_not_allowed", "message": "This request method is not allowed."}},
+                status=405,
+            )
+        except web.HTTPException as exc:
+            response = web.json_response(
+                {"error": {"code": "http_error", "message": "The request could not be completed."}},
+                status=exc.status,
+            )
         except Exception:
             response = web.json_response(
                 {"error": {"code": "internal_error", "message": "Meo AI could not complete this request."}},
