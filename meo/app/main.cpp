@@ -5,6 +5,7 @@
 #include <QTimer>
 #include <QQuickWindow>
 #include <QSize>
+#include <QVariantMap>
 #include <cstdio>
 
 namespace {
@@ -25,6 +26,51 @@ QSize requestedWindowSize(const QStringList &arguments)
     if (!widthOk || !heightOk || width < 1 || height < 1)
         return {};
     return QSize(width, height);
+}
+
+void seedUiDemo(AgentClient &client)
+{
+    client.message(QStringLiteral("user"),
+                   QStringLiteral("Check the current MeoArch project and show only what needs attention."));
+    client.message(QStringLiteral("assistant"),
+                   QStringLiteral("The project is in a good state. I found one build summary, one system metric, and the current workspace context."));
+
+    const auto present = [&client](const QString &id,
+                                   const QString &kind,
+                                   const QString &title,
+                                   const QString &subtitle,
+                                   const QString &value,
+                                   const QString &detail) {
+        QVariantMap card;
+        card.insert(QStringLiteral("card_id"), id);
+        card.insert(QStringLiteral("kind"), kind);
+        card.insert(QStringLiteral("title"), title);
+        card.insert(QStringLiteral("subtitle"), subtitle);
+        card.insert(QStringLiteral("value"), value);
+        card.insert(QStringLiteral("detail"), detail);
+        QVariantMap event;
+        event.insert(QStringLiteral("card"), card);
+        client.presentationEvent(event);
+    };
+
+    present(QStringLiteral("demo:build"),
+            QStringLiteral("status"),
+            QStringLiteral("Preview validation"),
+            QStringLiteral("Native + protocol"),
+            QStringLiteral("Passing"),
+            QStringLiteral("Latest checks completed without blocking errors."));
+    present(QStringLiteral("demo:memory"),
+            QStringLiteral("metric"),
+            QStringLiteral("Memory"),
+            QStringLiteral("Current session"),
+            QStringLiteral("7.4 / 32 GB"),
+            QStringLiteral("Normal for the current development workload."));
+    present(QStringLiteral("demo:workspace"),
+            QStringLiteral("system"),
+            QStringLiteral("Workspace"),
+            QStringLiteral("Meo AI"),
+            QStringLiteral("Ready"),
+            QStringLiteral("System actions still require Router policy and confirmation."));
 }
 }
 
@@ -58,6 +104,9 @@ int main(int argc, char **argv) {
     const QSize requestedSize = requestedWindowSize(app.arguments());
     if (window && requestedSize.isValid())
         window->resize(requestedSize);
+
+    if (app.arguments().contains("--ui-demo"))
+        seedUiDemo(client);
 
     const int screenshot = app.arguments().indexOf("--screenshot");
     if (screenshot >= 0 && screenshot + 1 < app.arguments().size()) {
