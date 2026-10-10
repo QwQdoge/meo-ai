@@ -30,6 +30,7 @@ jobs:
           test -x build/stage/usr/bin/meo-agent-service
           test -f build/stage/usr/share/newelle/meo/runtime/main.py
           test -f build/stage/usr/share/newelle/meo/runtime/http_transport.py
+          test -f build/stage/usr/share/newelle/meo/runtime/native_http_transport.py
           test -f build/stage/usr/share/newelle/meo/runtime/event_journal.py
           test -f build/stage/usr/share/newelle/meo/service/backend_adapter.py
           test -f build/stage/usr/share/newelle/meo/service/content_blocks.py
