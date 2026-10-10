@@ -107,7 +107,7 @@ class LegacyMemoryBridgeTests(unittest.TestCase):
         created = bridge.create_memory("Remember this", pinned=True)
         self.assertEqual(created.memory_id, "memory:created")
         self.assertTrue(created.pinned)
-        self.assertIn("source=user", created.source)
+        self.assertIn("newelle:user", created.source)
 
         updated = bridge.update_memory("memory:created", text="Remember updated", pinned=False)
         self.assertEqual(updated.text, "Remember updated")
