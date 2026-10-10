@@ -27,6 +27,10 @@ set(MEO_APP_QML
     app/qml/Main.qml
     app/qml/AiLogo.qml
     app/qml/ResponseDetails.qml
+    app/qml/ResponseContent.qml
+    app/qml/DetailsPane.qml
+    app/qml/PresentationCard.qml
+    app/qml/NavigationButton.qml
     app/qml/AiControlsPopup.qml
     app/qml/MemoryPanel.qml
     app/qml/LongPastePanel.qml
@@ -38,6 +42,14 @@ add_dependencies(meo-ai meoui_moduleplugin)
 target_link_libraries(meo-ai PRIVATE Qt6::Quick Qt6::QuickControls2 Qt6::Network)
 if(BUILD_TESTING)
     find_package(Qt6 REQUIRED COMPONENTS Test)
+    qt_add_executable(meo-ai-ui-layout-test tests/ui-layout-test.cpp ${MEO_AGENT_CLIENT_SOURCES})
+    target_include_directories(meo-ai-ui-layout-test PRIVATE app)
+    target_link_libraries(meo-ai-ui-layout-test PRIVATE Qt6::Quick Qt6::QuickControls2 Qt6::Network Qt6::Test)
+    add_dependencies(meo-ai-ui-layout-test meoui_moduleplugin)
+    qt_add_resources(meo-ai-ui-layout-test "meo_layout_app" PREFIX "/meo" FILES ${MEO_APP_QML})
+    target_compile_definitions(meo-ai-ui-layout-test PRIVATE MEOUI_IMPORT_PATH="${CMAKE_CURRENT_BINARY_DIR}/meoui")
+    add_test(NAME meo-ai.ui-layout COMMAND meo-ai-ui-layout-test)
+    set_tests_properties(meo-ai.ui-layout PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QSG_RHI_BACKEND=software")
     # Live use still requires an explicit endpoint. CTest only runs this client
     # against a local Python stub; it never uses a configured provider/profile.
     qt_add_executable(meo-ai-live-client tests/live-native-client.cpp ${MEO_AGENT_CLIENT_SOURCES})

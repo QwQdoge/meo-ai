@@ -33,7 +33,18 @@ void seedUiDemo(AgentClient &client)
     client.message(QStringLiteral("user"),
                    QStringLiteral("Check the current MeoArch project and show only what needs attention."));
     client.message(QStringLiteral("assistant"),
-                   QStringLiteral("The project is in a good state. I found one build summary, one system metric, and the current workspace context."));
+                   QStringLiteral("Here is a sample project review.\n\n### What needs attention\n\n1. **Router policy** — system actions require an explicit decision before execution.\n2. **Build warnings** — review nonblocking diagnostics after a successful build.\n3. **Documentation** — add usage examples where the interface has changed.\n\nThe cards below illustrate how structured results sit alongside a response."));
+    // Deterministic presentation fixtures, never a claim about this machine.
+    client.toolEvent(QVariantMap{{"type", "tool.completed"}, {"request_id", "preview"},
+                               {"tool_name", "Read project documents"},
+                               {"display_text", "Sample activity · no files were read"}});
+    client.responseMetaEvent(QVariantMap{
+        {"request_id", "preview"}, {"provider", "Offline preview"}, {"model", "Sample AI"},
+        {"usage", QVariantMap{{"input_tokens", 1245}, {"output_tokens", 2341}, {"total_tokens", 3586}}},
+        {"timing", QVariantMap{{"total_ms", 12400}, {"first_token_ms", 310}}},
+        {"activity", QVariantMap{{"tools", true}}},
+        {"citations", QVariantList{QVariantMap{{"title", "Meo AI repository · sample source"},
+                                               {"uri", "https://github.com/QwQdoge/meo-ai"}}}}});
 
     const auto present = [&client](const QString &id,
                                    const QString &kind,
@@ -97,6 +108,7 @@ int main(int argc, char **argv) {
     QQmlApplicationEngine engine;
     engine.addImportPath(QStringLiteral(MEOUI_IMPORT_PATH));
     engine.rootContext()->setContextProperty("agent", &client);
+    engine.rootContext()->setContextProperty("uiPreview", app.arguments().contains("--ui-demo"));
     engine.load(QUrl("qrc:/meo/app/qml/Main.qml"));
     if (engine.rootObjects().isEmpty()) return 1;
 
