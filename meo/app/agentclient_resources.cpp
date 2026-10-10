@@ -103,7 +103,7 @@ void AgentClient::sendWithPendingResources(const QString &text) {
     const QString value = text.trimmed();
     if (value.isEmpty() || busy() || actionBusy() || !m_options.isEmpty()) return;
     if (!m_serviceMode) {
-        send(value);
+        AgentClient::send(value);
         return;
     }
 
