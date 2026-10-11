@@ -104,7 +104,10 @@ class PairingClient:
             self.base_url + path,
             data=payload,
             method="POST",
-            headers={"Content-Type": "application/json"},
+            headers={
+                "Content-Type": "application/json",
+                "User-Agent": "MeoAI-Device/0.1",
+            },
         )
         try:
             with urlopen(request, timeout=15) as response:

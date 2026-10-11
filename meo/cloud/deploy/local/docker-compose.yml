@@ -18,6 +18,7 @@ services:
 
   cloudflared:
     image: cloudflare/cloudflared:latest
+    user: "${MEO_CLOUDFLARED_UID:-1000}:${MEO_CLOUDFLARED_GID:-1000}"
     restart: unless-stopped
     command: tunnel --no-autoupdate --config /etc/cloudflared/config.yml run
     depends_on:

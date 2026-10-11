@@ -7,6 +7,7 @@ This is the cheapest first deployment for Meo AI: the Cloud/Relay process runs o
 - The Meo AI Cloud container is non-root and read-only apart from `/tmp`.
 - Supabase service-role credentials live only in the local `.env` file and are never copied into the image.
 - Cloudflare tunnel credentials live only under `cloudflared/` and are ignored by Git.
+- The Docker build context excludes local environment files and tunnel configuration/credentials through the repository `.dockerignore`.
 - The Cloud service is not published with a Docker host port. Only the `cloudflared` container can reach it on the private Compose network.
 - Browser CORS is an exact allowlist; production should include only trusted Meo web origins.
 
@@ -41,6 +42,14 @@ MEO_ACCOUNT_URL=https://account.meoarch.org
 MEO_ALLOWED_WEB_ORIGINS=https://account.meoarch.org
 PORT=8080
 ```
+
+Set `MEO_CLOUDFLARED_UID` and `MEO_CLOUDFLARED_GID` to the output of
+`id -u` and `id -g`. The tunnel runs as that non-root user so it can read the
+mode-600 credentials without making them accessible to other users.
+
+Before starting Cloud, apply the ordered SQL files in `meo/cloud/migrations/`
+to the same Supabase project as Meo Account. This includes the service-role
+table/sequence grants; RLS policies alone do not grant Data API access.
 
 Never commit `.env`.
 
