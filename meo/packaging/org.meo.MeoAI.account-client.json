@@ -10,6 +10,7 @@
     "openid"
   ],
   "capabilities": [
-    "ai_usage_sync"
+    "ai_usage_sync",
+    "local_ai"
   ]
 }
