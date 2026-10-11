@@ -11,9 +11,14 @@ from meo.cloud.server import CloudServerConfig, build_application
 class ConversationStore:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str]] = []
+        self.page_rows = None
+        self.last_before = None
 
-    async def list_conversations(self, *, user_id: str, limit: int = 50):
+    async def list_conversations(self, *, user_id: str, limit: int = 50, before=None):
         self.calls.append(("list", user_id))
+        self.last_before = before
+        if self.page_rows is not None:
+            return self.page_rows[:limit]
         return ({"id": str(uuid4()), "title": "Owned", "user_id": user_id},)
 
     async def create_conversation(self, *, user_id: str, title: str):
@@ -41,6 +46,41 @@ class AccountVerifier:
 
 
 class ConversationRouteTests(unittest.IsolatedAsyncioTestCase):
+    async def test_history_cursor_is_bounded_and_owner_scoped(self) -> None:
+        from aiohttp.test_utils import TestClient, TestServer
+
+        store = ConversationStore()
+        store.page_rows = tuple({
+            "id": str(uuid4()),
+            "title": f"Conversation {index}",
+            "updated_at": "2026-10-11T08:00:00+00:00",
+        } for index in range(51))
+        config = CloudServerConfig(
+            supabase_url="https://example.supabase.co",
+            supabase_publishable_key="publishable",
+            supabase_service_role_key="service-role",
+        )
+        with (
+            patch("meo.cloud.server.SupabaseRestStore", return_value=store),
+            patch("meo.cloud.server.SupabaseAccountTokenVerifier", return_value=AccountVerifier()),
+        ):
+            async with TestClient(TestServer(build_application(config))) as client:
+                response = await client.get(
+                    "/v1/conversations", headers={"Authorization": "Bearer owner-token"},
+                )
+                page = await response.json()
+                self.assertEqual(len(page["conversations"]), 50)
+                self.assertIsInstance(page["next_cursor"], str)
+                self.assertEqual(store.calls[-1], ("list", "owner"))
+                await client.get(
+                    "/v1/conversations", params={"cursor": page["next_cursor"]},
+                    headers={"Authorization": "Bearer owner-token"},
+                )
+                self.assertEqual(
+                    store.last_before,
+                    ("2026-10-11T08:00:00+00:00", page["conversations"][-1]["id"]),
+                )
+
     async def test_history_uses_verified_identity_and_rejects_other_users(self) -> None:
         from aiohttp.test_utils import TestClient, TestServer
 
@@ -72,7 +112,14 @@ class ConversationRouteTests(unittest.IsolatedAsyncioTestCase):
                 headers = {"Authorization": "Bearer owner-token"}
                 listed = await client.get("/v1/conversations", headers=headers)
                 self.assertEqual(listed.status, 200)
+                self.assertEqual((await listed.json())["next_cursor"], None)
                 self.assertEqual(store.calls[-1], ("list", "owner"))
+
+                invalid_cursor = await client.get(
+                    "/v1/conversations?cursor=invalid", headers=headers,
+                )
+                self.assertEqual(invalid_cursor.status, 400)
+                self.assertEqual((await invalid_cursor.json())["error"]["code"], "invalid_cursor")
 
                 created = await client.post(
                     "/v1/conversations",

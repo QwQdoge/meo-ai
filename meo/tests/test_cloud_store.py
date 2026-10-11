@@ -49,6 +49,16 @@ class SupabaseRestStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(query["user_id"], ["eq.user-1"])
         self.assertEqual(conversations[0]["id"], "conversation-1")
 
+        await self.store.list_conversations(
+            user_id="user-1", limit=51,
+            before=("2026-10-11T08:00:00+00:00", "00000000-0000-0000-0000-000000000001"),
+        )
+        query = parse_qs(urlsplit(self.calls[-1][1]).query)
+        self.assertEqual(query["user_id"], ["eq.user-1"])
+        self.assertEqual(query["limit"], ["51"])
+        self.assertEqual(query["order"], ["updated_at.desc,id.desc"])
+        self.assertIn("updated_at.lt.2026-10-11T08:00:00+00:00", query["or"][0])
+
         conversation = await self.store.create_conversation(user_id="user-1", title="  Hello  ")
         self.assertEqual(self.calls[-1][2], {"user_id": "user-1", "title": "Hello"})
         self.assertEqual(conversation["id"], "conversation-1")

@@ -12,7 +12,7 @@ from urllib.request import Request, urlopen
 
 class CloudStore(Protocol):
     async def list_conversations(
-        self, *, user_id: str, limit: int = 50,
+        self, *, user_id: str, limit: int = 50, before: tuple[str, str] | None = None,
     ) -> tuple[dict, ...]: ...
 
     async def create_conversation(self, *, user_id: str, title: str) -> dict: ...
@@ -169,18 +169,23 @@ class SupabaseRestStore:
         self._request_json_override = request_json
 
     async def list_conversations(
-        self, *, user_id: str, limit: int = 50,
+        self, *, user_id: str, limit: int = 50, before: tuple[str, str] | None = None,
     ) -> tuple[dict, ...]:
-        if not 1 <= limit <= 100:
-            raise ValueError("conversation limit must be between 1 and 100")
-        query = urlencode(
-            {
+        if not 1 <= limit <= 101:
+            raise ValueError("conversation limit must be between 1 and 101")
+        filters = {
                 "select": "id,title,created_at,updated_at",
                 "user_id": f"eq.{user_id}",
                 "order": "updated_at.desc,id.desc",
                 "limit": str(limit),
-            }
-        )
+        }
+        if before is not None:
+            updated_at, conversation_id = before
+            filters["or"] = (
+                f"(updated_at.lt.{updated_at},"
+                f"and(updated_at.eq.{updated_at},id.lt.{conversation_id}))"
+            )
+        query = urlencode(filters)
         result = await self._request("GET", f"/rest/v1/ai_conversations?{query}", None)
         if not isinstance(result, list):
             raise RuntimeError("Supabase conversation response is invalid")

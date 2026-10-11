@@ -46,7 +46,7 @@ Keep these production values:
 
 ```text
 MEO_ACCOUNT_URL=https://account.meoarch.org
-MEO_ALLOWED_WEB_ORIGINS=https://account.meoarch.org
+MEO_ALLOWED_WEB_ORIGINS=https://account.meoarch.org,https://chat.meoarch.org
 PORT=8080
 ```
 

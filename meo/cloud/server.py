@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import json
 import os
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 from urllib.parse import urlencode, urlsplit
@@ -316,8 +319,32 @@ def build_application(config: CloudServerConfig):
             raise ApiError("invalid_limit", "Conversation limit is invalid.") from exc
         if not 1 <= limit <= 100:
             raise ApiError("invalid_limit", "Conversation limit must be between 1 and 100.")
-        rows = await store.list_conversations(user_id=account.user_id, limit=limit)
-        return web.json_response({"conversations": list(rows)})
+        cursor = request.query.get("cursor", "")
+        before = None
+        if cursor:
+            try:
+                if len(cursor) > 512:
+                    raise ValueError("cursor is too long")
+                decoded = json.loads(base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)))
+                if not isinstance(decoded, list) or len(decoded) != 2:
+                    raise ValueError("invalid cursor shape")
+                timestamp = datetime.fromisoformat(decoded[0])
+                if timestamp.tzinfo is None:
+                    raise ValueError("cursor timestamp needs a time zone")
+                before = (timestamp.isoformat(), str(UUID(decoded[1])))
+            except (ValueError, TypeError, KeyError, UnicodeError, binascii.Error) as exc:
+                raise ApiError("invalid_cursor", "Conversation cursor is invalid.") from exc
+        rows = await store.list_conversations(
+            user_id=account.user_id, limit=limit + 1, before=before,
+        )
+        page = list(rows[:limit])
+        next_cursor = None
+        if len(rows) > limit and page:
+            last = page[-1]
+            next_cursor = base64.urlsafe_b64encode(
+                json.dumps([last["updated_at"], last["id"]], separators=(",", ":")).encode()
+            ).decode().rstrip("=")
+        return web.json_response({"conversations": page, "next_cursor": next_cursor})
 
     async def create_conversation(request):
         account = await identity(request)
