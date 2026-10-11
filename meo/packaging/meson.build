@@ -1,5 +1,7 @@
 python = import('python')
+add_languages('c')
 meo_python = python.find_installation('python3')
+meo_python_embed = meo_python.dependency(embed: true)
 meo_pkgdatadir = join_paths(get_option('prefix'), get_option('datadir'), meson.project_name())
 meo_moduledir = join_paths(meo_pkgdatadir, 'meo')
 meo_bindir = join_paths(get_option('prefix'), get_option('bindir'))
@@ -14,13 +16,13 @@ install_data(
   install_dir: join_paths(get_option('datadir'), 'meo-account', 'clients')
 )
 
-configure_file(
-  input: 'meo-agent-service.in',
-  output: 'meo-agent-service',
-  configuration: meo_conf,
+executable(
+  'meo-agent-service',
+  'meo-agent-service.c',
+  dependencies: meo_python_embed,
+  c_args: ['-DMEO_PKGDATADIR="' + meo_pkgdatadir + '"'],
   install: true,
-  install_dir: get_option('bindir'),
-  install_mode: 'r-xr--r--'
+  install_dir: get_option('bindir')
 )
 
 configure_file(
@@ -97,10 +99,13 @@ install_data(
 install_data(
   '../system/system_tool.py',
   '../system/dbus_router.py',
+  '../system/account_ai.py',
+  '../system/account_ai_interaction.py',
   install_dir: join_paths(meo_moduledir, 'system')
 )
 
 install_data(
+  '../adapters/account_llm.py',
   '../adapters/control_backend.py',
   '../adapters/headless_newelle.py',
   '../adapters/legacy_chat.py',
