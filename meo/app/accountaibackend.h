@@ -37,6 +37,7 @@ public:
 
 signals:
     void changed();
+    void modelActivationRequested(const QString &connectionId, const QString &modelId);
 
 private slots:
     void handleAccountChanged();
