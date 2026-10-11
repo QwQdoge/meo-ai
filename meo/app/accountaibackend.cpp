@@ -21,6 +21,21 @@ QVariantMap mapValue(const QVariant &value)
     return value.toMap();
 }
 
+QVariantMap normalizedConnection(const QVariant &value)
+{
+    QVariantMap connection = mapValue(value);
+    if (connection.isEmpty())
+        return {};
+
+    // Account intentionally owns the nested permission object. Project the one
+    // display-safe bit the QML surface needs instead of teaching views about
+    // the broker's storage schema (and never copy a credential into this map).
+    const QVariantMap automatic = mapValue(connection.value(QStringLiteral("automaticInference")));
+    connection.insert(QStringLiteral("automaticInferenceEnabled"),
+                      automatic.value(QStringLiteral("enabled")).toBool());
+    return connection;
+}
+
 QString displayName(const QVariantMap &connection)
 {
     const QString name = connection.value(QStringLiteral("displayName")).toString().trimmed();
@@ -78,7 +93,7 @@ void AccountAiBackend::setBusy(bool busy)
 QVariantMap AccountAiBackend::connectionById(const QString &connectionId) const
 {
     for (const QVariant &value : m_connections) {
-        const QVariantMap connection = mapValue(value);
+        const QVariantMap connection = normalizedConnection(value);
         if (connection.value(QStringLiteral("id")).toString() == connectionId)
             return connection;
     }
@@ -135,7 +150,7 @@ void AccountAiBackend::refresh()
 
     m_connections.clear();
     for (const QVariant &value : connectionsReply.value()) {
-        const QVariantMap connection = mapValue(value);
+        const QVariantMap connection = normalizedConnection(value);
         if (!connection.isEmpty())
             m_connections.append(connection);
     }
@@ -148,7 +163,7 @@ void AccountAiBackend::refresh()
     }
 
     if (m_selectedConnectionId.isEmpty() && m_connections.size() == 1) {
-        const QVariantMap only = mapValue(m_connections.first());
+        const QVariantMap only = normalizedConnection(m_connections.first());
         m_selectedConnectionId = only.value(QStringLiteral("id")).toString();
         m_selectedModelId = only.value(QStringLiteral("defaultModel")).toString();
         savePreferences();
