@@ -20,12 +20,18 @@ set(BUILD_TESTING ${BUILD_TESTING_SAVED})
 set(MEO_AGENT_CLIENT_SOURCES
     app/agentclient.cpp
     app/agentclient_resources.cpp
+    app/agentclient_settings.cpp
     app/agentclient.h
 )
 
 set(MEO_USAGE_SOURCES
     app/usagebackend.cpp
     app/usagebackend.h
+)
+
+set(MEO_ACCOUNT_AI_SOURCES
+    app/accountaibackend.cpp
+    app/accountaibackend.h
 )
 
 set(MEO_APP_QML
@@ -38,11 +44,12 @@ set(MEO_APP_QML
     app/qml/PresentationCard.qml
     app/qml/NavigationButton.qml
     app/qml/AiControlsPopup.qml
+    app/qml/SettingsCenter.qml
     app/qml/MemoryPanel.qml
     app/qml/LongPastePanel.qml
 )
 
-qt_add_executable(meo-ai app/main.cpp ${MEO_AGENT_CLIENT_SOURCES} ${MEO_USAGE_SOURCES})
+qt_add_executable(meo-ai app/main.cpp ${MEO_AGENT_CLIENT_SOURCES} ${MEO_USAGE_SOURCES} ${MEO_ACCOUNT_AI_SOURCES})
 qt_add_resources(meo-ai "meo_app" PREFIX "/meo" FILES ${MEO_APP_QML})
 add_dependencies(meo-ai meoui_moduleplugin)
 target_link_libraries(meo-ai PRIVATE Qt6::DBus Qt6::Quick Qt6::QuickControls2 Qt6::Network)
