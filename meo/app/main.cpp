@@ -150,6 +150,15 @@ int main(int argc, char **argv) {
 
     UsageBackend usageBackend;
     AccountAiBackend accountAiBackend;
+    QObject::connect(
+        &accountAiBackend, &AccountAiBackend::modelActivationRequested,
+        &client, [&client](const QString &connectionId, const QString &modelId) {
+            if (connectionId.isEmpty() || modelId.isEmpty())
+                return;
+            client.setConversationModel(
+                QStringLiteral("meo_account:%1:%2").arg(connectionId, modelId));
+        });
+
     QQmlApplicationEngine engine;
     engine.addImportPath(QStringLiteral(MEOUI_IMPORT_PATH));
     engine.rootContext()->setContextProperty("agent", &client);
