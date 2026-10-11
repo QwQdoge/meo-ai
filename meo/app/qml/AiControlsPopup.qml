@@ -11,6 +11,15 @@ Popup {
     property real uiScale: MeoTheme.globalScale
     signal changeRequested(string controlId, var value)
 
+    readonly property var selectedModel: {
+        const values = agent.models || []
+        for (let i = 0; i < values.length; ++i) {
+            if (values[i].selected === true) return values[i]
+        }
+        return values.length > 0 ? values[0] : ({})
+    }
+    readonly property string modelScope: String(selectedModel.selection_scope || "profile")
+
     modal: true
     focus: true
     width: Math.min(620 * uiScale, parent ? parent.width - 28 * uiScale : 620 * uiScale)
@@ -33,35 +42,24 @@ Popup {
         RowLayout {
             Layout.fillWidth: true
             spacing: 8 * root.uiScale
-
             ColumnLayout {
                 Layout.fillWidth: true
                 spacing: 2 * root.uiScale
-
                 MeoText {
                     Layout.fillWidth: true
                     text: qsTr("AI controls")
-                    typeRole: "title"
-                    typeSize: "medium"
+                    typeRole: "title"; typeSize: "medium"
                     color: MeoTheme.contentOnSurface
                 }
-
                 MeoText {
                     Layout.fillWidth: true
-                    text: qsTr("Runtime settings, the current conversation model, memory, and structured AI input.")
-                    typeRole: "body"
-                    typeSize: "small"
+                    text: qsTr("Live runtime settings, model selection, memory and conversation input.")
+                    typeRole: "body"; typeSize: "small"
                     color: MeoTheme.contentOnSurfaceVariant
                     wrapMode: Text.Wrap
                 }
             }
-
-            MeoButton {
-                text: qsTr("Close")
-                type: "text"
-                size: "xs"
-                onClicked: root.close()
-            }
+            MeoButton { text: qsTr("Close"); type: "text"; size: "xs"; onClicked: root.close() }
         }
 
         Rectangle {
@@ -81,68 +79,44 @@ Popup {
                 spacing: 8 * root.uiScale
 
                 Rectangle {
-                    id: conversationModelCard
                     width: parent.width
                     visible: agent.serviceMode && agent.models.length > 0
-                    implicitHeight: visible ? conversationModelColumn.implicitHeight + 24 * root.uiScale : 0
+                    implicitHeight: visible ? activeModelColumn.implicitHeight + 24 * root.uiScale : 0
                     radius: 18 * root.uiScale
                     color: MeoTheme.surfaceContainer
-
                     ColumnLayout {
-                        id: conversationModelColumn
-                        anchors.left: parent.left
-                        anchors.right: parent.right
-                        anchors.top: parent.top
+                        id: activeModelColumn
+                        anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
                         anchors.margins: 12 * root.uiScale
                         spacing: 8 * root.uiScale
-
                         RowLayout {
                             Layout.fillWidth: true
                             spacing: 10 * root.uiScale
-
-                            MeoIcon {
-                                icon: "chat"
-                                size: 26
-                                color: MeoTheme.primary
-                            }
-
+                            MeoIcon { icon: "deployed_code"; size: 26; color: MeoTheme.primary }
                             ColumnLayout {
                                 Layout.fillWidth: true
                                 spacing: 2 * root.uiScale
-
                                 MeoText {
                                     Layout.fillWidth: true
-                                    text: qsTr("Current conversation model")
-                                    typeRole: "label"
-                                    typeSize: "medium"
-                                    color: MeoTheme.contentOnSurface
+                                    text: root.modelScope === "conversation" ? qsTr("Current conversation model") : qsTr("Active profile model")
+                                    typeRole: "label"; typeSize: "medium"; color: MeoTheme.contentOnSurface
                                 }
-
                                 MeoText {
                                     Layout.fillWidth: true
-                                    text: qsTr("This changes the model AgentService uses for this conversation immediately. It is separate from staged per-job model routing.")
-                                    typeRole: "body"
-                                    typeSize: "small"
-                                    color: MeoTheme.contentOnSurfaceVariant
-                                    wrapMode: Text.Wrap
+                                    text: root.modelScope === "conversation"
+                                        ? qsTr("Changes only this conversation.")
+                                        : qsTr("The current compatibility backend stores model choice in the active profile, so this can affect other conversations using that profile.")
+                                    typeRole: "body"; typeSize: "small"; color: MeoTheme.contentOnSurfaceVariant; wrapMode: Text.Wrap
                                 }
                             }
                         }
-
                         MeoExposedDropdown {
                             Layout.fillWidth: true
-                            label: qsTr("Conversation model")
+                            label: root.modelScope === "conversation" ? qsTr("Conversation model") : qsTr("Profile model")
                             model: agent.models
                             textRole: "label"
                             valueRole: "model_id"
-                            currentIndex: {
-                                const values = agent.models || []
-                                for (let i = 0; i < values.length; ++i) {
-                                    if (values[i].selected === true)
-                                        return i
-                                }
-                                return values.length > 0 ? 0 : -1
-                            }
+                            currentValue: String(root.selectedModel.model_id || "")
                             type: "outlined"
                             enabled: !agent.busy && !agent.actionBusy
                             onSelected: function(index, value) {
@@ -159,108 +133,55 @@ Popup {
                     implicitHeight: visible ? resourceColumn.implicitHeight + 24 * root.uiScale : 0
                     radius: 18 * root.uiScale
                     color: MeoTheme.surfaceContainer
-
                     ColumnLayout {
                         id: resourceColumn
-                        anchors.left: parent.left
-                        anchors.right: parent.right
-                        anchors.top: parent.top
+                        anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
                         anchors.margins: 12 * root.uiScale
                         spacing: 8 * root.uiScale
-
                         RowLayout {
                             Layout.fillWidth: true
                             spacing: 10 * root.uiScale
-
                             ColumnLayout {
                                 Layout.fillWidth: true
                                 spacing: 2 * root.uiScale
-
-                                MeoText {
-                                    Layout.fillWidth: true
-                                    text: qsTr("Conversation input")
-                                    typeRole: "label"
-                                    typeSize: "medium"
-                                    color: MeoTheme.contentOnSurface
-                                }
-
+                                MeoText { text: qsTr("Conversation input"); typeRole: "label"; typeSize: "medium"; color: MeoTheme.contentOnSurface }
                                 MeoText {
                                     Layout.fillWidth: true
                                     text: agent.pendingResources.length > 0
                                         ? qsTr("%1 attachment(s) will be sent with the next message.").arg(agent.pendingResources.length)
-                                        : qsTr("Attach long text as structured conversation data.")
-                                    typeRole: "body"
-                                    typeSize: "small"
-                                    color: MeoTheme.contentOnSurfaceVariant
-                                    wrapMode: Text.Wrap
+                                        : qsTr("Attach long text as structured request context.")
+                                    typeRole: "body"; typeSize: "small"; color: MeoTheme.contentOnSurfaceVariant; wrapMode: Text.Wrap
                                 }
                             }
-
                             MeoButton {
-                                text: qsTr("Long paste")
-                                type: "tonal"
-                                size: "xs"
+                                text: qsTr("Long paste"); type: "tonal"; size: "xs"
                                 enabled: !agent.busy && !agent.actionBusy
                                 onClicked: longPastePanel.open()
                             }
                         }
-
                         Repeater {
                             model: agent.pendingResources
-
                             delegate: Rectangle {
                                 required property var modelData
                                 Layout.fillWidth: true
                                 implicitHeight: 42 * root.uiScale
                                 radius: 13 * root.uiScale
                                 color: MeoTheme.surfaceContainerLow
-
                                 RowLayout {
-                                    anchors.fill: parent
-                                    anchors.leftMargin: 10 * root.uiScale
-                                    anchors.rightMargin: 8 * root.uiScale
+                                    anchors.fill: parent; anchors.leftMargin: 10 * root.uiScale; anchors.rightMargin: 8 * root.uiScale
                                     spacing: 8 * root.uiScale
-
                                     ColumnLayout {
-                                        Layout.fillWidth: true
-                                        spacing: 0
-
-                                        MeoText {
-                                            Layout.fillWidth: true
-                                            text: String(modelData.name || qsTr("Attachment"))
-                                            typeRole: "label"
-                                            typeSize: "small"
-                                            color: MeoTheme.contentOnSurface
-                                            elide: Text.ElideRight
-                                        }
-
-                                        MeoText {
-                                            Layout.fillWidth: true
-                                            text: qsTr("%1 bytes · %2").arg(Number(modelData.size_bytes || 0)).arg(String(modelData.kind || "resource"))
-                                            typeRole: "label"
-                                            typeSize: "small"
-                                            color: MeoTheme.contentOnSurfaceVariant
-                                            opacity: 0.68
-                                            elide: Text.ElideRight
-                                        }
+                                        Layout.fillWidth: true; spacing: 0
+                                        MeoText { Layout.fillWidth: true; text: String(modelData.name || qsTr("Attachment")); typeRole: "label"; typeSize: "small"; color: MeoTheme.contentOnSurface; elide: Text.ElideRight }
+                                        MeoText { Layout.fillWidth: true; text: qsTr("%1 bytes · %2").arg(Number(modelData.size_bytes || 0)).arg(String(modelData.kind || "resource")); typeRole: "label"; typeSize: "small"; color: MeoTheme.contentOnSurfaceVariant; opacity: 0.68; elide: Text.ElideRight }
                                     }
-
-                                    MeoButton {
-                                        text: qsTr("Remove")
-                                        type: "text"
-                                        size: "xs"
-                                        enabled: !agent.busy && !agent.actionBusy
-                                        onClicked: agent.discardPendingResource(String(modelData.resource_id || ""))
-                                    }
+                                    MeoButton { text: qsTr("Remove"); type: "text"; size: "xs"; enabled: !agent.busy && !agent.actionBusy; onClicked: agent.discardPendingResource(String(modelData.resource_id || "")) }
                                 }
                             }
                         }
-
                         MeoButton {
                             visible: agent.pendingResources.length > 1
-                            text: qsTr("Clear pending attachments")
-                            type: "text"
-                            size: "xs"
+                            text: qsTr("Clear pending attachments"); type: "text"; size: "xs"
                             enabled: !agent.busy && !agent.actionBusy
                             onClicked: agent.clearPendingResources()
                         }
@@ -273,52 +194,26 @@ Popup {
                     implicitHeight: visible ? memoryEntryRow.implicitHeight + 24 * root.uiScale : 0
                     radius: 18 * root.uiScale
                     color: MeoTheme.surfaceContainer
-
                     RowLayout {
                         id: memoryEntryRow
-                        anchors.left: parent.left
-                        anchors.right: parent.right
-                        anchors.top: parent.top
+                        anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
                         anchors.margins: 12 * root.uiScale
                         spacing: 10 * root.uiScale
-
                         ColumnLayout {
-                            Layout.fillWidth: true
-                            spacing: 2 * root.uiScale
-
+                            Layout.fillWidth: true; spacing: 2 * root.uiScale
+                            MeoText { text: qsTr("Managed memory"); typeRole: "label"; typeSize: "medium"; color: MeoTheme.contentOnSurface }
                             MeoText {
                                 Layout.fillWidth: true
-                                text: qsTr("Managed memory")
-                                typeRole: "label"
-                                typeSize: "medium"
-                                color: MeoTheme.contentOnSurface
-                            }
-
-                            MeoText {
-                                Layout.fillWidth: true
-                                text: qsTr("%1 saved · %2")
-                                    .arg(agent.memories.length)
-                                    .arg(agent.memoryState.enabled === true ? qsTr("automatic recall on") : qsTr("automatic recall off"))
-                                typeRole: "body"
-                                typeSize: "small"
-                                color: MeoTheme.contentOnSurfaceVariant
-                                wrapMode: Text.Wrap
+                                text: qsTr("%1 saved · %2").arg(agent.memories.length).arg(agent.memoryState.enabled === true ? qsTr("automatic recall on") : qsTr("automatic recall off"))
+                                typeRole: "body"; typeSize: "small"; color: MeoTheme.contentOnSurfaceVariant; wrapMode: Text.Wrap
                             }
                         }
-
-                        MeoButton {
-                            text: qsTr("Manage")
-                            type: "tonal"
-                            size: "xs"
-                            enabled: !agent.actionBusy && !agent.metadataBusy
-                            onClicked: memoryPanel.open()
-                        }
+                        MeoButton { text: qsTr("Manage"); type: "tonal"; size: "xs"; enabled: !agent.actionBusy && !agent.metadataBusy; onClicked: memoryPanel.open() }
                     }
                 }
 
                 Repeater {
                     model: root.controls
-
                     delegate: Rectangle {
                         id: controlRow
                         required property var modelData
@@ -326,64 +221,35 @@ Popup {
                         implicitHeight: controlColumn.implicitHeight + 24 * root.uiScale
                         radius: 18 * root.uiScale
                         color: MeoTheme.surfaceContainerLow
-
                         ColumnLayout {
                             id: controlColumn
-                            anchors.left: parent.left
-                            anchors.right: parent.right
-                            anchors.top: parent.top
+                            anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
                             anchors.margins: 12 * root.uiScale
                             spacing: 7 * root.uiScale
-
                             RowLayout {
-                                Layout.fillWidth: true
-                                spacing: 10 * root.uiScale
-
+                                Layout.fillWidth: true; spacing: 10 * root.uiScale
                                 ColumnLayout {
-                                    Layout.fillWidth: true
-                                    spacing: 2 * root.uiScale
-
-                                    MeoText {
-                                        Layout.fillWidth: true
-                                        text: String(controlRow.modelData.label || controlRow.modelData.control_id || "")
-                                        typeRole: "label"
-                                        typeSize: "medium"
-                                        color: MeoTheme.contentOnSurface
-                                        elide: Text.ElideRight
-                                    }
-
-                                    MeoText {
-                                        visible: String(controlRow.modelData.description || "").length > 0
-                                        Layout.fillWidth: true
-                                        text: String(controlRow.modelData.description || "")
-                                        typeRole: "body"
-                                        typeSize: "small"
-                                        color: MeoTheme.contentOnSurfaceVariant
-                                        wrapMode: Text.Wrap
-                                    }
+                                    Layout.fillWidth: true; spacing: 2 * root.uiScale
+                                    MeoText { Layout.fillWidth: true; text: String(controlRow.modelData.label || controlRow.modelData.control_id || ""); typeRole: "label"; typeSize: "medium"; color: MeoTheme.contentOnSurface; elide: Text.ElideRight }
+                                    MeoText { visible: String(controlRow.modelData.description || "").length > 0; Layout.fillWidth: true; text: String(controlRow.modelData.description || ""); typeRole: "body"; typeSize: "small"; color: MeoTheme.contentOnSurfaceVariant; wrapMode: Text.Wrap }
                                 }
-
                                 Switch {
                                     visible: controlRow.modelData.kind === "toggle"
-                                    enabled: controlRow.modelData.writable !== false
+                                    enabled: controlRow.modelData.writable !== false && !agent.actionBusy
                                     checked: controlRow.modelData.value === true
                                     onToggled: root.changeRequested(String(controlRow.modelData.control_id || ""), checked)
                                 }
                             }
-
                             ComboBox {
                                 visible: controlRow.modelData.kind === "select"
                                 Layout.fillWidth: true
-                                enabled: controlRow.modelData.writable !== false
+                                enabled: controlRow.modelData.writable !== false && !agent.actionBusy
                                 model: controlRow.modelData.options || []
-                                textRole: "label"
-                                valueRole: "value"
+                                textRole: "label"; valueRole: "value"
                                 currentIndex: {
                                     const options = controlRow.modelData.options || []
-                                    for (let i = 0; i < options.length; ++i) {
-                                        if (String(options[i].value) === String(controlRow.modelData.value))
-                                            return i
-                                    }
+                                    for (let i = 0; i < options.length; ++i)
+                                        if (String(options[i].value) === String(controlRow.modelData.value)) return i
                                     return -1
                                 }
                                 onActivated: {
@@ -392,10 +258,9 @@ Popup {
                                         root.changeRequested(String(controlRow.modelData.control_id || ""), options[currentIndex].value)
                                 }
                             }
-
                             SpinBox {
                                 visible: controlRow.modelData.kind === "integer"
-                                enabled: controlRow.modelData.writable !== false
+                                enabled: controlRow.modelData.writable !== false && !agent.actionBusy
                                 from: controlRow.modelData.minimum !== undefined ? Number(controlRow.modelData.minimum) : 0
                                 to: controlRow.modelData.maximum !== undefined ? Number(controlRow.modelData.maximum) : 1000000
                                 stepSize: controlRow.modelData.step !== undefined ? Number(controlRow.modelData.step) : 1
@@ -403,36 +268,17 @@ Popup {
                                 editable: true
                                 onValueModified: root.changeRequested(String(controlRow.modelData.control_id || ""), value)
                             }
-
                             MeoText {
                                 visible: controlRow.modelData.kind === "readonly"
                                 Layout.fillWidth: true
                                 text: String(controlRow.modelData.value === undefined ? "" : controlRow.modelData.value)
-                                typeRole: "body"
-                                typeSize: "small"
-                                color: MeoTheme.contentOnSurfaceVariant
-                                wrapMode: Text.Wrap
+                                typeRole: "body"; typeSize: "small"; color: MeoTheme.contentOnSurfaceVariant; wrapMode: Text.Wrap
                             }
-
                             MeoText {
                                 visible: String(controlRow.modelData.safety_note || "").length > 0
                                 Layout.fillWidth: true
                                 text: String(controlRow.modelData.safety_note || "")
-                                typeRole: "label"
-                                typeSize: "small"
-                                color: MeoTheme.contentOnSurfaceVariant
-                                opacity: 0.76
-                                wrapMode: Text.Wrap
-                            }
-
-                            MeoText {
-                                visible: controlRow.modelData.restart_required === true
-                                Layout.fillWidth: true
-                                text: qsTr("Takes effect after the runtime restarts.")
-                                typeRole: "label"
-                                typeSize: "small"
-                                color: MeoTheme.contentOnSurfaceVariant
-                                opacity: 0.72
+                                typeRole: "label"; typeSize: "small"; color: MeoTheme.contentOnSurfaceVariant; opacity: 0.76; wrapMode: Text.Wrap
                             }
                         }
                     }
@@ -442,11 +288,8 @@ Popup {
                     visible: root.controls.length === 0 && !agent.serviceMode
                     width: parent.width
                     text: qsTr("The active backend does not currently expose adjustable AI controls.")
-                    typeRole: "body"
-                    typeSize: "medium"
-                    color: MeoTheme.contentOnSurfaceVariant
-                    horizontalAlignment: Text.AlignHCenter
-                    wrapMode: Text.Wrap
+                    typeRole: "body"; typeSize: "medium"; color: MeoTheme.contentOnSurfaceVariant
+                    horizontalAlignment: Text.AlignHCenter; wrapMode: Text.Wrap
                     topPadding: 32 * root.uiScale
                 }
             }
@@ -461,21 +304,11 @@ Popup {
         busy: agent.actionBusy || agent.metadataBusy
         x: parent ? Math.round((parent.width - width) / 2) : 0
         y: parent ? Math.round((parent.height - height) / 2) : 0
-        onRefreshRequested: function(query) {
-            agent.refreshMemory(query)
-        }
-        onEnabledChangeRequested: function(enabled) {
-            agent.setMemoryEnabled(enabled)
-        }
-        onCreateRequested: function(text, pinned) {
-            agent.createMemory(text, pinned)
-        }
-        onUpdateRequested: function(memoryId, text, pinned) {
-            agent.updateMemory(memoryId, text, pinned)
-        }
-        onDeleteRequested: function(memoryId) {
-            agent.deleteMemory(memoryId)
-        }
+        onRefreshRequested: function(query) { agent.refreshMemory(query) }
+        onEnabledChangeRequested: function(enabled) { agent.setMemoryEnabled(enabled) }
+        onCreateRequested: function(text, pinned) { agent.createMemory(text, pinned) }
+        onUpdateRequested: function(memoryId, text, pinned) { agent.updateMemory(memoryId, text, pinned) }
+        onDeleteRequested: function(memoryId) { agent.deleteMemory(memoryId) }
     }
 
     LongPastePanel {
@@ -483,8 +316,6 @@ Popup {
         parent: Overlay.overlay
         x: parent ? Math.round((parent.width - width) / 2) : 0
         y: parent ? Math.round((parent.height - height) / 2) : 0
-        onAttachRequested: function(name, text) {
-            agent.addLongTextResource(name, text)
-        }
+        onAttachRequested: function(name, text) { agent.addLongTextResource(name, text) }
     }
 }
