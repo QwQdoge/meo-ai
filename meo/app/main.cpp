@@ -1,3 +1,4 @@
+#include "accountaibackend.h"
 #include "nativeagentclient.h"
 #include "usagebackend.h"
 #include <QCoreApplication>
@@ -148,10 +149,12 @@ int main(int argc, char **argv) {
     }
 
     UsageBackend usageBackend;
+    AccountAiBackend accountAiBackend;
     QQmlApplicationEngine engine;
     engine.addImportPath(QStringLiteral(MEOUI_IMPORT_PATH));
     engine.rootContext()->setContextProperty("agent", &client);
     engine.rootContext()->setContextProperty("usage", &usageBackend);
+    engine.rootContext()->setContextProperty("accountAI", &accountAiBackend);
     engine.rootContext()->setContextProperty("uiPreview", app.arguments().contains("--ui-demo"));
     engine.load(QUrl("qrc:/meo/app/qml/Main.qml"));
     if (engine.rootObjects().isEmpty()) return 1;
