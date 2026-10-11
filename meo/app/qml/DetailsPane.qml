@@ -26,6 +26,12 @@ Rectangle {
     radius: 26 * uiScale
     color: MeoTheme.surfaceContainerLow
 
+    onTabChanged: {
+        // Main's long-standing sidebar contract opens tab 3 for AI settings.
+        // Keep that contract stable and make tab 3 the real settings surface.
+        if (tab === 3) settingsCenter.openPage(0)
+    }
+
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 12 * root.uiScale
@@ -35,7 +41,7 @@ Rectangle {
             Layout.leftMargin: 8 * root.uiScale
             MeoText {
                 Layout.fillWidth: true
-                text: [qsTr("Response details"), qsTr("Memory"), qsTr("Resources"), qsTr("AI activity"), qsTr("AI settings")][root.tab]
+                text: [qsTr("Response details"), qsTr("Memory"), qsTr("Resources"), qsTr("AI settings"), qsTr("AI activity")][root.tab]
                 typeRole: "title"
                 typeSize: "small"
                 color: MeoTheme.contentOnSurface
@@ -54,7 +60,7 @@ Rectangle {
             Layout.fillWidth: true
             spacing: 4 * root.uiScale
             Repeater {
-                model: [qsTr("Response"), qsTr("Memory"), qsTr("Files"), qsTr("Activity"), qsTr("Settings")]
+                model: [qsTr("Response"), qsTr("Memory"), qsTr("Files"), qsTr("Settings"), qsTr("Activity")]
                 delegate: MeoButton {
                     required property string modelData
                     required property int index
@@ -101,13 +107,13 @@ Rectangle {
         ActivityDashboard {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            visible: root.tab === 3
+            visible: root.tab === 4
         }
 
         ScrollView {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            visible: root.tab === 1 || root.tab === 2 || root.tab === 4
+            visible: root.tab === 1 || root.tab === 2 || root.tab === 3
             clip: true
             ColumnLayout {
                 width: parent.width
@@ -140,25 +146,32 @@ Rectangle {
                                       ? qsTr("Review, edit or remove what Meo AI remembers.")
                                       : qsTr("Managed memory is unavailable for the current service."))
                                   : root.tab === 2 ? qsTr("Add long text to this conversation. Only the items you attach are sent with your next message.")
-                                  : qsTr("Choose models by job and adjust the controls offered by your current service.")
+                                  : qsTr("Open the complete settings center for providers, model routing, agent controls, skills, MCP, memory, Account sync and diagnostics.")
                             wrapMode: Text.Wrap
                             color: MeoTheme.contentOnSurfaceVariant
                         }
                         MeoButton {
                             Layout.fillWidth: true
-                            text: root.tab === 1 ? qsTr("Manage memory") : root.tab === 2 ? qsTr("Attach text") : qsTr("Models by job")
+                            text: root.tab === 1 ? qsTr("Manage memory") : root.tab === 2 ? qsTr("Attach text") : qsTr("Open AI settings")
                             type: "tonal"; size: "s"
                             enabled: !root.busy && (root.tab !== 1 || !!root.memoryState.supported)
                             onClicked: {
                                 if (root.tab === 1) root.manageMemoryRequested()
                                 else if (root.tab === 2) root.attachRequested()
-                                else root.modelsRequested()
+                                else settingsCenter.openPage(0)
                             }
                         }
                         MeoButton {
-                            visible: root.tab === 4
+                            visible: root.tab === 3
                             Layout.fillWidth: true
-                            text: qsTr("AI controls"); type: "outlined"; size: "s"
+                            text: qsTr("Models by job"); type: "outlined"; size: "s"
+                            enabled: !root.busy
+                            onClicked: root.modelsRequested()
+                        }
+                        MeoButton {
+                            visible: root.tab === 3
+                            Layout.fillWidth: true
+                            text: qsTr("Quick AI controls"); type: "outlined"; size: "s"
                             enabled: !root.busy
                             onClicked: root.controlsRequested()
                         }
@@ -211,12 +224,20 @@ Rectangle {
             }
             MeoText {
                 Layout.fillWidth: true
-                text: root.tab === 3 ? (usage.status || qsTr("AI activity ready"))
+                text: root.tab === 4 ? (typeof usage !== "undefined" && usage.status ? usage.status : qsTr("AI activity ready"))
                                      : (root.ready ? qsTr("Local service connected") : qsTr("Local service not connected"))
                 typeRole: "label"; typeSize: "small"
                 color: MeoTheme.contentOnSurfaceVariant
                 elide: Text.ElideRight
             }
         }
+    }
+
+    SettingsCenter {
+        id: settingsCenter
+        parent: Overlay.overlay
+        accountBackend: typeof accountAI !== "undefined" ? accountAI : null
+        onManageMemoryRequested: root.manageMemoryRequested()
+        onOpenQuickControlsRequested: root.controlsRequested()
     }
 }
