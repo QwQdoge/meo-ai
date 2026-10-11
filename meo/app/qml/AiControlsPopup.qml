@@ -48,7 +48,7 @@ Popup {
 
                 MeoText {
                     Layout.fillWidth: true
-                    text: qsTr("Runtime settings, memory, and conversation-scoped AI input.")
+                    text: qsTr("Runtime settings, the current conversation model, memory, and structured AI input.")
                     typeRole: "body"
                     typeSize: "small"
                     color: MeoTheme.contentOnSurfaceVariant
@@ -79,6 +79,79 @@ Popup {
             Column {
                 width: parent.width
                 spacing: 8 * root.uiScale
+
+                Rectangle {
+                    id: conversationModelCard
+                    width: parent.width
+                    visible: agent.serviceMode && agent.models.length > 0
+                    implicitHeight: visible ? conversationModelColumn.implicitHeight + 24 * root.uiScale : 0
+                    radius: 18 * root.uiScale
+                    color: MeoTheme.surfaceContainer
+
+                    ColumnLayout {
+                        id: conversationModelColumn
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        anchors.margins: 12 * root.uiScale
+                        spacing: 8 * root.uiScale
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 10 * root.uiScale
+
+                            MeoIcon {
+                                icon: "chat"
+                                size: 26
+                                color: MeoTheme.primary
+                            }
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 2 * root.uiScale
+
+                                MeoText {
+                                    Layout.fillWidth: true
+                                    text: qsTr("Current conversation model")
+                                    typeRole: "label"
+                                    typeSize: "medium"
+                                    color: MeoTheme.contentOnSurface
+                                }
+
+                                MeoText {
+                                    Layout.fillWidth: true
+                                    text: qsTr("This changes the model AgentService uses for this conversation immediately. It is separate from staged per-job model routing.")
+                                    typeRole: "body"
+                                    typeSize: "small"
+                                    color: MeoTheme.contentOnSurfaceVariant
+                                    wrapMode: Text.Wrap
+                                }
+                            }
+                        }
+
+                        MeoExposedDropdown {
+                            Layout.fillWidth: true
+                            label: qsTr("Conversation model")
+                            model: agent.models
+                            textRole: "label"
+                            valueRole: "model_id"
+                            currentIndex: {
+                                const values = agent.models || []
+                                for (let i = 0; i < values.length; ++i) {
+                                    if (values[i].selected === true)
+                                        return i
+                                }
+                                return values.length > 0 ? 0 : -1
+                            }
+                            type: "outlined"
+                            enabled: !agent.busy && !agent.actionBusy
+                            onSelected: function(index, value) {
+                                if (String(value || "").length > 0)
+                                    agent.setConversationModel(String(value))
+                            }
+                        }
+                    }
+                }
 
                 Rectangle {
                     width: parent.width
