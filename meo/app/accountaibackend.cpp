@@ -227,7 +227,20 @@ void AccountAiBackend::discoverModels(const QString &connectionId)
         setStatus(tr("Meo AI could not start model discovery. Check its Account permission."));
         return;
     }
+
     m_activeRequestId = reply.value();
+
+    // The broker may publish an early state (or even an immediate terminal
+    // validation failure) before the synchronous D-Bus method returns the
+    // request id. Re-read the owned request once so the UI can never remain
+    // stuck in Busy merely because that first signal raced the assignment.
+    const QDBusReply<QVariantMap> current = broker.call(
+        QStringLiteral("GetRequest"), m_activeRequestId);
+    if (current.isValid() && !current.value().isEmpty()) {
+        const QVariantMap snapshot = current.value();
+        handleRequestChanged(m_activeRequestId,
+                             snapshot.value(QStringLiteral("state")).toString(), snapshot);
+    }
 }
 
 void AccountAiBackend::handleRequestChanged(const QString &requestId, const QString &state,
