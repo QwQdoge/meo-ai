@@ -4,7 +4,8 @@
   "oauthClientId": "meo-ai-native",
   "redirectUri": "meoai://auth/callback",
   "executables": [
-    "/usr/bin/meo-ai"
+    "/usr/bin/meo-ai",
+    "/usr/bin/meo-agent-service"
   ],
   "scopes": [
     "openid"
