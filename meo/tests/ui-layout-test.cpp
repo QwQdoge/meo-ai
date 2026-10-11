@@ -29,6 +29,11 @@ private slots:
         QQmlApplicationEngine engine;
         engine.addImportPath(QStringLiteral(MEOUI_IMPORT_PATH));
         engine.rootContext()->setContextProperty("agent", &client);
+        // Main normally supplies UsageBackend. Keep the layout fixture small
+        // while still exercising bindings in the complete Settings Center.
+        engine.rootContext()->setContextProperty(
+            "usage", QVariantMap{{QStringLiteral("status"), QStringLiteral("Fixture activity")},
+                                 {QStringLiteral("busy"), false}});
         engine.rootContext()->setContextProperty("uiPreview", true);
         engine.load(QUrl("qrc:/meo/app/qml/Main.qml"));
         QVERIFY(!engine.rootObjects().isEmpty());
@@ -81,6 +86,15 @@ private slots:
         QTRY_VERIFY(!window->property("showDock").toBool());
         QVERIFY(QMetaObject::invokeMethod(window, "openInspector", Q_ARG(QVariant, 0)));
         QTRY_VERIFY(window->property("showDock").toBool());
+
+        // Sidebar tab 3 is the stable AI-settings contract. It must now open
+        // the full multi-page Settings Center rather than the Activity view.
+        QVERIFY(QMetaObject::invokeMethod(window, "openInspector", Q_ARG(QVariant, 3)));
+        QCOMPARE(window->property("inspectorTab").toInt(), 3);
+        auto *settingsCenter = window->findChild<QObject *>("meoAiSettingsCenter");
+        QVERIFY(settingsCenter);
+        QTRY_VERIFY(settingsCenter->property("visible").toBool());
+        QVERIFY(QMetaObject::invokeMethod(settingsCenter, "close"));
 
         window->resize(960, 720);
         QTRY_VERIFY(!window->property("showDock").toBool());
