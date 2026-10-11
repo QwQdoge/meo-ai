@@ -11,6 +11,13 @@ This is the cheapest first deployment for Meo AI: the Cloud/Relay process runs o
 - The Cloud service is not published with a Docker host port. Only the `cloudflared` container can reach it on the private Compose network.
 - Browser CORS is an exact allowlist; production should include only trusted Meo web origins.
 
+The `meoarch.org` Cloudflare zone keeps Browser Integrity Check enabled globally.
+The server-to-server API uses non-browser user agents, so the zone has one narrow
+custom-rule exception: `http.host eq "ai.meoarch.org" and
+starts_with(http.request.uri.path, "/v1/")` skips the `bic` product only. Keep
+WAF rules, rate limits and Cloud API bearer authentication enabled for these
+requests. Do not disable Browser Integrity Check zone-wide.
+
 ## 1. Install prerequisites on Arch
 
 ```bash
