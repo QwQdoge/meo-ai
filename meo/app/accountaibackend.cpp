@@ -1,5 +1,6 @@
 #include "accountaibackend.h"
 
+#include <QDBusArgument>
 #include <QDBusConnection>
 #include <QDBusInterface>
 #include <QDBusReply>
@@ -13,6 +14,13 @@ const QString kPath = QStringLiteral("/org/meo/Accounts1");
 const QString kInterface = QStringLiteral("org.meo.Accounts1");
 const QString kClientId = QStringLiteral("org.meo.MeoAI");
 
+QVariantMap mapValue(const QVariant &value)
+{
+    if (value.metaType().id() == qMetaTypeId<QDBusArgument>())
+        return qdbus_cast<QVariantMap>(value.value<QDBusArgument>());
+    return value.toMap();
+}
+
 QString displayName(const QVariantMap &connection)
 {
     const QString name = connection.value(QStringLiteral("displayName")).toString().trimmed();
@@ -24,11 +32,12 @@ AccountAiBackend::AccountAiBackend(QObject *parent)
     : QObject(parent)
 {
     loadPreferences();
-    const QDBusConnection bus = QDBusConnection::sessionBus();
-    bus.connect(kService, kPath, kInterface, QStringLiteral("accountChanged"),
-                this, SLOT(handleAccountChanged()));
-    bus.connect(kService, kPath, kInterface, QStringLiteral("requestChanged"),
-                this, SLOT(handleRequestChanged(QString,QString,QVariantMap)));
+    QDBusConnection::sessionBus().connect(
+        kService, kPath, kInterface, QStringLiteral("accountChanged"),
+        this, SLOT(handleAccountChanged()));
+    QDBusConnection::sessionBus().connect(
+        kService, kPath, kInterface, QStringLiteral("requestChanged"),
+        this, SLOT(handleRequestChanged(QString,QString,QVariantMap)));
     QTimer::singleShot(0, this, &AccountAiBackend::refresh);
 }
 
@@ -69,7 +78,7 @@ void AccountAiBackend::setBusy(bool busy)
 QVariantMap AccountAiBackend::connectionById(const QString &connectionId) const
 {
     for (const QVariant &value : m_connections) {
-        const QVariantMap connection = value.toMap();
+        const QVariantMap connection = mapValue(value);
         if (connection.value(QStringLiteral("id")).toString() == connectionId)
             return connection;
     }
@@ -79,7 +88,7 @@ QVariantMap AccountAiBackend::connectionById(const QString &connectionId) const
 bool AccountAiBackend::modelExists(const QString &modelId) const
 {
     for (const QVariant &value : m_models) {
-        const QVariantMap model = value.toMap();
+        const QVariantMap model = mapValue(value);
         if (model.value(QStringLiteral("model_id")).toString() == modelId)
             return true;
     }
@@ -90,7 +99,6 @@ void AccountAiBackend::refresh()
 {
     QDBusInterface broker(kService, kPath, kInterface, QDBusConnection::sessionBus());
     if (!broker.isValid()) {
-        const bool changedState = m_serviceAvailable || m_signedIn || !m_connections.isEmpty();
         m_serviceAvailable = false;
         m_signedIn = false;
         m_connections.clear();
@@ -99,10 +107,7 @@ void AccountAiBackend::refresh()
         m_discoveryConnectionId.clear();
         m_busy = false;
         m_status = tr("Meo Account service is unavailable.");
-        if (changedState)
-            emit changed();
-        else
-            emit changed();
+        emit changed();
         return;
     }
 
@@ -128,7 +133,13 @@ void AccountAiBackend::refresh()
         return;
     }
 
-    m_connections = connectionsReply.value();
+    m_connections.clear();
+    for (const QVariant &value : connectionsReply.value()) {
+        const QVariantMap connection = mapValue(value);
+        if (!connection.isEmpty())
+            m_connections.append(connection);
+    }
+
     if (!m_selectedConnectionId.isEmpty() && connectionById(m_selectedConnectionId).isEmpty()) {
         m_selectedConnectionId.clear();
         m_selectedModelId.clear();
@@ -137,7 +148,7 @@ void AccountAiBackend::refresh()
     }
 
     if (m_selectedConnectionId.isEmpty() && m_connections.size() == 1) {
-        const QVariantMap only = m_connections.first().toMap();
+        const QVariantMap only = mapValue(m_connections.first());
         m_selectedConnectionId = only.value(QStringLiteral("id")).toString();
         m_selectedModelId = only.value(QStringLiteral("defaultModel")).toString();
         savePreferences();
@@ -259,7 +270,7 @@ void AccountAiBackend::handleRequestChanged(const QString &requestId, const QStr
         if (!defaultModel.isEmpty() && modelExists(defaultModel))
             m_selectedModelId = defaultModel;
         else if (!m_models.isEmpty())
-            m_selectedModelId = m_models.first().toMap().value(QStringLiteral("model_id")).toString();
+            m_selectedModelId = mapValue(m_models.first()).value(QStringLiteral("model_id")).toString();
     }
     m_selectedConnectionId = m_discoveryConnectionId;
     m_discoveryConnectionId.clear();
