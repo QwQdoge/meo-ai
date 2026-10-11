@@ -35,12 +35,13 @@ jobs:
     runs-on: ubuntu-latest
     container: archlinux:base-devel
     steps:
-      - run: pacman -Syu --noconfirm --needed git meson python glib2 gettext
+      - run: pacman -Syu --noconfirm --needed git meson python glib2 gettext file
       - uses: actions/checkout@v4
       - run: meson setup build/package --prefix=/usr
       - run: DESTDIR="$PWD/build/stage" meson install -C build/package
       - run: |
           test -x build/stage/usr/bin/meo-agent-service
+          file build/stage/usr/bin/meo-agent-service | grep -F 'ELF'
           test -x build/stage/usr/bin/meo-agentd
           test -x build/stage/usr/bin/meo-connect-device
           test -f build/stage/usr/share/newelle/meo/runtime/main.py
@@ -60,6 +61,9 @@ jobs:
           test -f build/stage/usr/share/newelle/meo/service/sync_contract.py
           test -f build/stage/usr/share/newelle/meo/system/system_tool.py
           test -f build/stage/usr/share/newelle/meo/system/dbus_router.py
+          test -f build/stage/usr/share/newelle/meo/system/account_ai.py
+          test -f build/stage/usr/share/newelle/meo/system/account_ai_interaction.py
+          test -f build/stage/usr/share/newelle/meo/adapters/account_llm.py
           test -f build/stage/usr/share/newelle/meo/adapters/control_backend.py
           test -f build/stage/usr/share/newelle/meo/adapters/headless_newelle.py
           test -f build/stage/usr/share/newelle/meo/adapters/legacy_chat.py
