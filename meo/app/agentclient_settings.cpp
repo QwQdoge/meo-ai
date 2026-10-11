@@ -25,7 +25,10 @@ void AgentClient::setConversationModel(const QString &modelId)
         const QJsonObject body{{QStringLiteral("model_id"), id}};
         postServiceAction(url, QJsonDocument(body).toJson(QJsonDocument::Compact),
                           [this](QNetworkReply *) {
-            m_status = tr("Conversation model changed");
+            // The backend advertises the real selection scope in ModelInfo.
+            // The current compatibility backend is profile-scoped even though
+            // the stable AgentService endpoint is conversation-addressed.
+            m_status = tr("Active model changed");
             QTimer::singleShot(0, this, [this] { refreshServiceMetadata(); });
         });
     });
