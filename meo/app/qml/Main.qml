@@ -690,6 +690,7 @@ ApplicationWindow {
                         Layout.preferredHeight: 60 * window.scale
                         enabled: !agent.busy && !agent.actionBusy && !agent.options.length
                         placeholderText: qsTr("Ask anything, or hand off a task…")
+                        placeholderTextColor: MeoTheme.contentOnSurfaceVariant
                         wrapMode: TextEdit.Wrap
                         selectByMouse: true
                         padding: 6 * window.scale
@@ -970,7 +971,6 @@ ApplicationWindow {
                                         typeRole: "label"
                                         typeSize: "small"
                                         color: MeoTheme.contentOnSurfaceVariant
-                                        opacity: 0.66
                                     }
                                 }
 
@@ -1012,7 +1012,6 @@ ApplicationWindow {
                                     typeRole: "label"
                                     typeSize: "small"
                                     color: MeoTheme.contentOnSurfaceVariant
-                                    opacity: 0.68
                                     wrapMode: Text.Wrap
                                 }
                             }
@@ -1027,7 +1026,6 @@ ApplicationWindow {
                 typeRole: "label"
                 typeSize: "small"
                 color: MeoTheme.contentOnSurfaceVariant
-                opacity: 0.72
                 wrapMode: Text.Wrap
             }
         }

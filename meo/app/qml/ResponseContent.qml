@@ -314,7 +314,6 @@ Item {
                         typeRole: "label"
                         typeSize: "small"
                         color: MeoTheme.contentOnSurfaceVariant
-                        opacity: 0.72
                     }
                 }
 
@@ -422,7 +421,6 @@ Item {
                                     typeRole: "label"
                                     typeSize: "small"
                                     color: MeoTheme.contentOnSurfaceVariant
-                                    opacity: 0.7
                                 }
                             }
                         }

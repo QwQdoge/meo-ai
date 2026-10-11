@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Meo AI
+Comment=Your AI assistant on Linux
+Exec=meo-ai
+Icon=meo-ai
+Terminal=false
+Categories=Utility;
+Keywords=AI;assistant;chat;Meo;
+StartupNotify=true

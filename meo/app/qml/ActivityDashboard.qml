@@ -172,6 +172,7 @@ ScrollView {
                             opacity: level === 0 ? 0.55 : level === 1 ? 0.58 : level === 2 ? 0.72 : 1
                             ToolTip.visible: heatHover.hovered
                             ToolTip.text: String(modelData.date) + " · " + root.compactNumber(modelData.tokens) + " " + qsTr("tokens")
+                            ToolTip.delay: 250
                             HoverHandler { id: heatHover }
                         }
                     }

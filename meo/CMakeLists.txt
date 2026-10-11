@@ -136,4 +136,9 @@ install(TARGETS meo-ai RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(DIRECTORY prompts skills DESTINATION ${CMAKE_INSTALL_DATADIR}/meo-ai)
 install(FILES packaging/org.meo.MeoAI.account-client.json
         DESTINATION ${CMAKE_INSTALL_DATADIR}/meo-account/clients)
+install(FILES packaging/org.meo.MeoAI.desktop
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+install(FILES "${MEO_UI_ROOT}/assets/icons/meo-ai-f.svg"
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps
+        RENAME meo-ai.svg)
 target_compile_definitions(meo-ai PRIVATE MEOUI_IMPORT_PATH="${CMAKE_CURRENT_BINARY_DIR}/meoui")
