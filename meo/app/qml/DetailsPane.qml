@@ -26,11 +26,13 @@ Rectangle {
     radius: 26 * uiScale
     color: MeoTheme.surfaceContainerLow
 
-    onTabChanged: {
-        // Main's long-standing sidebar contract opens tab 3 for AI settings.
-        // Keep that contract stable and make tab 3 the real settings surface.
-        if (tab === 3) settingsCenter.openPage(0)
+    function openSettingsForCurrentTab() {
+        if (tab === 3)
+            settingsCenter.openPage(0)
     }
+
+    onTabChanged: openSettingsForCurrentTab()
+    Component.onCompleted: Qt.callLater(openSettingsForCurrentTab)
 
     ColumnLayout {
         anchors.fill: parent
