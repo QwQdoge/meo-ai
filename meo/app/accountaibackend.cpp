@@ -185,8 +185,11 @@ bool AccountAiBackend::selectConnection(const QString &connectionId)
     const QVariantMap connection = connectionById(id);
     if (id.isEmpty() || connection.isEmpty())
         return false;
-    if (m_selectedConnectionId == id)
+    if (m_selectedConnectionId == id) {
+        if (!m_selectedModelId.isEmpty())
+            emit modelActivationRequested(m_selectedConnectionId, m_selectedModelId);
         return true;
+    }
 
     m_selectedConnectionId = id;
     m_selectedModelId = connection.value(QStringLiteral("defaultModel")).toString();
@@ -194,6 +197,8 @@ bool AccountAiBackend::selectConnection(const QString &connectionId)
     savePreferences();
     m_status = tr("Preferred connection: %1").arg(displayName(connection));
     emit changed();
+    if (!m_selectedModelId.isEmpty())
+        emit modelActivationRequested(m_selectedConnectionId, m_selectedModelId);
     return true;
 }
 
@@ -202,12 +207,16 @@ bool AccountAiBackend::selectModel(const QString &modelId)
     const QString id = modelId.trimmed();
     if (id.isEmpty() || !modelExists(id))
         return false;
-    if (m_selectedModelId == id)
+    if (m_selectedModelId == id) {
+        if (!m_selectedConnectionId.isEmpty())
+            emit modelActivationRequested(m_selectedConnectionId, m_selectedModelId);
         return true;
+    }
     m_selectedModelId = id;
     savePreferences();
     m_status = tr("Preferred model: %1").arg(id);
     emit changed();
+    emit modelActivationRequested(m_selectedConnectionId, m_selectedModelId);
     return true;
 }
 
@@ -307,6 +316,8 @@ void AccountAiBackend::handleRequestChanged(const QString &requestId, const QStr
         ? tr("The provider returned no models.")
         : tr("Found %1 provider models.").arg(m_models.size());
     emit changed();
+    if (!m_selectedConnectionId.isEmpty() && !m_selectedModelId.isEmpty())
+        emit modelActivationRequested(m_selectedConnectionId, m_selectedModelId);
 }
 
 void AccountAiBackend::handleAccountChanged()
