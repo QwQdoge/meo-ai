@@ -95,6 +95,23 @@ def _import_controller_class():
     return module.NewelleController
 
 
+def _install_account_llm_provider() -> None:
+    """Register the Meo-owned broker handler only in the headless product runtime."""
+    from meo.adapters.account_llm import MeoAccountLLMHandler
+    from src.constants import AVAILABLE_LLMS
+
+    AVAILABLE_LLMS["meo_account"] = {
+        "key": "meo_account",
+        "title": "Meo Account",
+        "description": (
+            "Use an AI connection owned by Meo Account. Provider credentials stay in KWallet "
+            "and every inference requires the Meo AgentService consent flow."
+        ),
+        "class": MeoAccountLLMHandler,
+        "secondary": True,
+    }
+
+
 def _system_tools_enabled() -> bool:
     return os.environ.get("MEO_AI_ENABLE_SYSTEM_TOOL", "").strip().lower() in {"1", "true", "yes", "on"}
 
@@ -130,6 +147,9 @@ def create_backend():
     """Construct the compatibility core without constructing a Newelle window."""
     gettext.install("newelle")
     Controller = _import_controller_class()
+    # Register before constructing the controller so a persisted meo_account
+    # selection is valid even on the first service start after login.
+    _install_account_llm_provider()
     controller = Controller(sys.path)
     controller.ui_init(headless=True)
     controller.set_ui_controller(MeoHeadlessUIController(controller))
