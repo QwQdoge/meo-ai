@@ -15,6 +15,9 @@ class AgentClient : public QObject {
     Q_PROPERTY(bool serviceMode READ serviceMode CONSTANT)
     Q_PROPERTY(QString status READ status NOTIFY changed)
     Q_PROPERTY(QString metadataStatus READ metadataStatus NOTIFY changed)
+    Q_PROPERTY(bool requestFailed READ requestFailed NOTIFY changed)
+    Q_PROPERTY(bool requestRetryable READ requestRetryable NOTIFY changed)
+    Q_PROPERTY(QString requestError READ requestError NOTIFY changed)
     Q_PROPERTY(QVariantList options READ options NOTIFY changed)
     Q_PROPERTY(QVariantMap agentState READ agentState NOTIFY changed)
     Q_PROPERTY(QVariantList models READ models NOTIFY changed)
@@ -34,6 +37,9 @@ public:
     bool serviceMode() const { return m_serviceMode; }
     QString status() const { return m_status; }
     QString metadataStatus() const { return m_metadataStatus; }
+    bool requestFailed() const { return m_requestFailed; }
+    bool requestRetryable() const { return m_requestRetryable; }
+    QString requestError() const { return m_requestError; }
     QVariantList options() const { return m_options; }
     QVariantMap agentState() const { return m_agentState; }
     QVariantList models() const { return m_models; }
@@ -52,6 +58,7 @@ public:
     Q_INVOKABLE void clearPendingResources();
     Q_INVOKABLE void choose(int index);
     Q_INVOKABLE void cancel();
+    Q_INVOKABLE void retryLastRequest();
     Q_INVOKABLE void newChat();
     Q_INVOKABLE void refreshServiceMetadata();
     Q_INVOKABLE void refreshMemory(const QString &query = QString());
@@ -82,6 +89,8 @@ private:
     void attachServiceStream(QNetworkReply *reply);
     void consumeService();
     void submitServiceCancel();
+    void clearRequestFailure(bool clearLastRequest = false);
+    void setRequestFailure(const QString &message, bool retryable);
     void fetchServiceMetadataStep(int step, bool hadError);
     void postServiceAction(const QUrl &url, const QByteArray &body, const std::function<void(QNetworkReply *)> &onSuccess);
     void deleteServiceAction(const QUrl &url, const std::function<void(QNetworkReply *)> &onSuccess);
@@ -96,8 +105,10 @@ private:
     QString m_requestId;
     QString m_decisionId;
     QString m_pendingServiceText;
+    QString m_lastRequestText;
     QString m_status;
     QString m_metadataStatus;
+    QString m_requestError;
     QString m_memoryQuery;
     QVariantList m_options;
     QVariantMap m_agentState;
@@ -114,6 +125,8 @@ private:
     bool m_serviceMode = false;
     bool m_cancelPending = false;
     bool m_staleConversationRetryUsed = false;
+    bool m_requestFailed = false;
+    bool m_requestRetryable = false;
     int m_lastEventSeq = 0;
     int m_reconnectAttempts = 0;
 };
