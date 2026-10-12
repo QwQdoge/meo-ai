@@ -1,220 +1,81 @@
-# Meo AI — Newelle-derived MeoArch assistant
+# Meo AI
 
-Development preview: native C++/QML MeoUI frontend and Meo prompt overlay.
-See [Meo build/run instructions](meo/README.md) and [architecture and migration plan](meo/docs/architecture.md).
-The full agent engine is inherited from [qwersyk/Newelle](https://github.com/qwersyk/Newelle);
-upstream attribution and GPL-3.0 licensing are preserved. GTK remains required
-for the engine during frontend extraction. System integration is under development.
+**Meo AI is the MeoArch assistant for everyday chat, local/remote agent work, and safe system actions — with one Meo experience across desktop and web.**
 
----
+> Development preview. The native MeoUI frontend is the product direction; the Newelle-derived engine remains as migration/compatibility infrastructure while capabilities move behind the headless Meo service layer.
 
-<h1 align="center">
-  <img src="https://raw.githubusercontent.com/qwersyk/Newelle/master/data/icons/hicolor/scalable/apps/io.github.qwersyk.Newelle.svg" alt="Newelle" width="192" height="192"/>
-  <br>
-  Newelle - Your Ultimate Virtual Assistant
-</h1>
-<p align="center">
-  <a href="https://flathub.org/apps/details/io.github.qwersyk.Newelle">
-      <picture>
-        <source srcset="https://dl.flathub.org/assets/badges/flathub-badge-i-en.svg" media="(prefers-color-scheme: light)">
-        <source srcset="https://raw.githubusercontent.com/qwersyk/Assets/main/flathub-badge-dark.svg" media="(prefers-color-scheme: dark)">
-        <img width="200" alt="Download on Flathub" src="https://dl.flathub.org/assets/badges/flathub-badge-i-en.svg"/>
-      </picture>
-    </a>
-    <a href="https://github.com/topics/newelle-extension">
-      <picture>
-        <source srcset="https://raw.githubusercontent.com/qwersyk/Assets/main/newelle-extension.svg" media="(prefers-color-scheme: light)">
-        <source srcset="https://raw.githubusercontent.com/qwersyk/Assets/main/newelle-extension-dark.svg" media="(prefers-color-scheme: dark)">
-        <img width="200" alt="Download on Flathub" src="https://raw.githubusercontent.com/qwersyk/Assets/main/newelle-extension.svg"/>
-      </picture>
-    </a>
-    <a href="https://github.com/qwersyk/Newelle/wiki">
-      <picture>
-        <source srcset="https://raw.githubusercontent.com/qwersyk/Assets/main/newelle-wiki.svg" media="(prefers-color-scheme: light)">
-        <source srcset="https://raw.githubusercontent.com/qwersyk/Assets/main/newelle-wiki-dark.svg" media="(prefers-color-scheme: dark)">
-        <img width="200" alt="Wiki for Newelle" src="https://raw.githubusercontent.com/qwersyk/Assets/main/newelle-wiki.svg"/>
-      </picture>
-    </a>
-	<a href="https://newelle.qsk.me/discord">
-      <picture>
-        <source srcset="https://raw.githubusercontent.com/qwersyk/Assets/main/discord.svg" media="(prefers-color-scheme: light)">
-        <source srcset="https://raw.githubusercontent.com/qwersyk/Assets/main/discord-dark.svg" media="(prefers-color-scheme: dark)">
-        <img width="200" alt="Join our discord" src="https://raw.githubusercontent.com/qwersyk/Assets/main/discord.svg"/>
-      </picture>
-    </a>
-    <br>
-</p>
+## Start here
 
-https://github.com/user-attachments/assets/909edf0e-5a79-40c2-a3ef-cb5b2b18abfc
+### Native desktop preview
 
-# Features
+Meo AI's desktop client is built with C++/QML and the shared **MeoUI** design system.
 
-
-- 🎨 **Advanced Customization**: Tailor the application with a wide range of settings
-- ✈️ **Connect Newelle to anything**: Interfaces allow you to control Newelle from Telegram, via API or anything else
-- 🚀 **Flexible Model Support**: Choose from mutliple AI models and providers to fit your specific needs
-- 📚 **Local models**: Download local models directly from Newelle, and run them using Llama.cpp or Ollama.
-- 💻 **Terminal Command Exection**: Execute commands suggested by the AI on the fly
-- 🧩 **Extensions**: Add your own functionalities and models to Newelle
-- ✨ **Skills**: Newelle supports skills from Claude, Codex...
-- 🛠 **Tools & MCP support**: Add tools via MCP servers or extensions, supporting tool search 
-- 🗣 **Voice support**: Chat hands free with Newelle, supporting many Speech To Text and TTS models (With wakeword support)
-- 📞 **Call Mode**: Chat in real time with AI models
-- 🧠 **Long Term Memory**: Remember conversations from previous chats
-- 💼 **Chat with documents**: Chat with your own documents
-- 🖼 **Image Generation**: Generate images directly in Newelle with stablediffusion or use third party services
-- 🔎 **Web Search**: Provide reliable answers using Web Search
-- 🌐 **Website Reading**: Scrape informations from websites by appending the prefix #https://.. in the prompt
-- 🖍 **Dynamic Context Management**: Dynamically summarize and remove non relevant messages to fit in the context
-- 🔓 **File Permissions**: Set permissions to which files to edit/read
-- ⏰ **Scheduled Tasks**: Schedule tasks to run in the background
-- 👤 **Profile Manager**: Create settings profiles and switch between them
-- 📁 **Builtin File Manager**: Manage you files with the help of AI
-- 📝 **Rich Formatting**: Supports both Markdown and LaTeX
-- 💬 **Multichat**: Run multiple chats at the same time 
-- 🌳 **Chat Branching**: Create alternative versions of your chats strating from any message in one click
-- ✏️ **Chat editing**: Edit or remove any message and manage your prompts easily
-- 🗂 **Chat Folders**: Organize your chats into folders
-
-<picture>
-  <source srcset="https://raw.githubusercontent.com/qwersyk/Newelle/master/screenshots/7.png" media="(prefers-color-scheme: light)">
-  <source srcset="https://raw.githubusercontent.com/qwersyk/Newelle/master/screenshots/7b.png" media="(prefers-color-scheme: dark)">
-  <img src="https://raw.githubusercontent.com/qwersyk/Newelle/master/screenshots/7.png" alt="screenshot">
-</picture>
-
-# Extensions
-
-Newelle supports extensions to extend its functionality. You can either
-use [existing extensions](https://github.com/topics/newelle-extension) or create your own to add new features to the
-application.
-
-<picture>
-  <source srcset="https://raw.githubusercontent.com/qwersyk/Newelle/master/screenshots/6.png" media="(prefers-color-scheme: light)">
-  <source srcset="https://raw.githubusercontent.com/qwersyk/Newelle/master/screenshots/6b.png" media="(prefers-color-scheme: dark)">
-  <img src="https://raw.githubusercontent.com/qwersyk/Newelle/master/screenshots/6.png" alt="screenshot">
-</picture>
-
-## Mini Window Mode
-
-A lightweight version of Newelle that can be triggered via keyboard shortcuts.
-
-If Newelle is already opened, you can use CTRL+G to toggle mini window mode.
-### Configuration
-
-#### 1. Setup Hotkeys
-As an example, to set the mini window launch's hotkey to Ctrl+Space, execute this command:
-```bash
-flatpak run io.github.qwersyk.Newelle --mini
-```
-or `newelle --mini` if not installed via flatpak.
-After that, enable the hotkey in settings.
-
-#### 2. Enable Window Centering
-For GNOME desktop environment users, you may need to enable automatic window centering:
-
-```bash
-gsettings set org.gnome.mutter center-new-windows true
-```
-
-<picture>
-  <source srcset="https://raw.githubusercontent.com/qwersyk/Newelle/master/screenshots/5.png" media="(prefers-color-scheme: light)">
-  <source srcset="https://raw.githubusercontent.com/qwersyk/Newelle/master/screenshots/5b.png" media="(prefers-color-scheme: dark)">
-  <img src="https://raw.githubusercontent.com/qwersyk/Newelle/master/screenshots/5.png" alt="screenshot">
-</picture>
-
-# Installation
-
-<a href="https://github.com/qwersyk/Newelle/archive/refs/heads/master.zip">
-  <picture>
-    <source srcset="https://raw.githubusercontent.com/qwersyk/Assets/main/builder.svg" media="(prefers-color-scheme: light)">
-    <source srcset="https://raw.githubusercontent.com/qwersyk/Assets/main/builder-dark.svg" media="(prefers-color-scheme: dark)">
-    <img src="https://raw.githubusercontent.com/qwersyk/Assets/main/builder.svg" alt="builder">
-  </picture>
-</a>
-
-There are two ways of doing this
-
-  * `install.sh`
-    1. Install the latest Gnome SDK
-    2. Run `sh install.sh`
-    3. Profit!
-  * Gnome Builder
-    1. Install GNOME Builder on your system.
-    2. Clone the Newelle repository from GitHub.
-    3. Open the project in GNOME Builder and compile it.
-    4. Once compiled, you can run the program from the compiled executable.
-
-<a href="https://nixos.org">
-  <picture>
-    <source srcset="https://raw.githubusercontent.com/qwersyk/Assets/main/nix.svg" media="(prefers-color-scheme: light)">
-    <source srcset="https://raw.githubusercontent.com/qwersyk/Assets/main/nix-dark.svg" media="(prefers-color-scheme: dark)">
-    <img src="https://raw.githubusercontent.com/qwersyk/Assets/main/nix.svg" alt="builder">
-  </picture>
-</a>
-
-With nix, you can run the app without installing by executing this command:
 ```sh
-nix-shell -p newelle
+cmake -S meo -B build/meo -DMEO_UI_ROOT="$PWD/../MeoUI" -DBUILD_TESTING=ON
+cmake --build build/meo --parallel 2
 ```
 
-<a href="https://github.com/qwersyk/Newelle/actions">
-  <picture>
-    <source srcset="https://raw.githubusercontent.com/qwersyk/Assets/main/beta.svg" media="(prefers-color-scheme: light)">
-    <source srcset="https://raw.githubusercontent.com/qwersyk/Assets/main/beta-dark.svg" media="(prefers-color-scheme: dark)">
-    <img src="https://raw.githubusercontent.com/qwersyk/Assets/main/beta.svg" alt="beta">
-  </picture>
-</a>
+Run the maintained service self-check and tests:
 
-> [!WARNING]
-> Localizations will not work on these builds! If you want your language to work, go to the
-> "Builder" section instead
-1. Download the latest release from the [Github Actions](https://github.com/qwersyk/Newelle/actions)
-2. Extract the downloaded package.
-3. Install a flatpak package.
-
-<a href="https://flathub.org/apps/io.github.qwersyk.Newelle">
-  <picture>
-    <source srcset="https://raw.githubusercontent.com/qwersyk/Assets/main/flathub.svg" media="(prefers-color-scheme: light)">
-    <source srcset="https://raw.githubusercontent.com/qwersyk/Assets/main/flathub-dark.svg" media="(prefers-color-scheme: dark)">
-    <img src="https://raw.githubusercontent.com/qwersyk/Assets/main/flathub.svg" alt="flathub">
-  </picture>
-</a>
-
-1. Ensure you have set up both flatpak and flathub
-2. Install Newelle by executing: `flatpak install flathub io.github.qwersyk.Newelle`
-
-# Permission
-
-> [!IMPORTANT]
-> The Flathub version of Newelle is restricted to the `.var/app/io.github.qwersyk.Newelle` folder and operates within a
-> Flatpak virtualized environment, limiting its capabilities.
-
-To extend Newelle's permissions, either execute this command to temporarily grant its access:
 ```sh
-flatpak run --talk-name=org.freedesktop.Flatpak --filesystem=home io.github.qwersyk.Newelle
+python3 meo/tools/check_headless_imports.py
+python3 -m meo.runtime.main --self-check
+python3 -m unittest discover -s meo/tests -p 'test_*.py' -v
 ```
-or adjust the permissions permanently using [Flatseal](https://flathub.org/apps/details/com.github.tchx84.Flatseal):
-  - Open Flatseal, find "newelle" and enable both "All user files" and "Session Bus"
-	- Add `org.freedesktop.Flatpak` to run outside the sandbox.
-> [!WARNING]
-> Be cautious when enabling these options. They reduce security by exposing your data and terminal. Avoid sharing
-> personal information, and understand that we can't guarantee the privacy of your chat data or prevent potential risks
-> from proprietary models.
 
-# Honorable Mentions of Newelle's forks
+For the full build, service, provider and live-acceptance workflow, see **[meo/README.md](meo/README.md)**.
 
-<a href="https://github.com/NyarchLinux/NyarchAssistant">
-  <picture>
-    <source srcset="https://raw.githubusercontent.com/qwersyk/Assets/main/nyarch.svg" media="(prefers-color-scheme: light)">
-    <source srcset="https://raw.githubusercontent.com/qwersyk/Assets/main/nyarch-dark.svg" media="(prefers-color-scheme: dark)">
-    <img src="https://raw.githubusercontent.com/qwersyk/Assets/main/nyarch.svg" alt="nyarch">
-  </picture>
-</a>
+### Web
 
-**[Nyarch Assistant](https://github.com/NyarchLinux/NyarchAssistant)** - Your ultimate Waifu AI Assistant
+The browser experience is maintained separately in **[QwQdoge/meo-ai-web](https://github.com/QwQdoge/meo-ai-web)**. `meo-ai` remains the product source of truth for the service contract, web integration boundary, cloud/device protocol and Meo-specific web policy.
 
-<picture>
-  <source srcset="https://raw.githubusercontent.com/NyarchLinux/NyarchAssistant/refs/heads/master/screenshots/1w.png" media="(prefers-color-scheme: light)">
-  <source srcset="https://raw.githubusercontent.com/NyarchLinux/NyarchAssistant/refs/heads/master/screenshots/1b.png" media="(prefers-color-scheme: dark)">
-  <img src="https://raw.githubusercontent.com/NyarchLinux/NyarchAssistant/refs/heads/master/screenshots/1w.png" alt="screenshot">
-</picture>
+## What Meo AI owns
+
+| Area | Responsibility |
+| --- | --- |
+| `meo/` | Meo-owned native assistant implementation |
+| `meo/service/` | Stable headless AgentService layer |
+| `meo/system/` | Unprivileged System AI Router client/tool layer |
+| `meo/adapters/` | Temporary compatibility adapters around the inherited engine |
+| `meo/web/` | Browser integration contract and Meo web policy |
+| `meo/cloud/` | Conversation, device and AgentRun contracts |
+| `meo/device/` | Authenticated bridge from remote work to local AgentService |
+
+Shared visual controls and design tokens belong to **MeoUI**. Account/session identity and encrypted BYOK credentials belong to **Meo Account**. Privileged desktop execution remains behind the typed **System AI Router** rather than inside the assistant.
+
+## Product principles
+
+- **One assistant, multiple surfaces.** Desktop and web should expose the same mental model instead of becoming separate products.
+- **Useful before configurable.** Good defaults, clear empty/loading/error states and progressive disclosure come before more settings.
+- **Streaming is a real state.** Stop, cancellation, reconnect and restored-session behavior are part of the product contract.
+- **User control is visible.** The UI should make model/provider, network use, tool approval and data boundaries understandable.
+- **System actions stay typed and reviewable.** Prompts, Skills and MCP descriptions never replace permission or policy enforcement.
+- **MeoUI is the visual source of truth.** Applications consume shared tokens and controls instead of inventing local copies.
+
+## Current architecture
+
+```text
+Desktop (C++/QML + MeoUI) ─┐
+                           ├─> AgentService ─> providers / tools / memory
+Web (meo-ai-web) ──────────┘        │
+                                    ├─> Meo Account (identity + encrypted BYOK)
+                                    └─> System AI Router (typed system capabilities)
+```
+
+The maintained architecture and migration details are in:
+
+- [Ownership and migration boundary](docs/ownership.md)
+- [Native architecture](meo/docs/architecture.md)
+- [AgentService contract](meo/docs/agent-service-contract.md)
+- [SystemTool contract](meo/docs/system-tool-contract.md)
+- [Web upstream policy](meo/docs/upstream-policy.md)
+
+## Status
+
+Meo AI is not presented as a finished release yet. The native frontend, AgentService transport, cancellation/reconnect semantics and System AI Router client are actively being migrated and validated. A successful mock, build or headless self-check is not the same as real-provider or live Plasma acceptance.
+
+## Upstream and license
+
+This repository is derived from **[qwersyk/Newelle](https://github.com/qwersyk/Newelle)** and preserves its provenance and GPL-3.0 licensing. The inherited root Newelle tree is intentionally retained while the Meo-native service/frontend reaches the documented split gates.
+
+Do not remove the compatibility layer merely to make the repository look cleaner; new Meo product work belongs under the boundaries documented in [`AGENTS.md`](AGENTS.md) and [`docs/ownership.md`](docs/ownership.md).

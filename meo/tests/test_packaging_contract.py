@@ -25,11 +25,12 @@ class PackagingContractTests(unittest.TestCase):
 
     def test_installed_launcher_uses_headless_backend_by_default(self):
         text = (ROOT / "meo/packaging/meo-agent-service.c").read_text(encoding="utf-8")
+        self.assertIn('"MEO_AI_BACKEND_FACTORY"', text)
         self.assertIn("meo.adapters.headless_newelle:create_backend", text)
         self.assertIn('PyConfig_InitIsolatedConfig(&config)', text)
         self.assertIn('PyImport_ImportModule("meo.runtime.main")', text)
         self.assertIn('PyObject_GetAttrString(module, "main")', text)
-        self.assertIn('"--backend-factory"', text)
+        self.assertIn('strcmp(value, "--backend-factory")', text)
         self.assertNotIn("src.main", text)
 
     def test_packaging_does_not_enable_unit_during_install(self):

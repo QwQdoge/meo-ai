@@ -17,6 +17,14 @@ QQuickItem *item(QQuickItem *parent, const QString &name) {
         if (auto *found = item(child, name)) return found;
     return nullptr;
 }
+
+QList<QQuickItem *> items(QQuickItem *parent, const QString &name) {
+    QList<QQuickItem *> found;
+    if (!parent) return found;
+    if (parent->objectName() == name) found.append(parent);
+    for (auto *child : parent->childItems()) found.append(items(child, name));
+    return found;
+}
 }
 
 class UiLayoutTest : public QObject {
@@ -42,6 +50,12 @@ private slots:
         auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
         QVERIFY(window);
         window->resize(1560, 940);
+
+        QPointer<QQuickItem> failureBanner;
+        QTRY_VERIFY((failureBanner = item(window->contentItem(), "meoAiRequestFailure")) != nullptr);
+        QVERIFY(failureBanner);
+        QVERIFY(!failureBanner->isVisible());
+
         client.message("user", "Review this project");
         client.message("assistant", "Sample response");
         client.presentationEvent(QVariantMap{{"card", QVariantMap{
@@ -54,6 +68,14 @@ private slots:
         QVERIFY(card);
         QCOMPARE(card->property("title").toString(), QString("Build"));
         QCOMPARE(card->property("cardValue").toString(), QString("Ready"));
+
+        // presentation.card is an upsert contract: a later event with the same
+        // card_id must update the existing visual card instead of appending a
+        // duplicate. This keeps streaming status/metric cards stable in place.
+        client.presentationEvent(QVariantMap{{"card", QVariantMap{
+            {"card_id", "test"}, {"title", "Build"}, {"value", "Updated"}, {"kind", "status"}}}});
+        QTRY_COMPARE(items(window->contentItem(), "meoAiPresentationCard").size(), 1);
+        QTRY_COMPARE(card->property("cardValue").toString(), QString("Updated"));
 
         QPointer<QQuickItem> pane;
         QTRY_VERIFY((pane = item(window->contentItem(), "meoAiDetailsPane")) != nullptr);
@@ -71,6 +93,25 @@ private slots:
         QTRY_VERIFY((pane = item(window->contentItem(), "meoAiDetailsPane")) != nullptr);
         QVERIFY(pane);
         QCOMPARE(pane->property("metadata").value<QJSValue>().toVariant().toMap().value("citations").toList().size(), 1);
+
+        // Fill enough history to make the conversation genuinely scrollable,
+        // then move away from the end. A streaming delta must update the last
+        // message without yanking the reader back to the bottom.
+        for (int i = 0; i < 18; ++i) {
+            client.message("user", QString("Question %1 with enough text to occupy a visible row.").arg(i));
+            client.message("assistant", QString("Answer %1 with enough text to occupy a visible row and make the history scroll.").arg(i));
+        }
+        QPointer<QQuickItem> history;
+        QTRY_VERIFY((history = item(window->contentItem(), "meoAiHistory")) != nullptr);
+        QVERIFY(history);
+        QTRY_VERIFY(history->property("contentHeight").toReal() > history->height());
+        QVERIFY(QMetaObject::invokeMethod(history.data(), "positionViewAtBeginning"));
+        QTRY_VERIFY(history->property("contentY").toReal() <
+                    history->property("contentHeight").toReal() - history->height() - 64);
+        const qreal contentYBeforeDelta = history->property("contentY").toReal();
+        client.delta(" streamed continuation");
+        QTest::qWait(50);
+        QVERIFY(qAbs(history->property("contentY").toReal() - contentYBeforeDelta) < 2.0);
 
         QPointer<QQuickItem> sidebar;
         QTRY_VERIFY((sidebar = item(window->contentItem(), "meoAiSidebar")) != nullptr);
@@ -108,8 +149,8 @@ private slots:
         // the full multi-page Settings Center rather than the Activity view.
         QVERIFY(QMetaObject::invokeMethod(window, "openInspector", Q_ARG(QVariant, 3)));
         QCOMPARE(window->property("inspectorTab").toInt(), 3);
-        // Dock and overlay can each own a DetailsPane. Select the open popup,
-        // since the first matching QObject may belong to the hidden host.
+        // The dock Loader may have recreated DetailsPane. Select the visible
+        // popup because the hidden host can still own another DetailsPane.
         QPointer<QObject> settingsCenter;
         QTRY_VERIFY(([&]() {
             for (auto *candidate : window->findChildren<QObject *>("meoAiSettingsCenter")) {
