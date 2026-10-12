@@ -81,10 +81,17 @@ private slots:
         QTRY_COMPARE(client.options().size(), 0);
         QTRY_VERIFY(!client.busy());
         QVERIFY(client.status().contains("no longer exists"));
+        QVERIFY(client.requestFailed());
+        QVERIFY(client.requestRetryable());
+        QVERIFY(client.requestError().contains("no longer exists"));
 
         // Recovery must leave the UI usable instead of trapping it behind a
-        // stale tool confirmation card.
+        // stale tool confirmation card. Starting over also clears the failure
+        // banner and its retry affordance.
         client.newChat();
+        QVERIFY(!client.requestFailed());
+        QVERIFY(!client.requestRetryable());
+        QVERIFY(client.requestError().isEmpty());
         QTRY_VERIFY(server.hasPendingConnections());
         auto createAgain = server.nextPendingConnection();
         const QByteArray createRequest = readRequest(createAgain);
