@@ -1,0 +1,99 @@
+name: Meo AI bug report
+description: Report a reproducible Meo AI product, runtime, or integration problem
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a Meo AI problem. Please remove private prompts, API keys, tokens, email addresses, and other sensitive data before submitting logs or screenshots.
+
+  - type: input
+    id: version
+    attributes:
+      label: Meo AI version or commit
+      description: Use the installed version when known; for a development checkout, paste the commit SHA.
+      placeholder: "0.1.0 / abc1234"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Surface
+      options:
+        - Native Qt/QML app
+        - AgentService / local runtime
+        - Meo Account provider bridge
+        - Web integration
+        - Packaging / install
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: system
+    attributes:
+      label: System
+      description: OS/distribution, desktop/session, architecture, and Qt version when relevant.
+      placeholder: "Arch Linux, Plasma 6 Wayland, x86_64, Qt 6.8"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: transport
+    attributes:
+      label: AI transport
+      description: Choose the path that was active when the problem happened.
+      options:
+        - Local AgentService
+        - Legacy local Newelle-compatible API
+        - Account-backed provider connection
+        - Not sure / not applicable
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: List the smallest sequence that reproduces the problem.
+      placeholder: |
+        1. Open ...
+        2. Select ...
+        3. Send ...
+        4. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: Add relevant status text, logs, screenshots, or request IDs. Remove secrets and private prompt contents first.
+      render: shell
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I removed API keys, access tokens, private prompt contents, and other sensitive data.
+          required: true
+        - label: I checked that this issue is reproducible on the version or commit listed above.
+          required: true
