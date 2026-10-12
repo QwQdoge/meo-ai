@@ -43,6 +43,21 @@ QUrl AgentClient::validatedOrigin(const QByteArray &variable, const QString &fal
     return base;
 }
 
+void AgentClient::clearRequestFailure(bool clearLastRequest) {
+    m_requestFailed = false;
+    m_requestRetryable = false;
+    m_requestError.clear();
+    if (clearLastRequest) m_lastRequestText.clear();
+}
+
+void AgentClient::setRequestFailure(const QString &message, bool retryable) {
+    const QString safeMessage = message.trimmed().isEmpty() ? tr("Request failed") : message;
+    m_requestFailed = true;
+    m_requestRetryable = retryable && m_serviceMode && !m_lastRequestText.trimmed().isEmpty();
+    m_requestError = safeMessage;
+    m_status = safeMessage;
+}
+
 void AgentClient::refreshServiceMetadata() {
     if (!m_serviceMode || m_metadataReply) return;
     m_metadataStatus = tr("Refreshing…");
@@ -210,7 +225,7 @@ void AgentClient::setMemoryEnabled(bool enabled) {
     }
     QUrl url = base;
     url.setPath("/v1/memory/settings");
-    QJsonObject body{{"enabled", enabled}};
+    QJsonObject body{{"value", enabled}};
     postServiceAction(url, QJsonDocument(body).toJson(QJsonDocument::Compact), [this](QNetworkReply *) {
         m_status = tr("Memory setting saved");
         QTimer::singleShot(0, this, [this] { refreshMemory(m_memoryQuery); });
@@ -265,15 +280,20 @@ void AgentClient::deleteMemory(const QString &memoryId) {
     }
     QUrl url = base;
     url.setPath(QString("/v1/memory/%1").arg(id));
-    deleteServiceAction(url, [this](QNetworkReply *) {
+    deleteServiceAction(url, [this, id](QNetworkReply *) {
+        for (int i = m_memories.size() - 1; i >= 0; --i) {
+            if (m_memories.at(i).toMap().value("memory_id").toString() == id)
+                m_memories.removeAt(i);
+        }
         m_status = tr("Memory deleted");
-        QTimer::singleShot(0, this, [this] { refreshMemory(m_memoryQuery); });
     });
 }
 
 void AgentClient::send(const QString &text) {
     if (busy() || actionBusy() || !m_options.isEmpty() || text.trimmed().isEmpty()) return;
     m_responseMetadata.clear();
+    clearRequestFailure(true);
+    if (m_serviceMode) m_lastRequestText = text;
     emit changed();
     emit message("user", text);
     if (m_serviceMode) {
@@ -321,6 +341,18 @@ void AgentClient::cancel() {
     submitServiceCancel();
 }
 
+void AgentClient::retryLastRequest() {
+    if (!m_serviceMode || busy() || actionBusy() || !m_options.isEmpty() ||
+        !m_requestRetryable || m_lastRequestText.trimmed().isEmpty()) {
+        return;
+    }
+    const QString retryText = m_lastRequestText;
+    clearRequestFailure();
+    m_responseMetadata.clear();
+    emit changed();
+    ensureServiceConversation([this, retryText] { sendService(retryText, true); });
+}
+
 void AgentClient::submitServiceCancel() {
     if (!m_serviceMode || actionBusy() || m_requestId.isEmpty()) return;
     m_cancelPending = false;
@@ -343,6 +375,7 @@ void AgentClient::submitServiceCancel() {
 void AgentClient::newChat() {
     if (busy() || actionBusy() || !m_options.isEmpty()) return;
     m_responseMetadata.clear();
+    clearRequestFailure(true);
     emit resetChat();
     if (!m_serviceMode) {
         requestLegacy("/new");
@@ -370,7 +403,9 @@ void AgentClient::ensureServiceConversation(const std::function<void()> &then) {
     }
     QUrl base = validatedOrigin("MEO_AI_SERVICE_ENDPOINT");
     if (!base.isValid()) {
-        m_status = tr("MEO_AI_SERVICE_ENDPOINT must be a loopback HTTP origin.");
+        const QString error = tr("MEO_AI_SERVICE_ENDPOINT must be a loopback HTTP origin.");
+        if (m_lastRequestText.isEmpty()) m_status = error;
+        else setRequestFailure(error, true);
         emit changed();
         return;
     }
@@ -388,11 +423,15 @@ void AgentClient::ensureServiceConversation(const std::function<void()> &then) {
         const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         const auto document = QJsonDocument::fromJson(reply->readAll());
         if (reply->error() != QNetworkReply::NoError || code < 200 || code >= 300 || !document.isObject()) {
-            m_status = tr("Meo AgentService unavailable while creating a conversation.");
+            const QString error = tr("Meo AgentService unavailable while creating a conversation.");
+            if (m_lastRequestText.isEmpty()) m_status = error;
+            else setRequestFailure(error, true);
         } else {
             m_conversationId = document.object().value("conversation_id").toString();
             if (m_conversationId.isEmpty()) {
-                m_status = tr("AgentService returned an invalid conversation.");
+                const QString error = tr("AgentService returned an invalid conversation.");
+                if (m_lastRequestText.isEmpty()) m_status = error;
+                else setRequestFailure(error, true);
             } else {
                 QSettings().setValue("serviceConversationId", m_conversationId);
                 then();
@@ -463,7 +502,7 @@ void AgentClient::loadServiceHistory() {
 void AgentClient::sendService(const QString &text, bool emitAssistantPlaceholder) {
     QUrl base = validatedOrigin("MEO_AI_SERVICE_ENDPOINT");
     if (!base.isValid()) {
-        m_status = tr("MEO_AI_SERVICE_ENDPOINT must be a loopback HTTP origin.");
+        setRequestFailure(tr("MEO_AI_SERVICE_ENDPOINT must be a loopback HTTP origin."), true);
         emit changed();
         return;
     }
@@ -473,7 +512,9 @@ void AgentClient::sendService(const QString &text, bool emitAssistantPlaceholder
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
     QJsonObject body{{"text", text}};
+    clearRequestFailure();
     if (emitAssistantPlaceholder) {
+        m_lastRequestText = text;
         m_pendingServiceText = text;
         m_staleConversationRetryUsed = false;
     }
@@ -494,7 +535,7 @@ void AgentClient::reconnectServiceStream() {
     if (!m_serviceMode || m_done || m_reply || m_requestId.isEmpty()) return;
     QUrl base = validatedOrigin("MEO_AI_SERVICE_ENDPOINT");
     if (!base.isValid()) {
-        m_status = tr("MEO_AI_SERVICE_ENDPOINT must be a loopback HTTP origin.");
+        setRequestFailure(tr("MEO_AI_SERVICE_ENDPOINT must be a loopback HTTP origin."), true);
         emit changed();
         return;
     }
@@ -559,6 +600,7 @@ void AgentClient::attachServiceStream(QNetworkReply *reply) {
                 m_cancelPending = false;
                 m_pendingServiceText.clear();
                 m_staleConversationRetryUsed = false;
+                clearRequestFailure(true);
                 m_status = tr("Stopped");
                 emit changed();
                 return;
@@ -575,7 +617,7 @@ void AgentClient::attachServiceStream(QNetworkReply *reply) {
 
             m_pendingServiceText.clear();
             m_staleConversationRetryUsed = false;
-            m_status = tr("The conversation could not be recovered. Send the message again to start a new chat.");
+            setRequestFailure(tr("The conversation could not be recovered. Try the request again."), true);
             emit changed();
             return;
         }
@@ -588,7 +630,7 @@ void AgentClient::attachServiceStream(QNetworkReply *reply) {
             m_cancelPending = false;
             m_staleConversationRetryUsed = false;
             m_reconnectAttempts = 0;
-            m_status = tr("The previous request no longer exists. You can start a new request.");
+            setRequestFailure(tr("The previous request no longer exists. Try the request again."), true);
             emit changed();
             return;
         }
@@ -612,14 +654,13 @@ void AgentClient::attachServiceStream(QNetworkReply *reply) {
             return;
         }
 
-        if (networkError != QNetworkReply::NoError || code != 200) {
-            m_status = tr("Meo AgentService unavailable (HTTP %1).").arg(code);
-        } else {
-            m_status = tr("AgentService stream ended before a terminal request event.");
-        }
+        const QString error = networkError != QNetworkReply::NoError || code != 200
+            ? tr("Meo AgentService unavailable (HTTP %1).").arg(code)
+            : tr("AgentService stream ended before a terminal request event.");
         m_pendingServiceText.clear();
         m_staleConversationRetryUsed = false;
         m_cancelPending = false;
+        setRequestFailure(error, true);
         emit changed();
     });
 }
@@ -680,6 +721,7 @@ void AgentClient::consumeService() {
             m_pendingServiceText.clear();
             m_staleConversationRetryUsed = false;
             m_cancelPending = false;
+            clearRequestFailure(true);
             m_status = tr("Ready");
         } else if (type == "request.cancelled") {
             m_done = true;
@@ -688,6 +730,7 @@ void AgentClient::consumeService() {
             m_cancelPending = false;
             m_options.clear();
             m_decisionId.clear();
+            clearRequestFailure(true);
             m_status = tr("Stopped");
         } else if (type == "request.failed") {
             m_done = true;
@@ -696,7 +739,7 @@ void AgentClient::consumeService() {
             m_cancelPending = false;
             m_options.clear();
             m_decisionId.clear();
-            m_status = event.value("error").toString(tr("Request failed"));
+            setRequestFailure(event.value("error").toString(tr("Request failed")), true);
         }
     }
 }
