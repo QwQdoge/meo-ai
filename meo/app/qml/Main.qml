@@ -488,7 +488,9 @@ ApplicationWindow {
                 objectName: "meoAiHistory"
                 anchors.top: compactHeader.bottom
                 anchors.topMargin: 16 * window.scale
-                anchors.bottom: confirmationSurface.visible ? confirmationSurface.top : composerShell.top
+                anchors.bottom: confirmationSurface.visible ? confirmationSurface.top
+                    : requestFailureSurface.visible ? requestFailureSurface.top
+                    : composerShell.top
                 anchors.bottomMargin: 16 * window.scale
                 anchors.horizontalCenter: parent.horizontalCenter
                 width: Math.min(parent.width - 2 * window.pageMargin, window.contentMaxWidth)
@@ -663,6 +665,22 @@ ApplicationWindow {
                         }
                     }
                 }
+            }
+
+            MeoBanner {
+                id: requestFailureSurface
+                objectName: "meoAiRequestFailure"
+                visible: agent.requestFailed
+                width: composerShell.width
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.bottom: composerShell.top
+                anchors.bottomMargin: 12 * window.scale
+                title: qsTr("Request failed")
+                text: agent.requestError
+                icon: "error"
+                tone: "error"
+                confirmText: agent.requestRetryable ? qsTr("Try again") : ""
+                onConfirmed: agent.retryLastRequest()
             }
 
             Rectangle {
