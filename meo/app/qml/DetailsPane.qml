@@ -27,12 +27,16 @@ Rectangle {
     color: MeoTheme.surfaceContainerLow
 
     function openSettingsForCurrentTab() {
-        if (tab === 3)
-            settingsCenter.openPage(0)
+        if (tab !== 3)
+            return
+        Qt.callLater(function() {
+            if (root.tab === 3)
+                settingsCenter.openPage(0)
+        })
     }
 
     onTabChanged: openSettingsForCurrentTab()
-    Component.onCompleted: Qt.callLater(openSettingsForCurrentTab)
+    Component.onCompleted: openSettingsForCurrentTab()
 
     ColumnLayout {
         anchors.fill: parent
