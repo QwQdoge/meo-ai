@@ -225,7 +225,7 @@ void AgentClient::setMemoryEnabled(bool enabled) {
     }
     QUrl url = base;
     url.setPath("/v1/memory/settings");
-    QJsonObject body{{"value", enabled}};
+    QJsonObject body{{"enabled", enabled}};
     postServiceAction(url, QJsonDocument(body).toJson(QJsonDocument::Compact), [this](QNetworkReply *) {
         m_status = tr("Memory setting saved");
         QTimer::singleShot(0, this, [this] { refreshMemory(m_memoryQuery); });
@@ -280,12 +280,9 @@ void AgentClient::deleteMemory(const QString &memoryId) {
     }
     QUrl url = base;
     url.setPath(QString("/v1/memory/%1").arg(id));
-    deleteServiceAction(url, [this, id](QNetworkReply *) {
-        for (int i = m_memories.size() - 1; i >= 0; --i) {
-            if (m_memories.at(i).toMap().value("memory_id").toString() == id)
-                m_memories.removeAt(i);
-        }
+    deleteServiceAction(url, [this](QNetworkReply *) {
         m_status = tr("Memory deleted");
+        QTimer::singleShot(0, this, [this] { refreshMemory(m_memoryQuery); });
     });
 }
 
