@@ -107,6 +107,7 @@ void AgentClient::sendWithPendingResources(const QString &text) {
         return;
     }
 
+    clearRequestFailure(true);
     m_responseMetadata.clear();
     emit changed();
     emit message("user", value);
@@ -146,6 +147,7 @@ void AgentClient::sendServiceWithResources(const QString &text, const QVariantLi
         return;
     }
 
+    clearRequestFailure(true);
     QUrl url = base;
     url.setPath(QString("/v1/conversations/%1/messages").arg(m_conversationId));
     QNetworkRequest request(url);
