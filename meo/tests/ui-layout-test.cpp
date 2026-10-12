@@ -108,9 +108,18 @@ private slots:
         // the full multi-page Settings Center rather than the Activity view.
         QVERIFY(QMetaObject::invokeMethod(window, "openInspector", Q_ARG(QVariant, 3)));
         QCOMPARE(window->property("inspectorTab").toInt(), 3);
-        QPointer<QObject> settingsCenter = window->findChild<QObject *>("meoAiSettingsCenter");
-        QVERIFY(settingsCenter);
-        QTRY_VERIFY(settingsCenter && settingsCenter->property("visible").toBool());
+        // Dock and overlay can each own a DetailsPane. Select the open popup,
+        // since the first matching QObject may belong to the hidden host.
+        QPointer<QObject> settingsCenter;
+        QTRY_VERIFY(([&]() {
+            for (auto *candidate : window->findChildren<QObject *>("meoAiSettingsCenter")) {
+                if (candidate->property("visible").toBool()) {
+                    settingsCenter = candidate;
+                    return true;
+                }
+            }
+            return false;
+        })());
         QVERIFY(QMetaObject::invokeMethod(settingsCenter.data(), "close"));
 
         window->resize(960, 720);
