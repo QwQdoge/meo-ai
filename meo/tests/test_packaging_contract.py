@@ -24,9 +24,17 @@ class PackagingContractTests(unittest.TestCase):
         self.assertNotIn("--host ::", text.replace("--host ::1", ""))
 
     def test_installed_launcher_uses_headless_backend_by_default(self):
-        text = (ROOT / "meo/packaging/meo-agent-service.in").read_text(encoding="utf-8")
-        self.assertIn("meo.adapters.headless_newelle:create_backend", text)
-        self.assertIn("from meo.runtime.main import main", text)
+        # The trusted installed entry point is now a compiled Python host rather
+        # than the old shell/Python wrapper. Keep the same security contract:
+        # it chooses the headless backend itself, imports only the runtime entry
+        # point, and rejects caller-supplied backend-factory overrides.
+        text = (ROOT / "meo/packaging/meo-agent-service.c").read_text(encoding="utf-8")
+        self.assertIn('"MEO_AI_BACKEND_FACTORY"', text)
+        self.assertIn('"meo.adapters.headless_newelle:create_backend"', text)
+        self.assertIn('PyImport_ImportModule("meo.runtime.main")', text)
+        self.assertIn('PyObject_GetAttrString(module, "main")', text)
+        self.assertIn('strcmp(value, "--backend-factory")', text)
+        self.assertIn("PyConfig_InitIsolatedConfig", text)
         self.assertNotIn("src.main", text)
 
     def test_packaging_does_not_enable_unit_during_install(self):
