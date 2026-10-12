@@ -42,6 +42,12 @@ private slots:
         auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
         QVERIFY(window);
         window->resize(1560, 940);
+
+        QPointer<QQuickItem> failureBanner;
+        QTRY_VERIFY((failureBanner = item(window->contentItem(), "meoAiRequestFailure")) != nullptr);
+        QVERIFY(failureBanner);
+        QVERIFY(!failureBanner->isVisible());
+
         client.message("user", "Review this project");
         client.message("assistant", "Sample response");
         client.presentationEvent(QVariantMap{{"card", QVariantMap{
