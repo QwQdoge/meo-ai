@@ -114,7 +114,11 @@ private slots:
         // the full multi-page Settings Center rather than the Activity view.
         QVERIFY(QMetaObject::invokeMethod(window, "openInspector", Q_ARG(QVariant, 3)));
         QCOMPARE(window->property("inspectorTab").toInt(), 3);
-        QPointer<QObject> settingsCenter = window->findChild<QObject *>("meoAiSettingsCenter");
+        // The dock Loader may have recreated DetailsPane between the calls
+        // above. Resolve the active pane first so we verify its SettingsCenter,
+        // rather than a stale popup owned by a previous responsive host.
+        QTRY_VERIFY((pane = item(window->contentItem(), "meoAiDetailsPane")) != nullptr);
+        QPointer<QObject> settingsCenter = pane->findChild<QObject *>("meoAiSettingsCenter");
         QVERIFY(settingsCenter);
         QTRY_VERIFY(settingsCenter && settingsCenter->property("visible").toBool());
         QVERIFY(QMetaObject::invokeMethod(settingsCenter.data(), "close"));
