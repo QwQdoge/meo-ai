@@ -93,6 +93,7 @@ install_data(
   '../service/search_trace.py',
   '../service/sync_contract.py',
   '../service/tool_decision.py',
+  '../service/verification.py',
   install_dir: join_paths(meo_moduledir, 'service')
 )
 
