@@ -49,12 +49,15 @@ public:
         // effective selectable value instead: MeoExposedDropdown renders an
         // unknown currentValue as an empty selection. Keep the configured ID
         // available for diagnostics while presenting the runtime fallback as
-        // the preferred value consumed by existing native views.
+        // the preferred value consumed by existing native views. Older service
+        // versions may not report preferred_available; in that case preserve
+        // their original preference rather than guessing that it is stale.
         QVariantList roles;
         roles.reserve(m_modelRoles.size());
         for (const QVariant &value : m_modelRoles) {
             QVariantMap role = value.toMap();
-            if (!role.value(QStringLiteral("preferred_available")).toBool()) {
+            const QString availabilityKey = QStringLiteral("preferred_available");
+            if (role.contains(availabilityKey) && !role.value(availabilityKey).toBool()) {
                 const QString configured = role.value(QStringLiteral("preferred_model_id")).toString();
                 if (!configured.isEmpty())
                     role.insert(QStringLiteral("configured_preferred_model_id"), configured);
