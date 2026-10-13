@@ -264,8 +264,6 @@ class RoutedBackendTests(unittest.TestCase):
             self.assertTrue(tool_events)
             self.assertEqual(tool_events[0]["type"], "presentation.card")
             self.assertEqual(tool_events[0]["card"]["title"], "Working")
-            # The request and progress card are already live while Coordinator is
-            # still blocked and before the actual model request begins.
             self.assertNotIn(("send", "main:strong"), backend.calls)
         finally:
             coordinator.release.set()
@@ -292,13 +290,13 @@ class RoutedBackendTests(unittest.TestCase):
             callbacks,
         )
         self.assertTrue(coordinator.started.wait(1.0))
-        self.assertEqual(service.get_request(context.request_id).state, RequestState.RUNNING_MODEL)
+        self.assertEqual(service.requests.get(context.request_id).state, RequestState.RUNNING_MODEL)
         self.assertTrue(service.cancel_request(context.request_id))
-        self.assertEqual(service.get_request(context.request_id).state, RequestState.CANCEL_REQUESTED)
+        self.assertEqual(service.requests.get(context.request_id).state, RequestState.CANCEL_REQUESTED)
 
         coordinator.release.set()
         self.assertTrue(done.wait(1.0))
-        self.assertEqual(service.get_request(context.request_id).state, RequestState.CANCELLED)
+        self.assertEqual(service.requests.get(context.request_id).state, RequestState.CANCELLED)
         self.assertFalse(backend.started.is_set())
         self.assertNotIn(("send", "main:strong"), backend.calls)
         self.assertEqual(backend.cancelled_handles, [])
@@ -328,7 +326,6 @@ class RoutedBackendTests(unittest.TestCase):
         self.assertEqual(done_events, ["done"])
         self.assertEqual(tool_events[0]["coordination"]["status"], "failed")
         self.assertIn("coordinator exploded", tool_events[0]["coordination"]["reason"])
-        # A follow-up request proves the previous execution did not strand the lock.
         routed.send_message("meo:1", "hello", callbacks)
         self.assertEqual(done_events, ["done", "done"])
 
