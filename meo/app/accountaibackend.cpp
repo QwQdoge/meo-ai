@@ -4,8 +4,10 @@
 #include <QDBusConnection>
 #include <QDBusInterface>
 #include <QDBusReply>
+#include <QDesktopServices>
 #include <QSettings>
 #include <QTimer>
+#include <QUrl>
 
 namespace
 {
@@ -40,6 +42,20 @@ QString displayName(const QVariantMap &connection)
 {
     const QString name = connection.value(QStringLiteral("displayName")).toString().trimmed();
     return name.isEmpty() ? connection.value(QStringLiteral("provider")).toString() : name;
+}
+
+QUrl accountPageUrl(const QString &page)
+{
+    const QString normalized = page.trimmed().toLower();
+    if (normalized == QLatin1String("profile"))
+        return QUrl(QStringLiteral("https://account.meoarch.org/settings/profile"));
+    if (normalized == QLatin1String("security"))
+        return QUrl(QStringLiteral("https://account.meoarch.org/settings/security"));
+    if (normalized == QLatin1String("privacy"))
+        return QUrl(QStringLiteral("https://account.meoarch.org/settings/privacy"));
+    if (normalized == QLatin1String("providers"))
+        return QUrl(QStringLiteral("https://account.meoarch.org/services"));
+    return QUrl(QStringLiteral("https://account.meoarch.org/"));
 }
 }
 
@@ -90,6 +106,13 @@ void AccountAiBackend::setBusy(bool busy)
     emit changed();
 }
 
+void AccountAiBackend::clearAccountIdentity()
+{
+    m_accountName.clear();
+    m_accountEmail.clear();
+    m_avatarUrl.clear();
+}
+
 QVariantMap AccountAiBackend::connectionById(const QString &connectionId) const
 {
     for (const QVariant &value : m_connections) {
@@ -116,9 +139,11 @@ void AccountAiBackend::refresh()
     if (!broker.isValid()) {
         m_serviceAvailable = false;
         m_signedIn = false;
+        clearAccountIdentity();
         m_connections.clear();
         m_models.clear();
         m_activeRequestId.clear();
+        m_activeRequestKind = RequestKind::None;
         m_discoveryConnectionId.clear();
         m_busy = false;
         m_status = tr("Meo Account service is unavailable.");
@@ -133,6 +158,7 @@ void AccountAiBackend::refresh()
     if (!statusReply.isValid()) {
         m_serviceAvailable = false;
         m_signedIn = false;
+        clearAccountIdentity();
         m_connections.clear();
         m_status = tr("Meo Account did not return its current state.");
         emit changed();
@@ -141,6 +167,18 @@ void AccountAiBackend::refresh()
 
     m_serviceAvailable = true;
     m_signedIn = statusReply.value().value(QStringLiteral("signedIn")).toBool();
+    clearAccountIdentity();
+    if (m_signedIn) {
+        const QDBusReply<QVariantMap> identityReply = broker.call(
+            QStringLiteral("GetIdentity"), kClientId);
+        if (identityReply.isValid()) {
+            const QVariantMap identity = identityReply.value();
+            m_accountName = identity.value(QStringLiteral("name")).toString().trimmed();
+            m_accountEmail = identity.value(QStringLiteral("email")).toString().trimmed();
+            m_avatarUrl = identity.value(QStringLiteral("avatarUrl")).toString().trimmed();
+        }
+    }
+
     if (!connectionsReply.isValid()) {
         m_connections.clear();
         m_status = tr("Meo AI is not authorized to use device AI connections.");
@@ -169,14 +207,71 @@ void AccountAiBackend::refresh()
         savePreferences();
     }
 
-    if (m_connections.isEmpty()) {
-        m_status = tr("No device AI connections are configured. Add one in Meo Settings.");
+    if (!m_signedIn) {
+        m_status = tr("Sign in to Meo to sync AI settings and conversations across devices.");
+    } else if (m_connections.isEmpty()) {
+        m_status = tr("Meo Account is connected. Add an AI provider to start chatting.");
     } else if (!m_selectedConnectionId.isEmpty()) {
         m_status = tr("Preferred connection: %1").arg(displayName(connectionById(m_selectedConnectionId)));
     } else {
-        m_status = tr("Choose a device AI connection for Meo AI.");
+        m_status = tr("Choose an AI connection for Meo AI.");
     }
     emit changed();
+}
+
+bool AccountAiBackend::signIn()
+{
+    if (m_busy)
+        return false;
+    if (m_signedIn)
+        return true;
+
+    QDBusInterface broker(kService, kPath, kInterface, QDBusConnection::sessionBus());
+    if (!broker.isValid()) {
+        setStatus(tr("Meo Account service is unavailable."));
+        return false;
+    }
+
+    setBusy(true);
+    m_activeRequestKind = RequestKind::Authentication;
+    m_status = tr("Preparing Meo Account sign-in…");
+    emit changed();
+
+    // Account owns the browser OAuth flow, PKCE, token store and callback. Meo AI
+    // only asks the registered Account client to connect the system account.
+    const QDBusReply<QString> reply = broker.call(
+        QStringLiteral("RequestAuthentication"), kClientId,
+        QStringLiteral("connect_system"), QVariantMap{});
+    if (!reply.isValid() || reply.value().isEmpty()) {
+        m_activeRequestKind = RequestKind::None;
+        setBusy(false);
+        setStatus(tr("Meo AI could not start Account sign-in."));
+        return false;
+    }
+
+    m_activeRequestId = reply.value();
+    const QDBusReply<QVariantMap> current = broker.call(
+        QStringLiteral("GetRequest"), m_activeRequestId);
+    if (current.isValid() && !current.value().isEmpty()) {
+        const QVariantMap snapshot = current.value();
+        handleRequestChanged(m_activeRequestId,
+                             snapshot.value(QStringLiteral("state")).toString(), snapshot);
+    }
+    return true;
+}
+
+bool AccountAiBackend::openAccountPage(const QString &page)
+{
+    const QUrl url = accountPageUrl(page);
+    if (!url.isValid() || url.scheme() != QLatin1String("https")) {
+        setStatus(tr("The Meo Account page is unavailable."));
+        return false;
+    }
+    if (!QDesktopServices::openUrl(url)) {
+        setStatus(tr("Your default browser could not open Meo Account."));
+        return false;
+    }
+    return true;
 }
 
 bool AccountAiBackend::selectConnection(const QString &connectionId)
@@ -226,7 +321,7 @@ void AccountAiBackend::discoverModels(const QString &connectionId)
         return;
     const QString id = connectionId.trimmed();
     if (connectionById(id).isEmpty()) {
-        setStatus(tr("Choose a valid device AI connection first."));
+        setStatus(tr("Choose a valid AI connection first."));
         return;
     }
 
@@ -237,6 +332,7 @@ void AccountAiBackend::discoverModels(const QString &connectionId)
     }
 
     setBusy(true);
+    m_activeRequestKind = RequestKind::ModelDiscovery;
     m_discoveryConnectionId = id;
     m_models.clear();
     m_status = tr("Discovering provider models…");
@@ -247,6 +343,7 @@ void AccountAiBackend::discoverModels(const QString &connectionId)
         QStringLiteral("discover_models"), QVariantMap{{QStringLiteral("connectionId"), id}});
     if (!reply.isValid() || reply.value().isEmpty()) {
         m_discoveryConnectionId.clear();
+        m_activeRequestKind = RequestKind::None;
         setBusy(false);
         setStatus(tr("Meo AI could not start model discovery. Check its Account permission."));
         return;
@@ -272,17 +369,48 @@ void AccountAiBackend::handleRequestChanged(const QString &requestId, const QStr
 {
     if (requestId != m_activeRequestId)
         return;
-    if (state != QLatin1String("completed") && state != QLatin1String("failed")
-        && state != QLatin1String("denied") && state != QLatin1String("expired")) {
-        if (state == QLatin1String("validating_destination"))
-            setStatus(tr("Checking the provider destination…"));
-        else if (state == QLatin1String("contacting_provider"))
-            setStatus(tr("Contacting the provider…"));
+
+    const RequestKind kind = m_activeRequestKind;
+    const bool terminal = state == QLatin1String("completed")
+        || state == QLatin1String("failed")
+        || state == QLatin1String("denied")
+        || state == QLatin1String("expired");
+
+    if (!terminal) {
+        if (kind == RequestKind::Authentication) {
+            if (state == QLatin1String("waiting_for_user"))
+                setStatus(tr("Continue with Meo Account to sign in."));
+            else if (state == QLatin1String("opening_browser"))
+                setStatus(tr("Opening Meo Account in your default browser…"));
+            else if (state == QLatin1String("waiting_for_callback"))
+                setStatus(tr("Finish signing in in your browser."));
+        } else if (kind == RequestKind::ModelDiscovery) {
+            if (state == QLatin1String("validating_destination"))
+                setStatus(tr("Checking the provider destination…"));
+            else if (state == QLatin1String("contacting_provider"))
+                setStatus(tr("Contacting the provider…"));
+        }
         return;
     }
 
     m_activeRequestId.clear();
+    m_activeRequestKind = RequestKind::None;
     setBusy(false);
+
+    if (kind == RequestKind::Authentication) {
+        if (state != QLatin1String("completed")) {
+            const QString error = result.value(QStringLiteral("error")).toString().trimmed();
+            setStatus(error.isEmpty() ? tr("Meo Account sign-in was not completed.") : error);
+            return;
+        }
+        setStatus(tr("Signed in to Meo Account."));
+        QTimer::singleShot(0, this, &AccountAiBackend::refresh);
+        return;
+    }
+
+    if (kind != RequestKind::ModelDiscovery)
+        return;
+
     if (state != QLatin1String("completed")) {
         const QString error = result.value(QStringLiteral("error")).toString().trimmed();
         m_discoveryConnectionId.clear();
@@ -328,15 +456,8 @@ void AccountAiBackend::handleAccountChanged()
 
 bool AccountAiBackend::openProviderSettings()
 {
-    QDBusInterface broker(kService, kPath, kInterface, QDBusConnection::sessionBus());
-    if (!broker.isValid()) {
-        setStatus(tr("Meo Account service is unavailable."));
-        return false;
-    }
-    const QDBusReply<bool> reply = broker.call(QStringLiteral("OpenSettings"));
-    if (!reply.isValid() || !reply.value()) {
-        setStatus(tr("Meo Settings could not be opened."));
-        return false;
-    }
-    return true;
+    // Provider management should feel like part of Meo AI. Until the embedded
+    // editor is backed by the Account credential broker, use the Account-owned
+    // web surface rather than bouncing users into a separate desktop settings app.
+    return openAccountPage(QStringLiteral("providers"));
 }
