@@ -6,6 +6,7 @@ import threading
 from typing import Iterable
 
 from meo.service.backend_adapter import BackendCallbacks, InputResource, ModelInfo
+from meo.service.coordinator import LocalSubagentCoordinator
 from meo.service.model_roles import ModelRoleRegistry
 from meo.service.verification import JudgeVerifier
 
@@ -59,9 +60,8 @@ class RouteDecision:
 class DeterministicModelRouter:
     """Small, inspectable request router.
 
-    Deterministic rules handle ordinary routing first. A model-assisted judge
-    verifies execution answers without forcing every simple chat through an
-    extra inference call.
+    Deterministic rules handle ordinary routing first. Complex execution may
+    receive bounded read-only subagent context and a model-assisted Judge.
     """
 
     @staticmethod
@@ -148,11 +148,11 @@ class DeterministicModelRouter:
 
 
 class RoutedBackend:
-    """Request-level model routing with bounded verification for execution work.
+    """Request routing, bounded coordination, and execution verification.
 
     Legacy Newelle model selection mutates profile settings. A lease therefore
-    spans the entire request, including auxiliary Judge/repair calls, so parallel
-    requests cannot silently switch each other's model.
+    spans the entire request, including auxiliary subagent, Judge, and repair
+    calls, so parallel requests cannot silently switch each other's model.
     """
 
     def __init__(
@@ -164,6 +164,7 @@ class RoutedBackend:
         self._backend = backend
         self._roles = roles
         self._router = router or DeterministicModelRouter()
+        self._coordinator = LocalSubagentCoordinator(backend, roles, max_subagents=3)
         self._verifier = JudgeVerifier(backend, roles, max_repairs=1)
         self._route_lock = threading.Lock()
 
@@ -188,7 +189,12 @@ class RoutedBackend:
         return next((item.model_id for item in models if item.selected), "")
 
     @staticmethod
-    def _enrich_meta(event: dict, decision: RouteDecision, verification: dict | None = None) -> dict:
+    def _enrich_meta(
+        event: dict,
+        decision: RouteDecision,
+        verification: dict | None = None,
+        coordination: dict | None = None,
+    ) -> dict:
         enriched = dict(event)
         enriched["type"] = "response_meta"
         enriched["routing"] = decision.public_dict()
@@ -197,6 +203,13 @@ class RoutedBackend:
             activity["vision"] = {"used": True}
         if decision.intent == "coding":
             activity["code"] = {"used": True}
+        if coordination is not None:
+            enriched["coordination"] = coordination
+            activity["coordination"] = {
+                "used": coordination.get("status") in {"completed", "failed"},
+                "status": str(coordination.get("status", "")),
+                "task_count": len(coordination.get("tasks", [])) if isinstance(coordination.get("tasks"), list) else 0,
+            }
         if verification is not None:
             enriched["verification"] = verification
             activity["verification"] = {
@@ -223,6 +236,14 @@ class RoutedBackend:
             self._route_lock.release()
             raise
 
+        coordination: dict | None = None
+        backend_text = text
+        if decision.role_id == "execution" and decision.complexity == "high" and self._coordinator.available:
+            outcome = self._coordinator.prepare(text, models, emit=callbacks.on_tool_event)
+            coordination = outcome.metadata
+            if outcome.context:
+                backend_text = outcome.context + text
+
         should_verify = decision.role_id == "execution" and self._verifier.available
         buffered_text: list[str] = []
         pending_meta: list[dict] = []
@@ -246,7 +267,7 @@ class RoutedBackend:
 
         def on_tool_event(event: dict) -> None:
             if event.get("type") == "response_meta":
-                enriched = self._enrich_meta(event, decision)
+                enriched = self._enrich_meta(event, decision, coordination=coordination)
                 if should_verify:
                     pending_meta[:] = [enriched]
                     return
@@ -265,7 +286,9 @@ class RoutedBackend:
             if outcome.text:
                 callbacks.on_text_delta(outcome.text)
             meta = pending_meta[0] if pending_meta else {"type": "response_meta", "activity": {}}
-            callbacks.on_tool_event(self._enrich_meta(meta, decision, outcome.metadata))
+            callbacks.on_tool_event(
+                self._enrich_meta(meta, decision, outcome.metadata, coordination=coordination)
+            )
             release()
             callbacks.on_done()
 
@@ -288,8 +311,8 @@ class RoutedBackend:
                 method = getattr(self._backend, "send_message_with_resources", None)
                 if not callable(method):
                     raise ValueError("selected backend does not support resource inputs")
-                return method(conversation_id, text, resources, wrapped)
-            return self._backend.send_message(conversation_id, text, wrapped)
+                return method(conversation_id, backend_text, resources, wrapped)
+            return self._backend.send_message(conversation_id, backend_text, wrapped)
         except Exception:
             release()
             raise
