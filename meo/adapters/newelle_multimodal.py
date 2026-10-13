@@ -16,8 +16,10 @@ class NewelleMultimodalBridge:
     """Translate AgentService resources and auxiliary calls into Newelle APIs.
 
     The compatibility layer deliberately does not invent a second provider
-    protocol. Newelle handlers already advertise `supports_vision()`, parse
-    fenced `image` blocks, and expose history-free `generate_text()` calls.
+    protocol. Newelle handlers already advertise vision support, parse fenced
+    `image` blocks, and expose history-free `generate_text()` calls. Handlers
+    may additionally expose `supports_model_vision(raw_model_id)` when one
+    provider contains a mix of text-only and image-capable models.
     """
 
     def __init__(self, backend, controller) -> None:
@@ -45,31 +47,60 @@ class NewelleMultimodalBridge:
         except Exception:
             return False
 
+    def _provider_model_supports_vision(self, provider_name: str, raw_model_id: str) -> bool:
+        """Resolve exact-model capability when a handler exposes it.
+
+        The handler-wide method remains the compatibility fallback for providers
+        whose catalog is uniformly multimodal. Account models use the exact-model
+        hook so one configured vision model cannot make sibling text models look
+        image-capable.
+        """
+        from src.constants import AVAILABLE_LLMS
+
+        provider = AVAILABLE_LLMS.get(provider_name)
+        if not isinstance(provider, dict):
+            # Keep test/custom bridge subclasses able to supply the legacy
+            # provider-level capability without registering a real handler.
+            return self._provider_supports_vision(provider_name)
+        handler_class = provider.get("class")
+        if not callable(handler_class):
+            return False
+        handlers = getattr(self._controller, "handlers", None)
+        directory = getattr(handlers, "directory", None)
+        try:
+            handler = handler_class(self._controller.settings, directory)
+            model_supported = getattr(handler, "supports_model_vision", None)
+            if callable(model_supported):
+                return bool(model_supported(raw_model_id))
+            supported = getattr(handler, "supports_vision", None)
+            return bool(supported()) if callable(supported) else False
+        except Exception:
+            return False
+
     def list_models(self) -> list[ModelInfo]:
         raw = list(self._backend.list_models())
-        providers = {
-            item.model_id.split(":", 1)[0]
-            for item in raw
-            if isinstance(item.model_id, str) and ":" in item.model_id
-        }
-        capabilities = {
-            provider: self._provider_supports_vision(provider)
-            for provider in providers
-        }
-        return [
-            ModelInfo(
-                item.model_id,
-                item.label,
-                item.provider,
-                selection_scope=item.selection_scope,
-                selected=item.selected,
-                supports_vision=(
-                    item.supports_vision
-                    or capabilities.get(item.model_id.split(":", 1)[0], False)
-                ),
+        result: list[ModelInfo] = []
+        for item in raw:
+            provider_name = ""
+            raw_model_id = ""
+            if isinstance(item.model_id, str) and ":" in item.model_id:
+                provider_name, raw_model_id = item.model_id.split(":", 1)
+            supports_vision = item.supports_vision
+            if provider_name and raw_model_id and not supports_vision:
+                supports_vision = self._provider_model_supports_vision(
+                    provider_name, raw_model_id
+                )
+            result.append(
+                ModelInfo(
+                    item.model_id,
+                    item.label,
+                    item.provider,
+                    selection_scope=item.selection_scope,
+                    selected=item.selected,
+                    supports_vision=supports_vision,
+                )
             )
-            for item in raw
-        ]
+        return result
 
     @staticmethod
     def _automatic_title_from_first_message(record: dict) -> str:
