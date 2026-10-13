@@ -173,6 +173,18 @@ private slots:
         })());
         QVERIFY(QMetaObject::invokeMethod(settingsCenter.data(), "close"));
 
+        // Recreating DetailsPane with a persisted Settings tab is presentation
+        // state only. New Chat/responsive host changes must not reopen the modal
+        // without another explicit user tab change.
+        window->setProperty("inspectorOpen", false);
+        QTRY_VERIFY(!window->property("showDock").toBool());
+        QCOMPARE(window->property("inspectorTab").toInt(), 3);
+        window->setProperty("inspectorOpen", true);
+        QTRY_VERIFY(window->property("showDock").toBool());
+        QTest::qWait(100);
+        for (auto *candidate : window->findChildren<QObject *>("meoAiSettingsCenter"))
+            QVERIFY(!candidate->property("visible").toBool());
+
         window->resize(960, 720);
         QTRY_VERIFY(!window->property("showDock").toBool());
         QTRY_VERIFY(sidebar && qAbs(sidebar->width() - 72) < 2);
