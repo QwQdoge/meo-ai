@@ -91,6 +91,59 @@ class LocalSubagentCoordinator:
             + "\n</context>\n"
         )
 
+    @staticmethod
+    def _progress_card(run_id: str, status: str, tasks: list[dict], **extra) -> dict:
+        total = len(tasks)
+        completed = sum(1 for task in tasks if task.get("status") == "completed")
+        failed = sum(1 for task in tasks if task.get("status") == "failed")
+        running = next(
+            (str(task.get("title", "Analysis")) for task in tasks if task.get("status") == "running"),
+            "",
+        )
+        if status == "planning":
+            title = "Working"
+            subtitle = "Planning a few focused checks"
+        elif status == "running":
+            title = "Working"
+            subtitle = f"Checking {running}" if running else "Running focused checks"
+        elif status == "completed":
+            title = "Work complete"
+            subtitle = "Supporting analysis is ready" if total else "No extra subagents were needed"
+        else:
+            title = "Work needs attention"
+            subtitle = "Supporting analysis could not finish"
+
+        lines: list[str] = []
+        for task in tasks:
+            task_status = str(task.get("status", "queued"))
+            marker = {
+                "completed": "✓",
+                "failed": "×",
+                "running": "→",
+                "queued": "·",
+            }.get(task_status, "·")
+            task_title = " ".join(str(task.get("title", "Analysis")).split())[:120]
+            lines.append(f"{marker} {task_title}")
+        reason = str(extra.get("reason", "")).strip()
+        if reason and not lines:
+            lines.append("Coordinator could not prepare supporting analysis.")
+
+        value = ""
+        if total:
+            done = completed + failed
+            value = f"{done}/{total}"
+        return {
+            "type": "presentation_card",
+            "card": {
+                "card_id": f"agent-run:{run_id}",
+                "kind": "status",
+                "title": title,
+                "subtitle": subtitle,
+                "value": value,
+                "detail": "\n".join(lines)[:1200],
+            },
+        }
+
     def prepare(
         self,
         request_text: str,
@@ -114,23 +167,13 @@ class LocalSubagentCoordinator:
         def publish(status: str, tasks: list[dict], **extra) -> None:
             if emit is None:
                 return
-            emit(
-                {
-                    "type": "agent_run",
-                    "run_id": run_id,
-                    "status": status,
-                    "kind": "local_subagents",
-                    "tasks": [
-                        {
-                            "index": index,
-                            "title": str(task.get("title", "")),
-                            "status": str(task.get("status", "")),
-                        }
-                        for index, task in enumerate(tasks)
-                    ],
-                    **extra,
-                }
-            )
+            # Presentation cards are already a bounded, native-safe AgentService
+            # contract and the MeoUI client upserts them by card_id. Progress UI
+            # must never be allowed to break the actual execution path.
+            try:
+                emit(self._progress_card(run_id, status, tasks, **extra))
+            except Exception:
+                return
 
         publish("planning", [])
         try:
