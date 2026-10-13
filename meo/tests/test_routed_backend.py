@@ -8,6 +8,7 @@ from meo.service.backend_adapter import BackendCallbacks, InputResource, ModelIn
 from meo.service.coordinator import CoordinatorOutcome
 from meo.service.core import AgentServiceCore
 from meo.service.model_roles import ModelRoleRegistry
+from meo.service.request_state import RequestState
 
 
 class FakeBackend:
@@ -270,6 +271,37 @@ class RoutedBackendTests(unittest.TestCase):
             coordinator.release.set()
         self.assertTrue(done.wait(1.0))
         self.assertIn(("send", "main:strong"), backend.calls)
+
+    def test_agent_service_cancel_during_coordinator_reaches_cancelled_without_model_start(self) -> None:
+        backend = DeferredBackend()
+        routed = RoutedBackend(backend, ModelRoleRegistry())
+        coordinator = BlockingCoordinator()
+        routed._coordinator = coordinator
+        service = AgentServiceCore(routed)
+        done = threading.Event()
+        callbacks = BackendCallbacks(
+            on_text_delta=lambda _delta: None,
+            on_tool_event=lambda _event: None,
+            on_done=done.set,
+            on_error=lambda _error: done.set(),
+        )
+
+        context = service.send_message(
+            "meo:1",
+            "Fix this code and analyze the architecture before implementing the change",
+            callbacks,
+        )
+        self.assertTrue(coordinator.started.wait(1.0))
+        self.assertEqual(service.get_request(context.request_id).state, RequestState.RUNNING_MODEL)
+        self.assertTrue(service.cancel_request(context.request_id))
+        self.assertEqual(service.get_request(context.request_id).state, RequestState.CANCEL_REQUESTED)
+
+        coordinator.release.set()
+        self.assertTrue(done.wait(1.0))
+        self.assertEqual(service.get_request(context.request_id).state, RequestState.CANCELLED)
+        self.assertFalse(backend.started.is_set())
+        self.assertNotIn(("send", "main:strong"), backend.calls)
+        self.assertEqual(backend.cancelled_handles, [])
 
     def test_coordinator_crash_fails_open_and_releases_request_lock(self) -> None:
         backend = FakeBackend()
