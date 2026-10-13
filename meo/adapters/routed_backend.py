@@ -196,6 +196,7 @@ class RoutedBackend:
         decision: RouteDecision,
         verification: dict | None = None,
         coordination: dict | None = None,
+        conversation_digest: dict | None = None,
     ) -> dict:
         enriched = dict(event)
         enriched["type"] = "response_meta"
@@ -217,6 +218,12 @@ class RoutedBackend:
             activity["verification"] = {
                 "used": True,
                 "status": str(verification.get("status", "")),
+            }
+        if conversation_digest is not None:
+            enriched["conversation_digest"] = conversation_digest
+            activity["title_summary"] = {
+                "used": conversation_digest.get("status") == "completed",
+                "status": str(conversation_digest.get("status", "")),
             }
         enriched["activity"] = activity
         return enriched
@@ -271,15 +278,27 @@ class RoutedBackend:
             finally:
                 self._route_lock.release()
 
-        def generate_digest(final_text: str) -> None:
+        def generate_digest(final_text: str) -> dict:
             if not final_text.strip():
-                return
+                return {"status": "skipped", "reason": "empty_response"}
             try:
-                self._digest.maybe_generate(conversation_id, text, final_text, models)
-            except Exception:
+                return self._digest.maybe_generate(conversation_id, text, final_text, models).metadata
+            except Exception as exc:
                 # Titles and summaries are convenience metadata. They must never
                 # turn a successful chat request into an error.
-                return
+                return {"status": "failed", "reason": str(exc)}
+
+        def publish_final_meta(verification: dict | None, digest: dict) -> None:
+            meta = pending_meta[0] if pending_meta else {"type": "response_meta", "activity": {}}
+            callbacks.on_tool_event(
+                self._enrich_meta(
+                    meta,
+                    decision,
+                    verification=verification,
+                    coordination=coordination,
+                    conversation_digest=digest,
+                )
+            )
 
         def on_text_delta(delta: str) -> None:
             if should_verify:
@@ -290,17 +309,14 @@ class RoutedBackend:
 
         def on_tool_event(event: dict) -> None:
             if event.get("type") == "response_meta":
-                enriched = self._enrich_meta(event, decision, coordination=coordination)
-                if should_verify:
-                    pending_meta[:] = [enriched]
-                    return
-                callbacks.on_tool_event(enriched)
+                pending_meta[:] = [dict(event)]
                 return
             callbacks.on_tool_event(event)
 
         def on_done() -> None:
             if not should_verify:
-                generate_digest("".join(visible_text))
+                digest = generate_digest("".join(visible_text))
+                publish_final_meta(None, digest)
                 release()
                 callbacks.on_done()
                 return
@@ -310,11 +326,8 @@ class RoutedBackend:
             final_text = outcome.text or candidate
             if final_text:
                 callbacks.on_text_delta(final_text)
-            generate_digest(final_text)
-            meta = pending_meta[0] if pending_meta else {"type": "response_meta", "activity": {}}
-            callbacks.on_tool_event(
-                self._enrich_meta(meta, decision, outcome.metadata, coordination=coordination)
-            )
+            digest = generate_digest(final_text)
+            publish_final_meta(outcome.metadata, digest)
             release()
             callbacks.on_done()
 
