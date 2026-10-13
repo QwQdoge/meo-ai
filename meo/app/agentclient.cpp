@@ -475,7 +475,10 @@ void AgentClient::loadServiceHistory() {
         } else {
             const auto object = document.object();
             const QString returnedConversation = object.value("conversation_id").toString();
-            if (returnedConversation != expectedConversation || m_conversationId != expectedConversation) {
+            const auto conversation = object.value("conversation").toObject();
+            const QString metadataConversation = conversation.value("conversation_id").toString();
+            if (returnedConversation != expectedConversation || m_conversationId != expectedConversation ||
+                (!metadataConversation.isEmpty() && metadataConversation != expectedConversation)) {
                 m_status = tr("AgentService returned mismatched conversation history.");
             } else {
                 const auto items = object.value("messages").toArray();
@@ -488,6 +491,8 @@ void AgentClient::loadServiceHistory() {
                     if ((role == "user" || role == "assistant") && !text.isEmpty())
                         emit message(role, text);
                 }
+                if (!conversation.isEmpty())
+                    emit conversationMetadata(conversation.toVariantMap());
                 m_status = tr("Ready");
             }
         }
