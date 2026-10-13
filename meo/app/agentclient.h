@@ -103,6 +103,7 @@ signals:
     void toolEvent(const QVariantMap &event);
     void presentationEvent(const QVariantMap &event);
     void responseMetaEvent(const QVariantMap &event);
+    void conversationMetadata(const QVariantMap &metadata);
     void resetChat();
 private:
     void requestLegacy(const QString &text);
