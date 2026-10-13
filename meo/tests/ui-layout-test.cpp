@@ -60,8 +60,18 @@ private slots:
         client.message("assistant", "Sample response");
         client.presentationEvent(QVariantMap{{"card", QVariantMap{
             {"card_id", "test"}, {"title", "Build"}, {"value", "Ready"}, {"kind", "status"}}}});
-        client.responseMetaEvent(QVariantMap{{"model", "Fixture"}, {"citations", QVariantList{
-            QVariantMap{{"title", "Fixture source"}, {"uri", "https://example.com"}}}}});
+        client.responseMetaEvent(QVariantMap{
+            {"model", "Fixture"},
+            {"conversation_digest", QVariantMap{
+                {"status", "completed"}, {"title", "Project Review"}, {"summary", "Reviewed the project."}}},
+            {"citations", QVariantList{
+                QVariantMap{{"title", "Fixture source"}, {"uri", "https://example.com"}}}}});
+
+        QPointer<QQuickItem> title;
+        QTRY_VERIFY((title = item(window->contentItem(), "meoAiConversationTitle")) != nullptr);
+        QVERIFY(title);
+        QTRY_COMPARE(title->property("text").toString(), QString("Project Review"));
+        QCOMPARE(window->property("generatedConversationTitle").toString(), QString("Project Review"));
 
         QPointer<QQuickItem> card;
         QTRY_VERIFY((card = item(window->contentItem(), "meoAiPresentationCard")) != nullptr);
