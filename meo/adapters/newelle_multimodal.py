@@ -5,6 +5,7 @@ import json
 from typing import Iterable
 
 from meo.service.backend_adapter import BackendCallbacks, InputResource, ModelInfo
+from meo.service.conversation_digest import newelle_automatic_chat_title
 
 
 _MAX_IMAGE_COUNT = 8
@@ -70,11 +71,11 @@ class NewelleMultimodalBridge:
             for item in raw
         ]
 
-    def _automatic_title_from_first_message(self, record: dict) -> str:
+    @staticmethod
+    def _automatic_title_from_first_message(record: dict) -> str:
         entries = record.get("chat", [])
         if not isinstance(entries, list):
             return ""
-        first_message = ""
         for entry in entries:
             if not isinstance(entry, dict):
                 continue
@@ -82,21 +83,8 @@ class NewelleMultimodalBridge:
                 continue
             value = entry.get("Message")
             if isinstance(value, str):
-                first_message = value
-                break
-        if not first_message:
-            return ""
-        try:
-            # Import lazily so the bridge stays import-safe in minimal/headless
-            # environments. Using Newelle's own helper keeps the comparison
-            # exactly aligned with name_chat_from_first_message().
-            from src.utility.strings import build_chat_title
-
-            title = build_chat_title(first_message)
-            return title if isinstance(title, str) else ""
-        except Exception:
-            # Conservative failure: unknown titles are treated as user-owned.
-            return ""
+                return newelle_automatic_chat_title(value)
+        return ""
 
     def _conversation_title_is_automatic(self, record: dict) -> bool:
         if record.get("name_is_default") is True:
