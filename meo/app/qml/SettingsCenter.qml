@@ -53,6 +53,24 @@ Popup {
         return String(role.preferred_model_id || role.fallback_model_id || "")
     }
 
+    function roleEligibleModels(role) {
+        const models = agent.models || []
+        const eligibleIds = role && role.eligible_model_ids ? role.eligible_model_ids : []
+        if (!eligibleIds || eligibleIds.length === 0)
+            return role && role.capability_available === false ? [] : models
+
+        const allowed = ({})
+        for (let i = 0; i < eligibleIds.length; ++i)
+            allowed[String(eligibleIds[i])] = true
+
+        const result = []
+        for (let i = 0; i < models.length; ++i) {
+            if (allowed[String(models[i].model_id || "")] === true)
+                result.push(models[i])
+        }
+        return result
+    }
+
     function providerLabel(connection) {
         if (!connection) return qsTr("AI connection")
         if (connection.provider === "ollama") return qsTr("Ollama")
@@ -513,15 +531,22 @@ Popup {
                                     MeoExposedDropdown {
                                         Layout.fillWidth: true
                                         label: qsTr("Model")
-                                        model: agent.models
+                                        model: root.roleEligibleModels(modelData)
                                         textRole: "label"
                                         valueRole: "model_id"
                                         currentValue: root.roleCurrentModel(modelData)
                                         type: "outlined"
-                                        enabled: agent.models.length > 0 && !agent.actionBusy
+                                        enabled: root.roleEligibleModels(modelData).length > 0 && !agent.actionBusy
                                         onSelected: function(index, value) {
                                             if (String(value).length) agent.setModelRole(String(modelData.role_id || ""), String(value))
                                         }
+                                    }
+                                    MeoText {
+                                        Layout.fillWidth: true
+                                        visible: modelData.capability_available === false
+                                        text: qsTr("No compatible model is currently available for this role.")
+                                        typeRole: "label"; typeSize: "small"; color: MeoTheme.contentOnSurfaceVariant
+                                        wrapMode: Text.Wrap
                                     }
                                     MeoText {
                                         Layout.fillWidth: true
