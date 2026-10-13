@@ -346,7 +346,12 @@ class RoutedBackend:
         backend_text = text
         if decision.role_id == "execution" and decision.complexity == "high" and self._coordinator.available:
             try:
-                outcome = self._coordinator.prepare(text, models, emit=callbacks.on_tool_event)
+                outcome = self._coordinator.prepare(
+                    text,
+                    models,
+                    emit=callbacks.on_tool_event,
+                    cancelled=startup_cancelled,
+                )
                 coordination = outcome.metadata
                 if outcome.context:
                     backend_text = outcome.context + text
