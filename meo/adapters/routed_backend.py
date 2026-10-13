@@ -6,6 +6,7 @@ import threading
 from typing import Iterable
 
 from meo.service.backend_adapter import BackendCallbacks, InputResource, ModelInfo
+from meo.service.conversation_digest import ConversationDigestGenerator
 from meo.service.coordinator import LocalSubagentCoordinator
 from meo.service.model_roles import ModelRoleRegistry
 from meo.service.verification import JudgeVerifier
@@ -151,8 +152,8 @@ class RoutedBackend:
     """Request routing, bounded coordination, and execution verification.
 
     Legacy Newelle model selection mutates profile settings. A lease therefore
-    spans the entire request, including auxiliary subagent, Judge, and repair
-    calls, so parallel requests cannot silently switch each other's model.
+    spans the entire request, including auxiliary subagent, Judge, digest, and
+    repair calls, so parallel requests cannot silently switch each other's model.
     """
 
     def __init__(
@@ -166,6 +167,7 @@ class RoutedBackend:
         self._router = router or DeterministicModelRouter()
         self._coordinator = LocalSubagentCoordinator(backend, roles, max_subagents=3)
         self._verifier = JudgeVerifier(backend, roles, max_repairs=1)
+        self._digest = ConversationDigestGenerator(backend, roles)
         self._route_lock = threading.Lock()
 
     def __getattr__(self, name: str):
@@ -255,6 +257,7 @@ class RoutedBackend:
 
         should_verify = decision.role_id == "execution" and self._verifier.available
         buffered_text: list[str] = []
+        visible_text: list[str] = []
         pending_meta: list[dict] = []
 
         def release() -> None:
@@ -268,10 +271,21 @@ class RoutedBackend:
             finally:
                 self._route_lock.release()
 
+        def generate_digest(final_text: str) -> None:
+            if not final_text.strip():
+                return
+            try:
+                self._digest.maybe_generate(conversation_id, text, final_text, models)
+            except Exception:
+                # Titles and summaries are convenience metadata. They must never
+                # turn a successful chat request into an error.
+                return
+
         def on_text_delta(delta: str) -> None:
             if should_verify:
                 buffered_text.append(delta)
             else:
+                visible_text.append(delta)
                 callbacks.on_text_delta(delta)
 
         def on_tool_event(event: dict) -> None:
@@ -286,14 +300,17 @@ class RoutedBackend:
 
         def on_done() -> None:
             if not should_verify:
+                generate_digest("".join(visible_text))
                 release()
                 callbacks.on_done()
                 return
 
             candidate = "".join(buffered_text)
             outcome = self._verifier.verify(text, candidate, models, decision.model_id)
-            if outcome.text:
-                callbacks.on_text_delta(outcome.text)
+            final_text = outcome.text or candidate
+            if final_text:
+                callbacks.on_text_delta(final_text)
+            generate_digest(final_text)
             meta = pending_meta[0] if pending_meta else {"type": "response_meta", "activity": {}}
             callbacks.on_tool_event(
                 self._enrich_meta(meta, decision, outcome.metadata, coordination=coordination)
