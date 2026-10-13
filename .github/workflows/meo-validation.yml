@@ -90,9 +90,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: QwQdoge/MeoUI
-          # Keep source CI on the same MeoUI commit pinned by the current beta
-          # release manifest instead of silently validating against an older UI.
-          ref: 8a18c94f3984ef9d8d9eb3dae27254c56f8fed84
+          # Keep source CI on an exact, independently verified MeoUI commit so
+          # component contracts cannot drift under the native client.
+          ref: 6f9c137c0d2bb1300ba79636d09f70cf94b0596b
           path: dependencies/MeoUI
       - run: cmake -S meo -B build/meo -DMEO_UI_ROOT="$PWD/dependencies/MeoUI" -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
       - run: cmake --build build/meo --parallel 2
