@@ -68,6 +68,13 @@ class DeferredVerifyingBackend(FakeBackend):
         return self.judge_outputs.pop(0)
 
 
+class FailingCoordinator:
+    available = True
+
+    def prepare(self, *_args, **_kwargs):
+        raise RuntimeError("coordinator exploded")
+
+
 class DeterministicModelRouterTests(unittest.TestCase):
     def setUp(self) -> None:
         self.models = [
@@ -164,6 +171,33 @@ class RoutedBackendTests(unittest.TestCase):
         self.assertEqual(tool_events[0]["verification"]["status"], "accepted")
         self.assertEqual(tool_events[0]["activity"]["verification"]["used"], True)
         self.assertEqual(tool_events[0]["activity"]["tools"], ["shell"])
+
+    def test_coordinator_crash_fails_open_and_releases_request_lock(self) -> None:
+        backend = FakeBackend()
+        routed = RoutedBackend(backend, ModelRoleRegistry())
+        routed._coordinator = FailingCoordinator()
+        tool_events: list[dict] = []
+        done_events: list[str] = []
+        callbacks = BackendCallbacks(
+            on_text_delta=lambda _delta: None,
+            on_tool_event=tool_events.append,
+            on_done=lambda: done_events.append("done"),
+            on_error=lambda error: done_events.append(error),
+        )
+
+        routed.send_message(
+            "meo:1",
+            "Fix this code and analyze the architecture before implementing the change",
+            callbacks,
+        )
+
+        self.assertIn(("send", "main:strong"), backend.calls)
+        self.assertEqual(done_events, ["done"])
+        self.assertEqual(tool_events[0]["coordination"]["status"], "failed")
+        self.assertIn("coordinator exploded", tool_events[0]["coordination"]["reason"])
+        # A follow-up request proves the previous execution did not strand the lock.
+        routed.send_message("meo:1", "hello", callbacks)
+        self.assertEqual(done_events, ["done", "done"])
 
     def test_catalog_is_exposed_as_request_scoped_and_preserves_capabilities(self) -> None:
         routed = RoutedBackend(FakeBackend(), ModelRoleRegistry())
