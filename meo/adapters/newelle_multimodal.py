@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import sys
 from typing import Iterable
 
 from meo.service.backend_adapter import BackendCallbacks, InputResource, ModelInfo
@@ -29,10 +30,24 @@ class NewelleMultimodalBridge:
     def __getattr__(self, name: str):
         return getattr(self._backend, name)
 
-    def _provider_supports_vision(self, provider_name: str) -> bool:
-        from src.constants import AVAILABLE_LLMS
+    @staticmethod
+    def _loaded_provider_registry() -> dict:
+        """Return Newelle's provider registry only when runtime already loaded it.
 
-        provider = AVAILABLE_LLMS.get(provider_name)
+        Capability inspection is used by the small headless AgentService catalog
+        and its protocol tests. Importing ``src.constants`` here would eagerly
+        import Newelle's full handler package (including optional multimedia
+        dependencies such as Pillow) merely to list models. The real Newelle
+        runtime has already loaded the registry before constructing this bridge;
+        lightweight/custom backends safely fall back to their advertised model
+        metadata or an overridden provider capability hook.
+        """
+        module = sys.modules.get("src.constants")
+        registry = getattr(module, "AVAILABLE_LLMS", None) if module is not None else None
+        return registry if isinstance(registry, dict) else {}
+
+    def _provider_supports_vision(self, provider_name: str) -> bool:
+        provider = self._loaded_provider_registry().get(provider_name)
         if not isinstance(provider, dict):
             return False
         handler_class = provider.get("class")
@@ -55,9 +70,7 @@ class NewelleMultimodalBridge:
         hook so one configured vision model cannot make sibling text models look
         image-capable.
         """
-        from src.constants import AVAILABLE_LLMS
-
-        provider = AVAILABLE_LLMS.get(provider_name)
+        provider = self._loaded_provider_registry().get(provider_name)
         if not isinstance(provider, dict):
             # Keep test/custom bridge subclasses able to supply the legacy
             # provider-level capability without registering a real handler.
@@ -166,12 +179,10 @@ class NewelleMultimodalBridge:
         provider's model setting here cannot cross-contaminate another routed
         request. The exact settings JSON is restored in `finally`.
         """
-        from src.constants import AVAILABLE_LLMS
-
         if not isinstance(model_id, str) or ":" not in model_id:
             raise ValueError("auxiliary model_id must include provider:model")
         provider_name, raw_model_id = model_id.split(":", 1)
-        provider = AVAILABLE_LLMS.get(provider_name)
+        provider = self._loaded_provider_registry().get(provider_name)
         if not isinstance(provider, dict) or not raw_model_id:
             raise ValueError(f"unknown auxiliary model: {model_id}")
         if model_id not in {item.model_id for item in self.list_models()}:
