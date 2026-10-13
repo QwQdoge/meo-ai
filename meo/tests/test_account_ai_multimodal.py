@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import unittest
 
-from meo.adapters.account_llm import MeoAccountLLMHandler
+from meo.adapters.account_multimodal import context_payload
 from meo.system.account_ai import DbusNextAccountAiClient
 
 
@@ -54,7 +54,7 @@ class AccountAiMultimodalTest(unittest.TestCase):
             }
         ]
 
-        encoded, images = MeoAccountLLMHandler._context_payload(prompt, history)
+        encoded, images = context_payload(prompt, history)
         payload = json.loads(encoded)
 
         self.assertEqual(images, (current_image,))
@@ -64,8 +64,11 @@ class AccountAiMultimodalTest(unittest.TestCase):
         self.assertIn("[Image attachment]", payload["conversation_history"][0]["content"])
         self.assertIn("What is shown here?", payload["current_user_prompt"])
 
-    def test_account_handler_advertises_vision_protocol(self):
-        self.assertTrue(MeoAccountLLMHandler.supports_vision(None))
+    def test_image_count_is_bounded_without_newelle_dependencies(self):
+        image = "data:image/png;base64,QQ=="
+        prompt = "\n".join(f"```image\n{image}\n```" for _ in range(9))
+        with self.assertRaisesRegex(ValueError, "At most 8 images"):
+            context_payload(prompt, [])
 
 
 if __name__ == "__main__":
