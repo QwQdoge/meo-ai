@@ -82,6 +82,15 @@ class JudgeVerifier:
             confidence = max(0.0, min(1.0, float(raw_confidence)))
         return verdict, issues, confidence
 
+    @staticmethod
+    def _metadata(status: str, *, checked: bool, verified: bool, **extra) -> dict:
+        return {
+            "status": status,
+            "checked": checked,
+            "verified": verified,
+            **extra,
+        }
+
     def verify(
         self,
         request_text: str,
@@ -90,16 +99,30 @@ class JudgeVerifier:
         execution_model_id: str,
     ) -> VerificationOutcome:
         if not candidate.strip():
-            return VerificationOutcome(candidate, {"status": "skipped", "reason": "empty_candidate"})
+            return VerificationOutcome(
+                candidate,
+                self._metadata("skipped", checked=False, verified=False, reason="empty_candidate"),
+            )
         generate = getattr(self._backend, "generate_auxiliary", None)
         if not callable(generate):
-            return VerificationOutcome(candidate, {"status": "unavailable", "reason": "backend_no_auxiliary_generation"})
+            return VerificationOutcome(
+                candidate,
+                self._metadata(
+                    "unavailable",
+                    checked=False,
+                    verified=False,
+                    reason="backend_no_auxiliary_generation",
+                ),
+            )
 
         catalog = list(models)
         try:
             judge_model_id, judge_fallback = self._roles.resolve_model("judge", catalog)
         except Exception as exc:
-            return VerificationOutcome(candidate, {"status": "unavailable", "reason": str(exc)})
+            return VerificationOutcome(
+                candidate,
+                self._metadata("unavailable", checked=False, verified=False, reason=str(exc)),
+            )
 
         current = candidate
         attempts: list[dict] = []
@@ -117,12 +140,14 @@ class JudgeVerifier:
             except Exception as exc:
                 return VerificationOutcome(
                     current,
-                    {
-                        "status": "unavailable",
-                        "reason": str(exc),
-                        "judge_model_id": judge_model_id,
-                        "attempts": attempts,
-                    },
+                    self._metadata(
+                        "unavailable",
+                        checked=False,
+                        verified=False,
+                        reason=str(exc),
+                        judge_model_id=judge_model_id,
+                        attempts=attempts,
+                    ),
                 )
 
             attempts.append(
@@ -135,13 +160,15 @@ class JudgeVerifier:
             if verdict == "ACCEPT":
                 return VerificationOutcome(
                     current,
-                    {
-                        "status": "accepted" if repair_index == 0 else "accepted_after_repair",
-                        "judge_model_id": judge_model_id,
-                        "judge_fallback_used": judge_fallback,
-                        "repair_count": repair_index,
-                        "attempts": attempts,
-                    },
+                    self._metadata(
+                        "accepted" if repair_index == 0 else "accepted_after_repair",
+                        checked=True,
+                        verified=True,
+                        judge_model_id=judge_model_id,
+                        judge_fallback_used=judge_fallback,
+                        repair_count=repair_index,
+                        attempts=attempts,
+                    ),
                 )
 
             if repair_index >= self._max_repairs:
@@ -158,31 +185,37 @@ class JudgeVerifier:
             except Exception as exc:
                 return VerificationOutcome(
                     candidate,
-                    {
-                        "status": "repair_failed",
-                        "reason": str(exc),
-                        "judge_model_id": judge_model_id,
-                        "attempts": attempts,
-                    },
+                    self._metadata(
+                        "repair_failed",
+                        checked=True,
+                        verified=False,
+                        reason=str(exc),
+                        judge_model_id=judge_model_id,
+                        attempts=attempts,
+                    ),
                 )
             if not current:
                 return VerificationOutcome(
                     candidate,
-                    {
-                        "status": "repair_failed",
-                        "reason": "repair model returned an empty answer",
-                        "judge_model_id": judge_model_id,
-                        "attempts": attempts,
-                    },
+                    self._metadata(
+                        "repair_failed",
+                        checked=True,
+                        verified=False,
+                        reason="repair model returned an empty answer",
+                        judge_model_id=judge_model_id,
+                        attempts=attempts,
+                    ),
                 )
 
         return VerificationOutcome(
             current,
-            {
-                "status": "rejected_after_repair",
-                "judge_model_id": judge_model_id,
-                "judge_fallback_used": judge_fallback,
-                "repair_count": self._max_repairs,
-                "attempts": attempts,
-            },
+            self._metadata(
+                "rejected_after_repair",
+                checked=True,
+                verified=False,
+                judge_model_id=judge_model_id,
+                judge_fallback_used=judge_fallback,
+                repair_count=self._max_repairs,
+                attempts=attempts,
+            ),
         )
