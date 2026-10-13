@@ -30,7 +30,10 @@ ApplicationWindow {
     property var toolEvents: []
     property var currentToolEvents: []
     property string pendingToolDisplay: ""
+    property string generatedConversationTitle: ""
     readonly property string conversationTitle: {
+        if (generatedConversationTitle.length)
+            return generatedConversationTitle
         for (let i = 0; i < messages.count; ++i) {
             if (messages.get(i).speaker === "user") {
                 const text = messages.get(i).body.replace(/\s+/g, " ")
@@ -198,6 +201,12 @@ ApplicationWindow {
         function onResponseMetaEvent(event) {
             // Convert QVariant containers to JS arrays for the details view.
             event = JSON.parse(JSON.stringify(event))
+            const digest = event.conversation_digest || {}
+            if (digest.status === "completed") {
+                const generatedTitle = String(digest.title || "").trim()
+                if (generatedTitle.length)
+                    window.generatedConversationTitle = generatedTitle
+            }
             if (!window.inspectorPinned) window.inspectedMetadata = event
             for (let i = messages.count - 1; i >= 0; --i) {
                 if (messages.get(i).speaker === "assistant") {
@@ -235,6 +244,7 @@ ApplicationWindow {
             messages.clear()
             presentationCards.clear()
             window.pendingToolDisplay = ""
+            window.generatedConversationTitle = ""
             window.inspectedMetadata = ({})
             window.inspectorPinned = false
             window.toolEvents = []
@@ -448,6 +458,7 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     spacing: 3 * window.scale
                     MeoText {
+                        objectName: "meoAiConversationTitle"
                         Layout.fillWidth: true
                         text: messages.count ? window.conversationTitle : qsTr("Your space to think")
                         typeRole: "title"; typeSize: "small"
@@ -956,6 +967,22 @@ ApplicationWindow {
 
                         delegate: Rectangle {
                             required property var modelData
+                            readonly property var eligibleModels: {
+                                const ids = modelData ? modelData.eligible_model_ids : undefined
+                                if (ids === undefined || ids === null)
+                                    return agent.models
+                                const allowed = ({})
+                                for (let i = 0; i < ids.length; ++i)
+                                    allowed[String(ids[i])] = true
+                                const compatible = []
+                                for (let i = 0; i < agent.models.length; ++i) {
+                                    const candidate = agent.models[i]
+                                    if (allowed[String(candidate.model_id || "")] === true)
+                                        compatible.push(candidate)
+                                }
+                                return compatible
+                            }
+                            readonly property bool hasEligibleModels: eligibleModels.length > 0
                             width: parent.width
                             implicitHeight: roleColumn.implicitHeight + 24 * window.scale
                             radius: 18 * window.scale
@@ -1004,17 +1031,17 @@ ApplicationWindow {
                                 MeoExposedDropdown {
                                     Layout.fillWidth: true
                                     label: qsTr("Model")
-                                    model: agent.models
+                                    model: eligibleModels
                                     textRole: "label"
                                     valueRole: "model_id"
                                     type: "outlined"
-                                    enabled: agent.models.length > 0 && !agent.actionBusy
+                                    enabled: hasEligibleModels && !agent.actionBusy
                                     currentValue: String(modelData.preferred_model_id
                                         || modelData.fallback_model_id
                                         || "")
 
                                     onSelected: function(index, value) {
-                                        if (index < 0 || index >= agent.models.length || !String(value).length)
+                                        if (index < 0 || index >= eligibleModels.length || !String(value).length)
                                             return
                                         agent.setModelRole(
                                             String(modelData.role_id || ""),
@@ -1024,9 +1051,11 @@ ApplicationWindow {
 
                                 MeoText {
                                     Layout.fillWidth: true
-                                    text: modelData.runtime_supported
-                                        ? qsTr("Independent routing is active.")
-                                        : qsTr("Saved now; independent routing is not active yet.")
+                                    text: !hasEligibleModels
+                                        ? qsTr("No compatible model is available for this role.")
+                                        : modelData.runtime_supported
+                                            ? qsTr("Independent routing is active.")
+                                            : qsTr("Saved now; independent routing is not active yet.")
                                     typeRole: "label"
                                     typeSize: "small"
                                     color: MeoTheme.contentOnSurfaceVariant
