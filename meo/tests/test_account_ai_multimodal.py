@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import unittest
 
-from meo.adapters.account_multimodal import context_payload
+from meo.adapters.account_multimodal import account_model_supports_vision, context_payload
 from meo.system.account_ai import DbusNextAccountAiClient
 
 
@@ -30,6 +30,29 @@ class AccountAiMultimodalTest(unittest.TestCase):
                 user_prompt="Describe the image",
                 input_images=("data:image/png;base64,QUJDRA==",),
             )
+
+    def test_account_vision_capability_requires_exact_explicit_model(self):
+        connections = [
+            {
+                "id": "connection-one",
+                "defaultModel": "vision-model",
+                "visionModels": ["vision-model", "other-vision"],
+            },
+            {
+                "id": "legacy-connection",
+                "defaultModel": "legacy-model",
+            },
+        ]
+        self.assertTrue(
+            account_model_supports_vision(connections, "connection-one:vision-model")
+        )
+        self.assertFalse(
+            account_model_supports_vision(connections, "connection-one:vision-model-mini")
+        )
+        self.assertFalse(
+            account_model_supports_vision(connections, "legacy-connection:legacy-model")
+        )
+        self.assertFalse(account_model_supports_vision(connections, "malformed"))
 
     def test_current_images_are_extracted_and_history_base64_is_not_replayed(self):
         current_image = "data:image/png;base64,Q1VSUkVOVA=="
