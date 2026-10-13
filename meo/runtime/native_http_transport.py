@@ -9,6 +9,51 @@ from meo.runtime.http_transport import AgentHttpTransport, _Handler
 from meo.service.core import AgentServiceCore
 
 
+_CONVERSATION_METADATA_FIELDS = (
+    "title",
+    "summary",
+    "title_is_default",
+    "title_is_automatic",
+)
+
+
+class NativeAgentHttpTransport(AgentHttpTransport):
+    """Native presentation additions layered over the canonical transport."""
+
+    def list_messages(self, conversation_id: str) -> dict:
+        payload = super().list_messages(conversation_id)
+        metadata: dict = {"conversation_id": conversation_id}
+
+        # NewelleMultimodalBridge already exposes a deliberately small,
+        # presentation-safe conversation projection. Reuse that projection
+        # here instead of reaching into Newelle chat storage a second way.
+        # Metadata is helpful UI state, but a temporary catalog failure must
+        # never make otherwise valid message history impossible to restore.
+        try:
+            conversations = self.service.list_conversations()
+        except Exception:
+            conversations = []
+
+        for item in conversations:
+            if not isinstance(item, dict):
+                continue
+            item_id = item.get("id", item.get("conversation_id"))
+            if item_id != conversation_id:
+                continue
+            for key in _CONVERSATION_METADATA_FIELDS:
+                value = item.get(key)
+                if isinstance(value, str):
+                    value = value.strip()
+                    if value:
+                        metadata[key] = value
+                elif isinstance(value, bool):
+                    metadata[key] = value
+            break
+
+        payload["conversation"] = metadata
+        return payload
+
+
 class _NativeHandler(_Handler):
     """Native-client compatibility routes kept at the loopback transport edge.
 
@@ -94,4 +139,4 @@ def create_native_http_server(
     host: str = "127.0.0.1",
     port: int = 8765,
 ) -> NativeAgentThreadingHttpServer:
-    return NativeAgentThreadingHttpServer((host, port), AgentHttpTransport(service))
+    return NativeAgentThreadingHttpServer((host, port), NativeAgentHttpTransport(service))
