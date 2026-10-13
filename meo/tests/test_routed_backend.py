@@ -300,16 +300,17 @@ class RoutedBackendTests(unittest.TestCase):
         routed.send_message("meo:1", "hello", callbacks)
         self.assertEqual(done_events, ["done", "done"])
 
-    def test_deferred_cancel_is_forwarded_when_real_handle_arrives(self) -> None:
+    def test_deferred_cancel_before_backend_start_short_circuits(self) -> None:
         backend = DeferredBackend()
         routed = RoutedBackend(backend, ModelRoleRegistry())
         coordinator = BlockingCoordinator()
         routed._coordinator = coordinator
+        done = threading.Event()
         callbacks = BackendCallbacks(
             on_text_delta=lambda _delta: None,
             on_tool_event=lambda _event: None,
-            on_done=lambda: None,
-            on_error=lambda _error: None,
+            on_done=done.set,
+            on_error=lambda _error: done.set(),
         )
 
         handle = routed.send_message(
@@ -320,11 +321,13 @@ class RoutedBackendTests(unittest.TestCase):
         self.assertTrue(coordinator.started.wait(1.0))
         routed.cancel(handle)
         coordinator.release.set()
-        self.assertTrue(backend.started.wait(1.0))
         worker = getattr(handle, "worker", None)
         if worker is not None:
             worker.join(1.0)
-        self.assertEqual(len(backend.cancelled_handles), 1)
+        self.assertTrue(done.is_set())
+        self.assertFalse(backend.started.is_set())
+        self.assertNotIn(("send", "main:strong"), backend.calls)
+        self.assertEqual(backend.cancelled_handles, [])
 
     def test_catalog_is_exposed_as_request_scoped_and_preserves_capabilities(self) -> None:
         routed = RoutedBackend(FakeBackend(), ModelRoleRegistry())
