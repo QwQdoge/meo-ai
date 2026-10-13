@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import json
 from typing import Iterable
 
 from meo.service.backend_adapter import BackendCallbacks, InputResource, ModelInfo
@@ -11,12 +12,11 @@ _MAX_IMAGE_BYTES = 20 * 1024 * 1024
 
 
 class NewelleMultimodalBridge:
-    """Translate AgentService image resources into Newelle's existing image blocks.
+    """Translate AgentService resources and auxiliary calls into Newelle APIs.
 
     The compatibility layer deliberately does not invent a second provider
-    protocol. Newelle handlers already advertise `supports_vision()` and parse
-    fenced `image` blocks. This bridge only connects the opaque local resource
-    bytes to that established input contract.
+    protocol. Newelle handlers already advertise `supports_vision()`, parse
+    fenced `image` blocks, and expose history-free `generate_text()` calls.
     """
 
     def __init__(self, backend, controller) -> None:
@@ -69,6 +69,60 @@ class NewelleMultimodalBridge:
             )
             for item in raw
         ]
+
+    def generate_auxiliary(
+        self,
+        model_id: str,
+        prompt: str,
+        system_prompt: list[str] | None = None,
+    ) -> str:
+        """Run a provider model without adding verifier prompts to chat history.
+
+        RoutedBackend serializes legacy requests, so temporarily changing the
+        provider's model setting here cannot cross-contaminate another routed
+        request. The exact settings JSON is restored in `finally`.
+        """
+        from src.constants import AVAILABLE_LLMS
+
+        if not isinstance(model_id, str) or ":" not in model_id:
+            raise ValueError("auxiliary model_id must include provider:model")
+        provider_name, raw_model_id = model_id.split(":", 1)
+        provider = AVAILABLE_LLMS.get(provider_name)
+        if not isinstance(provider, dict) or not raw_model_id:
+            raise ValueError(f"unknown auxiliary model: {model_id}")
+        if model_id not in {item.model_id for item in self.list_models()}:
+            raise ValueError(f"auxiliary model is not available: {model_id}")
+        handler_class = provider.get("class")
+        if not callable(handler_class):
+            raise ValueError(f"provider has no LLM handler: {provider_name}")
+
+        settings = self._controller.settings
+        previous_raw = settings.get_string("llm-settings")
+        try:
+            payload = json.loads(previous_raw)
+            if not isinstance(payload, dict):
+                payload = {}
+        except json.JSONDecodeError:
+            payload = {}
+        provider_settings = payload.get(provider_name)
+        if not isinstance(provider_settings, dict):
+            provider_settings = {}
+        else:
+            provider_settings = dict(provider_settings)
+        provider_settings["model"] = raw_model_id
+        payload[provider_name] = provider_settings
+
+        handlers = getattr(self._controller, "handlers", None)
+        directory = getattr(handlers, "directory", None)
+        try:
+            settings.set_string("llm-settings", json.dumps(payload))
+            handler = handler_class(settings, directory)
+            result = handler.generate_text(prompt, [], list(system_prompt or []))
+            if not isinstance(result, str):
+                raise ValueError("auxiliary model returned a non-text response")
+            return result
+        finally:
+            settings.set_string("llm-settings", previous_raw)
 
     def _selected_supports_vision(self) -> bool:
         return any(item.selected and item.supports_vision for item in self.list_models())
