@@ -8,7 +8,9 @@
     "/usr/bin/meo-agent-service"
   ],
   "scopes": [
-    "openid"
+    "openid",
+    "profile",
+    "email"
   ],
   "capabilities": [
     "ai_usage_sync",
