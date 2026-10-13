@@ -81,6 +81,7 @@ install_data(
   '../service/backend_adapter.py',
   '../service/content_blocks.py',
   '../service/controls.py',
+  '../service/coordinator.py',
   '../service/core.py',
   '../service/legacy_v2_bridge.py',
   '../service/memory.py',
