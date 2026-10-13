@@ -49,6 +49,25 @@ class DeferredBackend(FakeBackend):
         return object()
 
 
+class DeferredVerifyingBackend(FakeBackend):
+    def __init__(self, judge_outputs: list[str]) -> None:
+        super().__init__()
+        self.callbacks: BackendCallbacks | None = None
+        self.judge_outputs = list(judge_outputs)
+        self.auxiliary_calls: list[tuple[str, str]] = []
+
+    def send_message(self, _conversation_id: str, _text: str, callbacks: BackendCallbacks):
+        self.calls.append(("send", self.current))
+        self.callbacks = callbacks
+        callbacks.on_text_delta("unverified candidate")
+        callbacks.on_tool_event({"type": "response_meta", "activity": {"tools": ["shell"]}})
+        return object()
+
+    def generate_auxiliary(self, model_id: str, prompt: str, _system_prompt=None) -> str:
+        self.auxiliary_calls.append((model_id, prompt))
+        return self.judge_outputs.pop(0)
+
+
 class DeterministicModelRouterTests(unittest.TestCase):
     def setUp(self) -> None:
         self.models = [
@@ -114,6 +133,37 @@ class RoutedBackendTests(unittest.TestCase):
         self.assertEqual(events[0]["routing"]["role_id"], "execution")
         self.assertEqual(events[0]["routing"]["model_id"], "cheap:tiny")
         self.assertEqual(events[-1], "done")
+
+    def test_execution_candidate_is_hidden_until_judge_accepts(self) -> None:
+        backend = DeferredVerifyingBackend([
+            '{"verdict":"ACCEPT","issues":[],"confidence":0.95}',
+        ])
+        roles = ModelRoleRegistry()
+        roles.set_role("judge", "cheap:tiny", backend.list_models())
+        routed = RoutedBackend(backend, roles)
+        text_events: list[str] = []
+        tool_events: list[dict] = []
+        done_events: list[str] = []
+        callbacks = BackendCallbacks(
+            on_text_delta=text_events.append,
+            on_tool_event=tool_events.append,
+            on_done=lambda: done_events.append("done"),
+            on_error=lambda error: done_events.append(error),
+        )
+
+        routed.send_message("meo:1", "Fix this code", callbacks)
+        self.assertEqual(text_events, [])
+        self.assertEqual(tool_events, [])
+        self.assertIsNotNone(backend.callbacks)
+
+        backend.callbacks.on_done()
+
+        self.assertEqual(text_events, ["unverified candidate"])
+        self.assertEqual(done_events, ["done"])
+        self.assertEqual(backend.auxiliary_calls[0][0], "cheap:tiny")
+        self.assertEqual(tool_events[0]["verification"]["status"], "accepted")
+        self.assertEqual(tool_events[0]["activity"]["verification"]["used"], True)
+        self.assertEqual(tool_events[0]["activity"]["tools"], ["shell"])
 
     def test_catalog_is_exposed_as_request_scoped_and_preserves_capabilities(self) -> None:
         routed = RoutedBackend(FakeBackend(), ModelRoleRegistry())
