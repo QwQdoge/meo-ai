@@ -124,6 +124,66 @@ class NewelleMultimodalBridge:
         finally:
             settings.set_string("llm-settings", previous_raw)
 
+    def _conversation_chat_id(self, conversation_id: str) -> int | None:
+        try:
+            conversations = self._backend.list_conversations()
+        except Exception:
+            return None
+        for item in conversations:
+            if not isinstance(item, dict) or item.get("id") != conversation_id:
+                continue
+            chat_id = item.get("legacy_chat_id")
+            return chat_id if isinstance(chat_id, int) else None
+        return None
+
+    def _conversation_record(self, conversation_id: str) -> tuple[int, dict] | None:
+        chat_id = self._conversation_chat_id(conversation_id)
+        if chat_id is None:
+            return None
+        chats = getattr(self._controller, "chats", None)
+        record = chats.get(chat_id) if isinstance(chats, dict) else None
+        if not isinstance(record, dict):
+            return None
+        return chat_id, record
+
+    def conversation_needs_digest(self, conversation_id: str) -> bool:
+        target = self._conversation_record(conversation_id)
+        if target is None:
+            return False
+        _chat_id, record = target
+        return record.get("name_is_default") is True
+
+    def apply_conversation_digest(self, conversation_id: str, *, title: str, summary: str = "") -> None:
+        """Persist generated metadata without overwriting a user-renamed chat."""
+        target = self._conversation_record(conversation_id)
+        if target is None:
+            raise ValueError("unknown conversation_id")
+        chat_id, record = target
+        title = " ".join(str(title or "").split()).strip()
+        summary = " ".join(str(summary or "").split()).strip()
+        if not title:
+            raise ValueError("generated conversation title is empty")
+
+        if record.get("name_is_default") is True:
+            rename = getattr(self._controller, "rename_chat", None)
+            if callable(rename):
+                try:
+                    rename(chat_id, title, save=False)
+                except TypeError:
+                    rename(chat_id, title)
+            else:
+                record["name"] = title
+                record.pop("name_is_default", None)
+        if summary:
+            record["meo_summary"] = summary
+
+        save = getattr(self._controller, "save_chat", None)
+        if callable(save):
+            try:
+                save(chat_id)
+            except TypeError:
+                save()
+
     def _selected_supports_vision(self) -> bool:
         return any(item.selected and item.supports_vision for item in self.list_models())
 
