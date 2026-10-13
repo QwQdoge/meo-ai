@@ -15,6 +15,7 @@ Rectangle {
     property bool ready: false
     property bool busy: false
     property int tab: 0
+    property bool settingsAutoOpenArmed: false
     readonly property real uiScale: MeoTheme.globalScale
     signal closeRequested()
     signal manageMemoryRequested()
@@ -27,16 +28,20 @@ Rectangle {
     color: MeoTheme.surfaceContainerLow
 
     function openSettingsForCurrentTab() {
-        if (tab !== 3)
+        // A DetailsPane can be destroyed/recreated when New Chat or a responsive
+        // dock/overlay transition changes the host. Replaying a persisted tab=3
+        // during component construction is presentation state, not a fresh user
+        // request to open a modal. Only later, explicit tab changes may launch it.
+        if (!settingsAutoOpenArmed || tab !== 3)
             return
         Qt.callLater(function() {
-            if (root.tab === 3)
+            if (root.settingsAutoOpenArmed && root.tab === 3)
                 settingsCenter.openPage(0)
         })
     }
 
     onTabChanged: openSettingsForCurrentTab()
-    Component.onCompleted: openSettingsForCurrentTab()
+    Component.onCompleted: settingsAutoOpenArmed = true
 
     ColumnLayout {
         anchors.fill: parent
