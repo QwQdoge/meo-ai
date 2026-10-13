@@ -117,23 +117,12 @@ Popup {
             opacity: 0.65
         }
 
-        RowLayout {
+        MeoText {
             Layout.fillWidth: true
-            spacing: 8 * root.uiScale
-
-            MeoIcon {
-                icon: "notes"
-                size: 20
-                color: MeoTheme.contentOnSurfaceVariant
-            }
-
-            MeoText {
-                Layout.fillWidth: true
-                text: qsTr("Long text")
-                typeRole: "label"
-                typeSize: "medium"
-                color: MeoTheme.contentOnSurface
-            }
+            text: qsTr("Long text")
+            typeRole: "label"
+            typeSize: "medium"
+            color: MeoTheme.contentOnSurface
         }
 
         TextField {
