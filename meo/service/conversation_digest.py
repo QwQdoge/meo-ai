@@ -19,6 +19,40 @@ class ConversationDigestOutcome:
     metadata: dict
 
 
+def _remove_title_markdown(text: str) -> str:
+    """Mirror Newelle's remove_markdown subset used by build_chat_title.
+
+    Keep this dependency-free because AgentService's protocol/headless runtime
+    intentionally does not import the desktop utility stack (GI, media, or
+    tokenizer modules). The operations and order match src.utility.strings.
+    """
+    text = re.sub(r'^#{1,6}\s*', '', text, flags=re.MULTILINE)
+    text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)
+    text = re.sub(r'__(.*?)__', r'\1', text)
+    text = re.sub(r'\*(.*?)\*', r'\1', text)
+    text = re.sub(r'_(.*?)_', r'\1', text)
+    text = re.sub(r'`([^`]*)`', r'\1', text)
+    text = re.sub(r'```[\s\S]*?```', '', text)
+    text = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', text)
+    text = re.sub(r'!\[([^\]]*)\]\([^\)]+\)', r'\1', text)
+    text = re.sub(r'~~(.*?)~~', r'\1', text)
+    text = re.sub(r'^>\s*', '', text, flags=re.MULTILINE)
+    text = re.sub(r'^[ \t]*[-*_][ \t]*[-*_][ \t]*[-*_][ \t]*[-*_ ]*$', '', text, flags=re.MULTILINE)
+    text = re.sub(r'^\s*[-+*]\s+', '', text, flags=re.MULTILINE)
+    text = re.sub(r'^\s*\d+\.\s+', '', text, flags=re.MULTILINE)
+    text = re.sub(r'\n{2,}', '\n', text)
+    return text.strip()
+
+
+def newelle_automatic_chat_title(message: str, max_length: int = 30) -> str:
+    """Reproduce Newelle's first-message auto-title without desktop imports."""
+    text = re.sub(r'```[\s\S]*?```', ' ', str(message))
+    text = " ".join(_remove_title_markdown(text).split())
+    if len(text) > max_length:
+        text = text[:max_length].rstrip() + "…"
+    return text
+
+
 def _json_object(text: str) -> dict:
     value = str(text or "").strip()
     if value.startswith("```"):
