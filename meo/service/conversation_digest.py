@@ -124,6 +124,7 @@ class ConversationDigestGenerator:
                     "model_id": model_id,
                     "fallback_used": fallback_used,
                     "title": title,
+                    "summary": summary,
                     "summary_available": bool(summary),
                 }
             )
