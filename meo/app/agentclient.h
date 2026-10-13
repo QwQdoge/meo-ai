@@ -108,6 +108,9 @@ signals:
     void conversationMetadata(const QVariantMap &metadata);
     void resetChat();
 protected:
+    bool resourceCleanupBusy() const {
+        return m_clearPendingResourcesRequested || !m_resourceDeletionQueue.isEmpty();
+    }
     void abandonPendingResources() {
         m_pendingResources.clear();
         m_binaryResourceQueue.clear();
