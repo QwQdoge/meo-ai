@@ -54,6 +54,8 @@ public:
     Q_INVOKABLE virtual void send(const QString &text);
     Q_INVOKABLE void sendWithPendingResources(const QString &text);
     Q_INVOKABLE void addLongTextResource(const QString &name, const QString &text);
+    Q_INVOKABLE void addFileResource(const QUrl &fileUrl);
+    Q_INVOKABLE bool addClipboardImageResource();
     Q_INVOKABLE void discardPendingResource(const QString &resourceId);
     Q_INVOKABLE void clearPendingResources();
     Q_INVOKABLE void choose(int index);
@@ -85,6 +87,8 @@ private:
     void loadServiceHistory();
     void sendService(const QString &text, bool emitAssistantPlaceholder = true);
     void sendServiceWithResources(const QString &text, const QVariantList &resources);
+    void queueBinaryResource(const QString &name, const QString &mimeType, const QByteArray &data);
+    void uploadBinaryResource(const QString &conversation, const QString &resourceId, const QByteArray &data);
     void reconnectServiceStream();
     void attachServiceStream(QNetworkReply *reply);
     void consumeService();
