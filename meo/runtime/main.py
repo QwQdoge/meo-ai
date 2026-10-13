@@ -5,6 +5,7 @@ import importlib
 import os
 from typing import Callable
 
+from meo.adapters.newelle_multimodal import NewelleMultimodalBridge
 from meo.adapters.routed_backend import RoutedBackend
 from meo.runtime.headless_probe import require_headless
 from meo.runtime.native_http_transport import create_native_http_server
@@ -36,6 +37,9 @@ def build_service(spec: str) -> AgentServiceCore:
     factory = load_backend_factory(spec)
     backend = factory()
     require_headless()
+    controller = getattr(backend, "_meo_controller", None)
+    if controller is not None:
+        backend = NewelleMultimodalBridge(backend, controller)
     model_roles = ModelRoleRegistry(default_model_role_path())
     routed_backend = RoutedBackend(backend, model_roles)
     return AgentServiceCore(
