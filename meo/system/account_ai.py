@@ -12,6 +12,9 @@ ACCOUNT_OBJECT_PATH = "/org/meo/Accounts1"
 ACCOUNT_INTERFACE = "org.meo.Accounts1"
 MEO_AI_CLIENT_ID = "org.meo.MeoAI"
 _TERMINAL_STATES = frozenset({"completed", "failed", "denied", "expired"})
+_MAX_INPUT_IMAGES = 8
+_MAX_IMAGE_DATA_URL_CHARS = 17_000_000
+_MAX_IMAGE_DATA_URL_TOTAL_CHARS = 28_000_000
 
 
 class AccountAiUnavailable(RuntimeError):
@@ -244,9 +247,11 @@ class DbusNextAccountAiClient:
         user_prompt: str,
         system_prompt: str = "",
         data_categories: tuple[str, ...] = ("user_prompt",),
+        input_images: tuple[str, ...] = (),
         temperature: float = 0.3,
         max_output_tokens: int = 2048,
     ) -> dict[str, Any]:
+        images = list(input_images)
         values = {
             "connectionId": connection_id.strip(),
             "model": model.strip(),
@@ -268,6 +273,22 @@ class DbusNextAccountAiClient:
             not isinstance(item, str) or not item for item in categories
         ):
             raise ValueError("data_categories must contain 1 to 12 non-empty strings")
+        if len(images) > _MAX_INPUT_IMAGES:
+            raise ValueError(f"at most {_MAX_INPUT_IMAGES} images can be sent to Account AI")
+        if any(
+            not isinstance(source, str)
+            or not source.startswith("data:image/")
+            or ";base64," not in source[:128]
+            or len(source) > _MAX_IMAGE_DATA_URL_CHARS
+            for source in images
+        ):
+            raise ValueError("input_images must contain bounded image data URLs")
+        if sum(len(source) for source in images) > _MAX_IMAGE_DATA_URL_TOTAL_CHARS:
+            raise ValueError("combined Account AI image input is too large")
+        if images and "user_images" not in categories:
+            raise ValueError("input_images require the user_images data category")
+        if images:
+            values["inputImages"] = images
         if not 0 <= values["temperature"] <= 2:
             raise ValueError("temperature must be between 0 and 2")
         if not 1 <= values["maxOutputTokens"] <= 4096:

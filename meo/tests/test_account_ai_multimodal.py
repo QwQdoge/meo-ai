@@ -1,0 +1,72 @@
+from __future__ import annotations
+
+import json
+import unittest
+
+from meo.adapters.account_llm import MeoAccountLLMHandler
+from meo.system.account_ai import DbusNextAccountAiClient
+
+
+class AccountAiMultimodalTest(unittest.TestCase):
+    def test_inference_arguments_include_images_in_bound_payload(self):
+        image = "data:image/png;base64,QUJDRA=="
+        arguments = DbusNextAccountAiClient.inference_arguments(
+            connection_id="connection-one",
+            model="vision-model",
+            purpose="meo_ai_conversation",
+            user_prompt="Describe the image",
+            data_categories=("user_prompt", "user_images"),
+            input_images=(image,),
+        )
+        self.assertEqual(arguments["inputImages"], [image])
+        self.assertEqual(arguments["dataCategories"], ["user_prompt", "user_images"])
+
+    def test_images_require_explicit_data_category(self):
+        with self.assertRaisesRegex(ValueError, "user_images"):
+            DbusNextAccountAiClient.inference_arguments(
+                connection_id="connection-one",
+                model="vision-model",
+                purpose="meo_ai_conversation",
+                user_prompt="Describe the image",
+                input_images=("data:image/png;base64,QUJDRA==",),
+            )
+
+    def test_current_images_are_extracted_and_history_base64_is_not_replayed(self):
+        current_image = "data:image/png;base64,Q1VSUkVOVA=="
+        old_image = "data:image/png;base64,T0xESU1BR0U="
+        prompt = (
+            "Attached image: current.png\n"
+            "```image\n"
+            f"{current_image}\n"
+            "```\n\n"
+            "What is shown here?"
+        )
+        history = [
+            {
+                "User": "User",
+                "Message": (
+                    "Older attachment\n"
+                    "```image\n"
+                    f"{old_image}\n"
+                    "```\n\n"
+                    "Earlier question"
+                ),
+            }
+        ]
+
+        encoded, images = MeoAccountLLMHandler._context_payload(prompt, history)
+        payload = json.loads(encoded)
+
+        self.assertEqual(images, (current_image,))
+        self.assertNotIn(current_image, payload["current_user_prompt"])
+        self.assertNotIn(old_image, payload["conversation_history"][0]["content"])
+        self.assertIn("[Image attachment]", payload["current_user_prompt"])
+        self.assertIn("[Image attachment]", payload["conversation_history"][0]["content"])
+        self.assertIn("What is shown here?", payload["current_user_prompt"])
+
+    def test_account_handler_advertises_vision_protocol(self):
+        self.assertTrue(MeoAccountLLMHandler.supports_vision(None))
+
+
+if __name__ == "__main__":
+    unittest.main()
