@@ -111,6 +111,7 @@ install_data(
   '../adapters/legacy_chat.py',
   '../adapters/legacy_controls.py',
   '../adapters/legacy_memory.py',
+  '../adapters/newelle_multimodal.py',
   '../adapters/presentation_legacy_chat.py',
   '../adapters/presentation_tools.py',
   '../adapters/routed_backend.py',
