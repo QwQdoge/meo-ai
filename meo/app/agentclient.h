@@ -87,7 +87,7 @@ public:
     Q_INVOKABLE void choose(int index);
     Q_INVOKABLE void cancel();
     Q_INVOKABLE void retryLastRequest();
-    Q_INVOKABLE void newChat();
+    Q_INVOKABLE virtual void newChat();
     Q_INVOKABLE void refreshServiceMetadata();
     Q_INVOKABLE void refreshMemory(const QString &query = QString());
     Q_INVOKABLE void setConversationModel(const QString &modelId);
@@ -107,6 +107,15 @@ signals:
     void responseMetaEvent(const QVariantMap &event);
     void conversationMetadata(const QVariantMap &metadata);
     void resetChat();
+protected:
+    void abandonPendingResources() {
+        m_pendingResources.clear();
+        m_binaryResourceQueue.clear();
+        m_resourceDeletionQueue.clear();
+        m_clearPendingResourcesRequested = false;
+        m_resourceDeletionFailed = false;
+        emit changed();
+    }
 private:
     struct QueuedBinaryResource {
         QString name;
