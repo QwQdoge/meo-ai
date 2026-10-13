@@ -177,12 +177,16 @@ class NewelleMultimodalBridge:
         if summary:
             record["meo_summary"] = summary
 
-        save = getattr(self._controller, "save_chat", None)
-        if callable(save):
+        save_all = getattr(self._controller, "save_chats", None)
+        if callable(save_all):
+            save_all()
+            return
+        save_one = getattr(self._controller, "save_chat", None)
+        if callable(save_one):
             try:
-                save(chat_id)
+                save_one(chat_id)
             except TypeError:
-                save()
+                save_one()
 
     def _selected_supports_vision(self) -> bool:
         return any(item.selected and item.supports_vision for item in self.list_models())
