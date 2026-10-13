@@ -39,6 +39,7 @@ set(MEO_APP_QML
     app/qml/AiLogo.qml
     app/qml/ResponseDetails.qml
     app/qml/ResponseContent.qml
+    app/qml/ResponseExecutionSummary.qml
     app/qml/DetailsPane.qml
     app/qml/ActivityDashboard.qml
     app/qml/PresentationCard.qml
