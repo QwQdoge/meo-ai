@@ -3,7 +3,7 @@ from __future__ import annotations
 import threading
 from typing import Any, Callable
 
-from meo.adapters.account_multimodal import context_payload
+from meo.adapters.account_multimodal import account_model_supports_vision, context_payload
 from meo.system.account_ai import AccountAiUnavailable, DbusNextAccountAiClient
 from meo.system.account_ai_interaction import request_account_ai_consent
 from src.handlers.llm.llm import LLMHandler
@@ -80,11 +80,18 @@ class MeoAccountLLMHandler(LLMHandler):
         # token streaming.
         return False
 
+    def supports_model_vision(self, raw_model_id: str) -> bool:
+        try:
+            connections = account_ai_client().list_connections()
+        except Exception:
+            return False
+        return account_model_supports_vision(connections, raw_model_id)
+
     def supports_vision(self) -> bool:
-        # The Account protocol validates image inputs independently from the
-        # provider credential. Individual provider/model capability errors are
-        # surfaced by Account instead of leaking provider access into Meo AI.
-        return True
+        # Preserve Newelle's legacy handler-wide API, but make it honest for the
+        # currently selected Account model. The bridge uses supports_model_vision
+        # when cataloguing individual models.
+        return self.supports_model_vision(self.get_selected_model())
 
     @staticmethod
     def _system_text(system_prompt: list[str]) -> str:
