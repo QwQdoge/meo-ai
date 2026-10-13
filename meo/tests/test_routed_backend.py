@@ -16,7 +16,13 @@ class FakeBackend:
     def list_models(self):
         return [
             ModelInfo("cheap:tiny", "Tiny", "Cheap", selected=self.current == "cheap:tiny"),
-            ModelInfo("main:strong", "Strong", "Main", selected=self.current == "main:strong"),
+            ModelInfo(
+                "main:strong",
+                "Strong",
+                "Main",
+                selected=self.current == "main:strong",
+                supports_vision=True,
+            ),
         ]
 
     def set_model(self, _conversation_id: str, model_id: str) -> None:
@@ -47,7 +53,7 @@ class DeterministicModelRouterTests(unittest.TestCase):
     def setUp(self) -> None:
         self.models = [
             ModelInfo("cheap:tiny", "Tiny", "Cheap", selected=False),
-            ModelInfo("main:strong", "Strong", "Main", selected=True),
+            ModelInfo("main:strong", "Strong", "Main", selected=True, supports_vision=True),
         ]
         self.roles = ModelRoleRegistry()
         self.router = DeterministicModelRouter()
@@ -66,11 +72,25 @@ class DeterministicModelRouterTests(unittest.TestCase):
         self.assertEqual(decision.model_id, "cheap:tiny")
         self.assertTrue(decision.needs_tools)
 
-    def test_image_resource_uses_vision_role(self) -> None:
+    def test_image_resource_uses_vision_role_and_capable_model(self) -> None:
         image = InputResource("resource:image", "image", "shot.png", "image/png", b"png")
         decision = self.router.decide("What is wrong here?", (image,), self.models, self.roles)
         self.assertEqual(decision.role_id, "vision")
         self.assertTrue(decision.needs_vision)
+        self.assertEqual(decision.model_id, "main:strong")
+
+    def test_vision_preference_to_text_only_model_falls_back(self) -> None:
+        self.roles.set_role("vision", "cheap:tiny", self.models)
+        image = InputResource("resource:image", "image", "shot.png", "image/png", b"png")
+        decision = self.router.decide("Read this image", (image,), self.models, self.roles)
+        self.assertEqual(decision.model_id, "main:strong")
+        self.assertTrue(decision.fallback_used)
+
+    def test_image_request_fails_when_no_vision_model_exists(self) -> None:
+        models = [ModelInfo("text:only", "Text only", "Text", selected=True)]
+        image = InputResource("resource:image", "image", "shot.png", "image/png", b"png")
+        with self.assertRaisesRegex(ValueError, "no vision-capable model"):
+            self.router.decide("Read this image", (image,), models, self.roles)
 
 
 class RoutedBackendTests(unittest.TestCase):
@@ -95,9 +115,11 @@ class RoutedBackendTests(unittest.TestCase):
         self.assertEqual(events[0]["routing"]["model_id"], "cheap:tiny")
         self.assertEqual(events[-1], "done")
 
-    def test_catalog_is_exposed_as_request_scoped(self) -> None:
+    def test_catalog_is_exposed_as_request_scoped_and_preserves_capabilities(self) -> None:
         routed = RoutedBackend(FakeBackend(), ModelRoleRegistry())
-        self.assertTrue(all(item.selection_scope == "request" for item in routed.list_models()))
+        catalog = routed.list_models()
+        self.assertTrue(all(item.selection_scope == "request" for item in catalog))
+        self.assertTrue(next(item for item in catalog if item.model_id == "main:strong").supports_vision)
 
     def test_profile_switch_is_held_until_request_finishes(self) -> None:
         backend = DeferredBackend()
@@ -116,6 +138,22 @@ class RoutedBackendTests(unittest.TestCase):
         self.assertIsNotNone(backend.callbacks)
         backend.callbacks.on_done()
         self.assertEqual(backend.current, "main:strong")
+
+    def test_router_error_does_not_leave_request_lock_held(self) -> None:
+        backend = FakeBackend()
+        backend.list_models = lambda: [ModelInfo("text:only", "Text", selected=True)]
+        routed = RoutedBackend(backend, ModelRoleRegistry())
+        callbacks = BackendCallbacks(
+            on_text_delta=lambda _delta: None,
+            on_tool_event=lambda _event: None,
+            on_done=lambda: None,
+            on_error=lambda _error: None,
+        )
+        image = InputResource("resource:image", "image", "shot.png", "image/png", b"png")
+        with self.assertRaisesRegex(ValueError, "no vision-capable model"):
+            routed.send_message_with_resources("meo:1", "read", (image,), callbacks)
+        routed.send_message("meo:1", "hello", callbacks)
+        self.assertIn(("send", "main:strong"), backend.calls)
 
 
 if __name__ == "__main__":
