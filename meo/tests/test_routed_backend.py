@@ -98,6 +98,26 @@ class DeterministicModelRouterTests(unittest.TestCase):
         self.assertEqual(decision.model_id, "cheap:tiny")
         self.assertTrue(decision.needs_tools)
 
+    def test_provider_name_does_not_trigger_open_action_substring(self) -> None:
+        decision = self.router.decide("Compare OpenAI and Claude for coding", (), self.models, self.roles)
+        self.assertEqual(decision.role_id, "reasoning")
+        self.assertEqual(decision.intent, "coding_analysis")
+        self.assertFalse(decision.needs_tools)
+
+    def test_generic_chinese_do_summary_is_reasoning_not_execution(self) -> None:
+        decision = self.router.decide("帮我做一个总结，说明这篇文章的主要观点", (), self.models, self.roles)
+        self.assertEqual(decision.role_id, "reasoning")
+        self.assertEqual(decision.intent, "reasoning")
+        self.assertFalse(decision.needs_tools)
+
+    def test_code_generation_can_use_execution_model_without_claiming_tools(self) -> None:
+        self.roles.set_role("execution", "cheap:tiny", self.models)
+        decision = self.router.decide("Write a Python script that parses this JSON", (), self.models, self.roles)
+        self.assertEqual(decision.role_id, "execution")
+        self.assertEqual(decision.intent, "coding")
+        self.assertEqual(decision.model_id, "cheap:tiny")
+        self.assertFalse(decision.needs_tools)
+
     def test_image_resource_uses_vision_role_and_capable_model(self) -> None:
         image = InputResource("resource:image", "image", "shot.png", "image/png", b"png")
         decision = self.router.decide("What is wrong here?", (image,), self.models, self.roles)
