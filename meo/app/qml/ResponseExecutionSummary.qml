@@ -22,11 +22,13 @@ Rectangle {
     readonly property var routing: map(metadata.routing)
     readonly property var coordination: map(metadata.coordination)
     readonly property var verification: map(metadata.verification)
+    readonly property var digest: map(metadata.conversation_digest)
     readonly property var tasks: Array.isArray(coordination.tasks) ? coordination.tasks : []
     readonly property bool hasRouting: Object.keys(routing).length > 0
     readonly property bool hasCoordination: Object.keys(coordination).length > 0
     readonly property bool hasVerification: Object.keys(verification).length > 0
-    readonly property bool hasData: hasRouting || hasCoordination || hasVerification
+    readonly property bool hasDigest: Object.keys(digest).length > 0
+    readonly property bool hasData: hasRouting || hasCoordination || hasVerification || hasDigest
 
     visible: hasData
     Layout.fillWidth: true
@@ -133,6 +135,66 @@ Rectangle {
                 typeRole: "body"
                 typeSize: "small"
                 color: MeoTheme.contentOnSurface
+            }
+        }
+
+        Rectangle {
+            Layout.fillWidth: true
+            visible: root.hasDigest && root.digest.status === "completed"
+            Layout.preferredHeight: Math.max(1, root.uiScale)
+            color: MeoTheme.outlineVariant
+            opacity: 0.32
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            visible: root.hasDigest && root.digest.status === "completed"
+            spacing: 8 * root.uiScale
+
+            MeoText {
+                text: qsTr("Conversation")
+                typeRole: "label"
+                typeSize: "small"
+                color: MeoTheme.contentOnSurfaceVariant
+            }
+
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 2 * root.uiScale
+
+                MeoText {
+                    Layout.fillWidth: true
+                    text: String(root.digest.title || qsTr("Generated title"))
+                    textFormat: Text.PlainText
+                    wrapMode: Text.Wrap
+                    typeRole: "label"
+                    typeSize: "medium"
+                    color: MeoTheme.contentOnSurface
+                }
+
+                MeoText {
+                    Layout.fillWidth: true
+                    visible: String(root.digest.summary || "").length > 0
+                    text: String(root.digest.summary || "")
+                    textFormat: Text.PlainText
+                    wrapMode: Text.Wrap
+                    maximumLineCount: 3
+                    elide: Text.ElideRight
+                    typeRole: "body"
+                    typeSize: "small"
+                    color: MeoTheme.contentOnSurfaceVariant
+                }
+
+                MeoText {
+                    Layout.fillWidth: true
+                    visible: String(root.digest.model_id || "").length > 0
+                    text: qsTr("Background model: %1").arg(String(root.digest.model_id || ""))
+                    textFormat: Text.PlainText
+                    wrapMode: Text.Wrap
+                    typeRole: "label"
+                    typeSize: "small"
+                    color: MeoTheme.contentOnSurfaceVariant
+                }
             }
         }
     }
