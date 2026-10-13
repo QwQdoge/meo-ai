@@ -28,6 +28,14 @@ class FakeBackend:
         return object()
 
 
+class MixedBackend(FakeBackend):
+    def list_models(self):
+        return [
+            ModelInfo("mixed:text-only", "Mixed Text", selected=False),
+            ModelInfo("mixed:camera", "Mixed Vision", selected=True),
+        ]
+
+
 class FakeController:
     settings = object()
 
@@ -40,6 +48,11 @@ class FakeController:
 class TestBridge(NewelleMultimodalBridge):
     def _provider_supports_vision(self, provider_name: str) -> bool:
         return provider_name == "vision"
+
+
+class PerModelBridge(NewelleMultimodalBridge):
+    def _provider_model_supports_vision(self, provider_name: str, raw_model_id: str) -> bool:
+        return provider_name == "mixed" and raw_model_id == "camera"
 
 
 class NewelleMultimodalBridgeTests(unittest.TestCase):
@@ -57,6 +70,16 @@ class NewelleMultimodalBridgeTests(unittest.TestCase):
         self.assertFalse(next(item for item in catalog if item.model_id == "text:model").supports_vision)
         self.assertTrue(next(item for item in catalog if item.model_id == "vision:model").supports_vision)
         self.assertTrue(next(item for item in catalog if item.model_id == "vision:model").selected)
+
+    def test_catalog_can_scope_vision_to_one_model_inside_provider(self) -> None:
+        bridge = PerModelBridge(MixedBackend(), FakeController())
+        catalog = bridge.list_models()
+        self.assertFalse(
+            next(item for item in catalog if item.model_id == "mixed:text-only").supports_vision
+        )
+        self.assertTrue(
+            next(item for item in catalog if item.model_id == "mixed:camera").supports_vision
+        )
 
     def test_image_bytes_become_existing_newelle_image_block(self) -> None:
         backend = FakeBackend()
