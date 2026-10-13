@@ -91,6 +91,27 @@ class JudgeVerifier:
             **extra,
         }
 
+    @staticmethod
+    def _warning_text(candidate: str, status: str) -> str:
+        if not candidate.strip():
+            return candidate
+        if status == "rejected_after_repair":
+            notice = (
+                "Verification warning: I couldn't confirm this execution result after a repair attempt. "
+                "Review it before relying on it."
+            )
+        elif status == "repair_failed":
+            notice = (
+                "Verification warning: I couldn't complete the repair needed to verify this execution result. "
+                "Review it before relying on it."
+            )
+        else:
+            notice = (
+                "Verification unavailable: this execution result could not be checked. "
+                "Review it before relying on it."
+            )
+        return f"{notice}\n\n{candidate}"
+
     def verify(
         self,
         request_text: str,
@@ -106,7 +127,7 @@ class JudgeVerifier:
         generate = getattr(self._backend, "generate_auxiliary", None)
         if not callable(generate):
             return VerificationOutcome(
-                candidate,
+                self._warning_text(candidate, "unavailable"),
                 self._metadata(
                     "unavailable",
                     checked=False,
@@ -120,7 +141,7 @@ class JudgeVerifier:
             judge_model_id, judge_fallback = self._roles.resolve_model("judge", catalog)
         except Exception as exc:
             return VerificationOutcome(
-                candidate,
+                self._warning_text(candidate, "unavailable"),
                 self._metadata("unavailable", checked=False, verified=False, reason=str(exc)),
             )
 
@@ -139,7 +160,7 @@ class JudgeVerifier:
                 verdict, issues, confidence = self._parse_judgement(judgement_text)
             except Exception as exc:
                 return VerificationOutcome(
-                    current,
+                    self._warning_text(current, "unavailable"),
                     self._metadata(
                         "unavailable",
                         checked=False,
@@ -184,7 +205,7 @@ class JudgeVerifier:
                 ).strip()
             except Exception as exc:
                 return VerificationOutcome(
-                    candidate,
+                    self._warning_text(candidate, "repair_failed"),
                     self._metadata(
                         "repair_failed",
                         checked=True,
@@ -196,7 +217,7 @@ class JudgeVerifier:
                 )
             if not current:
                 return VerificationOutcome(
-                    candidate,
+                    self._warning_text(candidate, "repair_failed"),
                     self._metadata(
                         "repair_failed",
                         checked=True,
@@ -208,7 +229,7 @@ class JudgeVerifier:
                 )
 
         return VerificationOutcome(
-            current,
+            self._warning_text(current, "rejected_after_repair"),
             self._metadata(
                 "rejected_after_repair",
                 checked=True,
