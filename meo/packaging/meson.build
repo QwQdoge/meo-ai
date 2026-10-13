@@ -113,6 +113,7 @@ install_data(
   '../adapters/legacy_memory.py',
   '../adapters/presentation_legacy_chat.py',
   '../adapters/presentation_tools.py',
+  '../adapters/routed_backend.py',
   '../adapters/system_tools.py',
   install_dir: join_paths(meo_moduledir, 'adapters')
 )
