@@ -5,6 +5,7 @@ import importlib
 import os
 from typing import Callable
 
+from meo.adapters.routed_backend import RoutedBackend
 from meo.runtime.headless_probe import require_headless
 from meo.runtime.native_http_transport import create_native_http_server
 from meo.service.core import AgentServiceCore
@@ -35,9 +36,11 @@ def build_service(spec: str) -> AgentServiceCore:
     factory = load_backend_factory(spec)
     backend = factory()
     require_headless()
+    model_roles = ModelRoleRegistry(default_model_role_path())
+    routed_backend = RoutedBackend(backend, model_roles)
     return AgentServiceCore(
-        backend=backend,
-        model_roles=ModelRoleRegistry(default_model_role_path()),
+        backend=routed_backend,
+        model_roles=model_roles,
         resource_store=ConversationResourceStore(default_resource_root()),
     )
 
