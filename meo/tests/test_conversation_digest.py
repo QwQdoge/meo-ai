@@ -4,7 +4,7 @@ import unittest
 
 from meo.adapters.routed_backend import RoutedBackend
 from meo.service.backend_adapter import BackendCallbacks, ModelInfo
-from meo.service.conversation_digest import ConversationDigestGenerator
+from meo.service.conversation_digest import ConversationDigestGenerator, newelle_automatic_chat_title
 from meo.service.model_roles import ModelRoleRegistry
 
 
@@ -61,6 +61,14 @@ class ConversationDigestGeneratorTests(unittest.TestCase):
         ]
         self.roles = ModelRoleRegistry()
         self.roles.set_role("title", "cheap:tiny", self.models)
+
+    def test_headless_auto_title_mirrors_newelle_markdown_and_truncation_rules(self) -> None:
+        self.assertEqual(newelle_automatic_chat_title("**Fix** [Linux](https://example.invalid) build"), "Fix Linux build")
+        self.assertEqual(newelle_automatic_chat_title("prefix\n```image\nsecret payload\n```\nsuffix"), "prefix suffix")
+        self.assertEqual(
+            newelle_automatic_chat_title("Please investigate this Linux graphics driver regression and explain every relevant failure"),
+            "Please investigate this Linux…",
+        )
 
     def test_uses_title_role_and_persists_bounded_metadata(self) -> None:
         backend = DigestBackend(
