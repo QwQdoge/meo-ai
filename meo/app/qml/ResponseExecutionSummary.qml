@@ -19,6 +19,27 @@ Rectangle {
         return text.charAt(0).toUpperCase() + text.slice(1)
     }
 
+    function verificationLabel() {
+        const repairs = Number(verification.repair_count || 0)
+        if (verification.verified === true) {
+            if (repairs > 0)
+                return qsTr("Verified after %1 repair").arg(repairs)
+            return qsTr("Verified")
+        }
+        if (verification.checked === true) {
+            if (repairs > 0)
+                return qsTr("Not verified · %1 repair tried").arg(repairs)
+            return qsTr("Not verified")
+        }
+        if (verification.checked === false || verification.verified === false)
+            return qsTr("Not checked")
+
+        // Compatibility with response metadata written before checked/verified
+        // became first-class fields.
+        const status = words(verification.status)
+        return status.length ? status : qsTr("Not available")
+    }
+
     readonly property var routing: map(metadata.routing)
     readonly property var coordination: map(metadata.coordination)
     readonly property var verification: map(metadata.verification)
@@ -123,13 +144,7 @@ Rectangle {
             }
             MeoText {
                 Layout.fillWidth: true
-                text: {
-                    const status = root.words(root.verification.status)
-                    const repairs = Number(root.verification.repair_count || 0)
-                    if (repairs > 0)
-                        return qsTr("%1 · %2 repair").arg(status).arg(repairs)
-                    return status.length ? status : qsTr("Not available")
-                }
+                text: root.verificationLabel()
                 textFormat: Text.PlainText
                 wrapMode: Text.Wrap
                 typeRole: "body"
