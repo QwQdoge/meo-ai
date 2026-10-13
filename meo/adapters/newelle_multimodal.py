@@ -70,6 +70,28 @@ class NewelleMultimodalBridge:
             for item in raw
         ]
 
+    def list_conversations(self) -> list[dict]:
+        """Expose persisted Newelle title/summary without leaking chat storage."""
+        result: list[dict] = []
+        chats = getattr(self._controller, "chats", None)
+        chat_map = chats if isinstance(chats, dict) else {}
+        for item in self._backend.list_conversations():
+            if not isinstance(item, dict):
+                continue
+            enriched = dict(item)
+            chat_id = item.get("legacy_chat_id")
+            record = chat_map.get(chat_id) if isinstance(chat_id, int) else None
+            if isinstance(record, dict):
+                title = record.get("name")
+                summary = record.get("meo_summary")
+                if isinstance(title, str) and title.strip():
+                    enriched["title"] = title.strip()
+                if isinstance(summary, str) and summary.strip():
+                    enriched["summary"] = summary.strip()
+                enriched["title_is_default"] = record.get("name_is_default") is True
+            result.append(enriched)
+        return result
+
     def generate_auxiliary(
         self,
         model_id: str,
