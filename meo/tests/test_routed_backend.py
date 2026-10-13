@@ -79,8 +79,8 @@ class DeterministicModelRouterTests(unittest.TestCase):
         self.assertTrue(decision.needs_vision)
         self.assertEqual(decision.model_id, "main:strong")
 
-    def test_vision_preference_to_text_only_model_falls_back(self) -> None:
-        self.roles.set_role("vision", "cheap:tiny", self.models)
+    def test_stale_vision_preference_to_text_only_model_falls_back(self) -> None:
+        self.roles._assignments["vision"] = "cheap:tiny"
         image = InputResource("resource:image", "image", "shot.png", "image/png", b"png")
         decision = self.router.decide("Read this image", (image,), self.models, self.roles)
         self.assertEqual(decision.model_id, "main:strong")
