@@ -18,16 +18,22 @@ _CODING_TERMS = (
     "repo", "repository", "git", "linux", "backend", "frontend", "api", "sql",
     "修复", "代码", "编译", "测试", "仓库", "项目", "前端", "后端", "报错",
 )
-_ACTION_TERMS = (
-    "fix", "debug", "change", "edit", "update", "create", "delete", "run", "execute",
-    "install", "configure", "modify", "commit", "merge", "deploy", "open", "write", "apply",
-    "implement", "修复", "修改", "更新", "创建", "删除", "运行", "执行", "安装", "配置",
-    "提交", "合并", "部署", "实现", "做",
+_EXECUTION_TERMS = (
+    "fix", "debug", "edit", "update", "delete", "run", "execute", "install", "configure",
+    "modify", "commit", "merge", "deploy", "apply patch", "patch", "implement",
+    "open settings", "open bluetooth", "open wi-fi", "open wifi",
+    "修复", "调试", "修改", "更新", "删除", "运行", "执行", "安装", "配置", "提交", "合并",
+    "部署", "实现", "应用补丁", "打开设置", "打开蓝牙", "打开无线网络",
+)
+_CODE_CREATION_TERMS = (
+    "write", "create", "generate", "implement", "build", "make",
+    "写", "生成", "创建", "实现",
 )
 _REASONING_TERMS = (
     "analyze", "analyse", "compare", "evaluate", "reason", "plan", "strategy", "architecture",
-    "why", "tradeoff", "trade-off", "investigate", "review", "design", "分析", "比较", "评估",
-    "为什么", "计划", "架构", "权衡", "调查", "审查", "设计",
+    "why", "tradeoff", "trade-off", "investigate", "review", "design", "explain", "summarize",
+    "summary", "分析", "比较", "评估", "为什么", "计划", "架构", "权衡", "调查", "审查", "设计",
+    "解释", "总结", "概括",
 )
 _SIMPLE_CHAT_PREFIXES = (
     "hi", "hello", "hey", "thanks", "thank you", "你好", "嗨", "谢谢",
@@ -66,9 +72,23 @@ class DeterministicModelRouter:
     """
 
     @staticmethod
-    def _contains_any(text: str, terms: Iterable[str]) -> bool:
+    def _term_matches(text: str, term: str) -> bool:
         lowered = text.casefold()
-        return any(term.casefold() in lowered for term in terms)
+        token = term.casefold()
+        # CJK has no reliable ASCII-style word boundaries; multi-character
+        # intent phrases are intentionally explicit enough for substring use.
+        if any("\u3400" <= char <= "\u9fff" for char in token):
+            return token in lowered
+        # English technical tokens must be bounded. This prevents terms such as
+        # "open"/"api" from accidentally matching OpenAI or unrelated words.
+        return re.search(
+            rf"(?<![a-z0-9_]){re.escape(token)}(?![a-z0-9_])",
+            lowered,
+        ) is not None
+
+    @classmethod
+    def _contains_any(cls, text: str, terms: Iterable[str]) -> bool:
+        return any(cls._term_matches(text, term) for term in terms)
 
     def classify(self, text: str, resources: tuple[InputResource, ...] = ()) -> dict:
         normalized = " ".join(text.split())
@@ -79,7 +99,8 @@ class DeterministicModelRouter:
             for resource in resources
         )
         coding = self._contains_any(normalized, _CODING_TERMS)
-        action = self._contains_any(normalized, _ACTION_TERMS)
+        execution_action = self._contains_any(normalized, _EXECUTION_TERMS)
+        code_creation = coding and self._contains_any(normalized, _CODE_CREATION_TERMS)
         reasoning = self._contains_any(normalized, _REASONING_TERMS)
         long_prompt = len(normalized) >= 700 or text.count("\n") >= 8
         complex_prompt = len(normalized) >= 1500 or len(
@@ -92,12 +113,15 @@ class DeterministicModelRouter:
         if needs_vision:
             role_id = "vision"
             intent = "vision"
-        elif coding and action:
+        elif coding and (execution_action or code_creation):
             role_id = "execution"
             intent = "coding"
-        elif action:
+        elif execution_action:
             role_id = "execution"
             intent = "action"
+        elif coding:
+            role_id = "reasoning"
+            intent = "coding_analysis"
         elif reasoning or long_prompt:
             role_id = "reasoning"
             intent = "reasoning"
@@ -105,13 +129,16 @@ class DeterministicModelRouter:
             role_id = "chat"
             intent = "chat"
 
-        needs_tools = role_id == "execution"
+        # Execution model selection is not the same thing as tool authority.
+        # Pure code generation can benefit from the execution model/Judge while
+        # still requiring no shell/filesystem action.
+        needs_tools = execution_action
         needs_reasoning = role_id in {"reasoning", "execution"} or (
             needs_vision and (reasoning or long_prompt)
         )
-        if complex_prompt or (coding and reasoning) or (action and long_prompt):
+        if complex_prompt or (coding and reasoning) or (execution_action and long_prompt):
             complexity = "high"
-        elif reasoning or long_prompt or coding or needs_vision:
+        elif reasoning or long_prompt or coding or needs_vision or execution_action:
             complexity = "medium"
         elif simple_chat:
             complexity = "low"
