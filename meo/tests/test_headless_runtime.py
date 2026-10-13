@@ -3,6 +3,7 @@ import types
 import unittest
 from unittest import mock
 
+from meo.adapters.routed_backend import RoutedBackend
 from meo.runtime.headless_probe import inspect_loaded_modules
 from meo.runtime.main import build_service, load_backend_factory, main
 from meo.service.backend_adapter import BackendCallbacks
@@ -64,7 +65,8 @@ class HeadlessRuntimeTests(unittest.TestCase):
 
     def test_factory_builds_service(self):
         service = build_service(this_module_factory_spec())
-        self.assertIsInstance(service.backend, FakeBackend)
+        self.assertIsInstance(service.backend, RoutedBackend)
+        self.assertIsInstance(service.backend._backend, FakeBackend)
 
     def test_factory_module_that_loads_ui_is_rejected(self):
         module_name = "meo.tests.fake_dirty_backend"
