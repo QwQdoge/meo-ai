@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import json
-import re
 import threading
 from typing import Any, Callable
 
+from meo.adapters.account_multimodal import context_payload
 from meo.system.account_ai import AccountAiUnavailable, DbusNextAccountAiClient
 from meo.system.account_ai_interaction import request_account_ai_consent
 from src.handlers.llm.llm import LLMHandler
@@ -12,15 +11,6 @@ from src.handlers.llm.llm import LLMHandler
 
 _client_lock = threading.Lock()
 _client: DbusNextAccountAiClient | None = None
-_IMAGE_BLOCK = re.compile(
-    r"```image[^\S\r\n]*\r?\n(?P<source>data:image/[^\r\n]+)\r?\n```",
-    re.IGNORECASE,
-)
-_ANY_IMAGE_BLOCK = re.compile(
-    r"```image[^\S\r\n]*\r?\n.*?\r?\n```",
-    re.IGNORECASE | re.DOTALL,
-)
-_MAX_INPUT_IMAGES = 8
 
 
 def account_ai_client() -> DbusNextAccountAiClient:
@@ -97,59 +87,6 @@ class MeoAccountLLMHandler(LLMHandler):
         return True
 
     @staticmethod
-    def _strip_image_blocks(value: str) -> str:
-        return _ANY_IMAGE_BLOCK.sub("[Image attachment]", value)
-
-    @classmethod
-    def _context_payload(
-        cls,
-        prompt: str,
-        history: list[dict[str, str]],
-    ) -> tuple[str, tuple[str, ...]]:
-        images = tuple(
-            match.group("source").strip()
-            for match in _IMAGE_BLOCK.finditer(prompt)
-        )
-        if len(images) > _MAX_INPUT_IMAGES:
-            raise ValueError(f"At most {_MAX_INPUT_IMAGES} images can be sent to Account AI")
-
-        records: list[dict[str, str]] = []
-        for item in history[-48:]:
-            if not isinstance(item, dict):
-                continue
-            role = str(item.get("User") or "").strip()
-            message = item.get("Message")
-            if not role or not isinstance(message, str) or not message:
-                continue
-            # Historical image bytes are already represented by the previous
-            # turn. Never replay megabytes of base64 on every later request.
-            records.append({"role": role[:64], "content": cls._strip_image_blocks(message)})
-
-        payload = {
-            "conversation_history": records,
-            "current_user_prompt": cls._strip_image_blocks(prompt),
-        }
-        encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-        if len(encoded) <= 40000:
-            return encoded, images
-
-        # Preserve the current request and newest context. Remove oldest turns
-        # until the broker's hard prompt limit is met; never silently truncate
-        # the current user prompt itself.
-        clean_prompt = payload["current_user_prompt"]
-        if len(clean_prompt) > 32000:
-            raise ValueError("Current prompt is too large for the Account AI broker")
-        while records:
-            records.pop(0)
-            payload["conversation_history"] = records
-            encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-            if len(encoded) <= 40000:
-                return encoded, images
-        if len(encoded) > 40000:
-            raise ValueError("Current prompt is too large for the Account AI broker")
-        return encoded, images
-
-    @staticmethod
     def _system_text(system_prompt: list[str]) -> str:
         values = [str(value).strip() for value in system_prompt if str(value).strip()]
         text = "\n\n".join(values)
@@ -176,7 +113,7 @@ class MeoAccountLLMHandler(LLMHandler):
     ) -> str:
         connection_id, model = self._selection()
         system_text = self._system_text(system_prompt)
-        user_text, images = self._context_payload(prompt, history)
+        user_text, images = context_payload(prompt, history)
         categories = ["user_prompt"]
         if history:
             categories.append("conversation_history")
