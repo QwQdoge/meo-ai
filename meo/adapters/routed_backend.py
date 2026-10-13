@@ -239,10 +239,19 @@ class RoutedBackend:
         coordination: dict | None = None
         backend_text = text
         if decision.role_id == "execution" and decision.complexity == "high" and self._coordinator.available:
-            outcome = self._coordinator.prepare(text, models, emit=callbacks.on_tool_event)
-            coordination = outcome.metadata
-            if outcome.context:
-                backend_text = outcome.context + text
+            try:
+                outcome = self._coordinator.prepare(text, models, emit=callbacks.on_tool_event)
+                coordination = outcome.metadata
+                if outcome.context:
+                    backend_text = outcome.context + text
+            except Exception as exc:
+                # Coordination is an optimization. A planner/provider/UI bug must
+                # never strand the request lock or block the real execution path.
+                coordination = {
+                    "status": "failed",
+                    "reason": str(exc),
+                    "tasks": [],
+                }
 
         should_verify = decision.role_id == "execution" and self._verifier.available
         buffered_text: list[str] = []
