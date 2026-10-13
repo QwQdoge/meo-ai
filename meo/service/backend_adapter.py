@@ -11,6 +11,7 @@ class ModelInfo:
     provider: str = ""
     selection_scope: str = "conversation"
     selected: bool = False
+    supports_vision: bool = False
 
 
 @dataclass(frozen=True)
