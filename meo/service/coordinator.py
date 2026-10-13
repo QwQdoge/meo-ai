@@ -109,6 +109,9 @@ class LocalSubagentCoordinator:
         elif status == "completed":
             title = "Work complete"
             subtitle = "Supporting analysis is ready" if total else "No extra subagents were needed"
+        elif status == "cancelled":
+            title = "Work cancelled"
+            subtitle = "Stopped before main execution"
         else:
             title = "Work needs attention"
             subtitle = "Supporting analysis could not finish"
@@ -121,6 +124,7 @@ class LocalSubagentCoordinator:
                 "failed": "×",
                 "running": "→",
                 "queued": "·",
+                "cancelled": "–",
             }.get(task_status, "·")
             task_title = " ".join(str(task.get("title", "Analysis")).split())[:120]
             lines.append(f"{marker} {task_title}")
@@ -150,6 +154,7 @@ class LocalSubagentCoordinator:
         models: Iterable[ModelInfo],
         *,
         emit: Callable[[dict], None] | None = None,
+        cancelled: Callable[[], bool] | None = None,
     ) -> CoordinatorOutcome:
         run_id = f"local:{uuid4()}"
         if not self.available:
@@ -164,6 +169,14 @@ class LocalSubagentCoordinator:
                 {"run_id": run_id, "status": "unavailable", "reason": str(exc), "tasks": []},
             )
 
+        def is_cancelled() -> bool:
+            if cancelled is None:
+                return False
+            try:
+                return bool(cancelled())
+            except Exception:
+                return False
+
         def publish(status: str, tasks: list[dict], **extra) -> None:
             if emit is None:
                 return
@@ -175,6 +188,32 @@ class LocalSubagentCoordinator:
             except Exception:
                 return
 
+        def cancelled_outcome(tasks: list[dict]) -> CoordinatorOutcome:
+            for task in tasks:
+                if task.get("status") in {"queued", "running"}:
+                    task["status"] = "cancelled"
+            publish("cancelled", tasks)
+            public_tasks = [
+                {
+                    "title": str(task.get("title", "Analysis")),
+                    "status": str(task.get("status", "cancelled")),
+                }
+                for task in tasks
+            ]
+            return CoordinatorOutcome(
+                "",
+                {
+                    "run_id": run_id,
+                    "status": "cancelled",
+                    "model_id": reasoning_model_id,
+                    "fallback_used": fallback_used,
+                    "tasks": public_tasks,
+                },
+            )
+
+        if is_cancelled():
+            return cancelled_outcome([])
+
         publish("planning", [])
         try:
             raw_plan = generate(
@@ -185,6 +224,8 @@ class LocalSubagentCoordinator:
                     "Never delegate side effects. Output valid JSON only."
                 ],
             )
+            if is_cancelled():
+                return cancelled_outcome([])
             payload = _json_object(raw_plan)
         except Exception as exc:
             publish("failed", [], reason=str(exc))
@@ -212,6 +253,8 @@ class LocalSubagentCoordinator:
                 continue
             tasks.append({"title": title or "Analysis", "instruction": instruction, "status": "queued"})
 
+        if is_cancelled():
+            return cancelled_outcome(tasks)
         if not tasks:
             publish("completed", [])
             return CoordinatorOutcome(
@@ -227,6 +270,8 @@ class LocalSubagentCoordinator:
 
         publish("running", tasks)
         for index, task in enumerate(tasks):
+            if is_cancelled():
+                return cancelled_outcome(tasks)
             task["status"] = "running"
             publish("running", tasks, active_index=index)
             try:
@@ -243,6 +288,8 @@ class LocalSubagentCoordinator:
                 task["result"] = f"Subagent failed: {exc}"
                 task["status"] = "failed"
             publish("running", tasks, active_index=index)
+            if is_cancelled():
+                return cancelled_outcome(tasks)
 
         context = self._context_block(run_id, tasks)
         public_tasks = [
