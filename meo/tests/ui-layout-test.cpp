@@ -188,6 +188,35 @@ private slots:
         QTRY_VERIFY((composer = item(window->contentItem(), "meoAiComposerShell")) != nullptr);
         QVERIFY(composer);
         QVERIFY(composer->width() > 400 && composer->width() < window->width());
+
+        // Restored conversation metadata is presentation state, not response
+        // metadata. It must update the title without populating Response details.
+        client.resetChat();
+        client.message("user", "Fallback title from history");
+        client.message("assistant", "Restored response");
+        client.conversationMetadata(QVariantMap{
+            {"conversation_id", "meo:history"},
+            {"title", "Restored Project Review"},
+            {"summary", "Persisted conversation summary"},
+            {"title_is_default", false},
+        });
+        QTRY_COMPARE(title->property("text").toString(), QString("Restored Project Review"));
+        QCOMPARE(window->property("generatedConversationTitle").toString(),
+                 QString("Restored Project Review"));
+        QCOMPARE(window->property("inspectedMetadata").value<QJSValue>().toVariant().toMap().size(), 0);
+
+        // A default persisted title should not hide the more useful first-user
+        // fallback used by the native header.
+        client.resetChat();
+        client.message("user", "Fallback title from user");
+        client.message("assistant", "Restored response");
+        client.conversationMetadata(QVariantMap{
+            {"conversation_id", "meo:default"},
+            {"title", "New conversation"},
+            {"title_is_default", true},
+        });
+        QTRY_COMPARE(title->property("text").toString(), QString("Fallback title from user"));
+        QCOMPARE(window->property("generatedConversationTitle").toString(), QString());
     }
 };
 
