@@ -12,6 +12,7 @@
 #include <QMimeDatabase>
 #include <QMimeData>
 #include <QNetworkRequest>
+#include <QStringList>
 
 namespace {
 constexpr int kMaxPendingResources = 16;
@@ -21,7 +22,7 @@ constexpr qint64 kMaxLocalResourceBytes = 25 * 1024 * 1024;
 void AgentClient::addLongTextResource(const QString &name, const QString &text) {
     const QString resourceName = name.trimmed().isEmpty() ? tr("Long paste.txt") : name.trimmed();
     if (!m_serviceMode || busy() || actionBusy() || text.isEmpty()) return;
-    if (m_pendingResources.size() >= kMaxPendingResources) {
+    if (m_pendingResources.size() + m_binaryResourceQueue.size() >= kMaxPendingResources) {
         m_status = tr("At most %1 resources can be attached to one request.").arg(kMaxPendingResources);
         emit changed();
         return;
@@ -69,7 +70,10 @@ void AgentClient::addLongTextResource(const QString &name, const QString &text) 
 }
 
 void AgentClient::addFileResource(const QUrl &fileUrl) {
-    if (!m_serviceMode || busy() || actionBusy() || !fileUrl.isLocalFile()) return;
+    // OpenFiles delivers every selected URL synchronously. Do not reject later
+    // files merely because the first one already owns the action-reply lane;
+    // each validated file joins the private sequential upload queue below.
+    if (!m_serviceMode || busy() || !fileUrl.isLocalFile()) return;
     const QString path = fileUrl.toLocalFile();
     QFileInfo info(path);
     if (!info.exists() || !info.isFile() || info.size() < 0) {
@@ -121,8 +125,8 @@ bool AgentClient::addClipboardImageResource() {
 }
 
 void AgentClient::queueBinaryResource(const QString &name, const QString &mimeType, const QByteArray &data) {
-    if (!m_serviceMode || busy() || actionBusy() || data.isEmpty()) return;
-    if (m_pendingResources.size() >= kMaxPendingResources) {
+    if (!m_serviceMode || busy() || data.isEmpty()) return;
+    if (m_pendingResources.size() + m_binaryResourceQueue.size() >= kMaxPendingResources) {
         m_status = tr("At most %1 resources can be attached to one request.").arg(kMaxPendingResources);
         emit changed();
         return;
@@ -134,59 +138,81 @@ void AgentClient::queueBinaryResource(const QString &name, const QString &mimeTy
     }
     const QString safeName = name.trimmed().isEmpty() ? tr("Attachment") : name.trimmed();
     const QString safeMime = mimeType.trimmed().isEmpty() ? QStringLiteral("application/octet-stream") : mimeType.trimmed();
-    const QString kind = safeMime.startsWith(QStringLiteral("image/"), Qt::CaseInsensitive)
+    m_binaryResourceQueue.append(QueuedBinaryResource{safeName, safeMime, data});
+    processBinaryResourceQueue();
+}
+
+void AgentClient::processBinaryResourceQueue() {
+    if (m_binaryResourceQueue.isEmpty() || busy() || actionBusy()) return;
+    if (m_conversationId.isEmpty()) {
+        ensureServiceConversation([this] { processBinaryResourceQueue(); });
+        return;
+    }
+
+    const QueuedBinaryResource item = m_binaryResourceQueue.first();
+    const QString kind = item.mimeType.startsWith(QStringLiteral("image/"), Qt::CaseInsensitive)
         ? QStringLiteral("image")
         : QStringLiteral("attachment");
+    QUrl base = validatedOrigin("MEO_AI_SERVICE_ENDPOINT");
+    if (!base.isValid()) {
+        m_status = tr("MEO_AI_SERVICE_ENDPOINT must be a loopback HTTP origin.");
+        emit changed();
+        return;
+    }
 
-    ensureServiceConversation([this, safeName, safeMime, kind, data] {
-        if (actionBusy()) return;
-        QUrl base = validatedOrigin("MEO_AI_SERVICE_ENDPOINT");
-        if (!base.isValid()) {
-            m_status = tr("MEO_AI_SERVICE_ENDPOINT must be a loopback HTTP origin.");
+    const QString conversation = m_conversationId;
+    QUrl url = base;
+    url.setPath(QString("/v1/conversations/%1/resources").arg(conversation));
+    QNetworkRequest request(url);
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
+    const QJsonObject body{
+        {"kind", kind},
+        {"name", item.name},
+        {"mime_type", item.mimeType},
+        {"size_bytes", item.data.size()},
+    };
+    m_status = tr("Preparing attachment…");
+    QNetworkReply *reserveReply = m_network.post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
+    m_actionReply = reserveReply;
+    emit changed();
+
+    connect(reserveReply, &QNetworkReply::finished, this, [this, reserveReply, conversation, item] {
+        if (m_actionReply != reserveReply) {
+            reserveReply->deleteLater();
+            return;
+        }
+        m_actionReply = nullptr;
+        const int code = reserveReply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        QJsonParseError parseError;
+        const auto document = QJsonDocument::fromJson(reserveReply->readAll(), &parseError);
+        if (reserveReply->error() != QNetworkReply::NoError || code < 200 || code >= 300 ||
+            parseError.error != QJsonParseError::NoError || !document.isObject()) {
+            m_status = code == 413
+                ? tr("Attachment is too large for AgentService.")
+                : tr("Attachment could not be prepared (HTTP %1).").arg(code);
+            reserveReply->deleteLater();
+            finishBinaryResourceQueueItem();
             emit changed();
             return;
         }
-        const QString conversation = m_conversationId;
-        QUrl url = base;
-        url.setPath(QString("/v1/conversations/%1/resources").arg(conversation));
-        QNetworkRequest request(url);
-        request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
-        request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
-        const QJsonObject body{
-            {"kind", kind},
-            {"name", safeName},
-            {"mime_type", safeMime},
-            {"size_bytes", data.size()},
-        };
-        m_status = tr("Preparing attachment…");
-        m_actionReply = m_network.post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
-        emit changed();
-        connect(m_actionReply, &QNetworkReply::finished, this, [this, conversation, data] {
-            QNetworkReply *reply = m_actionReply;
-            m_actionReply = nullptr;
-            const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-            QJsonParseError parseError;
-            const auto document = QJsonDocument::fromJson(reply->readAll(), &parseError);
-            if (reply->error() != QNetworkReply::NoError || code < 200 || code >= 300 ||
-                parseError.error != QJsonParseError::NoError || !document.isObject()) {
-                m_status = code == 413
-                    ? tr("Attachment is too large for AgentService.")
-                    : tr("Attachment could not be prepared (HTTP %1).").arg(code);
-                reply->deleteLater();
-                emit changed();
-                return;
-            }
-            const auto resource = document.object().value("resource").toObject();
-            const QString resourceId = resource.value("resource_id").toString();
-            reply->deleteLater();
-            if (!resourceId.startsWith("resource:") || resourceId.contains('/')) {
-                m_status = tr("AgentService returned an invalid resource ID.");
-                emit changed();
-                return;
-            }
-            uploadBinaryResource(conversation, resourceId, data);
-        });
+        const auto resource = document.object().value("resource").toObject();
+        const QString resourceId = resource.value("resource_id").toString();
+        reserveReply->deleteLater();
+        if (!resourceId.startsWith("resource:") || resourceId.contains('/')) {
+            m_status = tr("AgentService returned an invalid resource ID.");
+            finishBinaryResourceQueueItem();
+            emit changed();
+            return;
+        }
+        uploadBinaryResource(conversation, resourceId, item.data);
     });
+}
+
+void AgentClient::finishBinaryResourceQueueItem() {
+    if (!m_binaryResourceQueue.isEmpty())
+        m_binaryResourceQueue.removeFirst();
+    processBinaryResourceQueue();
 }
 
 void AgentClient::uploadBinaryResource(
@@ -194,10 +220,16 @@ void AgentClient::uploadBinaryResource(
     const QString &resourceId,
     const QByteArray &data
 ) {
-    if (actionBusy() || conversation != m_conversationId) return;
+    if (actionBusy() || conversation != m_conversationId) {
+        m_status = tr("Attachment upload could not continue.");
+        finishBinaryResourceQueueItem();
+        emit changed();
+        return;
+    }
     QUrl base = validatedOrigin("MEO_AI_SERVICE_ENDPOINT");
     if (!base.isValid()) {
         m_status = tr("MEO_AI_SERVICE_ENDPOINT must be a loopback HTTP origin.");
+        finishBinaryResourceQueueItem();
         emit changed();
         return;
     }
@@ -207,18 +239,23 @@ void AgentClient::uploadBinaryResource(
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/octet-stream");
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
     m_status = tr("Uploading attachment…");
-    m_actionReply = m_network.put(request, data);
+    QNetworkReply *uploadReply = m_network.put(request, data);
+    m_actionReply = uploadReply;
     emit changed();
-    connect(m_actionReply, &QNetworkReply::finished, this, [this, conversation, resourceId] {
-        QNetworkReply *reply = m_actionReply;
+    connect(uploadReply, &QNetworkReply::finished, this, [this, uploadReply, conversation, resourceId] {
+        if (m_actionReply != uploadReply) {
+            uploadReply->deleteLater();
+            return;
+        }
         m_actionReply = nullptr;
-        const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        const int code = uploadReply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         QJsonParseError parseError;
-        const auto document = QJsonDocument::fromJson(reply->readAll(), &parseError);
-        if (reply->error() != QNetworkReply::NoError || code < 200 || code >= 300 ||
+        const auto document = QJsonDocument::fromJson(uploadReply->readAll(), &parseError);
+        if (uploadReply->error() != QNetworkReply::NoError || code < 200 || code >= 300 ||
             parseError.error != QJsonParseError::NoError || !document.isObject()) {
             m_status = tr("Attachment upload failed (HTTP %1).").arg(code);
-            reply->deleteLater();
+            uploadReply->deleteLater();
+            finishBinaryResourceQueueItem();
             emit changed();
             return;
         }
@@ -226,7 +263,8 @@ void AgentClient::uploadBinaryResource(
         if (resource.value("resource_id").toString() != resourceId ||
             resource.value("state").toString() != "ready") {
             m_status = tr("AgentService returned invalid attachment metadata.");
-            reply->deleteLater();
+            uploadReply->deleteLater();
+            finishBinaryResourceQueueItem();
             emit changed();
             return;
         }
@@ -234,49 +272,113 @@ void AgentClient::uploadBinaryResource(
         item.insert("conversation_id", conversation);
         m_pendingResources.append(item);
         m_status = tr("Attachment ready");
-        reply->deleteLater();
+        uploadReply->deleteLater();
+        finishBinaryResourceQueueItem();
         emit changed();
     });
 }
 
 void AgentClient::discardPendingResource(const QString &resourceId) {
     const QString id = resourceId.trimmed();
-    if (!m_serviceMode || actionBusy() || !id.startsWith("resource:") || id.contains('/')) return;
+    if (!m_serviceMode || busy() || actionBusy() || !id.startsWith("resource:") || id.contains('/')) return;
 
-    int targetIndex = -1;
-    QString conversation;
-    for (int i = 0; i < m_pendingResources.size(); ++i) {
-        const QVariantMap item = m_pendingResources.at(i).toMap();
+    QVariantMap target;
+    for (const QVariant &itemValue : m_pendingResources) {
+        const QVariantMap item = itemValue.toMap();
         if (item.value("resource_id").toString() == id) {
-            targetIndex = i;
-            conversation = item.value("conversation_id").toString();
+            target = item;
             break;
         }
     }
-    if (targetIndex < 0 || conversation.isEmpty()) return;
+    if (target.isEmpty() || target.value("conversation_id").toString().isEmpty()) return;
+
+    m_resourceDeletionQueue = QVariantList{target};
+    m_clearPendingResourcesRequested = false;
+    m_resourceDeletionFailed = false;
+    processResourceDeletionQueue();
+}
+
+void AgentClient::clearPendingResources() {
+    if (busy() || actionBusy()) return;
+    if (m_pendingResources.isEmpty()) {
+        m_status = tr("No pending attachments to clear");
+        emit changed();
+        return;
+    }
+    m_resourceDeletionQueue = m_pendingResources;
+    m_clearPendingResourcesRequested = true;
+    m_resourceDeletionFailed = false;
+    processResourceDeletionQueue();
+}
+
+void AgentClient::processResourceDeletionQueue() {
+    if (busy() || actionBusy()) return;
+    if (m_resourceDeletionQueue.isEmpty()) {
+        if (m_clearPendingResourcesRequested) {
+            m_status = m_resourceDeletionFailed
+                ? tr("Some attachments could not be removed.")
+                : tr("Pending attachments cleared");
+        } else {
+            m_status = m_resourceDeletionFailed
+                ? tr("Attachment could not be removed")
+                : tr("Attachment removed");
+        }
+        m_clearPendingResourcesRequested = false;
+        m_resourceDeletionFailed = false;
+        emit changed();
+        return;
+    }
+
+    const QVariantMap target = m_resourceDeletionQueue.first().toMap();
+    const QString id = target.value("resource_id").toString();
+    const QString conversation = target.value("conversation_id").toString();
+    if (!id.startsWith("resource:") || id.contains('/') || conversation.isEmpty()) {
+        m_resourceDeletionFailed = true;
+        m_resourceDeletionQueue.removeFirst();
+        processResourceDeletionQueue();
+        return;
+    }
 
     QUrl base = validatedOrigin("MEO_AI_SERVICE_ENDPOINT");
     if (!base.isValid()) {
+        m_resourceDeletionQueue.clear();
+        m_clearPendingResourcesRequested = false;
+        m_resourceDeletionFailed = false;
         m_status = tr("MEO_AI_SERVICE_ENDPOINT must be a loopback HTTP origin.");
         emit changed();
         return;
     }
     QUrl url = base;
     url.setPath(QString("/v1/conversations/%1/resources/%2").arg(conversation, id));
-    deleteServiceAction(url, [this, id](QNetworkReply *) {
-        for (int i = m_pendingResources.size() - 1; i >= 0; --i) {
-            if (m_pendingResources.at(i).toMap().value("resource_id").toString() == id)
-                m_pendingResources.removeAt(i);
-        }
-        m_status = tr("Attachment removed");
-    });
-}
-
-void AgentClient::clearPendingResources() {
-    if (busy() || actionBusy()) return;
-    m_pendingResources.clear();
-    m_status = tr("Pending attachments cleared");
+    QNetworkRequest request(url);
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
+    QNetworkReply *deleteReply = m_network.sendCustomRequest(request, QByteArrayLiteral("DELETE"));
+    m_actionReply = deleteReply;
     emit changed();
+
+    connect(deleteReply, &QNetworkReply::finished, this, [this, deleteReply, id] {
+        if (m_actionReply != deleteReply) {
+            deleteReply->deleteLater();
+            return;
+        }
+        m_actionReply = nullptr;
+        const int code = deleteReply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        const bool removed = (deleteReply->error() == QNetworkReply::NoError && code >= 200 && code < 300)
+            || code == 404;
+        if (removed) {
+            for (int i = m_pendingResources.size() - 1; i >= 0; --i) {
+                if (m_pendingResources.at(i).toMap().value("resource_id").toString() == id)
+                    m_pendingResources.removeAt(i);
+            }
+        } else {
+            m_resourceDeletionFailed = true;
+        }
+        if (!m_resourceDeletionQueue.isEmpty())
+            m_resourceDeletionQueue.removeFirst();
+        deleteReply->deleteLater();
+        emit changed();
+        processResourceDeletionQueue();
+    });
 }
 
 void AgentClient::sendWithPendingResources(const QString &text) {
@@ -317,10 +419,12 @@ void AgentClient::sendServiceWithResources(const QString &text, const QVariantLi
     }
 
     QJsonArray resourceIds;
+    QStringList sentResourceIds;
     for (const QVariant &entryValue : resources) {
         const QString resourceId = entryValue.toMap().value("resource_id").toString();
         if (!resourceId.startsWith("resource:") || resourceId.contains('/')) continue;
         resourceIds.append(resourceId);
+        sentResourceIds.append(resourceId);
     }
     if (resourceIds.isEmpty()) {
         sendService(text);
@@ -351,15 +455,24 @@ void AgentClient::sendServiceWithResources(const QString &text, const QVariantLi
     m_status = tr("Receiving…");
     emit message("assistant", "");
 
-    for (int i = m_pendingResources.size() - 1; i >= 0; --i) {
-        const QString pendingId = m_pendingResources.at(i).toMap().value("resource_id").toString();
-        for (const QJsonValue &sentId : resourceIds) {
-            if (sentId.toString() == pendingId) {
+    QNetworkReply *messageReply = m_network.post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
+    // Keep attachments pending until AgentService has actually accepted this
+    // message and assigned a request id. A rejected/failed POST therefore
+    // remains retryable with the exact same resources instead of silently
+    // losing them from the composer.
+    connect(messageReply, &QNetworkReply::metaDataChanged, this, [this, messageReply, sentResourceIds] {
+        const int code = messageReply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        if (code != 200 || messageReply->rawHeader("X-Meo-Request-Id").isEmpty()) return;
+        bool removedAny = false;
+        for (int i = m_pendingResources.size() - 1; i >= 0; --i) {
+            const QString pendingId = m_pendingResources.at(i).toMap().value("resource_id").toString();
+            if (sentResourceIds.contains(pendingId)) {
                 m_pendingResources.removeAt(i);
-                break;
+                removedAny = true;
             }
         }
-    }
+        if (removedAny) emit changed();
+    });
     emit changed();
-    attachServiceStream(m_network.post(request, QJsonDocument(body).toJson(QJsonDocument::Compact)));
+    attachServiceStream(messageReply);
 }

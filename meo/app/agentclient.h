@@ -1,4 +1,6 @@
 #pragma once
+#include <QByteArray>
+#include <QList>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QObject>
@@ -106,6 +108,12 @@ signals:
     void conversationMetadata(const QVariantMap &metadata);
     void resetChat();
 private:
+    struct QueuedBinaryResource {
+        QString name;
+        QString mimeType;
+        QByteArray data;
+    };
+
     void requestLegacy(const QString &text);
     void consumeLegacy();
     void ensureServiceConversation(const std::function<void()> &then);
@@ -113,7 +121,10 @@ private:
     void sendService(const QString &text, bool emitAssistantPlaceholder = true);
     void sendServiceWithResources(const QString &text, const QVariantList &resources);
     void queueBinaryResource(const QString &name, const QString &mimeType, const QByteArray &data);
+    void processBinaryResourceQueue();
+    void finishBinaryResourceQueueItem();
     void uploadBinaryResource(const QString &conversation, const QString &resourceId, const QByteArray &data);
+    void processResourceDeletionQueue();
     void reconnectServiceStream();
     void attachServiceStream(QNetworkReply *reply);
     void consumeService();
@@ -150,6 +161,10 @@ private:
     QVariantList m_memories;
     QVariantList m_pendingResources;
     QVariantMap m_responseMetadata;
+    QList<QueuedBinaryResource> m_binaryResourceQueue;
+    QVariantList m_resourceDeletionQueue;
+    bool m_clearPendingResourcesRequested = false;
+    bool m_resourceDeletionFailed = false;
     bool m_done = false;
     bool m_serviceMode = false;
     bool m_cancelPending = false;
