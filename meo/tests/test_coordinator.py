@@ -123,6 +123,49 @@ class LocalSubagentCoordinatorTests(unittest.TestCase):
         self.assertIn("Useful finding", outcome.context)
         self.assertEqual(len(backend.calls), 2)
 
+    def test_cancel_after_planner_skips_all_subagents(self) -> None:
+        backend = FakeAuxiliaryBackend([
+            '{"tasks":[{"title":"One","instruction":"A"},{"title":"Two","instruction":"B"}]}',
+            "should not run",
+        ])
+        coordinator = LocalSubagentCoordinator(backend, self.roles)
+        events: list[dict] = []
+
+        outcome = coordinator.prepare(
+            "Complex request",
+            self.models,
+            emit=events.append,
+            cancelled=lambda: len(backend.calls) >= 1,
+        )
+
+        self.assertEqual(outcome.metadata["status"], "cancelled")
+        self.assertEqual(outcome.context, "")
+        self.assertEqual(len(backend.calls), 1)
+        self.assertEqual(events[-1]["card"]["title"], "Work cancelled")
+
+    def test_cancel_after_first_subagent_skips_remaining_tasks(self) -> None:
+        backend = FakeAuxiliaryBackend([
+            '{"tasks":[{"title":"One","instruction":"A"},{"title":"Two","instruction":"B"},'
+            '{"title":"Three","instruction":"C"}]}',
+            "first result",
+            "should not run",
+            "should not run either",
+        ])
+        coordinator = LocalSubagentCoordinator(backend, self.roles)
+
+        outcome = coordinator.prepare(
+            "Complex request",
+            self.models,
+            cancelled=lambda: len(backend.calls) >= 2,
+        )
+
+        self.assertEqual(outcome.metadata["status"], "cancelled")
+        self.assertEqual(outcome.context, "")
+        self.assertEqual(len(backend.calls), 2)
+        self.assertEqual(outcome.metadata["tasks"][0]["status"], "completed")
+        self.assertEqual(outcome.metadata["tasks"][1]["status"], "cancelled")
+        self.assertEqual(outcome.metadata["tasks"][2]["status"], "cancelled")
+
 
 if __name__ == "__main__":
     unittest.main()
