@@ -5,6 +5,7 @@ import urllib.parse
 import urllib.request
 
 from meo.runtime.native_http_transport import create_native_http_server
+from meo.service.backend_adapter import ConversationMessage
 from meo.service.core import AgentServiceCore
 from meo.service.memory import MemoryRecord
 
@@ -12,6 +13,7 @@ from meo.service.memory import MemoryRecord
 class _MemoryBackend:
     def __init__(self):
         self.enabled = True
+        self.conversation_id = "meo:history"
         self.items = {
             "memory:one": MemoryRecord(
                 memory_id="memory:one",
@@ -21,6 +23,28 @@ class _MemoryBackend:
                 created_at="2026-10-10T00:00:00Z",
             )
         }
+
+    def list_conversations(self):
+        return [{
+            "id": self.conversation_id,
+            "legacy_chat_id": 42,
+            "title": "Project Review",
+            "summary": "Reviewed the Meo AI project and next steps.",
+            "title_is_default": False,
+            "title_is_automatic": False,
+            "internal_only": "do not expose",
+        }]
+
+    def conversation_exists(self, conversation_id):
+        return conversation_id == self.conversation_id
+
+    def list_messages(self, conversation_id):
+        if not self.conversation_exists(conversation_id):
+            raise ValueError("unknown conversation_id")
+        return [
+            ConversationMessage("user", "Please review my project"),
+            ConversationMessage("assistant", "Here is the review."),
+        ]
 
     def memory_supported(self):
         return True
@@ -90,6 +114,27 @@ class NativeHttpTransportTests(unittest.TestCase):
         request = urllib.request.Request(self.base + path, data=data, method=method, headers=headers)
         with urllib.request.urlopen(request, timeout=2) as response:
             return response.status, json.loads(response.read())
+
+    def test_native_history_includes_only_safe_conversation_metadata(self):
+        status, payload = self.request(
+            "GET", f"/v1/conversations/{self.backend.conversation_id}/messages"
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["conversation_id"], self.backend.conversation_id)
+        self.assertEqual(
+            payload["conversation"],
+            {
+                "conversation_id": self.backend.conversation_id,
+                "title": "Project Review",
+                "summary": "Reviewed the Meo AI project and next steps.",
+                "title_is_default": False,
+                "title_is_automatic": False,
+            },
+        )
+        self.assertNotIn("legacy_chat_id", payload["conversation"])
+        self.assertNotIn("internal_only", payload["conversation"])
+        self.assertEqual(payload["messages"][0]["role"], "user")
+        self.assertEqual(payload["messages"][1]["role"], "assistant")
 
     def test_native_get_combines_state_search_and_records(self):
         query = urllib.parse.urlencode({"scope": "account", "q": "compact"})
