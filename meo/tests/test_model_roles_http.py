@@ -76,7 +76,10 @@ class ModelRoleHttpTests(unittest.TestCase):
         status, payload = self.request("GET", "/v1/model-roles")
         self.assertEqual(status, 200)
         roles = payload["model_roles"]
-        self.assertEqual([item["role_id"] for item in roles], ["title", "judge", "reasoning", "execution"])
+        self.assertEqual(
+            [item["role_id"] for item in roles],
+            ["chat", "reasoning", "execution", "vision", "judge", "title"],
+        )
         self.assertTrue(all(item["runtime_supported"] is False for item in roles))
 
         status, updated = self.request(
