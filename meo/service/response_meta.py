@@ -78,6 +78,27 @@ _PROVIDER_FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     ),
 }
 
+_ACTIVITY_FIELDS = (
+    "memory",
+    "search",
+    "tools",
+    "mcp",
+    "web",
+    "retrieval",
+    "files",
+    "vision",
+    "code",
+    "sync",
+    "coordination",
+    "verification",
+)
+
+_RUNTIME_DETAIL_FIELDS = (
+    "routing",
+    "coordination",
+    "verification",
+)
+
 
 def _sensitive_key(key: str) -> bool:
     lowered = key.casefold().replace("-", "_")
@@ -306,21 +327,20 @@ def normalize_response_meta(event: Mapping[str, Any]) -> dict[str, Any]:
 
     activity = event.get("activity")
     if isinstance(activity, Mapping):
-        for key in (
-            "memory",
-            "search",
-            "tools",
-            "mcp",
-            "web",
-            "retrieval",
-            "files",
-            "vision",
-            "code",
-            "sync",
-        ):
+        for key in _ACTIVITY_FIELDS:
             value = activity.get(key)
             if isinstance(value, (bool, int, float, str, list, dict)):
                 result["activity"][key] = json_safe(value)
+
+    # Routing/coordinator/Judge are runtime facts rather than provider extras.
+    # Keep them first-class and secret-filtered so native clients can render an
+    # execution summary without digging through an unstructured `extra` bag.
+    for key in _RUNTIME_DETAIL_FIELDS:
+        value = event.get(key)
+        if isinstance(value, Mapping):
+            safe = _safe_mapping(value)
+            if safe:
+                result[key] = safe
 
     citations = event.get("citations")
     if isinstance(citations, list):
@@ -344,6 +364,7 @@ def normalize_response_meta(event: Mapping[str, Any]) -> dict[str, Any]:
         "rate_limits",
         "citations",
         "provider_metadata",
+        *_RUNTIME_DETAIL_FIELDS,
     }
     extras = {str(key): json_safe(value) for key, value in event.items() if key not in known}
     if extras:
