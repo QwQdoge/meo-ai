@@ -110,27 +110,37 @@ class ModelRoleRegistry:
         available = list(models)
         return next((item.model_id for item in available if item.selected), available[0].model_id if available else "")
 
+    @staticmethod
+    def _eligible_models(role_id: str, models: Iterable[ModelInfo]) -> list[ModelInfo]:
+        available = list(models)
+        if role_id == "vision":
+            return [item for item in available if item.supports_vision]
+        return available
+
     def resolve_model(self, role_id: str, models: Iterable[ModelInfo]) -> tuple[str, bool]:
         if role_id not in self.role_ids:
             raise ValueError(f"unknown model role: {role_id}")
-        available = self._model_list(models)
+        available = self._eligible_models(role_id, models)
         available_ids = {item.model_id for item in available}
         preferred = self._assignments.get(role_id, "")
         if preferred and preferred in available_ids:
             return preferred, False
         fallback = self._fallback_model_id(available)
         if not fallback:
+            if role_id == "vision":
+                raise ValueError("no vision-capable model is available for routing")
             raise ValueError("no model is available for routing")
         return fallback, bool(preferred)
 
     def list_roles(self, models: Iterable[ModelInfo]) -> list[dict]:
         available = self._model_list(models)
-        available_ids = {item.model_id for item in available}
-        selected_id = self._fallback_model_id(available)
-        runtime_supported = bool(available) and all(item.selection_scope == "request" for item in available)
         result = []
         for spec in MODEL_ROLE_SPECS:
+            eligible = self._eligible_models(spec.role_id, available)
+            eligible_ids = {item.model_id for item in eligible}
             preferred = self._assignments.get(spec.role_id, "")
+            fallback = self._fallback_model_id(eligible)
+            runtime_supported = bool(eligible) and all(item.selection_scope == "request" for item in eligible)
             result.append(
                 {
                     "role_id": spec.role_id,
@@ -138,11 +148,13 @@ class ModelRoleRegistry:
                     "description": spec.description,
                     "workload": spec.workload,
                     "preferred_model_id": preferred,
-                    "preferred_available": bool(preferred and preferred in available_ids),
-                    "fallback_model_id": selected_id,
+                    "preferred_available": bool(preferred and preferred in eligible_ids),
+                    "fallback_model_id": fallback,
                     "runtime_supported": runtime_supported,
                     "routing_status": "active" if runtime_supported else "preference_only",
                     "selection_scope": "request" if runtime_supported else "profile",
+                    "capability_available": bool(eligible),
+                    "eligible_model_ids": [item.model_id for item in eligible],
                 }
             )
         return result
@@ -151,13 +163,16 @@ class ModelRoleRegistry:
         if role_id not in self.role_ids:
             raise ValueError(f"unknown model role: {role_id}")
         available = self._model_list(models)
-        available_ids = {item.model_id for item in available}
+        by_id = {item.model_id: item for item in available}
         if model_id is None or not model_id.strip():
             self._assignments.pop(role_id, None)
         else:
             normalized = model_id.strip()
-            if normalized not in available_ids:
+            model = by_id.get(normalized)
+            if model is None:
                 raise ValueError(f"unknown model_id: {normalized}")
+            if role_id == "vision" and not model.supports_vision:
+                raise ValueError(f"model does not support vision inputs: {normalized}")
             self._assignments[role_id] = normalized
         self._save()
         return next(item for item in self.list_roles(available) if item["role_id"] == role_id)
