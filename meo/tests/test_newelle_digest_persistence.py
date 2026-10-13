@@ -55,14 +55,51 @@ class NewelleDigestPersistenceTests(unittest.TestCase):
         self.assertEqual(conversation["title"], "Linux Build Fix")
         self.assertEqual(conversation["summary"], "Fixed the build.")
         self.assertFalse(conversation["title_is_default"])
+        self.assertFalse(conversation["title_is_automatic"])
+
+    def test_newelle_first_message_title_is_still_eligible_for_ai_replacement(self) -> None:
+        controller = FakeController()
+        controller.chats[7] = {
+            "name": "Fix my Linux build",
+            "chat": [{"User": "User", "Message": "Fix my Linux build"}],
+        }
+        bridge = NewelleMultimodalBridge(FakeBackend(), controller)
+
+        self.assertTrue(bridge.conversation_needs_digest("meo:1"))
+        self.assertTrue(bridge.list_conversations()[0]["title_is_automatic"])
+
+        bridge.apply_conversation_digest(
+            "meo:1",
+            title="Linux Build Fix",
+            summary="The user asked for help fixing a Linux build.",
+        )
+
+        self.assertEqual(controller.chats[7]["name"], "Linux Build Fix")
+        self.assertEqual(controller.renamed, [(7, "Linux Build Fix", False)])
+        self.assertEqual(controller.saved, 1)
+        self.assertFalse(bridge.conversation_needs_digest("meo:1"))
+
+    def test_newelle_truncated_first_message_title_is_recognized(self) -> None:
+        controller = FakeController()
+        message = "Please investigate this Linux graphics driver regression and explain every relevant failure"
+        controller.chats[7] = {
+            "name": "Please investigate this Linux…",
+            "chat": [{"User": "User", "Message": message}],
+        }
+        bridge = NewelleMultimodalBridge(FakeBackend(), controller)
+
+        self.assertTrue(bridge.conversation_needs_digest("meo:1"))
 
     def test_user_renamed_chat_is_never_overwritten(self) -> None:
         controller = FakeController()
-        controller.chats[7].pop("name_is_default")
-        controller.chats[7]["name"] = "My manual title"
+        controller.chats[7] = {
+            "name": "My manual title",
+            "chat": [{"User": "User", "Message": "Fix my Linux build"}],
+        }
         bridge = NewelleMultimodalBridge(FakeBackend(), controller)
 
         self.assertFalse(bridge.conversation_needs_digest("meo:1"))
+        self.assertFalse(bridge.list_conversations()[0]["title_is_automatic"])
         bridge.apply_conversation_digest("meo:1", title="AI title", summary="Useful summary")
 
         self.assertEqual(controller.chats[7]["name"], "My manual title")
