@@ -5,6 +5,8 @@ import unittest
 
 from meo.adapters.routed_backend import DeterministicModelRouter, RoutedBackend
 from meo.service.backend_adapter import BackendCallbacks, InputResource, ModelInfo
+from meo.service.coordinator import CoordinatorOutcome
+from meo.service.core import AgentServiceCore
 from meo.service.model_roles import ModelRoleRegistry
 
 
@@ -12,6 +14,10 @@ class FakeBackend:
     def __init__(self) -> None:
         self.current = "main:strong"
         self.calls: list[tuple[str, str]] = []
+        self.cancelled_handles: list[object] = []
+
+    def conversation_exists(self, conversation_id: str) -> bool:
+        return conversation_id == "meo:1"
 
     def list_models(self):
         return [
@@ -34,6 +40,12 @@ class FakeBackend:
         callbacks.on_tool_event({"type": "response_meta", "activity": {}})
         callbacks.on_done()
         return object()
+
+    def choose_tool_option(self, _execution_handle: object, legacy_option_index: int) -> None:
+        self.calls.append(("choice", str(legacy_option_index)))
+
+    def cancel(self, execution_handle: object) -> None:
+        self.cancelled_handles.append(execution_handle)
 
 
 class DeferredBackend(FakeBackend):
@@ -73,6 +85,39 @@ class FailingCoordinator:
 
     def prepare(self, *_args, **_kwargs):
         raise RuntimeError("coordinator exploded")
+
+
+class BlockingCoordinator:
+    available = True
+
+    def __init__(self) -> None:
+        self.started = threading.Event()
+        self.release = threading.Event()
+
+    def prepare(self, _text, _models, *, emit=None):
+        if emit is not None:
+            emit({
+                "type": "presentation_card",
+                "card": {
+                    "card_id": "agent-run:test",
+                    "kind": "status",
+                    "title": "Working",
+                    "subtitle": "Planning a few focused checks",
+                    "value": "",
+                    "detail": "",
+                },
+            })
+        self.started.set()
+        if not self.release.wait(2.0):
+            raise RuntimeError("test coordinator was not released")
+        return CoordinatorOutcome(
+            "",
+            {
+                "run_id": "test",
+                "status": "completed",
+                "tasks": [],
+            },
+        )
 
 
 class DeterministicModelRouterTests(unittest.TestCase):
@@ -192,17 +237,52 @@ class RoutedBackendTests(unittest.TestCase):
         self.assertEqual(tool_events[0]["activity"]["verification"]["used"], True)
         self.assertEqual(tool_events[0]["activity"]["tools"], ["shell"])
 
+    def test_complex_coordinator_progress_is_live_through_agent_service(self) -> None:
+        backend = FakeBackend()
+        routed = RoutedBackend(backend, ModelRoleRegistry())
+        coordinator = BlockingCoordinator()
+        routed._coordinator = coordinator
+        service = AgentServiceCore(routed)
+        tool_events: list[dict] = []
+        done = threading.Event()
+        callbacks = BackendCallbacks(
+            on_text_delta=lambda _delta: None,
+            on_tool_event=tool_events.append,
+            on_done=done.set,
+            on_error=lambda _error: done.set(),
+        )
+
+        context = service.send_message(
+            "meo:1",
+            "Fix this code and analyze the architecture before implementing the change",
+            callbacks,
+        )
+        try:
+            self.assertTrue(context.request_id)
+            self.assertTrue(coordinator.started.wait(1.0))
+            self.assertTrue(tool_events)
+            self.assertEqual(tool_events[0]["type"], "presentation.card")
+            self.assertEqual(tool_events[0]["card"]["title"], "Working")
+            # The request and progress card are already live while Coordinator is
+            # still blocked and before the actual model request begins.
+            self.assertNotIn(("send", "main:strong"), backend.calls)
+        finally:
+            coordinator.release.set()
+        self.assertTrue(done.wait(1.0))
+        self.assertIn(("send", "main:strong"), backend.calls)
+
     def test_coordinator_crash_fails_open_and_releases_request_lock(self) -> None:
         backend = FakeBackend()
         routed = RoutedBackend(backend, ModelRoleRegistry())
         routed._coordinator = FailingCoordinator()
         tool_events: list[dict] = []
         done_events: list[str] = []
+        done = threading.Event()
         callbacks = BackendCallbacks(
             on_text_delta=lambda _delta: None,
             on_tool_event=tool_events.append,
-            on_done=lambda: done_events.append("done"),
-            on_error=lambda error: done_events.append(error),
+            on_done=lambda: (done_events.append("done"), done.set()),
+            on_error=lambda error: (done_events.append(error), done.set()),
         )
 
         routed.send_message(
@@ -210,6 +290,7 @@ class RoutedBackendTests(unittest.TestCase):
             "Fix this code and analyze the architecture before implementing the change",
             callbacks,
         )
+        self.assertTrue(done.wait(1.0))
 
         self.assertIn(("send", "main:strong"), backend.calls)
         self.assertEqual(done_events, ["done"])
@@ -218,6 +299,32 @@ class RoutedBackendTests(unittest.TestCase):
         # A follow-up request proves the previous execution did not strand the lock.
         routed.send_message("meo:1", "hello", callbacks)
         self.assertEqual(done_events, ["done", "done"])
+
+    def test_deferred_cancel_is_forwarded_when_real_handle_arrives(self) -> None:
+        backend = DeferredBackend()
+        routed = RoutedBackend(backend, ModelRoleRegistry())
+        coordinator = BlockingCoordinator()
+        routed._coordinator = coordinator
+        callbacks = BackendCallbacks(
+            on_text_delta=lambda _delta: None,
+            on_tool_event=lambda _event: None,
+            on_done=lambda: None,
+            on_error=lambda _error: None,
+        )
+
+        handle = routed.send_message(
+            "meo:1",
+            "Fix this code and analyze the architecture before implementing the change",
+            callbacks,
+        )
+        self.assertTrue(coordinator.started.wait(1.0))
+        routed.cancel(handle)
+        coordinator.release.set()
+        self.assertTrue(backend.started.wait(1.0))
+        worker = getattr(handle, "worker", None)
+        if worker is not None:
+            worker.join(1.0)
+        self.assertEqual(len(backend.cancelled_handles), 1)
 
     def test_catalog_is_exposed_as_request_scoped_and_preserves_capabilities(self) -> None:
         routed = RoutedBackend(FakeBackend(), ModelRoleRegistry())
