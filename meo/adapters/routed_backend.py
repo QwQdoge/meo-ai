@@ -133,7 +133,12 @@ class DeterministicModelRouter:
     ) -> RouteDecision:
         catalog = list(models)
         features = self.classify(text, resources)
-        model_id, fallback_used = roles.resolve_model(features["role_id"], catalog)
+        eligible = catalog
+        if features["needs_vision"]:
+            eligible = [item for item in catalog if item.supports_vision]
+            if not eligible:
+                raise ValueError("no vision-capable model is available for this image request")
+        model_id, fallback_used = roles.resolve_model(features["role_id"], eligible)
         return RouteDecision(
             model_id=model_id,
             fallback_used=fallback_used,
@@ -172,6 +177,7 @@ class RoutedBackend:
                 item.provider,
                 selection_scope="request",
                 selected=item.selected,
+                supports_vision=item.supports_vision,
             )
             for item in self._backend.list_models()
         ]
@@ -191,7 +197,11 @@ class RoutedBackend:
         released = False
         models = list(self._backend.list_models())
         original_model = self._selected_model(models)
-        decision = self._router.decide(text, resources, models, self._roles)
+        try:
+            decision = self._router.decide(text, resources, models, self._roles)
+        except Exception:
+            self._route_lock.release()
+            raise
 
         def release() -> None:
             nonlocal released
