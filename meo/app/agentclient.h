@@ -43,7 +43,28 @@ public:
     QVariantList options() const { return m_options; }
     QVariantMap agentState() const { return m_agentState; }
     QVariantList models() const { return m_models; }
-    QVariantList modelRoles() const { return m_modelRoles; }
+    QVariantList modelRoles() const {
+        // AgentService deliberately preserves a configured preference even
+        // when that model is currently unavailable. Native dropdowns need the
+        // effective selectable value instead: MeoExposedDropdown renders an
+        // unknown currentValue as an empty selection. Keep the configured ID
+        // available for diagnostics while presenting the runtime fallback as
+        // the preferred value consumed by existing native views.
+        QVariantList roles;
+        roles.reserve(m_modelRoles.size());
+        for (const QVariant &value : m_modelRoles) {
+            QVariantMap role = value.toMap();
+            if (!role.value(QStringLiteral("preferred_available")).toBool()) {
+                const QString configured = role.value(QStringLiteral("preferred_model_id")).toString();
+                if (!configured.isEmpty())
+                    role.insert(QStringLiteral("configured_preferred_model_id"), configured);
+                role.insert(QStringLiteral("preferred_model_id"),
+                            role.value(QStringLiteral("fallback_model_id")).toString());
+            }
+            roles.append(role);
+        }
+        return roles;
+    }
     QVariantList skills() const { return m_skills; }
     QVariantList mcpServers() const { return m_mcpServers; }
     QVariantList controls() const { return m_controls; }
