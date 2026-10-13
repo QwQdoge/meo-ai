@@ -19,39 +19,50 @@ class ModelRoleSpec:
 
 MODEL_ROLE_SPECS = (
     ModelRoleSpec(
-        "title",
-        "Title",
-        "Cheap background model for chat titles and short labels.",
-        "auxiliary",
-    ),
-    ModelRoleSpec(
-        "judge",
-        "Judge",
-        "Small structured-output model for yes/no, ranking, and routing choices.",
-        "auxiliary",
+        "chat",
+        "Chat",
+        "Default conversational model for ordinary requests that do not need tools or deep reasoning.",
+        "primary",
     ),
     ModelRoleSpec(
         "reasoning",
         "Reasoning",
-        "Primary model for planning, difficult reasoning, and composing the answer.",
+        "Primary model for planning, difficult reasoning, analysis, and composing complex answers.",
         "primary",
     ),
     ModelRoleSpec(
         "execution",
         "Execution",
-        "Tool-capable model used for bounded agent steps and implementation work.",
+        "Tool-capable model used for coding, bounded agent steps, and implementation work.",
         "primary",
+    ),
+    ModelRoleSpec(
+        "vision",
+        "Vision",
+        "Multimodal model selected when the request contains an image resource.",
+        "primary",
+    ),
+    ModelRoleSpec(
+        "judge",
+        "Judge",
+        "Small structured-output model for verification, ranking, and routing choices.",
+        "auxiliary",
+    ),
+    ModelRoleSpec(
+        "title",
+        "Title & summary",
+        "Cheap background model for chat titles, short labels, and summaries.",
+        "auxiliary",
     ),
 )
 
 
 class ModelRoleRegistry:
-    """Non-secret model-role preferences owned by AgentService.
+    """Non-secret model-role assignments owned by AgentService.
 
-    This registry deliberately does not hold provider credentials and does not
-    pretend the current Newelle compatibility backend can route one request to
-    several models at once. It stores preferences now so the native UI and the
-    future Account/provider broker have a stable contract to target.
+    Providers and credentials stay behind the backend boundary. The registry
+    only stores stable model IDs and can expose whether the current backend has
+    request-scoped routing support.
     """
 
     def __init__(self, storage_path: str | os.PathLike[str] | None = None) -> None:
@@ -82,7 +93,7 @@ class ModelRoleRegistry:
             return
         self.storage_path.parent.mkdir(parents=True, exist_ok=True)
         temp = self.storage_path.with_suffix(self.storage_path.suffix + ".tmp")
-        payload = {"version": 1, "assignments": self._assignments}
+        payload = {"version": 2, "assignments": self._assignments}
         temp.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         try:
             os.chmod(temp, 0o600)
@@ -94,10 +105,29 @@ class ModelRoleRegistry:
     def _model_list(models: Iterable[ModelInfo]) -> list[ModelInfo]:
         return list(models)
 
+    @staticmethod
+    def _fallback_model_id(models: Iterable[ModelInfo]) -> str:
+        available = list(models)
+        return next((item.model_id for item in available if item.selected), available[0].model_id if available else "")
+
+    def resolve_model(self, role_id: str, models: Iterable[ModelInfo]) -> tuple[str, bool]:
+        if role_id not in self.role_ids:
+            raise ValueError(f"unknown model role: {role_id}")
+        available = self._model_list(models)
+        available_ids = {item.model_id for item in available}
+        preferred = self._assignments.get(role_id, "")
+        if preferred and preferred in available_ids:
+            return preferred, False
+        fallback = self._fallback_model_id(available)
+        if not fallback:
+            raise ValueError("no model is available for routing")
+        return fallback, bool(preferred)
+
     def list_roles(self, models: Iterable[ModelInfo]) -> list[dict]:
         available = self._model_list(models)
         available_ids = {item.model_id for item in available}
-        selected_id = next((item.model_id for item in available if item.selected), "")
+        selected_id = self._fallback_model_id(available)
+        runtime_supported = bool(available) and all(item.selection_scope == "request" for item in available)
         result = []
         for spec in MODEL_ROLE_SPECS:
             preferred = self._assignments.get(spec.role_id, "")
@@ -110,12 +140,9 @@ class ModelRoleRegistry:
                     "preferred_model_id": preferred,
                     "preferred_available": bool(preferred and preferred in available_ids),
                     "fallback_model_id": selected_id,
-                    # The current compatibility backend still has one profile-scoped
-                    # model selection. Keep this explicit so UI never implies that
-                    # multi-model execution is already active.
-                    "runtime_supported": False,
-                    "routing_status": "preference_only",
-                    "selection_scope": "profile",
+                    "runtime_supported": runtime_supported,
+                    "routing_status": "active" if runtime_supported else "preference_only",
+                    "selection_scope": "request" if runtime_supported else "profile",
                 }
             )
         return result
