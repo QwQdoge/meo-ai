@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import re
 import threading
-from typing import Iterable
+from typing import Callable, Iterable
 
 from meo.service.backend_adapter import BackendCallbacks, InputResource, ModelInfo
 from meo.service.conversation_digest import ConversationDigestGenerator
@@ -62,6 +62,10 @@ class RouteDecision:
             "complexity": self.complexity,
             "fallback_used": self.fallback_used,
         }
+
+
+class _DeferredStartupCancelled(RuntimeError):
+    """Internal signal used to finish a cancelled pre-model startup cleanly."""
 
 
 class _DeferredExecutionHandle:
@@ -309,6 +313,7 @@ class RoutedBackend:
         text: str,
         resources: tuple[InputResource, ...],
         callbacks: BackendCallbacks,
+        startup_cancelled: Callable[[], bool] | None = None,
     ):
         self._route_lock.acquire()
         released = False
@@ -319,6 +324,23 @@ class RoutedBackend:
         except Exception:
             self._route_lock.release()
             raise
+
+        model_switched = False
+
+        def release() -> None:
+            nonlocal released
+            if released:
+                return
+            released = True
+            try:
+                if model_switched and original_model and original_model != decision.model_id:
+                    self._backend.set_model(conversation_id, original_model)
+            finally:
+                self._route_lock.release()
+
+        if startup_cancelled is not None and startup_cancelled():
+            release()
+            raise _DeferredStartupCancelled()
 
         coordination: dict | None = None
         backend_text = text
@@ -337,21 +359,18 @@ class RoutedBackend:
                     "tasks": [],
                 }
 
+        # Cancellation can arrive while a planner/subagent provider call is in
+        # flight. Those calls are not interruptible through the legacy provider,
+        # but once Coordinator returns we must not start the side-effect-capable
+        # execution model for a request the user already cancelled.
+        if startup_cancelled is not None and startup_cancelled():
+            release()
+            raise _DeferredStartupCancelled()
+
         should_verify = decision.role_id == "execution" and self._verifier.available
         buffered_text: list[str] = []
         visible_text: list[str] = []
         pending_meta: list[dict] = []
-
-        def release() -> None:
-            nonlocal released
-            if released:
-                return
-            released = True
-            try:
-                if original_model and original_model != decision.model_id:
-                    self._backend.set_model(conversation_id, original_model)
-            finally:
-                self._route_lock.release()
 
         def generate_digest(final_text: str) -> dict:
             if not final_text.strip():
@@ -420,6 +439,9 @@ class RoutedBackend:
         )
         try:
             if decision.model_id and decision.model_id != original_model:
+                # Mark the lease dirty before mutation so a partially failing
+                # legacy set_model still gets a best-effort restoration.
+                model_switched = True
                 self._backend.set_model(conversation_id, decision.model_id)
             if resources:
                 method = getattr(self._backend, "send_message_with_resources", None)
@@ -454,7 +476,16 @@ class RoutedBackend:
                 callbacks.on_done()
                 return
             try:
-                delegate = self._send(conversation_id, text, resources, callbacks)
+                delegate = self._send(
+                    conversation_id,
+                    text,
+                    resources,
+                    callbacks,
+                    startup_cancelled=lambda: proxy.cancel_requested,
+                )
+            except _DeferredStartupCancelled:
+                callbacks.on_done()
+                return
             except Exception as exc:
                 callbacks.on_error(str(exc))
                 return
