@@ -70,6 +70,48 @@ class NewelleMultimodalBridge:
             for item in raw
         ]
 
+    def _automatic_title_from_first_message(self, record: dict) -> str:
+        entries = record.get("chat", [])
+        if not isinstance(entries, list):
+            return ""
+        first_message = ""
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("User") != "User" or entry.get("ToolContext"):
+                continue
+            value = entry.get("Message")
+            if isinstance(value, str):
+                first_message = value
+                break
+        if not first_message:
+            return ""
+        try:
+            # Import lazily so the bridge stays import-safe in minimal/headless
+            # environments. Using Newelle's own helper keeps the comparison
+            # exactly aligned with name_chat_from_first_message().
+            from src.utility.strings import build_chat_title
+
+            title = build_chat_title(first_message)
+            return title if isinstance(title, str) else ""
+        except Exception:
+            # Conservative failure: unknown titles are treated as user-owned.
+            return ""
+
+    def _conversation_title_is_automatic(self, record: dict) -> bool:
+        if record.get("name_is_default") is True:
+            return True
+        # Once Meo generated a digest, do not schedule it again even if an old
+        # title happens to match the first-message heuristic by coincidence.
+        summary = record.get("meo_summary")
+        if isinstance(summary, str) and summary.strip():
+            return False
+        current = record.get("name")
+        if not isinstance(current, str) or not current.strip():
+            return False
+        expected = self._automatic_title_from_first_message(record)
+        return bool(expected and current.strip() == expected.strip())
+
     def list_conversations(self) -> list[dict]:
         """Expose persisted Newelle title/summary without leaking chat storage."""
         result: list[dict] = []
@@ -89,6 +131,7 @@ class NewelleMultimodalBridge:
                 if isinstance(summary, str) and summary.strip():
                     enriched["summary"] = summary.strip()
                 enriched["title_is_default"] = record.get("name_is_default") is True
+                enriched["title_is_automatic"] = self._conversation_title_is_automatic(record)
             result.append(enriched)
         return result
 
@@ -173,7 +216,7 @@ class NewelleMultimodalBridge:
         if target is None:
             return False
         _chat_id, record = target
-        return record.get("name_is_default") is True
+        return self._conversation_title_is_automatic(record)
 
     def apply_conversation_digest(self, conversation_id: str, *, title: str, summary: str = "") -> None:
         """Persist generated metadata without overwriting a user-renamed chat."""
@@ -186,7 +229,9 @@ class NewelleMultimodalBridge:
         if not title:
             raise ValueError("generated conversation title is empty")
 
-        if record.get("name_is_default") is True:
+        # Re-check immediately before mutation. A user may have renamed the chat
+        # while the cheap title model was running.
+        if self._conversation_title_is_automatic(record):
             rename = getattr(self._controller, "rename_chat", None)
             if callable(rename):
                 try:
