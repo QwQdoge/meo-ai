@@ -6,7 +6,7 @@ class NativeAgentClient final : public AgentClient {
 public:
     explicit NativeAgentClient(QObject *parent = nullptr) : AgentClient(parent) {
         connect(this, &AgentClient::changed, this, [this] {
-            if (!m_newChatPending || busy() || actionBusy()) return;
+            if (!m_newChatPending || busy() || actionBusy() || resourceCleanupBusy()) return;
 
             // Resource deletion is best-effort. Even if AgentService could not
             // delete one backing object, its conversation-scoped identity must
