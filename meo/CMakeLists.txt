@@ -118,6 +118,11 @@ if(BUILD_TESTING)
     target_link_libraries(meo-ai-resource-client-test PRIVATE Qt6::Gui Qt6::Network Qt6::Test)
     add_test(NAME meo-ai.resources COMMAND meo-ai-resource-client-test)
 
+    qt_add_executable(meo-ai-new-chat-resource-test tests/new-chat-resource-test.cpp ${MEO_AGENT_CLIENT_SOURCES})
+    target_include_directories(meo-ai-new-chat-resource-test PRIVATE app)
+    target_link_libraries(meo-ai-new-chat-resource-test PRIVATE Qt6::Gui Qt6::Network Qt6::Test)
+    add_test(NAME meo-ai.new-chat-resources COMMAND meo-ai-new-chat-resource-test)
+
     add_test(
         NAME meo-ai.default-transport
         COMMAND ${CMAKE_COMMAND} -E env
