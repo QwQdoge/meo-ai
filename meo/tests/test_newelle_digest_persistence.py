@@ -51,6 +51,11 @@ class NewelleDigestPersistenceTests(unittest.TestCase):
         self.assertEqual(controller.saved, 1)
         self.assertFalse(bridge.conversation_needs_digest("meo:1"))
 
+        conversation = bridge.list_conversations()[0]
+        self.assertEqual(conversation["title"], "Linux Build Fix")
+        self.assertEqual(conversation["summary"], "Fixed the build.")
+        self.assertFalse(conversation["title_is_default"])
+
     def test_user_renamed_chat_is_never_overwritten(self) -> None:
         controller = FakeController()
         controller.chats[7].pop("name_is_default")
@@ -64,6 +69,7 @@ class NewelleDigestPersistenceTests(unittest.TestCase):
         self.assertEqual(controller.chats[7]["meo_summary"], "Useful summary")
         self.assertEqual(controller.renamed, [])
         self.assertEqual(controller.saved, 1)
+        self.assertEqual(bridge.list_conversations()[0]["title"], "My manual title")
 
 
 if __name__ == "__main__":
