@@ -198,6 +198,15 @@ ApplicationWindow {
                 Qt.callLater(function() { history.positionViewAtEnd() })
         }
 
+        function onConversationMetadata(metadata) {
+            metadata = JSON.parse(JSON.stringify(metadata))
+            if (metadata.title_is_default === true)
+                return
+            const restoredTitle = String(metadata.title || "").trim()
+            if (restoredTitle.length)
+                window.generatedConversationTitle = restoredTitle
+        }
+
         function onResponseMetaEvent(event) {
             // Convert QVariant containers to JS arrays for the details view.
             event = JSON.parse(JSON.stringify(event))
