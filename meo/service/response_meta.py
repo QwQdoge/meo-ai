@@ -91,12 +91,14 @@ _ACTIVITY_FIELDS = (
     "sync",
     "coordination",
     "verification",
+    "title_summary",
 )
 
 _RUNTIME_DETAIL_FIELDS = (
     "routing",
     "coordination",
     "verification",
+    "conversation_digest",
 )
 
 
@@ -332,9 +334,9 @@ def normalize_response_meta(event: Mapping[str, Any]) -> dict[str, Any]:
             if isinstance(value, (bool, int, float, str, list, dict)):
                 result["activity"][key] = json_safe(value)
 
-    # Routing/coordinator/Judge are runtime facts rather than provider extras.
-    # Keep them first-class and secret-filtered so native clients can render an
-    # execution summary without digging through an unstructured `extra` bag.
+    # Routing/coordinator/Judge/digest are runtime facts rather than provider
+    # extras. Keep them first-class and secret-filtered so native clients can
+    # render execution and conversation metadata without parsing an extra bag.
     for key in _RUNTIME_DETAIL_FIELDS:
         value = event.get(key)
         if isinstance(value, Mapping):
