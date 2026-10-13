@@ -19,6 +19,38 @@ _MAX_USER_PAYLOAD_CHARS = 40000
 _MAX_CURRENT_PROMPT_CHARS = 32000
 
 
+def account_model_supports_vision(
+    connections: Sequence[Mapping[str, object]],
+    raw_model_id: str,
+) -> bool:
+    """Return Account's explicit image-input capability for one exact model.
+
+    `raw_model_id` is the Newelle model key exposed by the Account handler:
+    `<connection-id>:<provider-model-id>`. Legacy connection records without an
+    explicit `visionModels` list intentionally fail closed. Model names are
+    never guessed from provider naming conventions.
+    """
+
+    if not isinstance(raw_model_id, str) or ":" not in raw_model_id:
+        return False
+    connection_id, model_id = raw_model_id.split(":", 1)
+    connection_id = connection_id.strip()
+    model_id = model_id.strip()
+    if not connection_id or not model_id:
+        return False
+
+    for connection in connections:
+        if not isinstance(connection, Mapping):
+            continue
+        if str(connection.get("id") or "").strip() != connection_id:
+            continue
+        configured = connection.get("visionModels")
+        if not isinstance(configured, Sequence) or isinstance(configured, (str, bytes, bytearray)):
+            return False
+        return any(isinstance(value, str) and value == model_id for value in configured)
+    return False
+
+
 def strip_image_blocks(value: str) -> str:
     """Replace fenced image payloads with a bounded text marker.
 
