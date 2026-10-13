@@ -64,6 +64,54 @@ class RouteDecision:
         }
 
 
+class _DeferredExecutionHandle:
+    """Stable AgentService handle while routed startup happens in a worker.
+
+    High-complexity execution may spend several provider calls in Coordinator
+    before the legacy backend can return its real execution handle. Returning
+    this proxy immediately lets AgentService open its callback gate, so progress
+    cards are visible while planning is still running. Tool choices and cancel
+    requests remain safe if they race the eventual legacy handle.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._delegate: object | None = None
+        self._cancel_requested = False
+        self._pending_options: list[int] = []
+        self.worker: threading.Thread | None = None
+
+    @property
+    def cancel_requested(self) -> bool:
+        with self._lock:
+            return self._cancel_requested
+
+    def bind(self, delegate: object) -> tuple[bool, tuple[int, ...]]:
+        with self._lock:
+            self._delegate = delegate
+            if self._cancel_requested:
+                self._pending_options.clear()
+                return True, ()
+            pending = tuple(self._pending_options)
+            self._pending_options.clear()
+            return False, pending
+
+    def request_cancel(self) -> object | None:
+        with self._lock:
+            self._cancel_requested = True
+            self._pending_options.clear()
+            return self._delegate
+
+    def queue_option(self, legacy_option_index: int) -> object | None:
+        with self._lock:
+            if self._cancel_requested:
+                raise ValueError("request is cancelling")
+            if self._delegate is None:
+                self._pending_options.append(legacy_option_index)
+                return None
+            return self._delegate
+
+
 class DeterministicModelRouter:
     """Small, inspectable request router.
 
@@ -383,7 +431,77 @@ class RoutedBackend:
             release()
             raise
 
+    def _should_defer_startup(self, text: str, resources: tuple[InputResource, ...]) -> bool:
+        if not self._coordinator.available:
+            return False
+        try:
+            features = self._router.classify(text, resources)
+        except Exception:
+            return False
+        return features.get("role_id") == "execution" and features.get("complexity") == "high"
+
+    def _send_deferred(
+        self,
+        conversation_id: str,
+        text: str,
+        resources: tuple[InputResource, ...],
+        callbacks: BackendCallbacks,
+    ) -> _DeferredExecutionHandle:
+        proxy = _DeferredExecutionHandle()
+
+        def run() -> None:
+            if proxy.cancel_requested:
+                callbacks.on_done()
+                return
+            try:
+                delegate = self._send(conversation_id, text, resources, callbacks)
+            except Exception as exc:
+                callbacks.on_error(str(exc))
+                return
+
+            cancel_requested, pending_options = proxy.bind(delegate)
+            if cancel_requested:
+                try:
+                    self._backend.cancel(delegate)
+                except Exception as exc:
+                    callbacks.on_error(str(exc))
+                return
+            for option_index in pending_options:
+                try:
+                    self._backend.choose_tool_option(delegate, option_index)
+                except Exception as exc:
+                    callbacks.on_error(str(exc))
+                    return
+
+        worker = threading.Thread(
+            target=run,
+            name="meo-routed-startup",
+            daemon=True,
+        )
+        proxy.worker = worker
+        worker.start()
+        return proxy
+
+    def choose_tool_option(self, execution_handle: object, legacy_option_index: int) -> None:
+        if isinstance(execution_handle, _DeferredExecutionHandle):
+            delegate = execution_handle.queue_option(legacy_option_index)
+            if delegate is None:
+                return
+            self._backend.choose_tool_option(delegate, legacy_option_index)
+            return
+        self._backend.choose_tool_option(execution_handle, legacy_option_index)
+
+    def cancel(self, execution_handle: object) -> None:
+        if isinstance(execution_handle, _DeferredExecutionHandle):
+            delegate = execution_handle.request_cancel()
+            if delegate is not None:
+                self._backend.cancel(delegate)
+            return
+        self._backend.cancel(execution_handle)
+
     def send_message(self, conversation_id: str, text: str, callbacks: BackendCallbacks):
+        if self._should_defer_startup(text, ()):
+            return self._send_deferred(conversation_id, text, (), callbacks)
         return self._send(conversation_id, text, (), callbacks)
 
     def send_message_with_resources(
@@ -393,4 +511,6 @@ class RoutedBackend:
         resources: tuple[InputResource, ...],
         callbacks: BackendCallbacks,
     ):
+        if self._should_defer_startup(text, resources):
+            return self._send_deferred(conversation_id, text, resources, callbacks)
         return self._send(conversation_id, text, resources, callbacks)
