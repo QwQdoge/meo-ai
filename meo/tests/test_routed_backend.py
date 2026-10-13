@@ -94,7 +94,7 @@ class BlockingCoordinator:
         self.started = threading.Event()
         self.release = threading.Event()
 
-    def prepare(self, _text, _models, *, emit=None):
+    def prepare(self, _text, _models, *, emit=None, cancelled=None):
         if emit is not None:
             emit({
                 "type": "presentation_card",
@@ -114,7 +114,7 @@ class BlockingCoordinator:
             "",
             {
                 "run_id": "test",
-                "status": "completed",
+                "status": "cancelled" if cancelled is not None and cancelled() else "completed",
                 "tasks": [],
             },
         )
