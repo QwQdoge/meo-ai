@@ -47,7 +47,8 @@ void AgentClient::clearRequestFailure(bool clearLastRequest) {
     m_requestFailed = false;
     m_requestRetryable = false;
     m_requestError.clear();
-    if (clearLastRequest) m_lastRequestText.clear();
+    if (clearLastRequest && !m_lastRequestHasPendingResources)
+        m_lastRequestText.clear();
 }
 
 void AgentClient::setRequestFailure(const QString &message, bool retryable) {
@@ -288,6 +289,18 @@ void AgentClient::deleteMemory(const QString &memoryId) {
 
 void AgentClient::send(const QString &text) {
     if (busy() || actionBusy() || !m_options.isEmpty() || text.trimmed().isEmpty()) return;
+    if (m_serviceMode && !m_pendingResources.isEmpty()) {
+        // `send()` is the canonical UI entry point. If the composer has ready
+        // resources, preserve the request identity and delegate to the
+        // resource-aware path so Enter, the send button, and future callers
+        // cannot accidentally drop attachments.
+        m_lastRequestText = text;
+        m_lastRequestHasPendingResources = true;
+        sendWithPendingResources(text);
+        return;
+    }
+
+    m_lastRequestHasPendingResources = false;
     m_responseMetadata.clear();
     clearRequestFailure(true);
     if (m_serviceMode) m_lastRequestText = text;
@@ -344,10 +357,49 @@ void AgentClient::retryLastRequest() {
         return;
     }
     const QString retryText = m_lastRequestText;
+    const bool retryWithResources = m_lastRequestHasPendingResources;
     clearRequestFailure();
     m_responseMetadata.clear();
     emit changed();
-    ensureServiceConversation([this, retryText] { sendService(retryText, true); });
+    ensureServiceConversation([this, retryText, retryWithResources] {
+        if (!retryWithResources) {
+            sendService(retryText, true);
+            return;
+        }
+
+        QVariantList usable;
+        for (const QVariant &entryValue : m_pendingResources) {
+            const QVariantMap entry = entryValue.toMap();
+            if (entry.value("conversation_id").toString() == m_conversationId &&
+                entry.value("state").toString() == "ready" &&
+                entry.value("resource_id").toString().startsWith("resource:")) {
+                usable.append(entry);
+            }
+        }
+        if (!usable.isEmpty()) {
+            sendServiceWithResources(retryText, usable);
+            return;
+        }
+
+        if (!m_pendingResources.isEmpty()) {
+            // Conversation-scoped resource IDs cannot be moved to a newly
+            // created/stale conversation. Never silently retry the text while
+            // pretending the attachments were included.
+            m_lastRequestHasPendingResources = false;
+            setRequestFailure(
+                tr("The attachments belong to an expired conversation. Reattach them before retrying."),
+                false);
+            emit changed();
+            return;
+        }
+
+        // The original message was accepted and consumed its pending resource
+        // chips before a later stream failure. At this point there are no local
+        // resource IDs left to replay, so retry the text rather than inventing
+        // attachment state.
+        m_lastRequestHasPendingResources = false;
+        sendService(retryText, true);
+    });
 }
 
 void AgentClient::submitServiceCancel() {
@@ -371,6 +423,7 @@ void AgentClient::submitServiceCancel() {
 
 void AgentClient::newChat() {
     if (busy() || actionBusy() || !m_options.isEmpty()) return;
+    m_lastRequestHasPendingResources = false;
     m_responseMetadata.clear();
     clearRequestFailure(true);
     emit resetChat();
@@ -723,6 +776,7 @@ void AgentClient::consumeService() {
             m_pendingServiceText.clear();
             m_staleConversationRetryUsed = false;
             m_cancelPending = false;
+            m_lastRequestHasPendingResources = false;
             clearRequestFailure(true);
             m_status = tr("Ready");
         } else if (type == "request.cancelled") {
@@ -732,6 +786,7 @@ void AgentClient::consumeService() {
             m_cancelPending = false;
             m_options.clear();
             m_decisionId.clear();
+            m_lastRequestHasPendingResources = false;
             clearRequestFailure(true);
             m_status = tr("Stopped");
         } else if (type == "request.failed") {

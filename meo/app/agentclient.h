@@ -170,6 +170,7 @@ private:
     bool m_cancelPending = false;
     bool m_staleConversationRetryUsed = false;
     bool m_requestFailed = false;
+    bool m_lastRequestHasPendingResources = false;
     bool m_requestRetryable = false;
     int m_lastEventSeq = 0;
     int m_reconnectAttempts = 0;

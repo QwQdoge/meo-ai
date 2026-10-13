@@ -139,7 +139,8 @@ private slots:
         QTRY_COMPARE(client.pendingResources().size(), 1);
         QCOMPARE(client.pendingResources().at(0).toMap().value("name").toString(), QString("research.txt"));
 
-        client.sendWithPendingResources("Use the attached notes");
+        // The regular composer entry point must automatically include pending resources.
+        client.send("Use the attached notes");
         QTRY_VERIFY(server.hasPendingConnections());
         QTcpSocket *message = server.nextPendingConnection();
         const QByteArray messageRequest = readRequest(message);
@@ -257,7 +258,7 @@ private slots:
         const QByteArray resourceId = "resource:33333333333333333333333333333333";
         createLongText(client, server, "meo:retry", resourceId);
 
-        client.sendWithPendingResources("Please use this attachment");
+        client.send("Please use this attachment");
         QTRY_VERIFY(server.hasPendingConnections());
         QTcpSocket *message = server.nextPendingConnection();
         const QByteArray request = readRequest(message);
@@ -267,10 +268,39 @@ private slots:
 
         QTRY_VERIFY(!client.busy());
         QTRY_VERIFY(client.requestFailed());
+        QTRY_VERIFY(client.requestRetryable());
         QCOMPARE(client.pendingResources().size(), 1);
         QCOMPARE(client.pendingResources().at(0).toMap().value("resource_id").toString(),
                  QString::fromUtf8(resourceId));
         message->deleteLater();
+
+        client.retryLastRequest();
+        QTRY_VERIFY(server.hasPendingConnections());
+        QTcpSocket *retry = server.nextPendingConnection();
+        const QByteArray retryRequest = readRequest(retry);
+        QVERIFY(retryRequest.contains("POST /v1/conversations/meo:retry/messages"));
+        const auto retryBody = QJsonDocument::fromJson(requestBody(retryRequest)).object();
+        QCOMPARE(retryBody.value("text").toString(), QString("Please use this attachment"));
+        const auto retryIds = retryBody.value("resource_ids").toArray();
+        QCOMPARE(retryIds.size(), 1);
+        QCOMPARE(retryIds.at(0).toString(), QString::fromUtf8(resourceId));
+        QCOMPARE(client.pendingResources().size(), 1);
+
+        retry->write("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n"
+                     "X-Meo-Request-Id: req-resource-retry\r\n\r\n");
+        retry->flush();
+        QTRY_COMPARE(client.pendingResources().size(), 0);
+        retry->write("data: {\"seq\":1,\"type\":\"request.started\","
+                     "\"request_id\":\"req-resource-retry\",\"conversation_id\":\"meo:retry\","
+                     "\"state\":\"running_model\"}\n\n");
+        retry->write("data: {\"seq\":2,\"type\":\"request.completed\","
+                     "\"request_id\":\"req-resource-retry\",\"state\":\"completed\"}\n\n");
+        retry->flush();
+        retry->disconnectFromHost();
+        QTRY_VERIFY(!client.busy());
+        QTRY_VERIFY(!client.requestFailed());
+        QVERIFY(client.status().contains("Ready"));
+        retry->deleteLater();
     }
 
     void clearPendingResourcesDeletesBackingResources() {
