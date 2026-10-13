@@ -182,6 +182,7 @@ class AgentServiceCore:
                 "provider": item.provider,
                 "selection_scope": item.selection_scope,
                 "selected": item.selected,
+                "supports_vision": item.supports_vision,
             }
             for item in self._require_backend().list_models()
         ]
