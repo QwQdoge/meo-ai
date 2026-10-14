@@ -46,7 +46,12 @@ pub fn decode_sse_line(line: &str) -> Result<Option<StreamEvent>, StreamEventErr
     }
     let value: Value = serde_json::from_str(payload)
         .map_err(|error| StreamEventError::InvalidJson(error.to_string()))?;
-    if value.get("type").and_then(Value::as_str).unwrap_or_default().is_empty() {
+    if value
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .is_empty()
+    {
         return Err(StreamEventError::MissingType);
     }
     serde_json::from_value(value)
