@@ -1,15 +1,17 @@
 #![cfg(feature = "service")]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
+use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, RwLock};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, Mutex, RwLock};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use dashmap::DashMap;
-use futures_util::StreamExt;
+use futures_util::{FutureExt, StreamExt};
 use serde_json::json;
 use thiserror::Error;
 use tokio::sync::broadcast;
+use tokio::time::{timeout, Instant};
 use uuid::Uuid;
 
 use crate::provider::{Provider, ProviderError, ProviderEvent, ProviderRequest};
@@ -18,7 +20,44 @@ use crate::protocol::{
 };
 
 const EVENT_CHANNEL_CAPACITY: usize = 512;
-const EVENT_REPLAY_LIMIT: usize = 2048;
+
+#[derive(Debug, Clone)]
+pub struct ServiceConfig {
+    /// Maximum time allowed for the provider to establish a streaming response.
+    pub provider_start_timeout: Duration,
+    /// Maximum silence between provider stream items before the request is failed.
+    pub provider_idle_timeout: Duration,
+    /// Hard ceiling for one model request, independent of provider activity.
+    pub request_timeout: Duration,
+    /// Number of terminal requests retained for reconnect/replay diagnostics.
+    pub retained_terminal_requests: usize,
+    /// Maximum number of events retained per request for SSE replay.
+    pub event_replay_limit: usize,
+}
+
+impl Default for ServiceConfig {
+    fn default() -> Self {
+        Self {
+            provider_start_timeout: Duration::from_secs(30),
+            provider_idle_timeout: Duration::from_secs(120),
+            request_timeout: Duration::from_secs(30 * 60),
+            retained_terminal_requests: 128,
+            event_replay_limit: 2048,
+        }
+    }
+}
+
+impl ServiceConfig {
+    fn validated(self) -> Self {
+        Self {
+            provider_start_timeout: self.provider_start_timeout.max(Duration::from_secs(1)),
+            provider_idle_timeout: self.provider_idle_timeout.max(Duration::from_secs(1)),
+            request_timeout: self.request_timeout.max(Duration::from_secs(1)),
+            retained_terminal_requests: self.retained_terminal_requests.max(1),
+            event_replay_limit: self.event_replay_limit.max(32),
+        }
+    }
+}
 
 #[derive(Debug, Error)]
 pub enum ServiceError {
@@ -45,13 +84,14 @@ struct ConversationRuntime {
 struct RequestRuntime {
     snapshot: RwLock<RequestSnapshot>,
     seq: AtomicU64,
-    journal: RwLock<Vec<CoreEvent>>,
+    journal: RwLock<VecDeque<CoreEvent>>,
     sender: broadcast::Sender<CoreEvent>,
     cancelled: AtomicBool,
+    event_replay_limit: usize,
 }
 
 impl RequestRuntime {
-    fn new(request_id: String, conversation_id: String) -> Self {
+    fn new(request_id: String, conversation_id: String, event_replay_limit: usize) -> Self {
         let (sender, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
         Self {
             snapshot: RwLock::new(RequestSnapshot {
@@ -62,9 +102,10 @@ impl RequestRuntime {
                 error_message: String::new(),
             }),
             seq: AtomicU64::new(0),
-            journal: RwLock::new(Vec::new()),
+            journal: RwLock::new(VecDeque::with_capacity(event_replay_limit.min(256))),
             sender,
             cancelled: AtomicBool::new(false),
+            event_replay_limit,
         }
     }
 
@@ -75,10 +116,9 @@ impl RequestRuntime {
     fn publish(&self, event: CoreEvent) {
         {
             let mut journal = self.journal.write().expect("request journal poisoned");
-            journal.push(event.clone());
-            if journal.len() > EVENT_REPLAY_LIMIT {
-                let drain = journal.len() - EVENT_REPLAY_LIMIT;
-                journal.drain(..drain);
+            journal.push_back(event.clone());
+            while journal.len() > self.event_replay_limit {
+                journal.pop_front();
             }
         }
         let _ = self.sender.send(event);
@@ -94,14 +134,24 @@ impl RequestRuntime {
         snapshot.error_code = code.to_owned();
         snapshot.error_message = message.to_owned();
     }
+
+    fn is_terminal(&self) -> bool {
+        self.snapshot
+            .read()
+            .expect("request snapshot poisoned")
+            .state
+            .terminal()
+    }
 }
 
 #[derive(Clone)]
 pub struct MeoService {
+    config: ServiceConfig,
     providers: Arc<RwLock<HashMap<String, Arc<dyn Provider>>>>,
     model_provider: Arc<RwLock<HashMap<String, String>>>,
     conversations: Arc<DashMap<String, Arc<RwLock<ConversationRuntime>>>>,
     requests: Arc<DashMap<String, Arc<RequestRuntime>>>,
+    terminal_requests: Arc<Mutex<VecDeque<String>>>,
 }
 
 impl Default for MeoService {
@@ -112,12 +162,43 @@ impl Default for MeoService {
 
 impl MeoService {
     pub fn new() -> Self {
+        Self::with_config(ServiceConfig::default())
+    }
+
+    pub fn with_config(config: ServiceConfig) -> Self {
         Self {
+            config: config.validated(),
             providers: Arc::new(RwLock::new(HashMap::new())),
             model_provider: Arc::new(RwLock::new(HashMap::new())),
             conversations: Arc::new(DashMap::new()),
             requests: Arc::new(DashMap::new()),
+            terminal_requests: Arc::new(Mutex::new(VecDeque::new())),
         }
+    }
+
+    pub fn health_snapshot(&self) -> serde_json::Value {
+        let retained_requests = self.requests.len();
+        let active_requests = self
+            .requests
+            .iter()
+            .filter(|entry| !entry.value().is_terminal())
+            .count();
+        let terminal_requests = retained_requests.saturating_sub(active_requests);
+        json!({
+            "ready": true,
+            "runtime": "rust",
+            "conversations": self.conversations.len(),
+            "active_requests": active_requests,
+            "retained_requests": retained_requests,
+            "retained_terminal_requests": terminal_requests,
+            "limits": {
+                "terminal_requests": self.config.retained_terminal_requests,
+                "event_replay": self.config.event_replay_limit,
+                "provider_start_timeout_ms": self.config.provider_start_timeout.as_millis(),
+                "provider_idle_timeout_ms": self.config.provider_idle_timeout.as_millis(),
+                "request_timeout_ms": self.config.request_timeout.as_millis(),
+            }
+        })
     }
 
     pub fn register_provider(&self, provider: Arc<dyn Provider>) {
@@ -132,6 +213,18 @@ impl MeoService {
             .write()
             .expect("provider lock poisoned")
             .insert(provider_id, provider);
+    }
+
+    pub fn registered_models(&self) -> Vec<String> {
+        let mut models = self
+            .model_provider
+            .read()
+            .expect("model route lock poisoned")
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        models.sort();
+        models
     }
 
     pub fn create_conversation(&self, model_id: impl Into<String>) -> Conversation {
@@ -247,13 +340,7 @@ impl MeoService {
 
     pub fn cancel_request(&self, request_id: &str) -> Result<(), ServiceError> {
         let request = self.requests.get(request_id).ok_or(ServiceError::UnknownRequest)?;
-        if request
-            .snapshot
-            .read()
-            .expect("request snapshot poisoned")
-            .state
-            .terminal()
-        {
+        if request.is_terminal() {
             return Err(ServiceError::RequestTerminal);
         }
         request.cancelled.store(true, Ordering::Release);
@@ -290,6 +377,7 @@ impl MeoService {
         let request = Arc::new(RequestRuntime::new(
             request_id.clone(),
             conversation_id.to_owned(),
+            self.config.event_replay_limit,
         ));
         self.requests.insert(request_id.clone(), request.clone());
 
@@ -315,18 +403,27 @@ impl MeoService {
 
         let service = self.clone();
         let conversation_id_owned = conversation_id.to_owned();
-        let request_id_for_task = request_id.clone();
+        let task_request_id = request_id.clone();
         tokio::spawn(async move {
-            service
-                .run_provider_request(
-                    conversation_id_owned,
-                    request_id_for_task,
-                    request,
-                    provider,
-                    model_id,
-                    history,
-                )
-                .await;
+            let run = service.run_provider_request(
+                conversation_id_owned,
+                task_request_id.clone(),
+                request.clone(),
+                provider,
+                model_id,
+                history,
+            );
+            if AssertUnwindSafe(run).catch_unwind().await.is_err() {
+                if !request.is_terminal() {
+                    service.finish_failure(
+                        &task_request_id,
+                        &request,
+                        "request_task_panicked",
+                        "The model request task stopped unexpectedly.",
+                    );
+                }
+                service.mark_terminal(&task_request_id);
+            }
         });
         Ok(request_id)
     }
@@ -371,24 +468,82 @@ impl MeoService {
             max_tokens: None,
             extra: HashMap::new(),
         };
-        let mut stream = match provider.stream(provider_request).await {
-            Ok(stream) => stream,
-            Err(error) => {
-                self.finish_failure(&request_id, &request, "provider_start_failed", &error.to_string());
+
+        let mut stream = match timeout(
+            self.config.provider_start_timeout,
+            provider.stream(provider_request),
+        )
+        .await
+        {
+            Ok(Ok(stream)) => stream,
+            Ok(Err(error)) => {
+                self.finish_failure(
+                    &request_id,
+                    &request,
+                    "provider_start_failed",
+                    &error.to_string(),
+                );
+                self.mark_terminal(&request_id);
+                return;
+            }
+            Err(_) => {
+                self.finish_failure(
+                    &request_id,
+                    &request,
+                    "provider_start_timeout",
+                    "The model provider did not establish a stream before the timeout.",
+                );
+                self.mark_terminal(&request_id);
                 return;
             }
         };
 
+        let deadline = Instant::now() + self.config.request_timeout;
         let mut assistant_text = String::new();
-        while let Some(event) = stream.next().await {
+
+        loop {
             if request.cancelled.load(Ordering::Acquire) {
-                request.transition(RequestState::Cancelled);
-                request.publish(CoreEvent::RequestCancelled {
-                    seq: request.next_seq(),
-                    request_id: request_id.clone(),
-                });
+                self.finish_cancelled(&request_id, &request);
                 return;
             }
+
+            let now = Instant::now();
+            if now >= deadline {
+                self.finish_failure(
+                    &request_id,
+                    &request,
+                    "request_timeout",
+                    "The model request exceeded the configured maximum runtime.",
+                );
+                self.mark_terminal(&request_id);
+                return;
+            }
+            let remaining = deadline.saturating_duration_since(now);
+            let wait_for = self.config.provider_idle_timeout.min(remaining);
+
+            let next = match timeout(wait_for, stream.next()).await {
+                Ok(next) => next,
+                Err(_) => {
+                    let code = if Instant::now() >= deadline {
+                        "request_timeout"
+                    } else {
+                        "provider_idle_timeout"
+                    };
+                    let message = if code == "request_timeout" {
+                        "The model request exceeded the configured maximum runtime."
+                    } else {
+                        "The model provider stopped producing stream events for too long."
+                    };
+                    self.finish_failure(&request_id, &request, code, message);
+                    self.mark_terminal(&request_id);
+                    return;
+                }
+            };
+
+            let Some(event) = next else {
+                break;
+            };
+
             match event {
                 Ok(ProviderEvent::TextDelta(delta)) => {
                     assistant_text.push_str(&delta);
@@ -421,18 +576,20 @@ impl MeoService {
                 }
                 Ok(ProviderEvent::Done) => break,
                 Err(error) => {
-                    self.finish_failure(&request_id, &request, "provider_stream_failed", &error.to_string());
+                    self.finish_failure(
+                        &request_id,
+                        &request,
+                        "provider_stream_failed",
+                        &error.to_string(),
+                    );
+                    self.mark_terminal(&request_id);
                     return;
                 }
             }
         }
 
         if request.cancelled.load(Ordering::Acquire) {
-            request.transition(RequestState::Cancelled);
-            request.publish(CoreEvent::RequestCancelled {
-                seq: request.next_seq(),
-                request_id,
-            });
+            self.finish_cancelled(&request_id, &request);
             return;
         }
 
@@ -457,8 +614,21 @@ impl MeoService {
         request.transition(RequestState::Completed);
         request.publish(CoreEvent::RequestCompleted {
             seq: request.next_seq(),
-            request_id,
+            request_id: request_id.clone(),
         });
+        self.mark_terminal(&request_id);
+    }
+
+    fn finish_cancelled(&self, request_id: &str, request: &RequestRuntime) {
+        if request.is_terminal() {
+            return;
+        }
+        request.transition(RequestState::Cancelled);
+        request.publish(CoreEvent::RequestCancelled {
+            seq: request.next_seq(),
+            request_id: request_id.to_owned(),
+        });
+        self.mark_terminal(request_id);
     }
 
     fn finish_failure(
@@ -468,6 +638,9 @@ impl MeoService {
         code: &str,
         message: &str,
     ) {
+        if request.is_terminal() {
+            return;
+        }
         let safe_message: String = message.chars().take(2048).collect();
         request.fail(code, &safe_message);
         request.publish(CoreEvent::RequestFailed {
@@ -477,6 +650,29 @@ impl MeoService {
             message: safe_message,
         });
     }
+
+    fn mark_terminal(&self, request_id: &str) {
+        let mut terminal = self
+            .terminal_requests
+            .lock()
+            .expect("terminal request queue poisoned");
+        if !terminal.iter().any(|value| value == request_id) {
+            terminal.push_back(request_id.to_owned());
+        }
+        while terminal.len() > self.config.retained_terminal_requests {
+            let Some(expired) = terminal.pop_front() else {
+                break;
+            };
+            let removable = self
+                .requests
+                .get(&expired)
+                .map(|request| request.is_terminal())
+                .unwrap_or(false);
+            if removable {
+                self.requests.remove(&expired);
+            }
+        }
+    }
 }
 
 fn now_ms() -> i64 {
@@ -485,4 +681,83 @@ fn now_ms() -> i64 {
         .unwrap_or_default()
         .as_millis()
         .min(i64::MAX as u128) as i64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+    use futures_util::stream;
+
+    struct StaticProvider {
+        models: Vec<crate::ProviderModel>,
+    }
+
+    #[async_trait]
+    impl Provider for StaticProvider {
+        fn id(&self) -> &str {
+            "test"
+        }
+
+        fn models(&self) -> &[crate::ProviderModel] {
+            &self.models
+        }
+
+        async fn stream(&self, _request: ProviderRequest) -> Result<crate::ProviderStream, ProviderError> {
+            Ok(Box::pin(stream::iter(vec![
+                Ok(ProviderEvent::TextDelta("hello".to_owned())),
+                Ok(ProviderEvent::Done),
+            ])))
+        }
+    }
+
+    fn test_service(retained_terminal_requests: usize) -> MeoService {
+        let service = MeoService::with_config(ServiceConfig {
+            retained_terminal_requests,
+            provider_start_timeout: Duration::from_secs(1),
+            provider_idle_timeout: Duration::from_secs(1),
+            request_timeout: Duration::from_secs(2),
+            event_replay_limit: 64,
+        });
+        service.register_provider(Arc::new(StaticProvider {
+            models: vec![crate::ProviderModel {
+                model_id: "test-model".to_owned(),
+                label: "Test".to_owned(),
+                provider: "test".to_owned(),
+                supports_vision: false,
+                supports_tools: false,
+            }],
+        }));
+        service
+    }
+
+    #[tokio::test]
+    async fn terminal_requests_are_bounded() {
+        let service = test_service(2);
+        let conversation = service.create_conversation("test-model");
+        for _ in 0..4 {
+            let request_id = service
+                .send_message(
+                    &conversation.conversation_id,
+                    SendMessageRequest {
+                        text: "hi".to_owned(),
+                        model_id: String::new(),
+                        resource_ids: vec![],
+                    },
+                )
+                .unwrap();
+            for _ in 0..50 {
+                if service
+                    .request_snapshot(&request_id)
+                    .map(|snapshot| snapshot.state.terminal())
+                    .unwrap_or(true)
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }
+        let health = service.health_snapshot();
+        assert!(health["retained_requests"].as_u64().unwrap_or_default() <= 2);
+    }
 }
