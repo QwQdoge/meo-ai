@@ -34,8 +34,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: meo/core-rs
-      # Compile first so real service/runtime errors are visible even while the
-      # initial Rust migration is still being normalized by rustfmt.
       - run: cargo check --all-features
       - run: cargo clippy --all-features --all-targets -- -D warnings
       - run: cargo test --all-features
@@ -64,7 +62,7 @@ jobs:
         working-directory: meo/android
         run: |
           if [ ! -x ./gradlew ]; then
-            gradle wrapper --gradle-version 9.1.0
+            gradle wrapper --gradle-version 9.6.0
           fi
       - name: Compile Android debug client
         working-directory: meo/android
