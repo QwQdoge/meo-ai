@@ -83,7 +83,11 @@ impl OpenAiCompatibleProvider {
         let endpoint = endpoint.into();
         let parsed = url::Url::parse(&endpoint)
             .map_err(|error| ProviderError::InvalidConfiguration(error.to_string()))?;
-        if parsed.scheme() != "https" && parsed.host_str() != Some("127.0.0.1") && parsed.host_str() != Some("localhost") {
+        if parsed.scheme() != "https"
+            && parsed.host_str() != Some("127.0.0.1")
+            && parsed.host_str() != Some("localhost")
+            && parsed.host_str() != Some("::1")
+        {
             return Err(ProviderError::InvalidConfiguration(
                 "provider endpoint must use HTTPS unless it is loopback".into(),
             ));
@@ -132,32 +136,45 @@ impl Provider for OpenAiCompatibleProvider {
     }
 
     async fn stream(&self, request: ProviderRequest) -> Result<ProviderStream, ProviderError> {
+        let messages = self.messages_json(&request);
+        let model_id = request.model_id.clone();
+        let temperature = request.temperature;
+        let max_tokens = request.max_tokens;
+        let extra = request.extra;
+
         let mut body = json!({
-            "model": request.model_id,
+            "model": model_id,
             "stream": true,
             "stream_options": {"include_usage": true},
-            "messages": self.messages_json(&request),
+            "messages": messages,
         });
-        if let Some(value) = request.temperature {
+        if let Some(value) = temperature {
             body["temperature"] = json!(value);
         }
-        if let Some(value) = request.max_tokens {
+        if let Some(value) = max_tokens {
             body["max_tokens"] = json!(value);
         }
         if let Some(object) = body.as_object_mut() {
-            for (key, value) in request.extra {
+            for (key, value) in extra {
                 object.insert(key, value);
             }
         }
 
-        let mut builder = self.client.post(&self.endpoint).headers(self.headers.clone()).json(&body);
+        let mut builder = self
+            .client
+            .post(&self.endpoint)
+            .headers(self.headers.clone())
+            .json(&body);
         if !self.api_key.is_empty() {
             builder = builder.bearer_auth(&self.api_key);
         }
         let response = builder.send().await?;
         if !response.status().is_success() {
             let status = response.status().as_u16();
-            let message = response.text().await.unwrap_or_else(|_| "provider error".into());
+            let message = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "provider error".into());
             return Err(ProviderError::Status {
                 status,
                 message: message.chars().take(2048).collect(),
