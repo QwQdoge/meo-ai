@@ -33,9 +33,10 @@ android {
 }
 
 val rustOutput = layout.projectDirectory.dir("src/main/jniLibs")
+val rustCrate = rootProject.layout.projectDirectory.dir("../core-rs")
 
 fun registerRustBuild(name: String, release: Boolean) = tasks.register<Exec>(name) {
-    workingDir(rootProject.projectDir)
+    workingDir(rustCrate.asFile)
     val args = mutableListOf(
         "cargo", "ndk",
         "-t", "arm64-v8a",
@@ -43,7 +44,6 @@ fun registerRustBuild(name: String, release: Boolean) = tasks.register<Exec>(nam
         "-t", "x86_64",
         "-o", rustOutput.asFile.absolutePath,
         "build",
-        "--manifest-path", "../core-rs/Cargo.toml",
         "--features", "android-jni",
     )
     if (release) args += "--release"
