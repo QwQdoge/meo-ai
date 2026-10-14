@@ -89,9 +89,9 @@ pub struct PluginPresentation {
 
 /// Stable cross-platform response representation.
 ///
-/// Do not put platform UI code, shell commands or privileged execution payloads
-/// in these blocks. Actions carry stable IDs; execution continues through the
-/// existing typed tool / Router permission boundary.
+/// Rust owns the wire contract. Platform UIs only render these blocks and send
+/// stable action IDs back to the typed action/tool boundary. Blocks never carry
+/// shell commands, native UI source, raw privileged operations or local paths.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ContentBlock {
@@ -117,23 +117,51 @@ pub enum ContentBlock {
         #[serde(default)]
         display: bool,
     },
+    Mermaid {
+        block_id: String,
+        source: String,
+        #[serde(default)]
+        title: String,
+    },
     Image {
         block_id: String,
+        #[serde(default)]
         resource_id: String,
         name: String,
         #[serde(default)]
         mime_type: String,
         #[serde(default)]
+        uri: String,
+        #[serde(default)]
         alt: String,
+        #[serde(default)]
         width: Option<u32>,
+        #[serde(default)]
         height: Option<u32>,
+    },
+    Media {
+        block_id: String,
+        #[serde(default)]
+        resource_id: String,
+        name: String,
+        mime_type: String,
+        #[serde(default)]
+        uri: String,
+        #[serde(default)]
+        poster_uri: String,
+        #[serde(default)]
+        duration_ms: Option<u64>,
     },
     Attachment {
         block_id: String,
+        #[serde(default)]
         resource_id: String,
         name: String,
         #[serde(default)]
         mime_type: String,
+        #[serde(default)]
+        uri: String,
+        #[serde(default)]
         size_bytes: Option<u64>,
         #[serde(default)]
         state: String,
@@ -162,6 +190,8 @@ pub enum ContentBlock {
         detail: String,
         #[serde(default)]
         source: String,
+        #[serde(default)]
+        progress: Option<f32>,
     },
     Confirmation {
         block_id: String,
@@ -206,10 +236,14 @@ pub enum ContentBlock {
     },
     Artifact {
         block_id: String,
+        #[serde(default)]
         resource_id: String,
         name: String,
         #[serde(default)]
         mime_type: String,
+        #[serde(default)]
+        uri: String,
+        #[serde(default)]
         size_bytes: Option<u64>,
         #[serde(default)]
         state: String,
@@ -219,8 +253,8 @@ pub enum ContentBlock {
         artifact_id: String,
         #[serde(default)]
         title: String,
-        /// HTML is rendered in a sandboxed platform surface, never as QML/
-        /// Compose/React source and never with native bridge access by default.
+        /// HTML is presentation content rendered in an isolated sandbox. It
+        /// never receives a native bridge or privileged filesystem access.
         html: String,
         #[serde(default)]
         sandbox: HtmlSandbox,
@@ -228,6 +262,17 @@ pub enum ContentBlock {
     Plugin {
         block_id: String,
         presentation: PluginPresentation,
+    },
+    Widget {
+        block_id: String,
+        widget_id: String,
+        kind: String,
+        #[serde(default)]
+        title: String,
+        #[serde(default)]
+        data: Value,
+        #[serde(default)]
+        actions: Vec<BlockAction>,
     },
     Error {
         block_id: String,
@@ -246,7 +291,9 @@ impl ContentBlock {
             | Self::Markdown { block_id, .. }
             | Self::Code { block_id, .. }
             | Self::Math { block_id, .. }
+            | Self::Mermaid { block_id, .. }
             | Self::Image { block_id, .. }
+            | Self::Media { block_id, .. }
             | Self::Attachment { block_id, .. }
             | Self::Citation { block_id, .. }
             | Self::SourceGroup { block_id, .. }
@@ -258,6 +305,7 @@ impl ContentBlock {
             | Self::Artifact { block_id, .. }
             | Self::Html { block_id, .. }
             | Self::Plugin { block_id, .. }
+            | Self::Widget { block_id, .. }
             | Self::Error { block_id, .. } => block_id,
         }
     }
@@ -298,6 +346,25 @@ mod tests {
         let block: ContentBlock = serde_json::from_str(source).unwrap();
         match block {
             ContentBlock::Html { sandbox, .. } => assert_eq!(sandbox, HtmlSandbox::Static),
+            other => panic!("unexpected block: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn image_can_be_resource_or_remote_uri() {
+        let source = r#"{
+            "type":"image",
+            "block_id":"b:image",
+            "name":"Generated image",
+            "mime_type":"image/png",
+            "uri":"https://example.invalid/image.png"
+        }"#;
+        let block: ContentBlock = serde_json::from_str(source).unwrap();
+        match block {
+            ContentBlock::Image { resource_id, uri, .. } => {
+                assert!(resource_id.is_empty());
+                assert_eq!(uri, "https://example.invalid/image.png");
+            }
             other => panic!("unexpected block: {other:?}"),
         }
     }
