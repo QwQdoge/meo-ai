@@ -34,20 +34,24 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: meo/core-rs
-      - run: cargo fmt --check
+      # Compile first so real service/runtime errors are visible even while the
+      # initial Rust migration is still being normalized by rustfmt.
       - run: cargo check --all-features
       - run: cargo clippy --all-features --all-targets -- -D warnings
       - run: cargo test --all-features
+      - run: cargo fmt --check
 
   android-project:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@v2
         with:
