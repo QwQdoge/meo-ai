@@ -38,7 +38,10 @@ pub fn router(service: MeoService) -> Router {
     Router::new()
         .route("/v1/agent-state", get(agent_state))
         .route("/v1/health", get(agent_state))
-        .route("/v1/conversations", get(list_conversations).post(create_conversation))
+        .route(
+            "/v1/conversations",
+            get(list_conversations).post(create_conversation),
+        )
         .route("/v1/conversations/{conversation_id}", get(get_conversation))
         .route(
             "/v1/conversations/{conversation_id}/messages",
@@ -149,7 +152,9 @@ async fn set_model(
         .get("model_id")
         .and_then(Value::as_str)
         .ok_or_else(|| ApiError::bad_request("model_id is required"))?;
-    state.service.set_conversation_model(&conversation_id, model_id)?;
+    state
+        .service
+        .set_conversation_model(&conversation_id, model_id)?;
     Ok(Json(json!({
         "accepted": true,
         "conversation_id": conversation_id,
@@ -181,7 +186,9 @@ async fn request_events(
     // lost. The cursor below drops duplicates. Terminal events close the SSE
     // stream immediately instead of leaving an idle connection around forever.
     let receiver = state.service.subscribe(&request_id)?;
-    let replay = state.service.request_events_after(&request_id, query.after)?;
+    let replay = state
+        .service
+        .request_events_after(&request_id, query.after)?;
     let replay_cursor = replay.last().map(CoreEvent::seq).unwrap_or(query.after);
     let replay_terminal = replay.last().is_some_and(is_terminal_event);
     let historical = stream::iter(replay.into_iter().map(to_sse_event));
