@@ -108,28 +108,33 @@ pub struct ToolDecision {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(tag = "type")]
 pub enum CoreEvent {
+    #[serde(rename = "request.started")]
     RequestStarted {
         seq: u64,
         request_id: String,
         conversation_id: String,
     },
+    #[serde(rename = "message.delta")]
     MessageDelta {
         seq: u64,
         request_id: String,
         delta: String,
     },
+    #[serde(rename = "content.block")]
     ContentBlock {
         seq: u64,
         request_id: String,
         block: ContentBlock,
     },
+    #[serde(rename = "tool.requested")]
     ToolRequested {
         seq: u64,
         request_id: String,
         decision: ToolDecision,
     },
+    #[serde(rename = "tool.completed")]
     ToolCompleted {
         seq: u64,
         request_id: String,
@@ -137,19 +142,23 @@ pub enum CoreEvent {
         #[serde(default)]
         detail: String,
     },
+    #[serde(rename = "response.meta")]
     ResponseMeta {
         seq: u64,
         request_id: String,
         metadata: serde_json::Value,
     },
+    #[serde(rename = "request.completed")]
     RequestCompleted {
         seq: u64,
         request_id: String,
     },
+    #[serde(rename = "request.cancelled")]
     RequestCancelled {
         seq: u64,
         request_id: String,
     },
+    #[serde(rename = "request.failed")]
     RequestFailed {
         seq: u64,
         request_id: String,
