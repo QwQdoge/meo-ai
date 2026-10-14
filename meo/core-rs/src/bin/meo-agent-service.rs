@@ -3,9 +3,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 
-use meo_ai_core::{
-    transport, MeoService, OpenAiCompatibleProvider, ProviderModel, ServiceConfig,
-};
+use meo_ai_core::{transport, MeoService, OpenAiCompatibleProvider, ProviderModel, ServiceConfig};
 use tokio::net::TcpListener;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
@@ -62,10 +60,7 @@ fn service_config() -> ServiceConfig {
             "MEO_AI_PROVIDER_IDLE_TIMEOUT_SECONDS",
             120,
         )),
-        request_timeout: Duration::from_secs(env_u64(
-            "MEO_AI_REQUEST_TIMEOUT_SECONDS",
-            30 * 60,
-        )),
+        request_timeout: Duration::from_secs(env_u64("MEO_AI_REQUEST_TIMEOUT_SECONDS", 30 * 60)),
         retained_terminal_requests: env_usize("MEO_AI_RETAINED_TERMINAL_REQUESTS", 128),
         event_replay_limit: env_usize("MEO_AI_EVENT_REPLAY_LIMIT", 2048),
     }
