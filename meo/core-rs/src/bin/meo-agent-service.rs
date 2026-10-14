@@ -24,6 +24,20 @@ fn env_usize(name: &str, default: usize) -> usize {
         .unwrap_or(default)
 }
 
+fn argument_value(name: &str) -> Option<String> {
+    let prefix = format!("{name}=");
+    let mut args = env::args().skip(1);
+    while let Some(argument) = args.next() {
+        if argument == name {
+            return args.next();
+        }
+        if let Some(value) = argument.strip_prefix(&prefix) {
+            return Some(value.to_owned());
+        }
+    }
+    None
+}
+
 fn parse_models(raw: &str) -> Vec<ProviderModel> {
     raw.split(',')
         .map(str::trim)
@@ -80,12 +94,15 @@ fn build_service() -> Result<MeoService, Box<dyn std::error::Error>> {
 }
 
 fn bind_addr() -> Result<SocketAddr, Box<dyn std::error::Error>> {
-    let host = env::var("MEO_AI_SERVICE_HOST").unwrap_or_else(|_| "127.0.0.1".to_owned());
-    let port = env::var("MEO_AI_SERVICE_PORT")
-        .unwrap_or_else(|_| "8765".to_owned())
+    let host = argument_value("--host")
+        .or_else(|| env::var("MEO_AI_SERVICE_HOST").ok())
+        .unwrap_or_else(|| "127.0.0.1".to_owned());
+    let port = argument_value("--port")
+        .or_else(|| env::var("MEO_AI_SERVICE_PORT").ok())
+        .unwrap_or_else(|| "8765".to_owned())
         .parse::<u16>()?;
     let ip = host.parse::<IpAddr>().map_err(|_| {
-        format!("MEO_AI_SERVICE_HOST must be a loopback IP address, got {host:?}")
+        format!("Meo AgentService host must be a loopback IP address, got {host:?}")
     })?;
     if !ip.is_loopback() {
         return Err("Meo AgentService may only bind to loopback".into());
