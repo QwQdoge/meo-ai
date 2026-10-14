@@ -7,7 +7,7 @@ plugins {
 
 val meoOAuthClientId = providers.gradleProperty("MEO_OAUTH_CLIENT_ID")
     .orElse(providers.environmentVariable("MEO_OAUTH_CLIENT_ID"))
-    .orElse("")
+    .orElse("org.meo.ai.android")
     .get()
 val escapedOAuthClientId = meoOAuthClientId
     .replace("\\", "\\\\")
