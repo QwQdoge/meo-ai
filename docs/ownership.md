@@ -1,65 +1,114 @@
 # Meo AI ownership and migration boundary
 
-This repository is a migration repository: the Newelle-derived upstream tree remains present while the Meo-native frontend/service stack is developed under `meo/`. These two layers are not equal product authorities.
+This repository is a migration repository: the Newelle-derived upstream tree and the first Python/C++ Meo-native stack remain present while the product moves to its final architecture. These layers are not equal product authorities.
 
-## Current Meo direction
+## Final product architecture
 
-- `meo/`: current Meo-owned implementation area.
-- `meo/service/`: stable headless assistant/service layer.
-- `meo/system/`: unprivileged System AI Router client/tool layer.
-- `meo/adapters/`: temporary compatibility adapters around Newelle-era objects.
-- `meo/web/`: browser frontend integration, upstream references and Meo-specific web patches/configuration.
-- `meo/cloud/`: AI-specific cloud contracts for conversations, messages, devices and AgentRuns.
-- `meo/device/`: authenticated device registration and remote bridge to the local AgentService.
-- native C++/QML frontend under `meo/`: current desktop UI direction.
+The authoritative Meo AI product core is Rust under `meo/core-rs/`.
 
-New Meo product behavior should land under these boundaries unless it must patch a documented upstream integration seam.
+Rust owns:
 
-A large third-party web frontend may remain in a separate fork/deployment repository when preserving its independent upstream history materially reduces maintenance cost. In that case `meo-ai` remains the product source of truth for the web integration contract, authentication path, cloud/device protocols and Meo-specific patch policy. Do not vendor a large unrelated upstream tree merely to make the repository physically self-contained.
+- the cross-platform conversation/message/content-block protocol;
+- provider clients and model routing;
+- request lifecycle, cancellation, replay and streaming semantics;
+- resources, attachments and artifact metadata contracts;
+- tool/connector state and typed action IDs;
+- conversation state, persistence/sync contracts and client transport;
+- Account/session/broker and device protocol clients as they migrate;
+- the local AgentService HTTP/SSE implementation and the reusable cloud service core.
+
+Platform frontends own presentation only:
+
+- Linux/MeoArch: QML + MeoUI, backed by the Rust core through a stable Rust/Qt binding. A binding shim may exist for Qt ABI integration, but it must contain no conversation, provider, tool, sync or policy logic.
+- Android: Kotlin + Jetpack Compose Material 3 Expressive, backed by the same Rust core through JNI/UniFFI-style bindings.
+- Web: React/TypeScript presentation, consuming the same Rust-owned wire protocol and Rust service. Web UI code may adapt blocks to browser components but must not become a second AI engine.
+
+The three frontends may intentionally differ in navigation and platform interaction, but a conversation, request, rich response block, tool decision and reconnect sequence must mean the same thing on every client.
+
+## Current Meo-owned areas
+
+- `meo/core-rs/`: **authoritative product core and protocol**.
+- `meo/android/`: native Android frontend. Product logic belongs in Rust, not Kotlin view models or duplicated network stacks.
+- `meo/app/qml/`: native desktop presentation while the Rust/Qt binding replaces the original C++ client layer.
+- `meo/web/`: browser integration and upstream policy. Browser-specific presentation lives here; service/product semantics do not.
+- `meo/cloud/`: deployment and compatibility contracts while cloud execution moves onto the Rust service core.
+- `meo/device/`: compatibility implementation while authenticated device protocol/state moves to Rust.
+- `meo/service/`, `meo/runtime/`, `meo/system/`, `meo/adapters/`: migration/compatibility code. Do not add new product architecture here when the behavior belongs in Rust.
+
+## Migration rule for Python and C++
+
+Python and the original C++ AgentClient are no longer preferred implementation targets for new Meo AI behavior.
+
+Allowed changes there are limited to:
+
+- preserving a working release while the equivalent Rust path is being enabled;
+- compatibility adapters that translate an old contract into the Rust-owned contract;
+- bug/security fixes that cannot safely wait for deletion;
+- tests proving parity during migration.
+
+Do not add a new provider, message type, tool state machine, sync feature, cache, router, resource format, reconnect rule or cross-device protocol only to Python/C++. Implement the Rust contract first and adapt the compatibility layer to it.
+
+Deleting compatibility code is allowed only when packaging, desktop and integration tests no longer require it. The goal is deletion, not a permanently duplicated engine.
+
+## Visual system ownership
+
+MeoUI owns the desktop Material 3 / Material 3 Expressive design primitives, semantic tokens, adaptive geometry and motion. The Meo AI desktop must use those primitives rather than recreating Pixel-like values locally.
+
+Android uses official Jetpack Compose Material 3 Expressive APIs and dynamic color where available. Web should map the same semantic surface/container/shape/type hierarchy into browser tokens rather than copying Android implementation details.
+
+A visual feature is complete only when it has an equivalent semantic presentation across supported clients. Pixel/Material styling must never change the underlying Rust protocol shape.
 
 ## External authority boundaries
 
-Keeping all AI product orchestration in `meo-ai` does not move unrelated security authorities into this repository.
+Moving product orchestration to Rust does not move unrelated security authorities into this repository.
 
 - Meo Account remains authoritative for authentication/session identity and encrypted provider credentials.
-- Meo AI may consume the Account OAuth/provider-broker APIs but must not create a second credential authority.
-- The System AI Router and the owning system/application components remain authoritative for privileged or desktop actions.
-- Remote device infrastructure may relay exact AgentService/Router requests, but it must not bypass their existing request, confirmation or verification semantics.
+- The Rust core may consume Account OAuth/provider-broker APIs but must not create a second credential authority or expose raw provider keys to frontends.
+- The System AI Router and owning system/application components remain authoritative for privileged or desktop actions.
+- Remote device infrastructure may relay exact AgentService/Router requests, but it must not bypass request, confirmation or verification semantics.
 
 ## Newelle-derived compatibility layer
 
-The root Newelle-derived tree (`src/`, `modules/`, Meson/Flatpak metadata, `po/`, legacy data/assets and related build files) is retained because the current Meo migration still depends on upstream engine/runtime functionality.
+The root Newelle-derived tree (`src/`, `modules/`, Meson/Flatpak metadata, `po/`, legacy data/assets and related build files) is retained only while migration still depends on its provider/runtime behavior.
 
-It is **compatibility/migration infrastructure**, not the long-term Meo frontend architecture.
+It is compatibility infrastructure, not the target product architecture.
 
 Do not:
 
-- add new Meo-specific UI directly into GTK/Adwaita surfaces when an equivalent Meo-native surface exists;
+- add new Meo-specific UI directly into GTK/Adwaita surfaces;
+- add new cross-platform AI product logic to the Newelle tree;
 - duplicate System AI Router executors or privileged OS logic here;
-- delete the upstream layer while Meo service/runtime still imports or depends on it;
-- describe Newelle root UI as the target Meo desktop frontend.
+- delete the upstream layer before Rust replacements and packaging gates are complete;
+- describe the Newelle root UI, Python AgentService or C++ AgentClient as the final Meo AI architecture.
 
-## Split gate
+## Split/removal gates
 
-Do not move the Newelle tree into a separate legacy repository yet. A split becomes appropriate only when all of the following are true:
+The legacy layers can be moved out or deleted when all of the following are true:
 
-1. the Meo-native frontend is the default runnable product;
-2. headless Meo service/provider execution no longer requires GTK/Adwaita/WebKit UI objects;
-3. compatibility adapters are narrow and can be packaged independently or removed;
-4. packaging/CI can build Meo without treating the Newelle root as the primary application;
-5. provider, memory, tool, skill/MCP and conversation capabilities needed by the supported Meo release contract have migrated or have explicit replacements.
+1. Rust service/client protocol tests cover conversation, provider, resource, tool, cancellation and replay semantics;
+2. the QML frontend runs against the Rust binding by default and contains no C++ business logic;
+3. Android runs the same Rust protocol/core and native Compose renderer;
+4. web/cloud consumes the Rust-owned protocol/service for supported Meo features;
+5. packaging launches the Rust AgentService by default;
+6. Meo Account, memory, provider, tool, skill/MCP/connector and device capabilities needed by the supported release have Rust implementations or explicit external authorities;
+7. Newelle compatibility adapters are narrow enough to package separately or remove.
 
-At that point the preferred end state is:
+Preferred end state:
 
 ```text
-meo-ai            # Meo-native assistant/service/frontend
-meo-ai-newelle-legacy (or archived upstream fork)  # provenance/migration only
+meo-ai/
+  meo/core-rs/       # authoritative core/service/client
+  meo/app/qml/       # Linux native presentation
+  meo/android/       # Android native presentation
+  meo/web/           # web integration/presentation contract
+
+meo-ai-newelle-legacy (optional archived compatibility repository)
 ```
 
 ## System AI Router boundary
 
-`meo-ai` is a client of the OS-level System AI Router. The router/capability/policy/permission/verification authority belongs to `MeoArch-os-workspace` (with native executors in their owning system/app repositories). Meo AI may request typed capabilities; it must not recreate the privileged router inside this repository.
+`meo-ai` is a client of the OS-level System AI Router. The router/capability/policy/permission/verification authority belongs to `MeoArch-os-workspace` and owning system/app repositories. Rust may implement the typed client and state machine; it must not recreate privileged executors inside Meo AI.
 
 ## Change rule
 
-When touching root Newelle-derived code, document why a Meo-side adapter cannot own the change instead. Prefer migration seams over deeper coupling so the future split becomes easier rather than harder.
+For any new cross-platform capability, start from the Rust data/state contract, then render it in QML/MeoUI, Compose and web as applicable. A frontend-only implementation is not complete if it invents semantics that the Rust core does not own.
