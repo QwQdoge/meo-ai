@@ -15,7 +15,7 @@ use axum::{Json, Router};
 use futures_util::{stream, Stream, StreamExt};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use tokio_stream::wrappers::BroadcastStream;
+use tokio::sync::broadcast;
 use tower_http::trace::TraceLayer;
 
 use crate::protocol::{CoreEvent, SendMessageRequest};
@@ -37,6 +37,7 @@ type EventStream = Pin<Box<dyn Stream<Item = Result<Event, Infallible>> + Send>>
 pub fn router(service: MeoService) -> Router {
     Router::new()
         .route("/v1/agent-state", get(agent_state))
+        .route("/v1/health", get(agent_state))
         .route("/v1/conversations", get(list_conversations).post(create_conversation))
         .route("/v1/conversations/{conversation_id}", get(get_conversation))
         .route(
@@ -52,11 +53,7 @@ pub fn router(service: MeoService) -> Router {
 }
 
 async fn agent_state(State(state): State<Arc<HttpState>>) -> Json<Value> {
-    Json(json!({
-        "ready": true,
-        "runtime": "rust",
-        "conversations": state.service.list_conversations().len(),
-    }))
+    Json(state.service.health_snapshot())
 }
 
 async fn list_conversations(State(state): State<Arc<HttpState>>) -> Json<Value> {
@@ -67,7 +64,7 @@ async fn create_conversation(
     State(state): State<Arc<HttpState>>,
     body: Bytes,
 ) -> Result<Json<Value>, ApiError> {
-    let model_id = if body.is_empty() {
+    let requested_model = if body.is_empty() {
         String::new()
     } else {
         let value: Value = serde_json::from_slice(&body)
@@ -76,7 +73,18 @@ async fn create_conversation(
             .get("model_id")
             .and_then(Value::as_str)
             .unwrap_or_default()
+            .trim()
             .to_owned()
+    };
+    let model_id = if requested_model.is_empty() {
+        state
+            .service
+            .registered_models()
+            .into_iter()
+            .next()
+            .unwrap_or_default()
+    } else {
+        requested_model
     };
     let conversation = state.service.create_conversation(model_id);
     Ok(Json(json!({
@@ -169,35 +177,42 @@ async fn request_events(
     Path(request_id): Path<String>,
     Query(query): Query<EventQuery>,
 ) -> Result<Sse<EventStream>, ApiError> {
-    // Subscribe before taking the replay snapshot so an event can be duplicated
-    // but never lost. The live cursor filter removes any duplicate sequence.
+    // Subscribe before reading replay so an event can be duplicated but never
+    // lost. The cursor below drops duplicates. Terminal events close the SSE
+    // stream immediately instead of leaving an idle connection around forever.
     let receiver = state.service.subscribe(&request_id)?;
     let replay = state.service.request_events_after(&request_id, query.after)?;
     let replay_cursor = replay.last().map(CoreEvent::seq).unwrap_or(query.after);
-    let replay_terminal = replay.last().map(is_terminal_event).unwrap_or(false);
+    let replay_terminal = replay.last().is_some_and(is_terminal_event);
     let historical = stream::iter(replay.into_iter().map(to_sse_event));
 
     let stream: EventStream = if replay_terminal {
         Box::pin(historical)
     } else {
-        let live = BroadcastStream::new(receiver)
-            .filter_map(move |result| {
-                let cursor = replay_cursor;
-                async move {
-                    match result {
-                        Ok(event) if event.seq() > cursor => Some(event),
-                        _ => None,
+        let live = stream::unfold(
+            (receiver, replay_cursor, false),
+            |(mut receiver, mut cursor, finished)| async move {
+                if finished {
+                    return None;
+                }
+                loop {
+                    match receiver.recv().await {
+                        Ok(event) if event.seq() > cursor => {
+                            cursor = event.seq();
+                            let terminal = is_terminal_event(&event);
+                            return Some((to_sse_event(event), (receiver, cursor, terminal)));
+                        }
+                        Ok(_) => continue,
+                        Err(broadcast::error::RecvError::Lagged(_)) => {
+                            // Close. The client reconnects with its last cursor and
+                            // the bounded journal replays everything still retained.
+                            return None;
+                        }
+                        Err(broadcast::error::RecvError::Closed) => return None,
                     }
                 }
-            })
-            .scan(false, |finished, event| {
-                let terminal = is_terminal_event(&event);
-                let emit = !*finished;
-                if terminal {
-                    *finished = true;
-                }
-                async move { emit.then(|| to_sse_event(event)) }
-            });
+            },
+        );
         Box::pin(historical.chain(live))
     };
 
