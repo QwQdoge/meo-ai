@@ -34,7 +34,8 @@ pub struct MeoClient {
 
 impl MeoClient {
     pub fn new(origin: &str) -> Result<Self, ClientError> {
-        let origin = Url::parse(origin).map_err(|error| ClientError::InvalidOrigin(error.to_string()))?;
+        let origin =
+            Url::parse(origin).map_err(|error| ClientError::InvalidOrigin(error.to_string()))?;
         if origin.scheme() != "https"
             && origin.host_str() != Some("127.0.0.1")
             && origin.host_str() != Some("localhost")
@@ -61,22 +62,34 @@ impl MeoClient {
     }
 
     pub async fn create_conversation(&self, model_id: &str) -> Result<Conversation, ClientError> {
-        let value: Value = self.post_json("/v1/conversations", &json!({"model_id": model_id})).await?;
+        let value: Value = self
+            .post_json("/v1/conversations", &json!({"model_id": model_id}))
+            .await?;
         serde_json::from_value(value.get("conversation").cloned().unwrap_or(Value::Null))
             .map_err(|error| ClientError::InvalidPayload(error.to_string()))
     }
 
     pub async fn list_conversations(&self) -> Result<Vec<Conversation>, ClientError> {
         let value: Value = self.get_json("/v1/conversations").await?;
-        serde_json::from_value(value.get("conversations").cloned().unwrap_or(Value::Array(vec![])))
-            .map_err(|error| ClientError::InvalidPayload(error.to_string()))
+        serde_json::from_value(
+            value
+                .get("conversations")
+                .cloned()
+                .unwrap_or(Value::Array(vec![])),
+        )
+        .map_err(|error| ClientError::InvalidPayload(error.to_string()))
     }
 
     pub async fn messages(&self, conversation_id: &str) -> Result<Vec<Message>, ClientError> {
         let path = format!("/v1/conversations/{conversation_id}/messages");
         let value: Value = self.get_json(&path).await?;
-        serde_json::from_value(value.get("messages").cloned().unwrap_or(Value::Array(vec![])))
-            .map_err(|error| ClientError::InvalidPayload(error.to_string()))
+        serde_json::from_value(
+            value
+                .get("messages")
+                .cloned()
+                .unwrap_or(Value::Array(vec![])),
+        )
+        .map_err(|error| ClientError::InvalidPayload(error.to_string()))
     }
 
     pub async fn send_message(
@@ -105,9 +118,16 @@ impl MeoClient {
         Ok(())
     }
 
-    pub async fn events(&self, request_id: &str, after: u64) -> Result<CoreEventStream, ClientError> {
+    pub async fn events(
+        &self,
+        request_id: &str,
+        after: u64,
+    ) -> Result<CoreEventStream, ClientError> {
         let path = format!("/v1/requests/{request_id}/events?after={after}");
-        let response = self.request_builder(reqwest::Method::GET, &path)?.send().await?;
+        let response = self
+            .request_builder(reqwest::Method::GET, &path)?
+            .send()
+            .await?;
         let response = ensure_success(response).await?;
         let bytes = response.bytes_stream();
         let stream = futures_util::stream::unfold(
@@ -155,8 +175,15 @@ impl MeoClient {
     }
 
     async fn get_json<T: DeserializeOwned>(&self, path: &str) -> Result<T, ClientError> {
-        let response = self.request_builder(reqwest::Method::GET, path)?.send().await?;
-        ensure_success(response).await?.json().await.map_err(ClientError::Http)
+        let response = self
+            .request_builder(reqwest::Method::GET, path)?
+            .send()
+            .await?;
+        ensure_success(response)
+            .await?
+            .json()
+            .await
+            .map_err(ClientError::Http)
     }
 
     async fn post_json<T: DeserializeOwned, B: serde::Serialize + ?Sized>(
@@ -169,7 +196,11 @@ impl MeoClient {
             .json(body)
             .send()
             .await?;
-        ensure_success(response).await?.json().await.map_err(ClientError::Http)
+        ensure_success(response)
+            .await?
+            .json()
+            .await
+            .map_err(ClientError::Http)
     }
 
     fn request_builder(
