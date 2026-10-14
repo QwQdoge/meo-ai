@@ -10,7 +10,7 @@ use dashmap::DashMap;
 use futures_util::{FutureExt, StreamExt};
 use serde_json::json;
 use thiserror::Error;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, Notify};
 use tokio::time::{timeout, Instant};
 use uuid::Uuid;
 
@@ -50,9 +50,9 @@ impl Default for ServiceConfig {
 impl ServiceConfig {
     fn validated(self) -> Self {
         Self {
-            provider_start_timeout: self.provider_start_timeout.max(Duration::from_secs(1)),
-            provider_idle_timeout: self.provider_idle_timeout.max(Duration::from_secs(1)),
-            request_timeout: self.request_timeout.max(Duration::from_secs(1)),
+            provider_start_timeout: self.provider_start_timeout.max(Duration::from_millis(10)),
+            provider_idle_timeout: self.provider_idle_timeout.max(Duration::from_millis(10)),
+            request_timeout: self.request_timeout.max(Duration::from_millis(10)),
             retained_terminal_requests: self.retained_terminal_requests.max(1),
             event_replay_limit: self.event_replay_limit.max(32),
         }
@@ -87,6 +87,7 @@ struct RequestRuntime {
     journal: RwLock<VecDeque<CoreEvent>>,
     sender: broadcast::Sender<CoreEvent>,
     cancelled: AtomicBool,
+    cancel_notify: Notify,
     event_replay_limit: usize,
 }
 
@@ -105,6 +106,7 @@ impl RequestRuntime {
             journal: RwLock::new(VecDeque::with_capacity(event_replay_limit.min(256))),
             sender,
             cancelled: AtomicBool::new(false),
+            cancel_notify: Notify::new(),
             event_replay_limit,
         }
     }
@@ -141,6 +143,17 @@ impl RequestRuntime {
             .expect("request snapshot poisoned")
             .state
             .terminal()
+    }
+
+    fn request_cancel(&self) {
+        self.cancelled.store(true, Ordering::Release);
+        // notify_one stores a permit when no waiter is currently registered,
+        // avoiding a race between the atomic check and entering select!.
+        self.cancel_notify.notify_one();
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Acquire)
     }
 }
 
@@ -343,7 +356,7 @@ impl MeoService {
         if request.is_terminal() {
             return Err(ServiceError::RequestTerminal);
         }
-        request.cancelled.store(true, Ordering::Release);
+        request.request_cancel();
         Ok(())
     }
 
@@ -460,6 +473,11 @@ impl MeoService {
             conversation_id: conversation_id.clone(),
         });
 
+        if request.is_cancelled() {
+            self.finish_cancelled(&request_id, &request);
+            return;
+        }
+
         let provider_request = ProviderRequest {
             model_id,
             system_prompt: String::new(),
@@ -469,32 +487,41 @@ impl MeoService {
             extra: HashMap::new(),
         };
 
-        let mut stream = match timeout(
+        let start = timeout(
             self.config.provider_start_timeout,
             provider.stream(provider_request),
-        )
-        .await
-        {
-            Ok(Ok(stream)) => stream,
-            Ok(Err(error)) => {
-                self.finish_failure(
-                    &request_id,
-                    &request,
-                    "provider_start_failed",
-                    &error.to_string(),
-                );
-                self.mark_terminal(&request_id);
+        );
+        tokio::pin!(start);
+        let mut stream = tokio::select! {
+            biased;
+            _ = request.cancel_notify.notified() => {
+                self.finish_cancelled(&request_id, &request);
                 return;
             }
-            Err(_) => {
-                self.finish_failure(
-                    &request_id,
-                    &request,
-                    "provider_start_timeout",
-                    "The model provider did not establish a stream before the timeout.",
-                );
-                self.mark_terminal(&request_id);
-                return;
+            result = &mut start => {
+                match result {
+                    Ok(Ok(stream)) => stream,
+                    Ok(Err(error)) => {
+                        self.finish_failure(
+                            &request_id,
+                            &request,
+                            "provider_start_failed",
+                            &error.to_string(),
+                        );
+                        self.mark_terminal(&request_id);
+                        return;
+                    }
+                    Err(_) => {
+                        self.finish_failure(
+                            &request_id,
+                            &request,
+                            "provider_start_timeout",
+                            "The model provider did not establish a stream before the timeout.",
+                        );
+                        self.mark_terminal(&request_id);
+                        return;
+                    }
+                }
             }
         };
 
@@ -502,7 +529,7 @@ impl MeoService {
         let mut assistant_text = String::new();
 
         loop {
-            if request.cancelled.load(Ordering::Acquire) {
+            if request.is_cancelled() {
                 self.finish_cancelled(&request_id, &request);
                 return;
             }
@@ -520,8 +547,19 @@ impl MeoService {
             }
             let remaining = deadline.saturating_duration_since(now);
             let wait_for = self.config.provider_idle_timeout.min(remaining);
+            let next_wait = timeout(wait_for, stream.next());
+            tokio::pin!(next_wait);
 
-            let next = match timeout(wait_for, stream.next()).await {
+            let next = tokio::select! {
+                biased;
+                _ = request.cancel_notify.notified() => {
+                    self.finish_cancelled(&request_id, &request);
+                    return;
+                }
+                result = &mut next_wait => result,
+            };
+
+            let next = match next {
                 Ok(next) => next,
                 Err(_) => {
                     let code = if Instant::now() >= deadline {
@@ -588,7 +626,7 @@ impl MeoService {
             }
         }
 
-        if request.cancelled.load(Ordering::Acquire) {
+        if request.is_cancelled() {
             self.finish_cancelled(&request_id, &request);
             return;
         }
@@ -703,7 +741,10 @@ mod tests {
             &self.models
         }
 
-        async fn stream(&self, _request: ProviderRequest) -> Result<crate::ProviderStream, ProviderError> {
+        async fn stream(
+            &self,
+            _request: ProviderRequest,
+        ) -> Result<crate::ProviderStream, ProviderError> {
             Ok(Box::pin(stream::iter(vec![
                 Ok(ProviderEvent::TextDelta("hello".to_owned())),
                 Ok(ProviderEvent::Done),
@@ -756,6 +797,7 @@ mod tests {
                 }
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
+            tokio::task::yield_now().await;
         }
         let health = service.health_snapshot();
         assert!(health["retained_requests"].as_u64().unwrap_or_default() <= 2);
