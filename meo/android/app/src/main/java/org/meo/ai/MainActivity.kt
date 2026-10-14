@@ -4,10 +4,10 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -16,46 +16,59 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.Button
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.AccountCircle
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.AttachFile
+import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.Menu
+import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.Send
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LargeTopAppBar
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import org.meo.ai.core.MeoCore
+import org.meo.ai.ui.MeoExpressiveTheme
 import org.meo.ai.ui.RichBlockRenderer
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        setContent { MeoTheme { MeoApp() } }
+        setContent { MeoExpressiveTheme { MeoApp() } }
     }
 }
 
@@ -64,20 +77,6 @@ data class UiMessage(
     val text: String = "",
     val blocksJson: String = "[]",
 )
-
-@Composable
-private fun MeoTheme(content: @Composable () -> Unit) {
-    val context = LocalContext.current
-    val dark = isSystemInDarkTheme()
-    val scheme = remember(context, dark) {
-        if (android.os.Build.VERSION.SDK_INT >= 31) {
-            if (dark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-        } else {
-            if (dark) darkColorScheme() else lightColorScheme()
-        }
-    }
-    MaterialTheme(colorScheme = scheme, content = content)
-}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -91,13 +90,12 @@ private fun MeoApp() {
     }
     val messages = remember {
         mutableStateListOf(
-            UiMessage(
-                role = "assistant",
-                blocksJson = normalizedDemo,
-            ),
+            UiMessage(role = "assistant", blocksJson = normalizedDemo),
         )
     }
     var composer by remember { mutableStateOf("") }
+    val listState = rememberLazyListState()
+    val topBarScroll = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
 
     fun send() {
         val text = composer.trim()
@@ -106,114 +104,193 @@ private fun MeoApp() {
         messages += UiMessage(
             role = "assistant",
             blocksJson = """[
-                {"type":"markdown","block_id":"local:reply","text":"**Android client is ready.** The next transport step will stream this response from the same Meo AgentService used by desktop and web."},
-                {"type":"tool_activity","block_id":"local:rust","activity_id":"rust:core","title":"Rust shared core","state":"completed","detail":"Rich blocks and SSE normalization are running through meo-ai-core.","source":"android"}
+                {"type":"markdown","block_id":"local:reply","text":"**Meo AI Android is using the shared Rust core.** This UI is native Compose and follows Material 3 Expressive rather than wrapping the web client."},
+                {"type":"tool_activity","block_id":"local:rust","activity_id":"rust:core","title":"Rust core","state":"completed","detail":"Protocol, rich blocks and streaming normalization are shared with the other Meo AI clients.","source":"android"}
             ]""".trimIndent(),
         )
         composer = ""
     }
 
+    LaunchedEffect(messages.size) {
+        if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex)
+    }
+
     Scaffold(
+        modifier = Modifier.nestedScroll(topBarScroll.nestedScrollConnection),
         contentWindowInsets = WindowInsets.safeDrawing,
+        containerColor = MaterialTheme.colorScheme.surface,
         topBar = {
-            TopAppBar(
+            LargeTopAppBar(
                 title = {
-                    Column {
-                        Text("Meo AI", fontWeight = FontWeight.SemiBold)
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text(
-                            if (MeoCore.available) "Rust core connected" else "Rust core unavailable",
-                            style = MaterialTheme.typography.labelSmall,
+                            "Meo AI",
+                            style = MaterialTheme.typography.headlineMedium,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            if (MeoCore.available) "Rust core · connected" else "Rust core · unavailable",
+                            style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface),
-                actions = {
-                    Surface(
-                        modifier = Modifier.padding(end = 12.dp),
-                        shape = RoundedCornerShape(999.dp),
-                        color = MaterialTheme.colorScheme.secondaryContainer,
-                    ) {
-                        Text(
-                            "Meo Account",
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
-                            style = MaterialTheme.typography.labelMedium,
-                        )
+                navigationIcon = {
+                    FilledTonalIconButton(onClick = {}) {
+                        Icon(Icons.Rounded.Menu, contentDescription = "Open navigation")
                     }
                 },
+                actions = {
+                    IconButton(onClick = {}) {
+                        Icon(Icons.Rounded.Add, contentDescription = "New chat")
+                    }
+                    FilledTonalIconButton(onClick = {}) {
+                        Icon(Icons.Rounded.AccountCircle, contentDescription = "Meo Account")
+                    }
+                    IconButton(onClick = {}) {
+                        Icon(Icons.Rounded.MoreVert, contentDescription = "More")
+                    }
+                },
+                scrollBehavior = topBarScroll,
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer,
+                ),
             )
         },
         bottomBar = {
-            Surface(
-                tonalElevation = 2.dp,
-                modifier = Modifier.navigationBarsPadding().imePadding(),
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(12.dp),
-                    verticalAlignment = Alignment.Bottom,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    OutlinedTextField(
-                        value = composer,
-                        onValueChange = { composer = it },
-                        modifier = Modifier.weight(1f),
-                        placeholder = { Text("Ask anything…") },
-                        shape = RoundedCornerShape(24.dp),
-                        maxLines = 6,
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                        keyboardActions = KeyboardActions(onSend = { send() }),
-                    )
-                    Button(onClick = { send() }, enabled = composer.isNotBlank()) {
-                        Text("Send")
-                    }
-                }
-            }
+            Composer(
+                value = composer,
+                onValueChange = { composer = it },
+                onSend = ::send,
+            )
         },
     ) { padding ->
-        Box(Modifier.fillMaxSize().padding(padding)) {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                    start = 16.dp,
-                    end = 16.dp,
-                    top = 12.dp,
-                    bottom = 24.dp,
-                ),
-                verticalArrangement = Arrangement.spacedBy(20.dp),
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize().padding(padding),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 28.dp),
+            verticalArrangement = Arrangement.spacedBy(22.dp),
+        ) {
+            items(messages) { message ->
+                MessageRow(message)
+            }
+        }
+    }
+}
+
+@Composable
+private fun MessageRow(message: UiMessage) {
+    if (message.role == "user") {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            Card(
+                modifier = Modifier.fillMaxWidth(0.88f),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+                shape = MaterialTheme.shapes.largeIncreased,
+                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
             ) {
-                items(messages) { message ->
-                    if (message.role == "user") {
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                            Card(
-                                colors = CardDefaults.cardColors(
-                                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                                ),
-                                shape = RoundedCornerShape(22.dp),
-                            ) {
-                                Text(
-                                    message.text,
-                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                                    style = MaterialTheme.typography.bodyLarge,
-                                )
-                            }
-                        }
-                    } else {
-                        Column(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            Text(
-                                "Meo",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.primary,
-                                fontWeight = FontWeight.SemiBold,
-                            )
-                            RichBlockRenderer(
-                                blocksJson = message.blocksJson,
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                        }
-                    }
+                Text(
+                    message.text,
+                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp),
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                )
+            }
+        }
+        return
+    }
+
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Surface(
+                modifier = Modifier.size(34.dp),
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.primaryContainer,
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        Icons.Rounded.AutoAwesome,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
+            Text(
+                "Meo",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+        RichBlockRenderer(
+            blocksJson = message.blocksJson,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+
+@Composable
+private fun Composer(
+    value: String,
+    onValueChange: (String) -> Unit,
+    onSend: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .navigationBarsPadding()
+            .imePadding()
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        shape = MaterialTheme.shapes.extraLargeIncreased,
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        tonalElevation = 2.dp,
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            OutlinedTextField(
+                value = value,
+                onValueChange = onValueChange,
+                modifier = Modifier.fillMaxWidth(),
+                placeholder = { Text("Ask anything") },
+                maxLines = 7,
+                shape = MaterialTheme.shapes.extraLarge,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                keyboardActions = KeyboardActions(onSend = { onSend() }),
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                FilledTonalIconButton(onClick = {}) {
+                    Icon(Icons.Rounded.AttachFile, contentDescription = "Attach")
+                }
+                Surface(
+                    shape = RoundedCornerShape(999.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                ) {
+                    Text(
+                        "Auto · Best model",
+                        modifier = Modifier.padding(horizontal = 13.dp, vertical = 9.dp),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Box(Modifier.weight(1f))
+                FilledIconButton(
+                    onClick = onSend,
+                    enabled = value.isNotBlank(),
+                ) {
+                    Icon(Icons.Rounded.Send, contentDescription = "Send")
                 }
             }
         }
@@ -225,14 +302,14 @@ private val DEMO_BLOCKS = """
   {
     "type":"markdown",
     "block_id":"demo:intro",
-    "text":"# One conversation, richer answers\nMeo AI can render **structured content** instead of flattening everything into plain Markdown."
+    "text":"# One conversation, richer answers\nMeo AI renders **structured responses** without flattening tools, charts and artifacts into text."
   },
   {
     "type":"code",
     "block_id":"demo:code",
     "language":"rust",
-    "filename":"stream.rs",
-    "text":"let event = decode_sse_line(line)?;\nrender(event.blocks);"
+    "filename":"service.rs",
+    "text":"let request_id = service.send_message(conversation_id, input)?;\nlet stream = client.events(&request_id, 0).await?;"
   },
   {
     "type":"chart",
@@ -248,18 +325,18 @@ private val DEMO_BLOCKS = """
     "type":"table",
     "block_id":"demo:table",
     "table_id":"table:clients",
-    "title":"Shared capability surface",
-    "columns":[{"key":"client","label":"Client"},{"key":"ui","label":"UI"},{"key":"core","label":"Core"}],
-    "rows":[{"client":"Desktop","ui":"QML","core":"Rust"},{"client":"Web","ui":"React","core":"Protocol"},{"client":"Android","ui":"Compose","core":"Rust"}]
+    "title":"One Rust core, native surfaces",
+    "columns":[{"key":"client","label":"Client"},{"key":"ui","label":"Native UI"},{"key":"core","label":"Core"}],
+    "rows":[{"client":"Desktop","ui":"QML + MeoUI","core":"Rust"},{"client":"Web","ui":"React","core":"Rust service"},{"client":"Android","ui":"Compose M3E","core":"Rust"}]
   },
   {
     "type":"plugin",
     "block_id":"demo:plugin",
     "presentation":{
-      "plugin_id":"demo.weather",
+      "plugin_id":"demo.connector",
       "plugin_name":"Example connector",
       "title":"Interactive plugin surface",
-      "subtitle":"Connectors can return cards instead of dumping JSON into chat.",
+      "subtitle":"Connectors return structured UI instead of raw JSON.",
       "body":{"status":"ready"},
       "actions":[{"action_id":"open","label":"Open"}]
     }
@@ -269,7 +346,7 @@ private val DEMO_BLOCKS = """
     "block_id":"demo:html",
     "artifact_id":"artifact:preview",
     "title":"Sandboxed HTML artifact",
-    "html":"<main style='font:16px system-ui;padding:20px'><h2>Meo Artifact</h2><p>This HTML is isolated from native APIs.</p><button>Preview control</button></main>",
+    "html":"<main style='font:16px system-ui;padding:20px'><h2>Meo Artifact</h2><p>This preview is isolated from native APIs.</p><button>Preview control</button></main>",
     "sandbox":"static"
   }
 ]
