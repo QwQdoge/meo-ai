@@ -39,18 +39,13 @@ pub struct TableColumn {
     pub alignment: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HtmlSandbox {
+    #[default]
     Static,
     Scripts,
     Interactive,
-}
-
-impl Default for HtmlSandbox {
-    fn default() -> Self {
-        Self::Static
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -361,7 +356,9 @@ mod tests {
         }"#;
         let block: ContentBlock = serde_json::from_str(source).unwrap();
         match block {
-            ContentBlock::Image { resource_id, uri, .. } => {
+            ContentBlock::Image {
+                resource_id, uri, ..
+            } => {
                 assert!(resource_id.is_empty());
                 assert_eq!(uri, "https://example.invalid/image.png");
             }
