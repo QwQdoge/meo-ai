@@ -11,6 +11,9 @@
 pub mod blocks;
 pub mod stream;
 
+#[cfg(feature = "android-jni")]
+mod android;
+
 pub use blocks::{
     BlockAction, ChartKind, ChartSeries, ContentBlock, HtmlSandbox, PluginAction,
     PluginPresentation, TableColumn, ToolActivityState,
