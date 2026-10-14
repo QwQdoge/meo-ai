@@ -136,8 +136,14 @@ async fn provider_start_cannot_hang_forever() {
     let conversation = service.create_conversation("never-start-model");
     let request_id = send(&service, &conversation.conversation_id);
 
-    assert_eq!(wait_terminal(&service, &request_id).await, RequestState::Failed);
-    assert_eq!(failure_code(&service, &request_id), "provider_start_timeout");
+    assert_eq!(
+        wait_terminal(&service, &request_id).await,
+        RequestState::Failed
+    );
+    assert_eq!(
+        failure_code(&service, &request_id),
+        "provider_start_timeout"
+    );
 }
 
 #[tokio::test]
@@ -149,7 +155,10 @@ async fn silent_provider_stream_is_failed_instead_of_leaking_a_request() {
     let conversation = service.create_conversation("silent-model");
     let request_id = send(&service, &conversation.conversation_id);
 
-    assert_eq!(wait_terminal(&service, &request_id).await, RequestState::Failed);
+    assert_eq!(
+        wait_terminal(&service, &request_id).await,
+        RequestState::Failed
+    );
     assert_eq!(failure_code(&service, &request_id), "provider_idle_timeout");
 }
 
