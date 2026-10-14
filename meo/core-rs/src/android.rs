@@ -31,10 +31,7 @@ pub extern "system" fn Java_org_meo_ai_core_MeoCore_normalizeSseEvent(
 
     match result {
         Ok(json) => to_java_string(&mut env, json),
-        Err(error) => to_java_string(
-            &mut env,
-            json!({"error": error}).to_string(),
-        ),
+        Err(error) => to_java_string(&mut env, json!({"error": error}).to_string()),
     }
 }
 
@@ -52,9 +49,6 @@ pub extern "system" fn Java_org_meo_ai_core_MeoCore_normalizeBlocks(
 
     match result {
         Ok(json) => to_java_string(&mut env, json),
-        Err(error) => to_java_string(
-            &mut env,
-            json!({"error": error}).to_string(),
-        ),
+        Err(error) => to_java_string(&mut env, json!({"error": error}).to_string()),
     }
 }
