@@ -8,6 +8,7 @@ description = "Native Meo AI QML frontend backed entirely by Rust"
 [dependencies]
 meo-ai-core = { path = "../core-rs", default-features = false, features = ["client"] }
 qtbridge = { git = "https://github.com/qt/qtbridge-rust.git", rev = "ab0a90b19a243bebe1f4ac1f283f6aeab27e1c66", features = ["serde_json"] }
+futures-util = "0.3"
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
 tracing = "0.1"
