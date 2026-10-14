@@ -5,6 +5,14 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+val meoOAuthClientId = providers.gradleProperty("MEO_OAUTH_CLIENT_ID")
+    .orElse(providers.environmentVariable("MEO_OAUTH_CLIENT_ID"))
+    .orElse("")
+    .get()
+val escapedOAuthClientId = meoOAuthClientId
+    .replace("\\", "\\\\")
+    .replace("\"", "\\\"")
+
 android {
     namespace = "org.meo.ai"
     compileSdk = 36
@@ -16,10 +24,12 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
+        buildConfigField("String", "MEO_OAUTH_CLIENT_ID", "\"$escapedOAuthClientId\"")
     }
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     compileOptions {
