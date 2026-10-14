@@ -176,7 +176,7 @@ async fn request_events(
     State(state): State<Arc<HttpState>>,
     Path(request_id): Path<String>,
     Query(query): Query<EventQuery>,
-) -> Result<Sse<EventStream>, ApiError> {
+) -> Result<impl IntoResponse, ApiError> {
     // Subscribe before reading replay so an event can be duplicated but never
     // lost. The cursor below drops duplicates. Terminal events close the SSE
     // stream immediately instead of leaving an idle connection around forever.
