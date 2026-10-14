@@ -7,7 +7,7 @@ plugins {
 
 android {
     namespace = "org.meo.ai"
-    compileSdk = 37
+    compileSdk = 36
     ndkVersion = "28.2.13676358"
 
     defaultConfig {
