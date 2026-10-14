@@ -149,15 +149,9 @@ pub enum CoreEvent {
         metadata: serde_json::Value,
     },
     #[serde(rename = "request.completed")]
-    RequestCompleted {
-        seq: u64,
-        request_id: String,
-    },
+    RequestCompleted { seq: u64, request_id: String },
     #[serde(rename = "request.cancelled")]
-    RequestCancelled {
-        seq: u64,
-        request_id: String,
-    },
+    RequestCancelled { seq: u64, request_id: String },
     #[serde(rename = "request.failed")]
     RequestFailed {
         seq: u64,
