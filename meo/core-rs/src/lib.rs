@@ -41,4 +41,4 @@ pub use provider::{
     ProviderRequest, ProviderStream,
 };
 #[cfg(feature = "service")]
-pub use service::{MeoService, ServiceError};
+pub use service::{MeoService, ServiceConfig, ServiceError};
