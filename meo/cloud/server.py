@@ -12,25 +12,20 @@ from typing import Any
 from uuid import UUID
 from urllib.parse import urlencode, urlsplit
 
-from meo.cloud.account_auth import (
-    SupabaseAccountAuthConfig,
-    SupabaseAccountTokenVerifier,
-)
+from meo.cloud.account_auth import MeoAccountAuthConfig, MeoAccountTokenVerifier
 from meo.cloud.api import AgentRunApi, ApiError
 from meo.cloud.device_auth import DeviceBearerVerifier
 from meo.cloud.orchestrator import AgentRunOrchestrator
 from meo.cloud.pairing import DevicePairingService
 from meo.cloud.relay import RelayRegistry
 from meo.cloud.routing import AutomaticDeviceResolver
-from meo.cloud.store import SupabaseRestConfig, SupabaseRestStore
+from meo.cloud.postgres_store import NeonPostgresStore
 from meo.cloud.ws_server import RelayWebSocketServer
 
 
 @dataclass(frozen=True)
 class CloudServerConfig:
-    supabase_url: str
-    supabase_publishable_key: str
-    supabase_service_role_key: str
+    database_url: str
     account_url: str = "https://account.meoarch.org"
     allowed_web_origins: tuple[str, ...] = ("https://account.meoarch.org",)
     bind_host: str = "127.0.0.1"
@@ -62,9 +57,7 @@ class CloudServerConfig:
                 origins.append(_normalized_origin(value, label="MEO_ALLOWED_WEB_ORIGINS"))
 
         return cls(
-            supabase_url=required("MEO_SUPABASE_URL"),
-            supabase_publishable_key=required("MEO_SUPABASE_PUBLISHABLE_KEY"),
-            supabase_service_role_key=required("MEO_SUPABASE_SERVICE_ROLE_KEY"),
+            database_url=required("MEO_DATABASE_URL"),
             account_url=account_url.rstrip("/"),
             allowed_web_origins=tuple(dict.fromkeys(origins)),
             bind_host=os.environ.get("MEO_BIND_HOST", "127.0.0.1").strip() or "127.0.0.1",
@@ -151,18 +144,8 @@ def build_application(config: CloudServerConfig):
             "Meo AI cloud service requires: pip install -r meo/cloud/requirements.txt"
         ) from exc
 
-    store = SupabaseRestStore(
-        SupabaseRestConfig(
-            project_url=config.supabase_url,
-            service_role_key=config.supabase_service_role_key,
-        )
-    )
-    account_verifier = SupabaseAccountTokenVerifier(
-        SupabaseAccountAuthConfig(
-            project_url=config.supabase_url,
-            publishable_key=config.supabase_publishable_key,
-        )
-    )
+    store = NeonPostgresStore(config.database_url)
+    account_verifier = MeoAccountTokenVerifier(MeoAccountAuthConfig(config.account_url))
     device_verifier = DeviceBearerVerifier(store)
     pairing = DevicePairingService(store)
     pairing_limiter = _PairingStartLimiter()

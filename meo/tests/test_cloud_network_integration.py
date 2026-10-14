@@ -53,10 +53,10 @@ class CloudNetworkIntegrationTests(unittest.IsolatedAsyncioTestCase):
                                 "wss://relay.example.test"),
             secrets=None, connector=None, service=self.service,
         )
-        with patch("meo.cloud.server.SupabaseRestStore", return_value=self.store), \
-             patch("meo.cloud.server.SupabaseAccountTokenVerifier", return_value=TestAccountVerifier()), \
+        with patch("meo.cloud.server.NeonPostgresStore", return_value=self.store), \
+             patch("meo.cloud.server.MeoAccountTokenVerifier", return_value=TestAccountVerifier()), \
              patch("meo.cloud.server.DeviceBearerVerifier", return_value=TestDeviceVerifier()):
-            app = build_application(CloudServerConfig("https://example.test", "test", "test"))
+            app = build_application(CloudServerConfig("postgresql://user:pass@db.example.test/neondb"))
         self.runner = web.AppRunner(app)
         await self.runner.setup()
         site = web.TCPSite(self.runner, "127.0.0.1", 0)

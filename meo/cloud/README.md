@@ -16,7 +16,7 @@ The minimum server-side objects are:
 - `project_locations`: optional project-to-device/opaque-workspace hints;
 - `memory_items`: later, only after a stable memory contract exists.
 
-Account identity is taken from a Meo Account access token verified against Supabase Auth. Provider calls should use the Account provider broker rather than storing a second copy of API keys.
+Account identity is taken from a Meo Account OAuth access token verified by the Meo Account userinfo endpoint. Cloud state is stored in PostgreSQL through the Neon adapter. Provider calls should use the Account provider broker rather than storing a second copy of API keys.
 
 ## Cloud service
 
@@ -29,9 +29,7 @@ python3 -m pip install -r meo/cloud/requirements.txt
 Required server-only environment variables:
 
 ```text
-MEO_SUPABASE_URL
-MEO_SUPABASE_PUBLISHABLE_KEY
-MEO_SUPABASE_SERVICE_ROLE_KEY
+MEO_DATABASE_URL
 ```
 
 Optional deployment configuration:
@@ -43,7 +41,7 @@ MEO_BIND_HOST=127.0.0.1
 PORT=8080
 ```
 
-`MEO_ALLOWED_WEB_ORIGINS` is a comma-separated exact allowlist. The origin of `MEO_ACCOUNT_URL` is always included automatically. Public HTTP origins, credentials in origins, paths, query strings and fragments are rejected. Loopback HTTP is accepted only for local development.
+`MEO_DATABASE_URL` is a server-only Neon PostgreSQL URL. Keep it in the deployment secret store and use TLS. `MEO_ALLOWED_WEB_ORIGINS` is a comma-separated exact allowlist. The origin of `MEO_ACCOUNT_URL` is always included automatically. Public HTTP origins, credentials in origins, paths, query strings and fragments are rejected. Loopback HTTP is accepted only for local development.
 
 Run behind an HTTPS reverse proxy:
 

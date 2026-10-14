@@ -35,9 +35,7 @@ class CloudOriginTests(unittest.TestCase):
 
     def test_config_always_includes_account_origin_and_deduplicates(self) -> None:
         env = {
-            "MEO_SUPABASE_URL": "https://example.supabase.co",
-            "MEO_SUPABASE_PUBLISHABLE_KEY": "publishable",
-            "MEO_SUPABASE_SERVICE_ROLE_KEY": "service-role",
+            "MEO_DATABASE_URL": "postgresql://user:pass@db.example.test/neondb",
             "MEO_ACCOUNT_URL": "https://account.meoarch.org",
             "MEO_ALLOWED_WEB_ORIGINS": "https://chat.meoarch.org,https://account.meoarch.org",
         }

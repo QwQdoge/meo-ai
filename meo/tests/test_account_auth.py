@@ -5,8 +5,8 @@ import json
 import unittest
 
 from meo.cloud.account_auth import (
-    SupabaseAccountAuthConfig,
-    SupabaseAccountTokenVerifier,
+    MeoAccountAuthConfig,
+    MeoAccountTokenVerifier,
 )
 
 
@@ -18,19 +18,16 @@ def jwt_with_session(session_id: str) -> str:
 
 
 class AccountAuthTests(unittest.IsolatedAsyncioTestCase):
-    async def test_verified_account_subject_comes_from_auth_service(self) -> None:
+    async def test_verified_account_subject_comes_from_meo_account(self) -> None:
         seen: list[str] = []
 
         async def request_user(token: str):
             seen.append(token)
-            return {"id": "user-1", "email": "user@example.test"}
+            return {"sub": "user-1", "email": "user@example.test"}
 
         token = jwt_with_session("session-1")
-        verifier = SupabaseAccountTokenVerifier(
-            SupabaseAccountAuthConfig(
-                project_url="https://example.supabase.co",
-                publishable_key="sb_publishable_test",
-            ),
+        verifier = MeoAccountTokenVerifier(
+            MeoAccountAuthConfig(account_url="https://account.example.test"),
             request_user=request_user,
         )
         identity = await verifier.verify(token)
@@ -40,22 +37,16 @@ class AccountAuthTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(identity.session_id, "session-1")
 
     async def test_non_jwt_token_can_still_authenticate_without_session_binding(self) -> None:
-        verifier = SupabaseAccountTokenVerifier(
-            SupabaseAccountAuthConfig(
-                project_url="https://example.supabase.co",
-                publishable_key="sb_publishable_test",
-            ),
+        verifier = MeoAccountTokenVerifier(
+            MeoAccountAuthConfig(account_url="https://account.example.test"),
             request_user=lambda _token: {"id": "user-1"},
         )
         identity = await verifier.verify("opaque-access-token")
         self.assertIsNone(identity.session_id)
 
     async def test_missing_subject_is_rejected(self) -> None:
-        verifier = SupabaseAccountTokenVerifier(
-            SupabaseAccountAuthConfig(
-                project_url="https://example.supabase.co",
-                publishable_key="sb_publishable_test",
-            ),
+        verifier = MeoAccountTokenVerifier(
+            MeoAccountAuthConfig(account_url="https://account.example.test"),
             request_user=lambda _token: {},
         )
         with self.assertRaises(PermissionError):
@@ -69,11 +60,8 @@ class AccountAuthTests(unittest.IsolatedAsyncioTestCase):
             calls += 1
             return {"id": "user-1"}
 
-        verifier = SupabaseAccountTokenVerifier(
-            SupabaseAccountAuthConfig(
-                project_url="https://example.supabase.co",
-                publishable_key="sb_publishable_test",
-            ),
+        verifier = MeoAccountTokenVerifier(
+            MeoAccountAuthConfig(account_url="https://account.example.test"),
             request_user=request_user,
         )
         with self.assertRaises(PermissionError):

@@ -56,13 +56,11 @@ class ConversationRouteTests(unittest.IsolatedAsyncioTestCase):
             "updated_at": "2026-10-11T08:00:00+00:00",
         } for index in range(51))
         config = CloudServerConfig(
-            supabase_url="https://example.supabase.co",
-            supabase_publishable_key="publishable",
-            supabase_service_role_key="service-role",
+            database_url="postgresql://user:pass@db.example.test/neondb",
         )
         with (
-            patch("meo.cloud.server.SupabaseRestStore", return_value=store),
-            patch("meo.cloud.server.SupabaseAccountTokenVerifier", return_value=AccountVerifier()),
+            patch("meo.cloud.server.NeonPostgresStore", return_value=store),
+            patch("meo.cloud.server.MeoAccountTokenVerifier", return_value=AccountVerifier()),
         ):
             async with TestClient(TestServer(build_application(config))) as client:
                 response = await client.get(
@@ -86,13 +84,11 @@ class ConversationRouteTests(unittest.IsolatedAsyncioTestCase):
 
         store = ConversationStore()
         config = CloudServerConfig(
-            supabase_url="https://example.supabase.co",
-            supabase_publishable_key="publishable",
-            supabase_service_role_key="service-role",
+            database_url="postgresql://user:pass@db.example.test/neondb",
         )
         with (
-            patch("meo.cloud.server.SupabaseRestStore", return_value=store),
-            patch("meo.cloud.server.SupabaseAccountTokenVerifier", return_value=AccountVerifier()),
+            patch("meo.cloud.server.NeonPostgresStore", return_value=store),
+            patch("meo.cloud.server.MeoAccountTokenVerifier", return_value=AccountVerifier()),
         ):
             async with TestClient(TestServer(build_application(config))) as client:
                 unauthenticated = await client.get("/v1/conversations")

@@ -17,28 +17,26 @@ class AccountIdentity:
 
 
 @dataclass(frozen=True)
-class SupabaseAccountAuthConfig:
-    project_url: str
-    publishable_key: str
+class MeoAccountAuthConfig:
+    account_url: str
 
     def validate(self) -> None:
-        if not self.project_url.startswith("https://"):
-            raise ValueError("Supabase project URL must use https://")
-        if not self.publishable_key.strip():
-            raise ValueError("Supabase publishable key is required")
+        if not self.account_url.startswith("https://"):
+            raise ValueError("Meo Account URL must use https://")
+        if self.account_url.rstrip("/") != self.account_url:
+            raise ValueError("Meo Account URL must not end with a slash")
 
 
-class SupabaseAccountTokenVerifier:
-    """Verify a Meo Account access token without trusting browser-supplied IDs.
+class MeoAccountTokenVerifier:
+    """Verify a Meo Account OAuth access token through its userinfo endpoint.
 
-    The user identity comes from Supabase Auth. ``session_id`` is decoded only
-    from that same verified token and is used to bind sensitive server-side
-    re-auth checks to the browser session that proved the user's identity.
+    The user identity comes from the Meo Account OAuth resource server.
+    Browser-supplied IDs are never accepted as identity.
     """
 
     def __init__(
         self,
-        config: SupabaseAccountAuthConfig,
+        config: MeoAccountAuthConfig,
         *,
         request_user: Callable[[str], Any] | None = None,
     ) -> None:
@@ -58,7 +56,7 @@ class SupabaseAccountTokenVerifier:
             result = await asyncio.to_thread(self._request_user_sync, token)
         if not isinstance(result, dict):
             raise PermissionError("invalid account identity response")
-        user_id = result.get("id")
+        user_id = result.get("sub", result.get("id"))
         if not isinstance(user_id, str) or not user_id.strip():
             raise PermissionError("account token has no valid subject")
         email = result.get("email")
@@ -87,11 +85,11 @@ class SupabaseAccountTokenVerifier:
 
     def _request_user_sync(self, token: str) -> dict:
         request = Request(
-            self.config.project_url.rstrip("/") + "/auth/v1/user",
+            self.config.account_url.rstrip("/") + "/v1/auth/oauth2/userinfo",
             method="GET",
             headers={
                 "Authorization": f"Bearer {token}",
-                "apikey": self.config.publishable_key,
+                "Accept": "application/json",
             },
         )
         try:
@@ -100,11 +98,11 @@ class SupabaseAccountTokenVerifier:
         except HTTPError as exc:
             if exc.code in {401, 403}:
                 raise PermissionError("invalid or expired account token") from exc
-            raise RuntimeError(f"Supabase Auth request failed with HTTP {exc.code}") from exc
+            raise RuntimeError(f"Meo Account userinfo request failed with HTTP {exc.code}") from exc
         try:
             value = json.loads(raw.decode("utf-8"))
         except Exception as exc:
-            raise RuntimeError("Supabase Auth returned invalid JSON") from exc
+            raise RuntimeError("Meo Account returned invalid userinfo JSON") from exc
         if not isinstance(value, dict):
-            raise RuntimeError("Supabase Auth returned invalid user data")
+            raise RuntimeError("Meo Account returned invalid userinfo data")
         return value

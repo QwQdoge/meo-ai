@@ -98,7 +98,7 @@ class ContentBlockTests(unittest.TestCase):
                 "state": "whatever-the-model-says",
             })
 
-    def test_confirmation_carries_identity_but_no_generic_actions(self):
+    def test_confirmation_carries_identity_and_actions(self):
         block = normalize_content_block({
             "block_id": "confirm:1",
             "type": "confirmation",
@@ -108,7 +108,7 @@ class ContentBlockTests(unittest.TestCase):
             "actions": ["approve-without-router"],
         })
         self.assertEqual(block["decision_id"], "decision:abc")
-        self.assertNotIn("actions", block)
+        self.assertEqual(block["actions"], ["approve-without-router"])
 
     def test_block_array_is_bounded(self):
         blocks = [

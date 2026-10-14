@@ -13,7 +13,7 @@ and neither appears in URLs, local storage or Mongo configuration.
 ## Account broker calls
 
 The LibreChat API adapter forwards the authenticated server-side OIDC access
-token to `POST {MEO_ACCOUNT_URL}/functions/v1/ai-provider-broker` with
+token to `POST {MEO_API_URL}/v1/ai/provider-broker` with
 `redirect: error` and `Cache-Control: no-store` handling.
 
 - `list_credentials` returns enabled connection metadata.
@@ -25,6 +25,11 @@ token to `POST {MEO_ACCOUNT_URL}/functions/v1/ai-provider-broker` with
   through Account; the broker normalizes text deltas and aborts its provider
   fetch when the downstream request is cancelled. Provider keys remain inside
   the broker. Buffered `invoke` remains available to other Account clients.
+
+This is the target Meo API contract. The `/v1/ai/provider-broker` handler is not
+implemented in `meo-api` yet, so this path must not be treated as production
+ready until the Account-owned credential/consent logic is exposed behind it
+and its authorization and streaming tests pass.
 
 Chat purpose is `meo_ai_web_chat`. Categories are `chat_text` and, when history
 is attached, `conversation_context`. The Account broker validates the complete
