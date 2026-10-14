@@ -1,11 +1,13 @@
 #![cfg(feature = "service")]
 
 use std::convert::Infallible;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
+use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
@@ -30,12 +32,17 @@ struct EventQuery {
     after: u64,
 }
 
+type EventStream = Pin<Box<dyn Stream<Item = Result<Event, Infallible>> + Send>>;
+
 pub fn router(service: MeoService) -> Router {
     Router::new()
         .route("/v1/agent-state", get(agent_state))
         .route("/v1/conversations", get(list_conversations).post(create_conversation))
         .route("/v1/conversations/{conversation_id}", get(get_conversation))
-        .route("/v1/conversations/{conversation_id}/messages", get(list_messages).post(send_message))
+        .route(
+            "/v1/conversations/{conversation_id}/messages",
+            get(list_messages).post(send_message),
+        )
         .route("/v1/conversations/{conversation_id}/model", post(set_model))
         .route("/v1/requests/{request_id}", get(get_request))
         .route("/v1/requests/{request_id}/events", get(request_events))
@@ -58,18 +65,24 @@ async fn list_conversations(State(state): State<Arc<HttpState>>) -> Json<Value> 
 
 async fn create_conversation(
     State(state): State<Arc<HttpState>>,
-    body: Option<Json<Value>>,
-) -> Json<Value> {
-    let model_id = body
-        .as_ref()
-        .and_then(|Json(value)| value.get("model_id"))
-        .and_then(Value::as_str)
-        .unwrap_or_default();
+    body: Bytes,
+) -> Result<Json<Value>, ApiError> {
+    let model_id = if body.is_empty() {
+        String::new()
+    } else {
+        let value: Value = serde_json::from_slice(&body)
+            .map_err(|_| ApiError::bad_request("invalid JSON body"))?;
+        value
+            .get("model_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned()
+    };
     let conversation = state.service.create_conversation(model_id);
-    Json(json!({
+    Ok(Json(json!({
         "conversation_id": conversation.conversation_id,
         "conversation": conversation,
-    }))
+    })))
 }
 
 async fn get_conversation(
@@ -101,9 +114,20 @@ async fn send_message(
 ) -> Result<impl IntoResponse, ApiError> {
     let request_id = state.service.send_message(&conversation_id, input)?;
     let location = format!("/v1/requests/{request_id}/events");
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        "x-meo-request-id",
+        HeaderValue::from_str(&request_id)
+            .map_err(|_| ApiError::internal("invalid request identifier"))?,
+    );
+    headers.insert(
+        header::LOCATION,
+        HeaderValue::from_str(&location)
+            .map_err(|_| ApiError::internal("invalid event location"))?,
+    );
     Ok((
         StatusCode::ACCEPTED,
-        [("x-meo-request-id", request_id.as_str()), ("location", location.as_str())],
+        headers,
         Json(json!({"request_id": request_id, "events": location})),
     ))
 }
@@ -144,23 +168,53 @@ async fn request_events(
     State(state): State<Arc<HttpState>>,
     Path(request_id): Path<String>,
     Query(query): Query<EventQuery>,
-) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ApiError> {
-    let replay = state.service.request_events_after(&request_id, query.after)?;
+) -> Result<Sse<EventStream>, ApiError> {
+    // Subscribe before taking the replay snapshot so an event can be duplicated
+    // but never lost. The live cursor filter removes any duplicate sequence.
     let receiver = state.service.subscribe(&request_id)?;
-
+    let replay = state.service.request_events_after(&request_id, query.after)?;
+    let replay_cursor = replay.last().map(CoreEvent::seq).unwrap_or(query.after);
+    let replay_terminal = replay.last().map(is_terminal_event).unwrap_or(false);
     let historical = stream::iter(replay.into_iter().map(to_sse_event));
-    let live = BroadcastStream::new(receiver).filter_map(|result| async move {
-        match result {
-            Ok(event) => Some(to_sse_event(event)),
-            Err(_) => None,
-        }
-    });
 
-    Ok(Sse::new(historical.chain(live)).keep_alive(
+    let stream: EventStream = if replay_terminal {
+        Box::pin(historical)
+    } else {
+        let live = BroadcastStream::new(receiver)
+            .filter_map(move |result| {
+                let cursor = replay_cursor;
+                async move {
+                    match result {
+                        Ok(event) if event.seq() > cursor => Some(event),
+                        _ => None,
+                    }
+                }
+            })
+            .scan(false, |finished, event| {
+                let terminal = is_terminal_event(&event);
+                let emit = !*finished;
+                if terminal {
+                    *finished = true;
+                }
+                async move { emit.then(|| to_sse_event(event)) }
+            });
+        Box::pin(historical.chain(live))
+    };
+
+    Ok(Sse::new(stream).keep_alive(
         KeepAlive::new()
             .interval(Duration::from_secs(15))
             .text("keep-alive"),
     ))
+}
+
+fn is_terminal_event(event: &CoreEvent) -> bool {
+    matches!(
+        event,
+        CoreEvent::RequestCompleted { .. }
+            | CoreEvent::RequestCancelled { .. }
+            | CoreEvent::RequestFailed { .. }
+    )
 }
 
 fn to_sse_event(event: CoreEvent) -> Result<Event, Infallible> {
@@ -185,11 +239,19 @@ impl ApiError {
             message: message.into(),
         }
     }
+
+    fn internal(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "internal_error",
+            message: message.into(),
+        }
+    }
 }
 
 impl From<ServiceError> for ApiError {
     fn from(error: ServiceError) -> Self {
-        let (status, code) = match error {
+        let (status, code) = match &error {
             ServiceError::UnknownConversation | ServiceError::UnknownRequest => {
                 (StatusCode::NOT_FOUND, "not_found")
             }
