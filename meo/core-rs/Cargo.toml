@@ -3,20 +3,45 @@ name = "meo-ai-core"
 version = "0.1.0"
 edition = "2021"
 license = "GPL-3.0-or-later"
-description = "Shared Meo AI client protocol, rich-content and streaming primitives"
+description = "Authoritative Rust core for Meo AI clients, providers, conversations, tools and streaming"
 
 [lib]
 crate-type = ["rlib", "staticlib", "cdylib"]
 
 [features]
-default = []
-android-jni = ["dep:jni"]
+default = ["client"]
+client = ["dep:reqwest", "dep:futures-util", "dep:tokio", "dep:url"]
+service = [
+    "client",
+    "dep:async-trait",
+    "dep:axum",
+    "dep:bytes",
+    "dep:dashmap",
+    "dep:tokio-stream",
+    "dep:tower-http",
+    "dep:uuid",
+]
+android-jni = ["client", "dep:jni"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
+tracing = "0.1"
+
+async-trait = { version = "0.1", optional = true }
+axum = { version = "0.8", features = ["json", "http1", "tokio"], optional = true }
+bytes = { version = "1", optional = true }
+dashmap = { version = "6", optional = true }
+futures-util = { version = "0.3", optional = true }
 jni = { version = "0.21", optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"], optional = true }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"], optional = true }
+tokio-stream = { version = "0.1", features = ["sync"], optional = true }
+tower-http = { version = "0.6", features = ["cors", "trace"], optional = true }
+url = { version = "2", optional = true }
+uuid = { version = "1", features = ["v4", "serde"], optional = true }
 
 [dev-dependencies]
 pretty_assertions = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
