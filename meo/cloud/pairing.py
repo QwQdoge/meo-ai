@@ -46,7 +46,18 @@ class PairingPoll:
 
 
 class DevicePairingService:
-    """Short-lived device pairing with browser approval and one-time token delivery."""
+    """Short-lived device pairing with browser approval and one-time token delivery.
+
+    Contract ownership: Meo API (`meo-api/src/device-routes.ts`) is now the public
+    HTTP contract for device pairing, ported from this service. This module stays
+    the reference implementation and keeps the semantics the port must preserve
+    (ownerless `pending` rows, hashed single-use secrets, reauth-gated approval,
+    and row-locked single consumption). Do not change a rule here without
+    mirroring it there, and do not add public routes here that Meo API already
+    exposes -- see `docs/ownership.md` and the Batch 7 entry in the Meo API
+    capability plan.
+    """
+
 
     def __init__(
         self,
