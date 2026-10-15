@@ -41,6 +41,7 @@ The first-run UX is one command followed by one browser approval:
 
 ```bash
 python3 -m meo.device.pairing_client \
+  --api-url https://api.meoarch.org \
   --cloud-url https://ai.meoarch.org \
   --device-id legion-y9000x \
   --display-name "Legion Y9000X"
@@ -116,3 +117,7 @@ From a browser on another network:
 5. cancel stops future local agent work;
 6. an approval request can be approved/denied remotely using the exact decision ID;
 7. reconnect resumes event delivery without submitting the request again.
+
+Enrollment start/poll use Meo API `/v1/ai/device-enrollments/*`. The cloud URL
+selects the WSS relay only; it does not select an alternative authentication or
+pairing authority. Meo API returns the fixed Account verification URL.

@@ -140,7 +140,7 @@ Expected response:
 
 ## 7. Deploy the Account connect-device page
 
-The account repository already points to `https://ai.meoarch.org` by default. Run its verification workflow first, then the protected production deployment:
+The Account connect-device page approves through `https://api.meoarch.org/v1/ai/device-enrollments/*`. The relay remains at `wss://ai.meoarch.org/v1/device-relay`. Run its verification workflow first, then the protected production deployment:
 
 ```bash
 gh workflow run verify.yml -R QwQdoge/MeoArch-account
@@ -157,7 +157,7 @@ gh workflow run deploy.yml \
 gh run watch -R QwQdoge/MeoArch-account
 ```
 
-That production workflow runs Flutter analyze/tests and Edge Function checks before deploying to Cloudflare Pages.
+That production workflow runs Flutter analyze/tests and rejects retired Supabase clients before deploying to Cloudflare Pages.
 
 ## 8. Connect the Legion
 
@@ -207,3 +207,7 @@ The DNS record may remain; while the tunnel is offline Cloudflare will not reach
 ## Later migration to a VPS or managed container host
 
 The application itself does not depend on Cloudflare Tunnel. Move the same `meo/cloud/Dockerfile` to a managed host, inject the same environment variables, terminate HTTPS there, and point `ai.meoarch.org` at the new service. Device and browser protocols do not change.
+
+The active Chat frontend is Cloudflare Pages at `chat.meoarch.org`; do not route
+that hostname to the retired LibreChat preview bridge. Runtime device launchers
+must reference an installed interpreter, never a temporary build virtualenv.

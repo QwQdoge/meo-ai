@@ -23,6 +23,7 @@ from meo.device.secrets import KWalletDeviceSecretProvider
 
 
 DEFAULT_CLOUD_URL = "https://ai.meoarch.org"
+DEFAULT_API_URL = "https://api.meoarch.org"
 
 
 @dataclass(frozen=True)
@@ -31,6 +32,7 @@ class PairingClientConfig:
     device_id: str
     display_name: str
     capabilities: tuple[str, ...] = ("agent.chat",)
+    api_url: str = DEFAULT_API_URL
 
     def validate(self) -> None:
         parsed = urlparse(self.cloud_url)
@@ -40,6 +42,12 @@ class PairingClientConfig:
                 and parsed.hostname in {"127.0.0.1", "localhost", "::1"}
             ):
                 raise ValueError("cloud_url must use https:// (http is allowed only for loopback development)")
+        api = urlparse(self.api_url)
+        if api.scheme != "https" and not (api.scheme == "http" and api.hostname in {"127.0.0.1", "localhost", "::1"}):
+            raise ValueError("api_url must use https://")
+        for endpoint in (parsed, api):
+            if not endpoint.hostname or endpoint.username or endpoint.password or endpoint.path not in {"", "/"} or endpoint.query or endpoint.fragment:
+                raise ValueError("service URLs must be origins without credentials")
         if not self.device_id.strip() or not self.display_name.strip():
             raise ValueError("device identity is required")
         if not self.capabilities:
@@ -50,12 +58,12 @@ class PairingClient:
     def __init__(self, config: PairingClientConfig) -> None:
         config.validate()
         self.config = config
-        self.base_url = config.cloud_url.rstrip("/")
+        self.base_url = config.api_url.rstrip("/")
 
     async def enroll(self) -> str:
         started = await asyncio.to_thread(
             self._post,
-            "/v1/device-enrollments/start",
+            "/v1/ai/device-enrollments/start",
             {
                 "device_id": self.config.device_id,
                 "display_name": self.config.display_name,
@@ -80,7 +88,7 @@ class PairingClient:
         while time.monotonic() < deadline:
             result = await asyncio.to_thread(
                 self._post,
-                "/v1/device-enrollments/poll",
+                "/v1/ai/device-enrollments/poll",
                 {"pairing_secret": secret},
             )
             state = result.get("state")
@@ -113,12 +121,7 @@ class PairingClient:
             with urlopen(request, timeout=15) as response:
                 raw = response.read()
         except HTTPError as exc:
-            try:
-                error = json.loads(exc.read().decode("utf-8"))
-                message = error.get("error", {}).get("message")
-            except Exception:
-                message = None
-            raise RuntimeError(message or f"Meo Cloud returned HTTP {exc.code}") from exc
+            raise RuntimeError(f"Meo API returned HTTP {exc.code}") from exc
         except URLError as exc:
             raise RuntimeError("could not reach Meo Cloud") from exc
         try:
@@ -177,6 +180,7 @@ async def _main_async(args) -> None:
     capabilities = tuple(args.capability or ("agent.chat",))
     config = PairingClientConfig(
         cloud_url=args.cloud_url,
+        api_url=args.api_url,
         device_id=device_id,
         display_name=display_name,
         capabilities=capabilities,
@@ -202,6 +206,7 @@ async def _main_async(args) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Connect this computer to Meo AI")
+    parser.add_argument("--api-url", default=os.environ.get("MEO_API_URL", DEFAULT_API_URL), help="Meo API enrollment origin")
     parser.add_argument(
         "--cloud-url",
         default=os.environ.get("MEO_AI_CLOUD_URL", DEFAULT_CLOUD_URL),
