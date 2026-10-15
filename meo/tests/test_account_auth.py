@@ -12,7 +12,7 @@ from meo.cloud.account_auth import (
 
 def jwt_with_session(session_id: str) -> str:
     payload = base64.urlsafe_b64encode(
-        json.dumps({"session_id": session_id}).encode("utf-8")
+        json.dumps({"sid": session_id}).encode("utf-8")
     ).decode("ascii").rstrip("=")
     return f"header.{payload}.signature"
 

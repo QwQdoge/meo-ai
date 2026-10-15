@@ -10,7 +10,10 @@
   "scopes": [
     "openid",
     "profile",
-    "email"
+    "email",
+    "offline_access",
+    "meo:read",
+    "meo:write"
   ],
   "capabilities": [
     "ai_usage_sync",

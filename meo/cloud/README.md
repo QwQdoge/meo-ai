@@ -1,6 +1,6 @@
 # Meo AI cloud
 
-`meo/cloud/` owns AI-specific cloud state, remote AgentRun orchestration and the device relay. It does not own Meo Account authentication or raw provider credentials.
+`meo/cloud/` retains compatibility contracts for AI cloud state and the device relay while orchestration moves to the Rust core. Production versioned APIs and Neon migrations live in `meo-api`. It does not own Meo Account authentication or raw provider credentials.
 
 ## Initial data model
 
@@ -128,3 +128,16 @@ A useful first end-to-end acceptance is:
 7. stream text/tool events through the existing SSE endpoint;
 8. require an explicit decision only when the local agent requests a sensitive action;
 9. cancel and reconnect without duplicate execution.
+
+## Account cutover
+
+Supabase REST/Edge implementations and their deployment SQL have been retired
+from active source. History remains in Git and the project archive. The Neon
+adapter uses certificate-verified TLS and the restricted `meo_ai_limited` role.
+Account grants live in a separate Account database: the AI adapter deliberately
+fails closed when asked to verify a grant. Complete browser pairing through
+Meo API `/v1/ai/device-enrollments/:user_code/approve`; do not provision an Account
+DB credential or a replica grant table in this compatibility service.
+
+OAuth tokens use the Better Auth `sid` claim. Legacy credentials and provider
+keys are not copied automatically; authorize devices and connections again.

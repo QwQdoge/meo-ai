@@ -80,7 +80,7 @@ class MeoAccountTokenVerifier:
             return None
         if not isinstance(claims, dict):
             return None
-        session_id = claims.get("session_id")
+        session_id = claims.get("sid")
         return session_id.strip() if isinstance(session_id, str) and session_id.strip() else None
 
     def _request_user_sync(self, token: str) -> dict:

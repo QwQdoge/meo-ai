@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import ssl
 from datetime import datetime, timezone
 from typing import Any
 
@@ -31,7 +32,8 @@ class NeonPostgresStore:
 
             self._pool = await asyncpg.create_pool(
                 dsn=self._database_url,
-                ssl="require",
+                ssl=ssl.create_default_context(),
+                server_settings={"role": "meo_ai_limited"},
                 min_size=1,
                 max_size=10,
                 command_timeout=15,
@@ -275,11 +277,10 @@ class NeonPostgresStore:
     async def has_recent_reauth(self, *, user_id: str, session_id: str, purpose: str) -> bool:
         if purpose not in {"account_security","admin"}:
             raise ValueError("unsupported reauth purpose")
-        pool = await self._get_pool()
-        return bool(await pool.fetchval(
-            """select exists(select 1 from reauth_grants where user_id=$1::uuid and session_id=$2::uuid
-               and purpose=$3 and expires_at>now())""",user_id,session_id,purpose,
-        ))
+        # Account owns grants in its separate database. The compatibility AI
+        # service must never consult a lookalike grant table or accept a client flag.
+        # Browser approval is performed through Meo API's Account-backed endpoint.
+        return False
 
     async def close(self) -> None:
         if self._pool is not None:

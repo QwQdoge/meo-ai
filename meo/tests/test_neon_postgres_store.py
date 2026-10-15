@@ -78,6 +78,31 @@ class NeonPostgresStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("on conflict(run_id,seq) do nothing", query)
         self.assertEqual(args[:4], ("account-a", "run-id", 3, "message"))
 
+    async def test_account_grants_are_never_read_from_the_ai_database(self):
+        pool = FakePool(value=True)
+        store = NeonPostgresStore("postgresql://local/test", pool=pool)
+        self.assertFalse(await store.has_recent_reauth(user_id="account-a", session_id="session-a", purpose="account_security"))
+        self.assertEqual(pool.calls, [])
+
+    async def test_message_replay_is_owned_ordered_and_bounded(self):
+        pool = FakePool()
+        store = NeonPostgresStore("postgresql://local/test", pool=pool)
+        await store.list_conversation_messages(user_id="account-a", conversation_id="conversation-a", limit=25)
+        _, query, args = pool.calls[0]
+        self.assertIn("c.user_id=$1::uuid and m.user_id=$1::uuid", query)
+        self.assertIn("order by m.created_at asc,m.id asc limit $3", query)
+        self.assertEqual(args, ("account-a", "conversation-a", 25))
+
+    async def test_conversation_cursor_stays_scoped_to_the_owner(self):
+        pool = FakePool()
+        store = NeonPostgresStore("postgresql://local/test", pool=pool)
+        await store.list_conversations(user_id="account-a", limit=25, before=("2026-10-15T00:00:00Z", "conversation-a"))
+        _, query, args = pool.calls[0]
+        self.assertIn("user_id = $1::uuid", query)
+        self.assertIn("(updated_at, id) <", query)
+        self.assertEqual(args[0], "account-a")
+        self.assertEqual(args[-1], 25)
+
 
 if __name__ == "__main__":
     unittest.main()
