@@ -19,6 +19,7 @@ set(BUILD_TESTING ${BUILD_TESTING_SAVED})
 
 set(MEO_AGENT_CLIENT_SOURCES
     app/agentclient.cpp
+    app/agentclient_conversations.cpp
     app/agentclient_resources.cpp
     app/agentclient_settings.cpp
     app/agentclient.h
@@ -41,6 +42,7 @@ set(MEO_APP_QML
     app/qml/ResponseContent.qml
     app/qml/ResponseExecutionSummary.qml
     app/qml/DetailsPane.qml
+    app/qml/ConversationHistory.qml
     app/qml/ActivityDashboard.qml
     app/qml/PresentationCard.qml
     app/qml/NavigationButton.qml
@@ -97,6 +99,11 @@ if(BUILD_TESTING)
     target_include_directories(meo-ai-history-restore-test PRIVATE app)
     target_link_libraries(meo-ai-history-restore-test PRIVATE Qt6::Gui Qt6::Network Qt6::Test)
     add_test(NAME meo-ai.history-restore COMMAND meo-ai-history-restore-test)
+
+    qt_add_executable(meo-ai-conversation-catalog-test tests/conversation-catalog-test.cpp ${MEO_AGENT_CLIENT_SOURCES})
+    target_include_directories(meo-ai-conversation-catalog-test PRIVATE app)
+    target_link_libraries(meo-ai-conversation-catalog-test PRIVATE Qt6::Gui Qt6::Network Qt6::Test)
+    add_test(NAME meo-ai.conversation-catalog COMMAND meo-ai-conversation-catalog-test)
 
     qt_add_executable(meo-ai-stale-conversation-recovery-test tests/stale-conversation-recovery-test.cpp ${MEO_AGENT_CLIENT_SOURCES})
     target_include_directories(meo-ai-stale-conversation-recovery-test PRIVATE app)

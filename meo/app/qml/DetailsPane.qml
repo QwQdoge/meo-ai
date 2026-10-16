@@ -52,7 +52,7 @@ Rectangle {
             Layout.leftMargin: 8 * root.uiScale
             MeoText {
                 Layout.fillWidth: true
-                text: [qsTr("Response details"), qsTr("Memory"), qsTr("Resources"), qsTr("AI settings"), qsTr("AI activity")][root.tab]
+                text: [qsTr("Response details"), qsTr("Memory"), qsTr("Resources"), qsTr("AI settings"), qsTr("AI activity"), qsTr("Conversations")][root.tab]
                 typeRole: "title"
                 typeSize: "small"
                 color: MeoTheme.contentOnSurface
@@ -71,7 +71,7 @@ Rectangle {
             Layout.fillWidth: true
             spacing: 4 * root.uiScale
             Repeater {
-                model: [qsTr("Response"), qsTr("Memory"), qsTr("Files"), qsTr("Settings"), qsTr("Activity")]
+                model: [qsTr("Response"), qsTr("Memory"), qsTr("Files"), qsTr("Settings"), qsTr("Activity"), qsTr("Chats")]
                 delegate: MeoButton {
                     required property string modelData
                     required property int index
@@ -119,6 +119,12 @@ Rectangle {
             Layout.fillWidth: true
             Layout.fillHeight: true
             visible: root.tab === 4
+        }
+
+        ConversationHistory {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            visible: root.tab === 5
         }
 
         ScrollView {
@@ -236,6 +242,7 @@ Rectangle {
             MeoText {
                 Layout.fillWidth: true
                 text: root.tab === 4 ? (typeof usage !== "undefined" && usage.status ? usage.status : qsTr("AI activity ready"))
+                                     : root.tab === 5 ? qsTr("%1 saved chats").arg(agent.conversations.length)
                                      : (root.ready ? qsTr("Local service connected") : qsTr("Local service not connected"))
                 typeRole: "label"; typeSize: "small"
                 color: MeoTheme.contentOnSurfaceVariant

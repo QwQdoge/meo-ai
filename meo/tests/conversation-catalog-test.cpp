@@ -1,0 +1,108 @@
+#include "agentclient.h"
+
+#include <QSettings>
+#include <QSignalSpy>
+#include <QTcpServer>
+#include <QTcpSocket>
+#include <QTest>
+
+class ConversationCatalogTest : public QObject {
+    Q_OBJECT
+private:
+    static QByteArray readRequest(QTcpSocket *socket) {
+        QByteArray request;
+        for (int i = 0; i < 100 && !request.contains("\r\n\r\n"); ++i) {
+            if (!socket->bytesAvailable()) socket->waitForReadyRead(30);
+            request += socket->readAll();
+        }
+        return request;
+    }
+
+    static void replyJson(QTcpSocket *socket, int status, const QByteArray &reason, const QByteArray &body) {
+        socket->write("HTTP/1.1 " + QByteArray::number(status) + " " + reason
+                      + "\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: "
+                      + QByteArray::number(body.size()) + "\r\n\r\n" + body);
+        socket->flush();
+        socket->disconnectFromHost();
+    }
+
+private slots:
+    void initTestCase() {
+        QCoreApplication::setOrganizationName("MeoArchConversationCatalogTest");
+        QCoreApplication::setApplicationName("MeoAIConversationCatalogTest");
+    }
+
+    void cleanup() {
+        QSettings().clear();
+        qunsetenv("MEO_AI_SERVICE_ENDPOINT");
+        qunsetenv("MEO_AI_ENDPOINT");
+    }
+
+    void listsSafeMetadataAndRestoresSelectedConversation() {
+        QSettings().clear();
+        QTcpServer server;
+        QVERIFY(server.listen(QHostAddress::LocalHost));
+        qputenv("MEO_AI_SERVICE_ENDPOINT",
+                QString("http://127.0.0.1:%1").arg(server.serverPort()).toUtf8());
+
+        AgentClient client;
+        client.refreshConversations();
+
+        QTRY_VERIFY(server.hasPendingConnections());
+        auto catalogSocket = server.nextPendingConnection();
+        const QByteArray catalogRequest = readRequest(catalogSocket);
+        QVERIFY(catalogRequest.contains("GET /v1/conversations "));
+        replyJson(catalogSocket, 200, "OK",
+                  "{\"conversations\":[{"
+                  "\"id\":\"meo:first\","
+                  "\"legacy_chat_id\":41,"
+                  "\"title\":\"Project Review\","
+                  "\"summary\":\"Reviewed the product gaps and next steps.\","
+                  "\"title_is_default\":false,"
+                  "\"title_is_automatic\":false}]}" );
+
+        QTRY_COMPARE(client.conversations().size(), 1);
+        const QVariantMap catalogItem = client.conversations().constFirst().toMap();
+        QCOMPARE(catalogItem.value("id").toString(), QString("meo:first"));
+        QCOMPARE(catalogItem.value("conversation_id").toString(), QString("meo:first"));
+        QCOMPARE(catalogItem.value("title").toString(), QString("Project Review"));
+        QCOMPARE(catalogItem.value("summary").toString(),
+                 QString("Reviewed the product gaps and next steps."));
+        QVERIFY(!catalogItem.contains("legacy_chat_id"));
+        catalogSocket->deleteLater();
+
+        QSignalSpy resetSpy(&client, &AgentClient::resetChat);
+        QSignalSpy messageSpy(&client, &AgentClient::message);
+        QSignalSpy metadataSpy(&client, &AgentClient::conversationMetadata);
+        client.resumeConversation("meo:first");
+
+        QTRY_VERIFY(server.hasPendingConnections());
+        auto historySocket = server.nextPendingConnection();
+        const QByteArray historyRequest = readRequest(historySocket);
+        QVERIFY(historyRequest.contains("GET /v1/conversations/meo:first/messages"));
+        replyJson(historySocket, 200, "OK",
+                  "{\"conversation_id\":\"meo:first\",\"messages\":["
+                  "{\"role\":\"user\",\"text\":\"hello\"},"
+                  "{\"role\":\"assistant\",\"text\":\"Welcome back\"}]}" );
+
+        QTRY_COMPARE(resetSpy.count(), 1);
+        QTRY_COMPARE(messageSpy.count(), 2);
+        QTRY_COMPARE(metadataSpy.count(), 1);
+        QCOMPARE(client.conversationId(), QString("meo:first"));
+        QCOMPARE(QSettings().value("serviceConversationId").toString(), QString("meo:first"));
+        QCOMPARE(messageSpy.at(0).at(0).toString(), QString("user"));
+        QCOMPARE(messageSpy.at(0).at(1).toString(), QString("hello"));
+        QCOMPARE(messageSpy.at(1).at(0).toString(), QString("assistant"));
+        QCOMPARE(messageSpy.at(1).at(1).toString(), QString("Welcome back"));
+        const QVariantMap metadata = metadataSpy.at(0).at(0).toMap();
+        QCOMPARE(metadata.value("conversation_id").toString(), QString("meo:first"));
+        QCOMPARE(metadata.value("title").toString(), QString("Project Review"));
+        QCOMPARE(metadata.value("summary").toString(),
+                 QString("Reviewed the product gaps and next steps."));
+        QTRY_COMPARE(client.status(), QString("Ready"));
+        historySocket->deleteLater();
+    }
+};
+
+QTEST_GUILESS_MAIN(ConversationCatalogTest)
+#include "conversation-catalog-test.moc"

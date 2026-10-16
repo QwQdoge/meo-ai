@@ -20,6 +20,8 @@ class AgentClient : public QObject {
     Q_PROPERTY(bool requestFailed READ requestFailed NOTIFY changed)
     Q_PROPERTY(bool requestRetryable READ requestRetryable NOTIFY changed)
     Q_PROPERTY(QString requestError READ requestError NOTIFY changed)
+    Q_PROPERTY(QString conversationId READ conversationId NOTIFY changed)
+    Q_PROPERTY(QVariantList conversations READ conversations NOTIFY changed)
     Q_PROPERTY(QVariantList options READ options NOTIFY changed)
     Q_PROPERTY(QVariantMap agentState READ agentState NOTIFY changed)
     Q_PROPERTY(QVariantList models READ models NOTIFY changed)
@@ -42,6 +44,8 @@ public:
     bool requestFailed() const { return m_requestFailed; }
     bool requestRetryable() const { return m_requestRetryable; }
     QString requestError() const { return m_requestError; }
+    QString conversationId() const { return m_conversationId; }
+    QVariantList conversations() const { return m_conversations; }
     QVariantList options() const { return m_options; }
     QVariantMap agentState() const { return m_agentState; }
     QVariantList models() const { return m_models; }
@@ -88,6 +92,8 @@ public:
     Q_INVOKABLE void cancel();
     Q_INVOKABLE void retryLastRequest();
     Q_INVOKABLE virtual void newChat();
+    Q_INVOKABLE void refreshConversations();
+    Q_INVOKABLE void resumeConversation(const QString &conversationId);
     Q_INVOKABLE void refreshServiceMetadata();
     Q_INVOKABLE void refreshMemory(const QString &query = QString());
     Q_INVOKABLE void setConversationModel(const QString &modelId);
@@ -130,6 +136,7 @@ private:
     void consumeLegacy();
     void ensureServiceConversation(const std::function<void()> &then);
     void loadServiceHistory();
+    QVariantMap conversationMetadataForId(const QString &conversationId) const;
     void sendService(const QString &text, bool emitAssistantPlaceholder = true);
     void sendServiceWithResources(const QString &text, const QVariantList &resources);
     void queueBinaryResource(const QString &name, const QString &mimeType, const QByteArray &data);
@@ -162,6 +169,7 @@ private:
     QString m_metadataStatus;
     QString m_requestError;
     QString m_memoryQuery;
+    QVariantList m_conversations;
     QVariantList m_options;
     QVariantMap m_agentState;
     QVariantList m_models;
