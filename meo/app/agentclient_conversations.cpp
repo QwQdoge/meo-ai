@@ -124,7 +124,7 @@ void AgentClient::resumeConversation(const QString &conversationId) {
         return;
     }
 
-    QVariantMap metadata = conversationMetadataForId(id);
+    const QVariantMap metadata = conversationMetadataForId(id);
     if (metadata.isEmpty()) {
         m_status = tr("That conversation is no longer in the local history. Refresh chats and try again.");
         emit changed();
@@ -198,8 +198,9 @@ void AgentClient::resumeConversation(const QString &conversationId) {
                         emit message(role, text);
                     }
                 }
-                metadata.insert(QStringLiteral("conversation_id"), id);
-                emit conversationMetadata(metadata);
+                QVariantMap selectedMetadata = metadata;
+                selectedMetadata.insert(QStringLiteral("conversation_id"), id);
+                emit conversationMetadata(selectedMetadata);
                 m_status = tr("Ready");
             }
         }
