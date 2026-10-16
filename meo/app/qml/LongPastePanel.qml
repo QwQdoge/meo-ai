@@ -12,6 +12,28 @@ Popup {
     property int recommendedCharacterLimit: 180000
     signal attachRequested(string name, string text)
 
+    function formatBytes(value) {
+        const bytes = Number(value || 0)
+        if (!isFinite(bytes) || bytes <= 0)
+            return ""
+        if (bytes >= 1024 * 1024)
+            return (bytes / (1024 * 1024)).toFixed(bytes >= 10 * 1024 * 1024 ? 0 : 1) + " MB"
+        if (bytes >= 1024)
+            return (bytes / 1024).toFixed(bytes >= 10 * 1024 ? 0 : 1) + " KB"
+        return Math.round(bytes) + " B"
+    }
+
+    function resourceDetail(item) {
+        const parts = []
+        const mime = String(item.mime_type || "")
+        const size = formatBytes(item.size_bytes)
+        if (mime.length)
+            parts.push(mime)
+        if (size.length)
+            parts.push(size)
+        return parts.join(" · ")
+    }
+
     modal: true
     focus: true
     width: Math.min(680 * uiScale, parent ? parent.width - 28 * uiScale : 680 * uiScale)
@@ -32,7 +54,6 @@ Popup {
         onAccepted: {
             for (let i = 0; i < selectedFiles.length; ++i)
                 agent.addFileResource(selectedFiles[i])
-            root.close()
         }
     }
 
@@ -66,7 +87,7 @@ Popup {
 
                 MeoText {
                     Layout.fillWidth: true
-                    text: qsTr("Attach a file or image, paste an image from the clipboard, or add long text to this request.")
+                    text: qsTr("Attach files or images, drop them here, paste an image from the clipboard, or add long text to this request.")
                     typeRole: "body"
                     typeSize: "small"
                     color: MeoTheme.contentOnSurfaceVariant
@@ -92,7 +113,7 @@ Popup {
                 icon.name: "attach_file"
                 type: "tonal"
                 size: "s"
-                enabled: agent.serviceMode && !agent.busy && !agent.actionBusy
+                enabled: agent.serviceMode && !agent.busy
                 onClicked: attachmentPicker.open()
             }
 
@@ -103,9 +124,153 @@ Popup {
                 type: "outlined"
                 size: "s"
                 enabled: agent.serviceMode && !agent.busy && !agent.actionBusy
-                onClicked: {
-                    if (agent.addClipboardImageResource())
-                        root.close()
+                onClicked: agent.addClipboardImageResource()
+            }
+        }
+
+        DropArea {
+            id: fileDropArea
+            Layout.fillWidth: true
+            Layout.preferredHeight: 72 * root.uiScale
+            enabled: agent.serviceMode && !agent.busy
+
+            onEntered: function(drag) {
+                drag.accepted = drag.hasUrls
+            }
+
+            onDropped: function(drop) {
+                if (!drop.hasUrls)
+                    return
+                for (let i = 0; i < drop.urls.length; ++i)
+                    agent.addFileResource(drop.urls[i])
+                drop.acceptProposedAction()
+            }
+
+            Rectangle {
+                anchors.fill: parent
+                radius: 16 * root.uiScale
+                color: fileDropArea.containsDrag ? MeoTheme.surfaceContainer : MeoTheme.surfaceContainerLow
+                border.width: Math.max(1, root.uiScale)
+                border.color: fileDropArea.containsDrag ? MeoTheme.primary : MeoTheme.outlineVariant
+
+                RowLayout {
+                    anchors.centerIn: parent
+                    width: Math.min(parent.width - 24 * root.uiScale, implicitWidth)
+                    spacing: 8 * root.uiScale
+
+                    MeoIcon {
+                        icon: "attach_file"
+                        size: 24
+                        color: MeoTheme.primary
+                    }
+
+                    MeoText {
+                        Layout.fillWidth: true
+                        text: fileDropArea.containsDrag ? qsTr("Drop to attach") : qsTr("Drop files or images here")
+                        typeRole: "label"
+                        typeSize: "medium"
+                        color: MeoTheme.contentOnSurface
+                        horizontalAlignment: Text.AlignHCenter
+                    }
+                }
+            }
+        }
+
+        ColumnLayout {
+            Layout.fillWidth: true
+            visible: agent.pendingResources.length > 0
+            spacing: 6 * root.uiScale
+
+            RowLayout {
+                Layout.fillWidth: true
+
+                MeoText {
+                    Layout.fillWidth: true
+                    text: qsTr("Ready to send · %1").arg(agent.pendingResources.length)
+                    typeRole: "label"
+                    typeSize: "medium"
+                    color: MeoTheme.contentOnSurface
+                }
+
+                MeoButton {
+                    text: qsTr("Clear all")
+                    type: "text"
+                    size: "xs"
+                    enabled: !agent.busy && !agent.actionBusy
+                    onClicked: agent.clearPendingResources()
+                }
+            }
+
+            ScrollView {
+                Layout.fillWidth: true
+                Layout.preferredHeight: Math.min(116 * root.uiScale,
+                    Math.max(48 * root.uiScale, agent.pendingResources.length * 48 * root.uiScale))
+                clip: true
+                contentWidth: availableWidth
+
+                ColumnLayout {
+                    width: parent.width
+                    spacing: 4 * root.uiScale
+
+                    Repeater {
+                        model: agent.pendingResources
+
+                        delegate: Rectangle {
+                            required property var modelData
+                            Layout.fillWidth: true
+                            implicitHeight: 44 * root.uiScale
+                            radius: 12 * root.uiScale
+                            color: MeoTheme.surfaceContainerLowest
+
+                            RowLayout {
+                                anchors.fill: parent
+                                anchors.leftMargin: 10 * root.uiScale
+                                anchors.rightMargin: 6 * root.uiScale
+                                spacing: 8 * root.uiScale
+
+                                MeoIcon {
+                                    icon: String(modelData.kind || "") === "image" ? "image" : "attach_file"
+                                    size: 20
+                                    color: MeoTheme.primary
+                                }
+
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 0
+
+                                    MeoText {
+                                        Layout.fillWidth: true
+                                        text: String(modelData.name || qsTr("Attachment"))
+                                        typeRole: "label"
+                                        typeSize: "medium"
+                                        color: MeoTheme.contentOnSurface
+                                        elide: Text.ElideMiddle
+                                    }
+
+                                    MeoText {
+                                        Layout.fillWidth: true
+                                        text: root.resourceDetail(modelData)
+                                        visible: text.length > 0
+                                        typeRole: "label"
+                                        typeSize: "small"
+                                        color: MeoTheme.contentOnSurfaceVariant
+                                        elide: Text.ElideRight
+                                    }
+                                }
+
+                                MeoIconButton {
+                                    icon.name: "close"
+                                    type: "standard"
+                                    size: "xs"
+                                    enabled: !agent.busy && !agent.actionBusy
+                                    Accessible.name: qsTr("Remove attachment")
+                                    ToolTip.visible: hovered
+                                    ToolTip.text: Accessible.name
+                                    onClicked: agent.discardPendingResource(String(modelData.resource_id || ""))
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -136,6 +301,7 @@ Popup {
             id: pasteArea
             Layout.fillWidth: true
             Layout.fillHeight: true
+            Layout.minimumHeight: 100 * root.uiScale
             placeholderText: qsTr("Paste text here")
             selectByMouse: true
             wrapMode: TextEdit.Wrap
@@ -175,7 +341,7 @@ Popup {
                     && !agent.actionBusy
                 onClicked: {
                     root.attachRequested(nameField.text, pasteArea.text)
-                    root.close()
+                    pasteArea.text = ""
                 }
             }
         }
