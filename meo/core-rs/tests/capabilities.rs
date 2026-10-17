@@ -66,10 +66,16 @@ fn connector(id: &str, state: CapabilityConnectionState) -> CapabilityDescriptor
 fn catalog_is_deterministic_and_groups_skills_with_connectors() {
     let mut catalog = CapabilityCatalog::new();
     catalog
-        .register(connector("connector.drive", CapabilityConnectionState::Connected))
+        .register(connector(
+            "connector.drive",
+            CapabilityConnectionState::Connected,
+        ))
         .unwrap();
     catalog
-        .register(skill("skill.system-diagnostics", vec!["connector.drive".to_owned()]))
+        .register(skill(
+            "skill.system-diagnostics",
+            vec!["connector.drive".to_owned()],
+        ))
         .unwrap();
 
     let items = catalog.list();
@@ -84,10 +90,16 @@ fn catalog_is_deterministic_and_groups_skills_with_connectors() {
 fn skill_dependency_does_not_grant_connector_tools_or_runtime_abilities() {
     let mut catalog = CapabilityCatalog::new();
     catalog
-        .register(connector("connector.drive", CapabilityConnectionState::Connected))
+        .register(connector(
+            "connector.drive",
+            CapabilityConnectionState::Connected,
+        ))
         .unwrap();
     catalog
-        .register(skill("skill.system-diagnostics", vec!["connector.drive".to_owned()]))
+        .register(skill(
+            "skill.system-diagnostics",
+            vec!["connector.drive".to_owned()],
+        ))
         .unwrap();
 
     let skill_only = catalog.resolve(["skill.system-diagnostics"]).unwrap();
@@ -114,7 +126,10 @@ fn disconnected_connector_never_exposes_tools() {
         .unwrap();
 
     let error = catalog.resolve(["connector.drive"]).unwrap_err();
-    assert_eq!(error.to_string(), "capability is not connected: connector.drive");
+    assert_eq!(
+        error.to_string(),
+        "capability is not connected: connector.drive"
+    );
 }
 
 #[test]
