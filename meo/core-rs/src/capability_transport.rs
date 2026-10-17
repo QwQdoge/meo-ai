@@ -123,7 +123,7 @@ impl CapabilityApiError {
 
 impl From<CapabilityError> for CapabilityApiError {
     fn from(error: CapabilityError) -> Self {
-        let status = match error {
+        let status = match &error {
             CapabilityError::Unknown(_) => StatusCode::NOT_FOUND,
             CapabilityError::Disabled(_) | CapabilityError::NotConnected(_) => StatusCode::CONFLICT,
             CapabilityError::InvalidId(_)
