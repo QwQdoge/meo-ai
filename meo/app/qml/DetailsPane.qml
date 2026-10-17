@@ -249,6 +249,7 @@ Rectangle {
                 elide: Text.ElideRight
             }
             MeoButton {
+                objectName: "meoAiReportIssue"
                 visible: root.tab === 4
                 text: qsTr("Report issue")
                 icon.name: "open_in_new"
