@@ -233,7 +233,7 @@ impl ContextEngine {
         let memory_limit = ((dynamic_budget as f32) * budget.memory_fraction.clamp(0.0, 1.0))
             .round() as usize;
         let mut memory_budget = remaining.min(memory_limit);
-        let mut memory_ranked = memories.iter().cloned().collect::<Vec<_>>();
+        let mut memory_ranked = memories.to_vec();
         memory_ranked.sort_by(|left, right| {
             memory_score(right, current_message).total_cmp(&memory_score(left, current_message))
         });
