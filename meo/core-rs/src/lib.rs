@@ -8,12 +8,15 @@
 //! - Jetpack Compose Material 3 Expressive on Android
 
 pub mod blocks;
+pub mod builtin_capabilities;
 pub mod capabilities;
 pub mod protocol;
 pub mod stream;
 
 #[cfg(feature = "client")]
 pub mod client;
+#[cfg(feature = "service")]
+pub mod capability_transport;
 #[cfg(feature = "service")]
 pub mod provider;
 #[cfg(feature = "service")]
@@ -28,6 +31,7 @@ pub use blocks::{
     BlockAction, ChartKind, ChartSeries, ContentBlock, HtmlSandbox, PluginAction,
     PluginPresentation, TableColumn, ToolActivityState,
 };
+pub use builtin_capabilities::{register_builtin_capabilities, system_diagnostics_skill};
 pub use capabilities::{
     CapabilityCatalog, CapabilityConnectionState, CapabilityDescriptor, CapabilityEffect,
     CapabilityError, CapabilityKind, CapabilityOrigin, CapabilityPermission, CapabilityResolution,
@@ -41,6 +45,8 @@ pub use stream::{decode_sse_line, StreamEvent, StreamEventError};
 
 #[cfg(feature = "client")]
 pub use client::{ClientError, CoreEventStream, MeoClient};
+#[cfg(feature = "service")]
+pub use capability_transport::{shared_catalog, SharedCapabilityCatalog};
 #[cfg(feature = "service")]
 pub use provider::{
     OpenAiCompatibleProvider, Provider, ProviderError, ProviderEvent, ProviderModel,
