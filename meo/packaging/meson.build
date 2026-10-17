@@ -110,6 +110,7 @@ install_data(
 install_data(
   '../adapters/account_llm.py',
   '../adapters/account_multimodal.py',
+  '../adapters/conversation_management.py',
   '../adapters/control_backend.py',
   '../adapters/headless_newelle.py',
   '../adapters/legacy_chat.py',
