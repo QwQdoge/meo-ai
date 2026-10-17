@@ -73,7 +73,10 @@ impl MeoClient {
         .map_err(|error| ClientError::InvalidPayload(error.to_string()))
     }
 
-    pub async fn capability(&self, capability_id: &str) -> Result<CapabilityDescriptor, ClientError> {
+    pub async fn capability(
+        &self,
+        capability_id: &str,
+    ) -> Result<CapabilityDescriptor, ClientError> {
         validate_capability_path_id(capability_id)?;
         let value: Value = self
             .get_json(&format!("/v1/capabilities/{capability_id}"))
