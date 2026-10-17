@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
+from meo.adapters.conversation_management import ConversationManagementBridge
 from meo.adapters.legacy_controls import LegacyAiControls
 from meo.adapters.legacy_memory import LegacyMemoryBridge
 from meo.service.backend_adapter import BackendCallbacks
@@ -24,6 +25,7 @@ class ControlledLegacyBackend:
         self._controller = controller
         self._controls = LegacyAiControls(controller)
         self._memory = LegacyMemoryBridge(controller)
+        self._conversation_management = ConversationManagementBridge(backend, controller)
 
     def __getattr__(self, name: str):
         return getattr(self._backend, name)
@@ -222,6 +224,12 @@ class ControlledLegacyBackend:
                 started_at=started_at,
             ),
         )
+
+    def rename_conversation(self, conversation_id: str, title: str) -> None:
+        self._conversation_management.rename_conversation(conversation_id, title)
+
+    def delete_conversation(self, conversation_id: str) -> None:
+        self._conversation_management.delete_conversation(conversation_id)
 
     def list_controls(self):
         return self._controls.list_controls()
