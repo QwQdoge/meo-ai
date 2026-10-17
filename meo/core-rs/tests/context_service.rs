@@ -57,9 +57,7 @@ async fn service_prepares_context_and_emits_aggregate_stats() {
     {
         let catalog = service.capability_catalog();
         register_builtin_capabilities(
-            &mut catalog
-                .write()
-                .expect("capability catalog lock poisoned"),
+            &mut catalog.write().expect("capability catalog lock poisoned"),
         )
         .unwrap();
     }
@@ -97,7 +95,10 @@ async fn service_prepares_context_and_emits_aggregate_stats() {
         .system_prompt
         .contains("skill.system-diagnostics"));
     assert_eq!(provider_request.messages.len(), 1);
-    assert_eq!(provider_request.messages[0].text, "diagnose the boot failure");
+    assert_eq!(
+        provider_request.messages[0].text,
+        "diagnose the boot failure"
+    );
 
     let events = service.request_events_after(&request_id, 0).unwrap();
     let context_stats = events.iter().find_map(|event| match event {
