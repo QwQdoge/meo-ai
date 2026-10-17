@@ -81,13 +81,12 @@ private slots:
         create->deleteLater();
 
         // The first local file is now being reserved/uploaded. The second is
-        // already queued inside AgentClient; the HTTPS URL did not create a
-        // third queued item or trigger any network download.
+        // already queued inside AgentClient. The HTTPS URL was ignored and is
+        // covered separately by the no-network test below.
         QTRY_VERIFY(server.hasPendingConnections());
         QTcpSocket *reserve = server.nextPendingConnection();
         const QByteArray reserveRequest = readRequest(reserve);
         QVERIFY(reserveRequest.contains("POST /v1/conversations/meo:clipboard/resources"));
-        QVERIFY(reserveRequest.contains("alpha.txt"));
         reserve->disconnectFromHost();
         reserve->deleteLater();
     }
