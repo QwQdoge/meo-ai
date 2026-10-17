@@ -102,6 +102,72 @@ private slots:
         QTRY_COMPARE(client.status(), QString("Ready"));
         historySocket->deleteLater();
     }
+
+    void renamesAndDeletesCurrentConversationWithFallback() {
+        QSettings().clear();
+        QTcpServer server;
+        QVERIFY(server.listen(QHostAddress::LocalHost));
+        qputenv("MEO_AI_SERVICE_ENDPOINT",
+                QString("http://127.0.0.1:%1").arg(server.serverPort()).toUtf8());
+
+        AgentClient client;
+        client.refreshConversations();
+        QTRY_VERIFY(server.hasPendingConnections());
+        auto catalogSocket = server.nextPendingConnection();
+        QVERIFY(readRequest(catalogSocket).contains("GET /v1/conversations "));
+        replyJson(catalogSocket, 200, "OK",
+                  "{\"conversations\":["
+                  "{\"id\":\"meo:first\",\"title\":\"First\"},"
+                  "{\"id\":\"meo:second\",\"title\":\"Second\"}]}" );
+        QTRY_COMPARE(client.conversations().size(), 2);
+        catalogSocket->deleteLater();
+
+        client.renameConversation("meo:first", "  Renamed   chat  ");
+        QTRY_VERIFY(server.hasPendingConnections());
+        auto renameSocket = server.nextPendingConnection();
+        const QByteArray renameRequest = readRequest(renameSocket);
+        QVERIFY(renameRequest.contains("POST /v1/conversations/meo:first/title "));
+        replyJson(renameSocket, 200, "OK",
+                  "{\"accepted\":true,\"conversation_id\":\"meo:first\",\"title\":\"Renamed chat\"}");
+        QTRY_COMPARE(client.conversations().constFirst().toMap().value("title").toString(),
+                     QString("Renamed chat"));
+        renameSocket->deleteLater();
+
+        client.resumeConversation("meo:first");
+        QTRY_VERIFY(server.hasPendingConnections());
+        auto firstHistorySocket = server.nextPendingConnection();
+        QVERIFY(readRequest(firstHistorySocket).contains("GET /v1/conversations/meo:first/messages"));
+        replyJson(firstHistorySocket, 200, "OK",
+                  "{\"conversation_id\":\"meo:first\",\"messages\":["
+                  "{\"role\":\"user\",\"text\":\"first history\"}]}" );
+        QTRY_COMPARE(client.conversationId(), QString("meo:first"));
+        firstHistorySocket->deleteLater();
+
+        QSignalSpy resetSpy(&client, &AgentClient::resetChat);
+        const int resetsBeforeDelete = resetSpy.count();
+        client.deleteConversation("meo:first");
+        QTRY_VERIFY(server.hasPendingConnections());
+        auto deleteSocket = server.nextPendingConnection();
+        QVERIFY(readRequest(deleteSocket).contains("DELETE /v1/conversations/meo:first "));
+        replyJson(deleteSocket, 200, "OK",
+                  "{\"accepted\":true,\"conversation_id\":\"meo:first\",\"deleted\":true}");
+        deleteSocket->deleteLater();
+
+        QTRY_VERIFY(server.hasPendingConnections());
+        auto fallbackSocket = server.nextPendingConnection();
+        QVERIFY(readRequest(fallbackSocket).contains("GET /v1/conversations/meo:second/messages"));
+        replyJson(fallbackSocket, 200, "OK",
+                  "{\"conversation_id\":\"meo:second\",\"messages\":["
+                  "{\"role\":\"assistant\",\"text\":\"second history\"}]}" );
+
+        QTRY_COMPARE(client.conversations().size(), 1);
+        QTRY_COMPARE(client.conversationId(), QString("meo:second"));
+        QCOMPARE(client.conversations().constFirst().toMap().value("id").toString(), QString("meo:second"));
+        QVERIFY(resetSpy.count() >= resetsBeforeDelete + 2);
+        QCOMPARE(QSettings().value("serviceConversationId").toString(), QString("meo:second"));
+        QTRY_COMPARE(client.status(), QString("Ready"));
+        fallbackSocket->deleteLater();
+    }
 };
 
 QTEST_GUILESS_MAIN(ConversationCatalogTest)
