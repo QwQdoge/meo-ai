@@ -13,10 +13,10 @@ pub mod capabilities;
 pub mod protocol;
 pub mod stream;
 
-#[cfg(feature = "client")]
-pub mod client;
 #[cfg(feature = "service")]
 pub mod capability_transport;
+#[cfg(feature = "client")]
+pub mod client;
 #[cfg(feature = "service")]
 pub mod provider;
 #[cfg(feature = "service")]
@@ -43,10 +43,10 @@ pub use protocol::{
 };
 pub use stream::{decode_sse_line, StreamEvent, StreamEventError};
 
-#[cfg(feature = "client")]
-pub use client::{ClientError, CoreEventStream, MeoClient};
 #[cfg(feature = "service")]
 pub use capability_transport::{shared_catalog, SharedCapabilityCatalog};
+#[cfg(feature = "client")]
+pub use client::{ClientError, CoreEventStream, MeoClient};
 #[cfg(feature = "service")]
 pub use provider::{
     OpenAiCompatibleProvider, Provider, ProviderError, ProviderEvent, ProviderModel,
