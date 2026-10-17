@@ -181,4 +181,7 @@ install(FILES packaging/org.meo.MeoAI.desktop
 install(FILES "${MEO_UI_ROOT}/assets/icons/meo-ai-f.svg"
         DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps
         RENAME meo-ai.svg)
-target_compile_definitions(meo-ai PRIVATE MEOUI_IMPORT_PATH="${CMAKE_CURRENT_BINARY_DIR}/meoui")
+target_compile_definitions(meo-ai PRIVATE
+    MEOUI_IMPORT_PATH="${CMAKE_CURRENT_BINARY_DIR}/meoui"
+    MEO_AI_VERSION="${PROJECT_VERSION}"
+)
