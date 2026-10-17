@@ -120,7 +120,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let self_check = env::args().any(|arg| arg == "--self-check");
     let service = build_service()?;
-    let capabilities = capability_transport::shared_catalog();
+    let capabilities = service.capability_catalog();
     {
         let mut catalog = capabilities
             .write()
