@@ -42,6 +42,11 @@ set(MEO_DRAFT_SOURCES
     app/draftpersistence.h
 )
 
+set(MEO_PROJECT_SOURCES
+    app/projectstore.cpp
+    app/projectstore.h
+)
+
 set(MEO_APP_QML
     app/qml/App.qml
     app/qml/Main.qml
@@ -55,6 +60,7 @@ set(MEO_APP_QML
     app/qml/PresentationCard.qml
     app/qml/NavigationButton.qml
     app/qml/PrimaryModeLanding.qml
+    app/qml/ProjectsPage.qml
     app/qml/MobileNavigationDrawer.qml
     app/qml/MobileNavigationOverlay.qml
     app/qml/AiControlsPopup.qml
@@ -70,7 +76,7 @@ add_library(meo-agent-client STATIC ${MEO_AGENT_CLIENT_SOURCES})
 target_include_directories(meo-agent-client PUBLIC app)
 target_link_libraries(meo-agent-client PUBLIC Qt6::Gui Qt6::Network)
 
-qt_add_executable(meo-ai app/main.cpp ${MEO_USAGE_SOURCES} ${MEO_ACCOUNT_AI_SOURCES} ${MEO_DRAFT_SOURCES})
+qt_add_executable(meo-ai app/main.cpp ${MEO_USAGE_SOURCES} ${MEO_ACCOUNT_AI_SOURCES} ${MEO_DRAFT_SOURCES} ${MEO_PROJECT_SOURCES})
 qt_add_resources(meo-ai "meo_app" PREFIX "/meo" FILES ${MEO_APP_QML})
 add_dependencies(meo-ai meoui_moduleplugin)
 target_link_libraries(meo-ai PRIVATE meo-agent-client Qt6::DBus Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2 Qt6::Network)
@@ -89,6 +95,11 @@ if(BUILD_TESTING)
     target_include_directories(meo-ai-draft-persistence-test PRIVATE app)
     target_link_libraries(meo-ai-draft-persistence-test PRIVATE Qt6::Core Qt6::Qml Qt6::Test)
     add_test(NAME meo-ai.draft-persistence COMMAND meo-ai-draft-persistence-test)
+
+    qt_add_executable(meo-ai-project-store-test tests/project-store-test.cpp ${MEO_PROJECT_SOURCES})
+    target_include_directories(meo-ai-project-store-test PRIVATE app)
+    target_link_libraries(meo-ai-project-store-test PRIVATE Qt6::Core Qt6::Test)
+    add_test(NAME meo-ai.project-store COMMAND meo-ai-project-store-test)
 
     # Live use still requires an explicit endpoint. CTest only runs this client
     # against a local Python stub; it never uses a configured provider/profile.
