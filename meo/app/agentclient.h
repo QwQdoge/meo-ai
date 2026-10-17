@@ -77,6 +77,7 @@ public:
     Q_INVOKABLE void sendWithPendingResources(const QString &text);
     Q_INVOKABLE void addLongTextResource(const QString &name, const QString &text);
     Q_INVOKABLE void addFileResource(const QUrl &fileUrl);
+    Q_INVOKABLE int addClipboardResources();
     Q_INVOKABLE bool addClipboardImageResource();
     Q_INVOKABLE void discardPendingResource(const QString &resourceId);
     Q_INVOKABLE void clearPendingResources();
