@@ -45,7 +45,7 @@ private slots:
             "usage", QVariantMap{{QStringLiteral("status"), QStringLiteral("Fixture activity")},
                                  {QStringLiteral("busy"), false}});
         engine.rootContext()->setContextProperty("uiPreview", true);
-        engine.load(QUrl("qrc:/meo/app/qml/Main.qml"));
+        engine.load(QUrl("qrc:/meo/app/qml/App.qml"));
         QVERIFY(!engine.rootObjects().isEmpty());
         auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
         QVERIFY(window);
@@ -244,6 +244,27 @@ private slots:
         QTRY_VERIFY((composer = item(window->contentItem(), "meoAiComposerShell")) != nullptr);
         QVERIFY(composer);
         QVERIFY(composer->width() > 400 && composer->width() < window->width());
+
+        // Compact/mobile keeps the same hierarchy in a left Drawer. The Drawer
+        // is interactive with a nonzero left-edge drag margin, so Qt Quick
+        // provides the same edge-swipe gesture as the hamburger entry point.
+        QPointer<QQuickItem> mobileMenuButton;
+        QTRY_VERIFY((mobileMenuButton = item(window->contentItem(), "meoAiMobileMenuButton")) != nullptr);
+        QVERIFY(mobileMenuButton->isVisible());
+        QPointer<QObject> mobileDrawer = window->findChild<QObject *>("meoAiMobileNavigationDrawer");
+        QTRY_VERIFY(mobileDrawer);
+        QVERIFY(mobileDrawer->property("interactive").toBool());
+        QVERIFY(mobileDrawer->property("dragMargin").toReal() > 0.0);
+        QCOMPARE(mobileDrawer->property("edge").toInt(), static_cast<int>(Qt::LeftEdge));
+        QVERIFY(QMetaObject::invokeMethod(mobileMenuButton.data(), "clicked"));
+        QTRY_VERIFY(mobileDrawer->property("visible").toBool());
+        QPointer<QObject> mobileWork = window->findChild<QObject *>("meoAiMobileNav-work");
+        QTRY_VERIFY(mobileWork && mobileWork->property("visible").toBool());
+        QVERIFY(QMetaObject::invokeMethod(mobileWork.data(), "clicked"));
+        QTRY_COMPARE(window->property("primaryMode").toString(), QString("work"));
+        QTRY_VERIFY(!mobileDrawer->property("visible").toBool());
+        QVERIFY(QMetaObject::invokeMethod(window, "selectPrimaryMode", Q_ARG(QVariant, "chat")));
+        QTRY_COMPARE(window->property("primaryMode").toString(), QString("chat"));
 
         // Restored conversation metadata is presentation state, not response
         // metadata. It must update the title without populating Response details.
