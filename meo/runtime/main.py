@@ -5,6 +5,7 @@ import importlib
 import os
 from typing import Callable
 
+from meo.adapters.conversation_catalog import PublicConversationCatalogBridge
 from meo.adapters.newelle_multimodal import NewelleMultimodalBridge
 from meo.adapters.routed_backend import RoutedBackend
 from meo.runtime.headless_probe import require_headless
@@ -40,6 +41,9 @@ def build_service(spec: str) -> AgentServiceCore:
     controller = getattr(backend, "_meo_controller", None)
     if controller is not None:
         backend = NewelleMultimodalBridge(backend, controller)
+    # Keep Newelle-only storage identifiers inside the adapter stack. The
+    # service catalog exposes stable Meo IDs and presentation-safe metadata.
+    backend = PublicConversationCatalogBridge(backend)
     model_roles = ModelRoleRegistry(default_model_role_path())
     routed_backend = RoutedBackend(backend, model_roles)
     return AgentServiceCore(
