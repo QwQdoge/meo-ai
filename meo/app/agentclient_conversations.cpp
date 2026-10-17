@@ -6,6 +6,7 @@
 #include <QNetworkRequest>
 #include <QSettings>
 #include <QTimer>
+#include <QUrlQuery>
 
 namespace {
 
@@ -28,8 +29,10 @@ QVariantMap safeConversation(const QJsonObject &object) {
 
     const QString title = object.value(QStringLiteral("title")).toString().trimmed();
     const QString summary = object.value(QStringLiteral("summary")).toString().trimmed();
+    const QString excerpt = object.value(QStringLiteral("excerpt")).toString().trimmed();
     if (!title.isEmpty()) result.insert(QStringLiteral("title"), title.left(240));
     if (!summary.isEmpty()) result.insert(QStringLiteral("summary"), summary.left(1200));
+    if (!excerpt.isEmpty()) result.insert(QStringLiteral("excerpt"), excerpt.left(1200));
 
     for (const QString &key : {QStringLiteral("title_is_default"), QStringLiteral("title_is_automatic")}) {
         if (object.value(key).isBool()) result.insert(key, object.value(key).toBool());
@@ -111,6 +114,70 @@ void AgentClient::refreshConversations() {
     });
 }
 
+void AgentClient::searchConversations(const QString &query) {
+    const QString normalized = query.simplified();
+    if (m_conversationSearchReply) {
+        QNetworkReply *previous = m_conversationSearchReply;
+        m_conversationSearchReply = nullptr;
+        previous->abort();
+        previous->deleteLater();
+    }
+    if (normalized.isEmpty()) {
+        m_conversationSearchResults.clear();
+        emit changed();
+        return;
+    }
+    if (!m_serviceMode) return;
+    if (normalized.size() > 240) {
+        m_conversationSearchResults.clear();
+        m_status = tr("Conversation search is too long.");
+        emit changed();
+        return;
+    }
+
+    QUrl base = validatedOrigin("MEO_AI_SERVICE_ENDPOINT");
+    if (!base.isValid()) return;
+    QUrl url = base;
+    url.setPath(QStringLiteral("/v1/conversations/search"));
+    QUrlQuery urlQuery;
+    urlQuery.addQueryItem(QStringLiteral("q"), normalized);
+    url.setQuery(urlQuery);
+    QNetworkRequest request(url);
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
+    QNetworkReply *reply = m_network.get(request);
+    m_conversationSearchReply = reply;
+    emit changed();
+
+    connect(reply, &QNetworkReply::finished, this, [this, reply, normalized] {
+        if (m_conversationSearchReply != reply) {
+            reply->deleteLater();
+            return;
+        }
+        m_conversationSearchReply = nullptr;
+        const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        QJsonParseError parseError;
+        const QJsonDocument document = QJsonDocument::fromJson(reply->readAll(), &parseError);
+        QVariantList results;
+        if (reply->error() == QNetworkReply::NoError && code == 200
+            && parseError.error == QJsonParseError::NoError && document.isObject()
+            && document.object().value(QStringLiteral("query")).toString() == normalized) {
+            const QJsonArray items = document.object().value(QStringLiteral("results")).toArray();
+            results.reserve(items.size());
+            for (const QJsonValue &value : items) {
+                if (!value.isObject()) continue;
+                const QVariantMap item = safeConversation(value.toObject());
+                if (!item.isEmpty()) results.append(item);
+            }
+            m_conversationSearchResults = results;
+        } else if (reply->error() != QNetworkReply::OperationCanceledError) {
+            m_conversationSearchResults.clear();
+            m_status = tr("Could not search conversation history.");
+        }
+        reply->deleteLater();
+        emit changed();
+    });
+}
+
 void AgentClient::resumeConversation(const QString &conversationId) {
     const QString id = conversationId.trimmed();
     if (!m_serviceMode || busy() || actionBusy() || !m_options.isEmpty()) return;
@@ -125,7 +192,16 @@ void AgentClient::resumeConversation(const QString &conversationId) {
         return;
     }
 
-    const QVariantMap metadata = conversationMetadataForId(id);
+    QVariantMap metadata = conversationMetadataForId(id);
+    if (metadata.isEmpty()) {
+        for (const QVariant &value : m_conversationSearchResults) {
+            const QVariantMap candidate = value.toMap();
+            if (candidate.value(QStringLiteral("id")).toString() == id) {
+                metadata = candidate;
+                break;
+            }
+        }
+    }
     if (metadata.isEmpty()) {
         m_status = tr("That conversation is no longer in the local history. Refresh chats and try again.");
         emit changed();
