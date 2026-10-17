@@ -33,6 +33,8 @@ class ManagementBackend:
                 {
                     "id": "meo:first",
                     "excerpt": "…migration causes and consequences…",
+                    "match_role": "user",
+                    "match_count": 2,
                     "legacy_chat_id": 999,
                     "private": "must-not-leak",
                 }
@@ -85,6 +87,8 @@ class NativeConversationManagementTests(unittest.TestCase):
         self.assertEqual(result["title"], "First chat")
         self.assertEqual(result["summary"], "Planning notes")
         self.assertEqual(result["message_count"], 4)
+        self.assertEqual(result["match_role"], "user")
+        self.assertEqual(result["match_count"], 2)
         self.assertIn("migration causes", result["excerpt"])
         self.assertNotIn("legacy_chat_id", result)
         self.assertNotIn("private", result)
