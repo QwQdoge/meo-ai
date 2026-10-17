@@ -248,6 +248,17 @@ Rectangle {
                 color: MeoTheme.contentOnSurfaceVariant
                 elide: Text.ElideRight
             }
+            MeoButton {
+                visible: root.tab === 4
+                text: qsTr("Report issue")
+                icon.name: "open_in_new"
+                type: "text"
+                size: "xs"
+                Accessible.name: qsTr("Report a Meo AI issue")
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("Open the Meo AI bug report template in your browser")
+                onClicked: Qt.openUrlExternally("https://github.com/QwQdoge/meo-ai/issues/new?template=bug_report.yml")
+            }
         }
     }
 
