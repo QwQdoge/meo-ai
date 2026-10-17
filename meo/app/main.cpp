@@ -1,4 +1,5 @@
 #include "accountaibackend.h"
+#include "draftpersistence.h"
 #include "nativeagentclient.h"
 #include "usagebackend.h"
 #include <QCoreApplication>
@@ -39,6 +40,14 @@ QSize requestedWindowSize(const QStringList &arguments)
     return QSize(width, height);
 }
 
+bool isSideEffectFreePreview(const QStringList &arguments)
+{
+    return arguments.contains(QStringLiteral("--ui-demo"))
+        || arguments.contains(QStringLiteral("--smoke"))
+        || arguments.contains(QStringLiteral("--print-transport"))
+        || arguments.contains(QStringLiteral("--screenshot"));
+}
+
 bool shouldActivatePackagedAgentService(const QStringList &arguments)
 {
     if (!qEnvironmentVariableIsEmpty("MEO_AI_SERVICE_ENDPOINT")
@@ -48,10 +57,7 @@ bool shouldActivatePackagedAgentService(const QStringList &arguments)
     // Preview/smoke/transport probes are deliberately side-effect free. A
     // custom endpoint also remains entirely caller-owned; only the installed
     // default loopback service is eligible for on-demand activation.
-    return !arguments.contains(QStringLiteral("--ui-demo"))
-        && !arguments.contains(QStringLiteral("--smoke"))
-        && !arguments.contains(QStringLiteral("--print-transport"))
-        && !arguments.contains(QStringLiteral("--screenshot"));
+    return !isSideEffectFreePreview(arguments);
 }
 
 bool requestPackagedAgentService()
@@ -174,10 +180,21 @@ int main(int argc, char **argv) {
     engine.load(QUrl("qrc:/meo/app/qml/Main.qml"));
     if (engine.rootObjects().isEmpty()) return 1;
 
-    auto window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+    QObject *rootObject = engine.rootObjects().first();
+    auto window = qobject_cast<QQuickWindow *>(rootObject);
     const QSize requestedSize = requestedWindowSize(app.arguments());
     if (window && requestedSize.isValid())
         window->resize(requestedSize);
+
+    DraftPersistence draftPersistence;
+    if (!isSideEffectFreePreview(app.arguments())) {
+        QObject *composer = rootObject->findChild<QObject *>(QStringLiteral("meoAiComposer"));
+        if (draftPersistence.attach(composer)) {
+            QObject::connect(
+                &app, &QCoreApplication::aboutToQuit,
+                &draftPersistence, &DraftPersistence::flush);
+        }
+    }
 
     if (app.arguments().contains("--ui-demo"))
         seedUiDemo(client);
