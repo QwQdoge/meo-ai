@@ -124,6 +124,8 @@ private slots:
                   "\"summary\":\"School research\","
                   "\"excerpt\":\"…migration causes and consequences…\","
                   "\"message_count\":12,"
+                  "\"match_role\":\"user\","
+                  "\"match_count\":3,"
                   "\"legacy_chat_id\":77}]}" );
         QTRY_VERIFY(!client.conversationSearchBusy());
         QTRY_COMPARE(client.conversationSearchResults().size(), 1);
@@ -132,6 +134,8 @@ private slots:
         QCOMPARE(item.value("title").toString(), QString("Migration notes"));
         QCOMPARE(item.value("excerpt").toString(), QString("…migration causes and consequences…"));
         QCOMPARE(item.value("message_count").toInt(), 12);
+        QCOMPARE(item.value("match_role").toString(), QString("user"));
+        QCOMPARE(item.value("match_count").toInt(), 3);
         QVERIFY(!item.contains("legacy_chat_id"));
         searchSocket->deleteLater();
 
