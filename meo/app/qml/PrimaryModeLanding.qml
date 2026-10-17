@@ -15,7 +15,15 @@ Item {
     property bool deviceReady: false
     property real uiScale: MeoTheme.globalScale
 
+    ProjectsPage {
+        visible: root.modeKey === "projects"
+        anchors.fill: parent
+        store: typeof projectStore !== "undefined" ? projectStore : null
+        uiScale: root.uiScale
+    }
+
     ColumnLayout {
+        visible: root.modeKey !== "projects"
         width: Math.min(parent.width - 48 * root.uiScale, 720 * root.uiScale)
         anchors.centerIn: parent
         spacing: 16 * root.uiScale
