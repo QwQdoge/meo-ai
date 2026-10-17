@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Dialogs
 import QtQuick.Layouts
 import MeoUI 1.0
 
@@ -10,6 +11,7 @@ Item {
     readonly property bool searching: searchField.text.trim().length > 0
     property string managementConversationId: ""
     property string managementConversationTitle: ""
+    property string exportConversationId: ""
 
     function beginRename(item) {
         managementConversationId = String(item.id || "")
@@ -26,9 +28,22 @@ Item {
         deletePopup.open()
     }
 
+    function beginExport(item) {
+        exportConversationId = String(item.id || "")
+        exportDialog.open()
+    }
+
     onVisibleChanged: {
         if (visible && agent.serviceMode && !agent.actionBusy)
             agent.refreshConversations()
+    }
+
+    FileDialog {
+        id: exportDialog
+        title: qsTr("Export chat as Markdown")
+        fileMode: FileDialog.SaveFile
+        nameFilters: [qsTr("Markdown files (*.md)"), qsTr("All files (*)")]
+        onAccepted: agent.exportConversation(root.exportConversationId, selectedFile)
     }
 
     Timer {
@@ -222,6 +237,14 @@ Item {
                                     && !agent.actionBusy
                                     && agent.options.length === 0
                                 onClicked: agent.resumeConversation(String(modelData.id || ""))
+                            }
+
+                            MeoButton {
+                                text: qsTr("Export")
+                                type: "text"
+                                size: "xs"
+                                enabled: !agent.busy && !agent.actionBusy
+                                onClicked: root.beginExport(modelData)
                             }
 
                             MeoIconButton {
