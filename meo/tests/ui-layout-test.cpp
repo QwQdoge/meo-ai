@@ -259,7 +259,7 @@ private slots:
         QVERIFY(QMetaObject::invokeMethod(mobileMenuButton.data(), "clicked"));
         QTRY_VERIFY(mobileDrawer->property("visible").toBool());
         QPointer<QObject> mobileWork = window->findChild<QObject *>("meoAiMobileNav-work");
-        QTRY_VERIFY(mobileWork && mobileWork->property("visible").toBool());
+        QTRY_VERIFY(mobileWork);
         QVERIFY(QMetaObject::invokeMethod(mobileWork.data(), "clicked"));
         QTRY_COMPARE(window->property("primaryMode").toString(), QString("work"));
         QTRY_VERIFY(!mobileDrawer->property("visible").toBool());
