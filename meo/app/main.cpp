@@ -1,6 +1,7 @@
 #include "accountaibackend.h"
 #include "draftpersistence.h"
 #include "nativeagentclient.h"
+#include "projectstore.h"
 #include "usagebackend.h"
 #include <QCoreApplication>
 #include <QDBusConnection>
@@ -162,6 +163,7 @@ int main(int argc, char **argv) {
 
     UsageBackend usageBackend;
     AccountAiBackend accountAiBackend;
+    ProjectStore projectStore(!isSideEffectFreePreview(app.arguments()));
     QObject::connect(
         &accountAiBackend, &AccountAiBackend::modelActivationRequested,
         &client, [&client](const QString &connectionId, const QString &modelId) {
@@ -176,6 +178,7 @@ int main(int argc, char **argv) {
     engine.rootContext()->setContextProperty("agent", &client);
     engine.rootContext()->setContextProperty("usage", &usageBackend);
     engine.rootContext()->setContextProperty("accountAI", &accountAiBackend);
+    engine.rootContext()->setContextProperty("projectStore", &projectStore);
     engine.rootContext()->setContextProperty("uiPreview", app.arguments().contains("--ui-demo"));
     engine.load(QUrl("qrc:/meo/app/qml/App.qml"));
     if (engine.rootObjects().isEmpty()) return 1;
