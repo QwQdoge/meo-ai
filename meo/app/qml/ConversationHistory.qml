@@ -39,6 +39,18 @@ Item {
             agent.refreshConversations()
     }
 
+    Timer {
+        id: newChatRefresh
+        interval: 100
+        repeat: true
+        onTriggered: {
+            if (agent.busy || agent.actionBusy)
+                return
+            stop()
+            agent.refreshConversations()
+        }
+    }
+
     ColumnLayout {
         anchors.fill: parent
         spacing: 10 * root.uiScale
@@ -46,6 +58,18 @@ Item {
         RowLayout {
             Layout.fillWidth: true
             spacing: 8 * root.uiScale
+
+            MeoButton {
+                text: qsTr("New chat")
+                icon.name: "add"
+                type: "tonal"
+                size: "s"
+                enabled: agent.serviceMode && !agent.busy && agent.options.length === 0
+                onClicked: {
+                    agent.newChat()
+                    newChatRefresh.restart()
+                }
+            }
 
             TextField {
                 id: searchField
