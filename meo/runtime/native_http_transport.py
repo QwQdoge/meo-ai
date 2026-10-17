@@ -85,6 +85,12 @@ class NativeAgentHttpTransport(AgentHttpTransport):
             excerpt = value.get("excerpt")
             if isinstance(excerpt, str) and excerpt.strip():
                 output["excerpt"] = excerpt.strip()[:1200]
+            match_role = value.get("match_role")
+            if match_role in {"user", "assistant"}:
+                output["match_role"] = match_role
+            match_count = value.get("match_count")
+            if isinstance(match_count, int) and not isinstance(match_count, bool) and match_count >= 0:
+                output["match_count"] = min(match_count, 1000000)
             results.append(output)
         return {"query": query, "results": results}
 
