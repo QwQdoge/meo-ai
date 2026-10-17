@@ -185,6 +185,14 @@ private slots:
         for (auto *candidate : window->findChildren<QObject *>("meoAiSettingsCenter"))
             QVERIFY(!candidate->property("visible").toBool());
 
+        // Activity exposes a stable support entry point. The test deliberately
+        // does not click it, so CI never opens an external browser.
+        QVERIFY(QMetaObject::invokeMethod(window, "openInspector", Q_ARG(QVariant, 4)));
+        QCOMPARE(window->property("inspectorTab").toInt(), 4);
+        QPointer<QQuickItem> reportIssue;
+        QTRY_VERIFY((reportIssue = item(window->contentItem(), "meoAiReportIssue")) != nullptr);
+        QVERIFY(reportIssue->isVisible());
+
         window->resize(960, 720);
         QTRY_VERIFY(!window->property("showDock").toBool());
         QTRY_VERIFY(sidebar && qAbs(sidebar->width() - 72) < 2);
