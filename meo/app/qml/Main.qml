@@ -26,6 +26,7 @@ ApplicationWindow {
     property bool inspectorOpen: layoutPreferences.inspectorOpen
     property bool inspectorPinned: false
     property int inspectorTab: 0
+    property string primaryMode: "chat"
     property var inspectedMetadata: ({})
     property var toolEvents: []
     property var currentToolEvents: []
@@ -53,6 +54,20 @@ ApplicationWindow {
         inspectorTab = tab
         inspectorOpen = true
         if (width < 1280 * scale || messages.count === 0) inspectorOverlay.open()
+    }
+    function selectPrimaryMode(mode) {
+        const nextMode = String(mode || "chat")
+        if (nextMode !== "chat" && nextMode !== "work" && nextMode !== "projects" && nextMode !== "skills")
+            return
+        primaryMode = nextMode
+        inspectorOpen = false
+        inspectorOverlay.close()
+        if (nextMode === "chat") {
+            Qt.callLater(function() {
+                history.positionViewAtEnd()
+                composer.forceActiveFocus()
+            })
+        }
     }
     function matchingMessages(query) {
         let count = 0
@@ -264,7 +279,10 @@ ApplicationWindow {
     Shortcut {
         sequence: "Ctrl+N"
         enabled: !agent.busy && !agent.actionBusy && !agent.options.length
-        onActivated: agent.newChat()
+        onActivated: {
+            window.selectPrimaryMode("chat")
+            agent.newChat()
+        }
     }
 
     TextEdit {
@@ -336,13 +354,16 @@ ApplicationWindow {
                     type: "filled"; size: "s"
                     Accessible.name: qsTr("New chat")
                     enabled: !agent.busy && !agent.actionBusy && !agent.options.length
-                    onClicked: agent.newChat()
+                    onClicked: {
+                        window.selectPrimaryMode("chat")
+                        agent.newChat()
+                    }
                     ToolTip.visible: hovered && !window.showSidebar
                     ToolTip.text: Accessible.name
                 }
                 MeoTextField {
                     id: chatSearch
-                    visible: window.showSidebar && messages.count > 0
+                    visible: window.primaryMode === "chat" && window.showSidebar && messages.count > 0
                     Layout.fillWidth: true
                     placeholder: qsTr("Find in this conversation")
                     leadingIcon: "search"
@@ -353,10 +374,9 @@ ApplicationWindow {
                 Repeater {
                     model: [
                         {label: qsTr("Chat"), icon: "chat_bubble", action: "chat"},
-                        {label: qsTr("Chats"), icon: "history", action: "chats"},
-                        {label: qsTr("Models by job"), icon: "deployed_code", action: "models"},
-                        {label: qsTr("Memory"), icon: "neurology", action: "memory"},
-                        {label: qsTr("Resources"), icon: "folder_open", action: "resources"}
+                        {label: qsTr("Work"), icon: "work", action: "work"},
+                        {label: qsTr("Projects"), icon: "folder_open", action: "projects"},
+                        {label: qsTr("Skills"), icon: "extension", action: "skills"}
                     ]
                     delegate: NavigationButton {
                         required property var modelData
@@ -364,25 +384,16 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         text: window.showSidebar ? modelData.label : ""
                         icon.name: modelData.icon
-                        type: modelData.action === "chat"
-                            ? (!window.inspectorOpen ? "tonal" : "text")
-                            : modelData.action === "chats" && window.inspectorOpen && window.inspectorTab === 5
-                                ? "tonal" : "text"
+                        type: window.primaryMode === modelData.action ? "tonal" : "text"
                         size: "s"
                         Accessible.name: modelData.label
                         ToolTip.visible: hovered && !window.showSidebar
                         ToolTip.text: modelData.label
-                        onClicked: {
-                            if (modelData.action === "chats") window.openInspector(5)
-                            else if (modelData.action === "models") modelRolesPopup.open()
-                            else if (modelData.action === "memory") { agent.refreshMemory(); window.openInspector(1) }
-                            else if (modelData.action === "resources") window.openInspector(2)
-                            else { inspectorOpen = false; history.positionViewAtEnd(); composer.forceActiveFocus() }
-                        }
+                        onClicked: window.selectPrimaryMode(modelData.action)
                     }
                 }
                 MeoText {
-                    visible: window.showSidebar
+                    visible: window.primaryMode === "chat" && window.showSidebar
                     Layout.topMargin: 22 * window.scale
                     Layout.leftMargin: 12 * window.scale
                     text: qsTr("This conversation")
@@ -390,15 +401,15 @@ ApplicationWindow {
                     color: MeoTheme.contentOnSurfaceVariant
                 }
                 NavigationButton {
-                    visible: window.showSidebar
+                    visible: window.primaryMode === "chat" && window.showSidebar
                     Layout.fillWidth: true
                     text: messages.count ? qsTr("Current chat") : qsTr("A fresh start")
                     icon.name: "chat"
                     type: "tonal"; size: "s"
-                    onClicked: { history.positionViewAtEnd(); composer.forceActiveFocus() }
+                    onClicked: window.selectPrimaryMode("chat")
                 }
                 MeoText {
-                    visible: window.showSidebar && chatSearch.text.length > 0
+                    visible: window.primaryMode === "chat" && window.showSidebar && chatSearch.text.length > 0
                     Layout.fillWidth: true
                     Layout.margins: 8 * window.scale
                     text: qsTr("%1 matching messages").arg(window.matchingMessages(chatSearch.text))
@@ -475,14 +486,24 @@ ApplicationWindow {
                     MeoText {
                         objectName: "meoAiConversationTitle"
                         Layout.fillWidth: true
-                        text: messages.count ? window.conversationTitle : qsTr("Your space to think")
+                        text: window.primaryMode === "chat"
+                            ? (messages.count ? window.conversationTitle : qsTr("Your space to think"))
+                            : window.primaryMode === "work" ? qsTr("Work")
+                            : window.primaryMode === "projects" ? qsTr("Projects")
+                            : qsTr("Skills")
                         typeRole: "title"; typeSize: "small"
                         color: MeoTheme.contentOnSurface
                         elide: Text.ElideRight
                     }
                     MeoText {
                         Layout.fillWidth: true
-                        text: window.previewMode ? qsTr("Design preview · sample content") : agent.status
+                        text: window.primaryMode === "chat"
+                            ? (window.previewMode ? qsTr("Design preview · sample content") : agent.status)
+                            : window.primaryMode === "work"
+                                ? qsTr("Choose where Meo AI can act")
+                                : window.primaryMode === "projects"
+                                    ? qsTr("Persistent context for related work")
+                                    : qsTr("Reusable capabilities")
                         typeRole: "label"; typeSize: "small"
                         color: MeoTheme.contentOnSurfaceVariant
                         elide: Text.ElideRight
@@ -496,7 +517,10 @@ ApplicationWindow {
                     icon.name: "add"; type: "standard"; size: "xs"
                     Accessible.name: qsTr("New chat")
                     enabled: !agent.busy && !agent.actionBusy && !agent.options.length
-                    onClicked: agent.newChat()
+                    onClicked: {
+                        window.selectPrimaryMode("chat")
+                        agent.newChat()
+                    }
                 }
                 MeoIconButton {
                     icon.name: "right_panel_open"; type: window.inspectorOpen ? "tonal" : "standard"; size: "xs"
@@ -509,9 +533,32 @@ ApplicationWindow {
                 }
             }
 
+            PrimaryModeLanding {
+                id: primaryModeLanding
+                visible: window.primaryMode !== "chat"
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: compactHeader.bottom
+                anchors.bottom: parent.bottom
+                anchors.margins: window.pageMargin
+                modeKey: window.primaryMode
+                title: window.primaryMode === "work" ? qsTr("Work")
+                    : window.primaryMode === "projects" ? qsTr("Projects") : qsTr("Skills")
+                description: window.primaryMode === "work"
+                    ? qsTr("Run agentic tasks on a chosen computer or environment. Local execution comes first; authenticated remote devices can join later.")
+                    : window.primaryMode === "projects"
+                        ? qsTr("Keep related chats, files and Work together in one persistent place.")
+                        : qsTr("Use reusable capabilities without mixing them into model, memory or provider settings.")
+                iconName: window.primaryMode === "work" ? "work"
+                    : window.primaryMode === "projects" ? "folder_open" : "extension"
+                showDeviceTarget: window.primaryMode === "work"
+                deviceReady: !!agent.agentState.ready
+            }
+
             ListView {
                 id: history
                 objectName: "meoAiHistory"
+                visible: window.primaryMode === "chat"
                 anchors.top: compactHeader.bottom
                 anchors.topMargin: 16 * window.scale
                 anchors.bottom: confirmationSurface.visible ? confirmationSurface.top
@@ -628,7 +675,7 @@ ApplicationWindow {
 
             ColumnLayout {
                 id: emptyIntro
-                visible: messages.count === 0
+                visible: window.primaryMode === "chat" && messages.count === 0
                 width: Math.min(parent.width - 2 * window.pageMargin, 700 * window.scale)
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.bottom: composerShell.top
@@ -656,7 +703,7 @@ ApplicationWindow {
             Rectangle {
                 id: confirmationSurface
                 objectName: "meoAiConfirmation"
-                visible: agent.options.length > 0 && window.pendingToolDisplay.length > 0
+                visible: window.primaryMode === "chat" && agent.options.length > 0 && window.pendingToolDisplay.length > 0
                 width: composerShell.width
                 implicitHeight: confirmationColumn.implicitHeight + 28 * window.scale
                 anchors.horizontalCenter: parent.horizontalCenter
@@ -696,7 +743,7 @@ ApplicationWindow {
             MeoBanner {
                 id: requestFailureSurface
                 objectName: "meoAiRequestFailure"
-                visible: agent.requestFailed
+                visible: window.primaryMode === "chat" && agent.requestFailed
                 width: composerShell.width
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.bottom: composerShell.top
@@ -712,6 +759,7 @@ ApplicationWindow {
             Rectangle {
                 id: composerShell
                 objectName: "meoAiComposerShell"
+                visible: window.primaryMode === "chat"
                 width: Math.min(parent.width - 2 * window.pageMargin, window.composerMaxWidth)
                 implicitHeight: composerColumn.implicitHeight + 24 * window.scale
                 anchors.horizontalCenter: parent.horizontalCenter
@@ -799,7 +847,7 @@ ApplicationWindow {
             }
             RowLayout {
                 id: quickActions
-                visible: messages.count === 0 && !agent.busy && !agent.options.length
+                visible: window.primaryMode === "chat" && messages.count === 0 && !agent.busy && !agent.options.length
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.top: composerShell.bottom
                 anchors.topMargin: 16 * window.scale
@@ -818,7 +866,7 @@ ApplicationWindow {
                 }
             }
             MeoText {
-                visible: messages.count > 0
+                visible: window.primaryMode === "chat" && messages.count > 0
                 anchors.horizontalCenter: composerShell.horizontalCenter
                 anchors.top: composerShell.bottom
                 anchors.topMargin: 7 * window.scale
