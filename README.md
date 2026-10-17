@@ -29,6 +29,75 @@ For the full build, service, provider and live-acceptance workflow, see **[meo/R
 
 The browser experience is maintained separately in **[QwQdoge/meo-ai-web](https://github.com/QwQdoge/meo-ai-web)**. `meo-ai` remains the product source of truth for the service contract, web integration boundary, cloud/device protocol and Meo-specific web policy.
 
+## What is usable now
+
+The native preview already has a real end-to-end product path rather than a static UI mock:
+
+- streaming conversations with real Stop/cancel semantics, reconnect and stale-conversation recovery;
+- saved conversation history with restore, full-history message search, rename, delete and Markdown export;
+- file, image and long-text attachments, including drag and drop plus local clipboard files/images;
+- vision-capability checks before image requests reach a text-only model;
+- model selection and model-role routing, managed memory, Skills, MCP visibility and typed controls;
+- response details for usage, timing, context, sources and tool activity;
+- a live Activity view that shows the current request state and historical AI usage;
+- Meo Account integration for account-owned provider connections/BYOK metadata;
+- typed System AI Router boundaries for reviewable system actions.
+
+This is still a development preview. A feature being present in the UI does not mean every provider combination has completed live acceptance on every target system.
+
+## Common workflows
+
+**Start a chat:** open the native client and send a message. `Ctrl+N` starts a fresh conversation.
+
+**Find an old chat:** open **Response details → Chats** and search. Search covers saved titles and visible user/assistant message text, not hidden tool payloads.
+
+**Attach context:** use the attachment button to choose/drop files, paste local files or an image from the clipboard, or attach long text. Clipboard web URLs are not downloaded automatically.
+
+**Export or delete:** the Chats view can export a conversation as Markdown or permanently delete it after confirmation. Conversation-scoped local attachments are cleaned up with deletion.
+
+**Inspect work:** open **Response details** for response metadata and sources, or **AI activity** for current request state plus aggregated usage history.
+
+## Data and network boundaries
+
+Meo AI is local-first, but local-first does not mean network-free. The active provider may contact its configured API, Meo Account may broker account-owned provider access/sync, and explicit tools can contact services allowed by their own contracts. Core conversation state and pending attachments remain under the local AgentService path unless a request explicitly sends that content to a selected model/provider.
+
+Provider credentials are not meant to become a second Meo AI key store: account-owned BYOK stays behind Meo Account/KWallet boundaries. System actions remain behind typed System AI Router capability and confirmation policy instead of being granted by prompt text.
+
+## Troubleshooting
+
+### “AgentService not connected”
+
+Run:
+
+```sh
+python3 -m meo.runtime.main --self-check
+```
+
+For an installed build, also check the user service:
+
+```sh
+systemctl --user status meo-agent-service.service
+journalctl --user -u meo-agent-service.service -b
+```
+
+The native app only accepts a loopback AgentService origin for its local transport.
+
+### An image cannot be sent
+
+Choose a model that advertises vision support. Meo AI deliberately blocks an image request before sending when the selected model is known to be text-only.
+
+### A previous conversation disappeared
+
+Refresh Chats. If the saved conversation no longer exists, the client clears the stale local identity instead of silently writing new messages into a mismatched chat.
+
+### Activity import looks empty
+
+The Activity page only reports sources that have actually been imported or observed. Use **Import Codex & Claude Code** and then refresh; unsupported or missing sources remain visibly absent rather than being fabricated.
+
+### A request failed during streaming
+
+Use **Try again** when the failure is marked retryable. Meo AI keeps cancellation/retry semantics separate from merely hiding a broken stream so it does not pretend unfinished work succeeded.
+
 ## What Meo AI owns
 
 | Area | Responsibility |
@@ -65,6 +134,7 @@ Web (meo-ai-web) ──────────┘        │
 The maintained architecture and migration details are in:
 
 - [Ownership and migration boundary](docs/ownership.md)
+- [Product experience contract](docs/product-experience.md)
 - [Native architecture](meo/docs/architecture.md)
 - [AgentService contract](meo/docs/agent-service-contract.md)
 - [SystemTool contract](meo/docs/system-tool-contract.md)
