@@ -46,6 +46,7 @@ private slots:
     void cleanup() {
         QGuiApplication::clipboard()->clear();
         QSettings().clear();
+        QCoreApplication::setApplicationVersion(QString());
         qunsetenv("MEO_AI_SERVICE_ENDPOINT");
     }
 
@@ -106,6 +107,24 @@ private slots:
         QVERIFY(client.status().contains(QStringLiteral("local files or an image")));
         QTest::qWait(40);
         QVERIFY(!server.hasPendingConnections());
+    }
+
+    void copiedDiagnosticsContainVersionButNotEndpointOrConversationData() {
+        qputenv("MEO_AI_SERVICE_ENDPOINT", "http://127.0.0.1:49123");
+        QCoreApplication::setApplicationVersion(QStringLiteral("9.9-test"));
+
+        AgentClient client;
+        client.copyDiagnosticsToClipboard();
+
+        const QString text = QGuiApplication::clipboard()->text();
+        QVERIFY(text.contains(QStringLiteral("Meo AI 9.9-test")));
+        QVERIFY(text.contains(QStringLiteral("Transport: Local AgentService")));
+        QVERIFY(text.contains(QStringLiteral("Pending attachments: 0")));
+        QVERIFY(!text.contains(QStringLiteral("127.0.0.1")));
+        QVERIFY(!text.contains(QStringLiteral("49123")));
+        QVERIFY(!text.contains(QStringLiteral("MEO_AI_SERVICE_ENDPOINT")));
+        QVERIFY(!text.contains(QStringLiteral("conversation_id"), Qt::CaseInsensitive));
+        QVERIFY(!text.contains(QStringLiteral("api key"), Qt::CaseInsensitive));
     }
 };
 
