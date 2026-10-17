@@ -57,6 +57,11 @@ pub struct SendMessageRequest {
     pub model_id: String,
     #[serde(default)]
     pub resource_ids: Vec<String>,
+    /// User-visible Skill/App IDs selected for this request. These are resolved
+    /// against the shared capability catalog; clients never submit raw tools or
+    /// credentials through this field.
+    #[serde(default)]
+    pub capability_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
