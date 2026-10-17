@@ -42,7 +42,18 @@ QString markdownDocument(const QString &title, const QJsonArray &messages) {
 void AgentClient::exportConversation(const QString &conversationId, const QUrl &fileUrl) {
     const QString id = conversationId.trimmed();
     if (!m_serviceMode || busy() || actionBusy()) return;
-    if (id.isEmpty() || conversationMetadataForId(id).isEmpty()) {
+
+    QVariantMap metadata = conversationMetadataForId(id);
+    if (metadata.isEmpty()) {
+        for (const QVariant &value : m_conversationSearchResults) {
+            const QVariantMap candidate = value.toMap();
+            if (candidate.value(QStringLiteral("id")).toString() == id) {
+                metadata = candidate;
+                break;
+            }
+        }
+    }
+    if (id.isEmpty() || metadata.isEmpty()) {
         m_status = tr("That conversation is no longer available.");
         emit changed();
         return;
@@ -68,7 +79,7 @@ void AgentClient::exportConversation(const QString &conversationId, const QUrl &
     m_actionReply = reply;
     emit changed();
 
-    connect(reply, &QNetworkReply::finished, this, [this, reply, id, fileUrl] {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, id, fileUrl, metadata] {
         if (m_actionReply != reply) {
             reply->deleteLater();
             return;
@@ -95,16 +106,6 @@ void AgentClient::exportConversation(const QString &conversationId, const QUrl &
             return;
         }
 
-        QVariantMap metadata = conversationMetadataForId(id);
-        if (metadata.isEmpty()) {
-            for (const QVariant &value : m_conversationSearchResults) {
-                const QVariantMap candidate = value.toMap();
-                if (candidate.value(QStringLiteral("id")).toString() == id) {
-                    metadata = candidate;
-                    break;
-                }
-            }
-        }
         const QString markdown = markdownDocument(
             safeExportTitle(metadata),
             object.value(QStringLiteral("messages")).toArray());
