@@ -133,6 +133,12 @@ if(BUILD_TESTING)
     target_link_libraries(meo-ai-resource-client-test PRIVATE meo-agent-client Qt6::Test)
     add_test(NAME meo-ai.resources COMMAND meo-ai-resource-client-test)
 
+    qt_add_executable(meo-ai-clipboard-client-test tests/clipboard-client-test.cpp)
+    target_include_directories(meo-ai-clipboard-client-test PRIVATE app)
+    target_link_libraries(meo-ai-clipboard-client-test PRIVATE meo-agent-client Qt6::Test)
+    add_test(NAME meo-ai.clipboard-resources COMMAND meo-ai-clipboard-client-test)
+    set_tests_properties(meo-ai.clipboard-resources PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
     qt_add_executable(meo-ai-new-chat-resource-test tests/new-chat-resource-test.cpp)
     target_include_directories(meo-ai-new-chat-resource-test PRIVATE app)
     target_link_libraries(meo-ai-new-chat-resource-test PRIVATE meo-agent-client Qt6::Test)
