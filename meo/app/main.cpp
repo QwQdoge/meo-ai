@@ -15,6 +15,10 @@
 #include <QVariantMap>
 #include <cstdio>
 
+#ifndef MEO_AI_VERSION
+#define MEO_AI_VERSION "development"
+#endif
+
 namespace {
 QSize requestedWindowSize(const QStringList &arguments)
 {
@@ -132,7 +136,9 @@ void seedUiDemo(AgentClient &client)
 
 int main(int argc, char **argv) {
     QGuiApplication app(argc, argv);
-    app.setOrganizationName("MeoArch"); app.setApplicationName("MeoAI");
+    app.setOrganizationName("MeoArch");
+    app.setApplicationName("MeoAI");
+    app.setApplicationVersion(QStringLiteral(MEO_AI_VERSION));
 
     const bool activatePackagedService = shouldActivatePackagedAgentService(app.arguments());
     if (qEnvironmentVariableIsEmpty("MEO_AI_SERVICE_ENDPOINT") &&
