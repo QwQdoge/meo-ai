@@ -40,6 +40,44 @@ Unified web/cloud/device rules:
 - do not vendor a large web upstream merely for physical repository purity;
   record its exact upstream commit/license and keep the Meo patch surface small.
 
+Unified product and navigation rules:
+- Meo AI is one product across Web, Linux, Windows, macOS and Android. Keep the
+  information architecture and feature names aligned even when platform layouts
+  and capabilities differ.
+- the primary user-facing hierarchy is `Chat`, `Work`, `Projects`, and `Skills`.
+  These are task surfaces, not configuration categories.
+- `Chat` is conversational assistance. `Work` is agentic execution with an
+  explicit target device/environment, visible progress, permission boundaries,
+  and resumable task state. Never silently turn an ordinary Chat into Work.
+- `Projects` owns persistent task context/files/conversations. `Skills` owns
+  reusable user-visible capabilities. Do not use either as a dumping ground for
+  settings or low-level runtime state.
+- provider configuration, model routing/"models by job", memory management,
+  MCP/server configuration, diagnostics, account/session controls and connector
+  administration belong under Settings unless they are temporarily surfaced by
+  the current task context.
+- attachments belong to the current Chat; project files belong to a Project;
+  Work outputs belong to Work artifacts. Avoid a generic top-level `Resources`
+  bucket when the resource has a more specific owner.
+- desktop is the strongest local Work executor. Android may expose a smaller set
+  of local capabilities and should also act as a first-class controller for
+  remote Work. Web must not pretend to have direct local-machine privileges; it
+  controls authenticated online Meo devices through cloud/device contracts.
+- remote device control must use authenticated device registration, revocable
+  per-device sessions, scoped capabilities, user-visible target selection and
+  explicit approval for privileged operations. Never expose a generic remote
+  shell as the product contract.
+- Connectors should follow one capability/permission model whether implemented
+  by an official integration, an MCP adapter or a future Meo plugin. AI code
+  should receive brokered capabilities rather than long-lived third-party tokens.
+- Meo Account should support one-time device authorization followed by silent
+  session refresh until logout, revocation, expiry policy or security reauth.
+  Store refresh/session secrets in the platform secure store; do not persist
+  them in ordinary config files.
+- share protocol/data models/design tokens across clients where practical, but
+  do not force every platform to share one renderer. Web and native clients may
+  use different rendering stacks while remaining the same product.
+
 Do not move/delete the Newelle-derived root tree as incidental cleanup. The split
 gates are defined in `docs/ownership.md`; until those gates are met, reduce coupling
 through adapters rather than creating a second engine copy or breaking the build.
