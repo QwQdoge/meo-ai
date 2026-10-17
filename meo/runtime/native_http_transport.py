@@ -23,12 +23,6 @@ class NativeAgentHttpTransport(AgentHttpTransport):
     def list_messages(self, conversation_id: str) -> dict:
         payload = super().list_messages(conversation_id)
         metadata: dict = {"conversation_id": conversation_id}
-
-        # NewelleMultimodalBridge already exposes a deliberately small,
-        # presentation-safe conversation projection. Reuse that projection
-        # here instead of reaching into Newelle chat storage a second way.
-        # Metadata is helpful UI state, but a temporary catalog failure must
-        # never make otherwise valid message history impossible to restore.
         try:
             conversations = self.service.list_conversations()
         except Exception:
@@ -60,10 +54,41 @@ class NativeAgentHttpTransport(AgentHttpTransport):
             raise ValueError("selected backend does not support conversation management")
         return method
 
+    def search_conversations(self, query: str) -> dict:
+        query = " ".join(str(query or "").split()).strip()
+        if not query:
+            return {"query": "", "results": []}
+        if len(query) > 240:
+            raise ValueError("conversation search query is too long")
+        method = self._conversation_management_method("search_conversations")
+        raw_results = method(query)
+        if not isinstance(raw_results, list):
+            raw_results = []
+
+        catalog = {
+            item.get("id"): item
+            for item in self.service.list_conversations()
+            if isinstance(item, dict) and isinstance(item.get("id"), str)
+        }
+        results: list[dict] = []
+        for value in raw_results[:100]:
+            if not isinstance(value, dict):
+                continue
+            conversation_id = value.get("id")
+            if not isinstance(conversation_id, str) or conversation_id not in catalog:
+                continue
+            output = {"id": conversation_id}
+            metadata = catalog[conversation_id]
+            for key in ("title", "summary", "message_count"):
+                if key in metadata:
+                    output[key] = metadata[key]
+            excerpt = value.get("excerpt")
+            if isinstance(excerpt, str) and excerpt.strip():
+                output["excerpt"] = excerpt.strip()[:1200]
+            results.append(output)
+        return {"query": query, "results": results}
+
     def _conversation_has_active_request(self, conversation_id: str) -> bool:
-        # Native management is intentionally kept outside the canonical core for
-        # now. Inspect the core's request contexts here so deleting one chat does
-        # not needlessly block while another conversation is generating.
         contexts = tuple(getattr(self.service, "_contexts", {}).items())
         for request_id, context in contexts:
             if getattr(context, "conversation_id", None) != conversation_id:
@@ -106,7 +131,6 @@ class NativeAgentHttpTransport(AgentHttpTransport):
                 try:
                     store.delete(conversation_id, record.resource_id)
                 except ValueError:
-                    # Another cleanup path may already have removed it.
                     pass
         return {
             "accepted": True,
@@ -116,14 +140,7 @@ class NativeAgentHttpTransport(AgentHttpTransport):
 
 
 class _NativeHandler(_Handler):
-    """Native-client compatibility routes kept at the loopback transport edge.
-
-    AgentService's canonical managed-memory API currently uses `/v1/memories`
-    plus `/v1/memory/state`. The native product surface deliberately treats
-    memory as one resource (`/v1/memory`) and expects state + records together.
-    Keep that presentation alias here instead of leaking duplicate semantics
-    into AgentServiceCore or the memory backend.
-    """
+    """Native-client compatibility routes kept at the loopback transport edge."""
 
     @property
     def transport(self) -> NativeAgentHttpTransport:
@@ -131,6 +148,25 @@ class _NativeHandler(_Handler):
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
+        if parsed.path == "/v1/conversations/search":
+            if not self._request_boundary_allowed():
+                self._reply_error(HTTPStatus.FORBIDDEN, "request origin is not allowed")
+                return
+            try:
+                query = parse_qs(parsed.query, keep_blank_values=True)
+                if set(query) - {"q"}:
+                    raise ValueError("unsupported conversation search query parameter")
+                q_values = query.get("q", [""])
+                if len(q_values) != 1:
+                    raise ValueError("conversation search query must be specified at most once")
+                payload = self.transport.search_conversations(q_values[0])
+                self._reply_json(HTTPStatus.OK, payload)
+            except ValueError as exc:
+                self._reply_error(HTTPStatus.BAD_REQUEST, str(exc))
+            except Exception as exc:
+                self._reply_error(HTTPStatus.INTERNAL_SERVER_ERROR, str(exc))
+            return
+
         if parsed.path != "/v1/memory":
             super().do_GET()
             return
