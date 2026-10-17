@@ -3,7 +3,10 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 
-use meo_ai_core::{transport, MeoService, OpenAiCompatibleProvider, ProviderModel, ServiceConfig};
+use meo_ai_core::{
+    capability_transport, register_builtin_capabilities, transport, MeoService,
+    OpenAiCompatibleProvider, ProviderModel, ServiceConfig,
+};
 use tokio::net::TcpListener;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
@@ -117,8 +120,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let self_check = env::args().any(|arg| arg == "--self-check");
     let service = build_service()?;
+    let capabilities = capability_transport::shared_catalog();
+    {
+        let mut catalog = capabilities
+            .write()
+            .expect("capability catalog lock poisoned during startup");
+        register_builtin_capabilities(&mut catalog)?;
+    }
+
     if self_check {
-        println!("{}", service.health_snapshot());
+        let capability_count = capabilities
+            .read()
+            .expect("capability catalog lock poisoned during self-check")
+            .list()
+            .len();
+        println!(
+            "{}",
+            serde_json::json!({
+                "agent": service.health_snapshot(),
+                "capabilities": capability_count,
+            })
+        );
         return Ok(());
     }
 
@@ -127,7 +149,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let actual = listener.local_addr()?;
     info!(address = %actual, "Meo AgentService Rust runtime listening");
 
-    axum::serve(listener, transport::router(service))
+    let app = transport::router(service).merge(capability_transport::router(capabilities));
+    axum::serve(listener, app)
         .with_graceful_shutdown(async {
             if tokio::signal::ctrl_c().await.is_err() {
                 warn!("failed to install Ctrl-C shutdown handler");
