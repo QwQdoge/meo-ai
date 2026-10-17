@@ -45,7 +45,10 @@ pub fn shared_catalog() -> SharedCapabilityCatalog {
 }
 
 async fn list_capabilities(State(state): State<Arc<CapabilityHttpState>>) -> Json<Value> {
-    let catalog = state.catalog.read().expect("capability catalog lock poisoned");
+    let catalog = state
+        .catalog
+        .read()
+        .expect("capability catalog lock poisoned");
     let capabilities = catalog.list();
     let skill_count = capabilities
         .iter()
@@ -66,7 +69,10 @@ async fn get_capability(
     State(state): State<Arc<CapabilityHttpState>>,
     Path(capability_id): Path<String>,
 ) -> Result<Json<Value>, CapabilityApiError> {
-    let catalog = state.catalog.read().expect("capability catalog lock poisoned");
+    let catalog = state
+        .catalog
+        .read()
+        .expect("capability catalog lock poisoned");
     let capability = catalog
         .get(&capability_id)
         .cloned()
@@ -79,7 +85,10 @@ async fn set_capability_state(
     Path(capability_id): Path<String>,
     Json(body): Json<CapabilityStatePatch>,
 ) -> Result<Json<Value>, CapabilityApiError> {
-    let mut catalog = state.catalog.write().expect("capability catalog lock poisoned");
+    let mut catalog = state
+        .catalog
+        .write()
+        .expect("capability catalog lock poisoned");
     let current = catalog
         .get(&capability_id)
         .cloned()
