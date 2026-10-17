@@ -29,6 +29,7 @@ pub fn system_diagnostics_skill() -> CapabilityDescriptor {
         connection_state: CapabilityConnectionState::NotRequired,
         permissions: vec![],
         tools: vec![],
+        provides: vec![],
         requires: vec![],
         context_hint: concat!(
             "For system diagnostics, separate observed facts from hypotheses; ",
