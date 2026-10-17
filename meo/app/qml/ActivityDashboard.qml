@@ -109,6 +109,13 @@ ScrollView {
                 }
             }
             MeoIconButton {
+                icon.name: "content_copy"; size: "xs"; type: "standard"
+                Accessible.name: qsTr("Copy diagnostics")
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("Copy version and runtime state without prompts, keys, conversation IDs or endpoints")
+                onClicked: agent.copyDiagnosticsToClipboard()
+            }
+            MeoIconButton {
                 icon.name: "refresh"; size: "xs"; type: "standard"
                 enabled: !usage.busy
                 Accessible.name: qsTr("Refresh activity")
@@ -393,6 +400,58 @@ ScrollView {
                         enabled: !usage.busy
                         onClicked: usage.syncNow()
                     }
+                }
+            }
+        }
+
+        Rectangle {
+            id: dataNetworkCard
+            objectName: "meoAiDataNetworkCard"
+            Layout.fillWidth: true
+            implicitHeight: dataNetworkColumn.implicitHeight + 28 * root.uiScale
+            radius: 22 * root.uiScale
+            color: MeoTheme.surfaceContainerLowest
+            border.width: Math.max(1, root.uiScale)
+            border.color: MeoTheme.outlineVariant
+
+            ColumnLayout {
+                id: dataNetworkColumn
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.margins: 14 * root.uiScale
+                spacing: 8 * root.uiScale
+
+                MeoText {
+                    text: qsTr("Data & network")
+                    typeRole: "label"
+                    typeSize: "medium"
+                    color: MeoTheme.contentOnSurface
+                }
+                MeoText {
+                    Layout.fillWidth: true
+                    text: qsTr("Saved chats and pending attachments are managed by the local AgentService. Sending a request shares the selected message and attachments with the active provider path; a remote provider can therefore use the network, while a local provider can remain local.")
+                    typeRole: "body"
+                    typeSize: "small"
+                    color: MeoTheme.contentOnSurfaceVariant
+                    wrapMode: Text.Wrap
+                }
+                MeoText {
+                    Layout.fillWidth: true
+                    text: qsTr("Provider credentials stay behind Meo Account/KWallet boundaries. System changes go through typed System AI Router policy and confirmation rather than being granted by prompt text.")
+                    typeRole: "body"
+                    typeSize: "small"
+                    color: MeoTheme.contentOnSurfaceVariant
+                    wrapMode: Text.Wrap
+                }
+                MeoText {
+                    Layout.fillWidth: true
+                    text: qsTr("Copy diagnostics includes only version, platform and runtime state. It excludes prompts, API keys, endpoints, conversation IDs and account data.")
+                    typeRole: "label"
+                    typeSize: "small"
+                    color: MeoTheme.contentOnSurfaceVariant
+                    wrapMode: Text.Wrap
+                    opacity: 0.8
                 }
             }
         }
