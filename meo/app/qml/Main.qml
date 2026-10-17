@@ -353,22 +353,28 @@ ApplicationWindow {
                 Repeater {
                     model: [
                         {label: qsTr("Chat"), icon: "chat_bubble", action: "chat"},
+                        {label: qsTr("Chats"), icon: "history", action: "chats"},
                         {label: qsTr("Models by job"), icon: "deployed_code", action: "models"},
                         {label: qsTr("Memory"), icon: "neurology", action: "memory"},
                         {label: qsTr("Resources"), icon: "folder_open", action: "resources"}
                     ]
                     delegate: NavigationButton {
                         required property var modelData
+                        objectName: "meoAiNav-" + modelData.action
                         Layout.fillWidth: true
                         text: window.showSidebar ? modelData.label : ""
                         icon.name: modelData.icon
-                        type: modelData.action === "chat" ? "tonal" : "text"
+                        type: modelData.action === "chat"
+                            ? (!window.inspectorOpen ? "tonal" : "text")
+                            : modelData.action === "chats" && window.inspectorOpen && window.inspectorTab === 5
+                                ? "tonal" : "text"
                         size: "s"
                         Accessible.name: modelData.label
                         ToolTip.visible: hovered && !window.showSidebar
                         ToolTip.text: modelData.label
                         onClicked: {
-                            if (modelData.action === "models") modelRolesPopup.open()
+                            if (modelData.action === "chats") window.openInspector(5)
+                            else if (modelData.action === "models") modelRolesPopup.open()
                             else if (modelData.action === "memory") { agent.refreshMemory(); window.openInspector(1) }
                             else if (modelData.action === "resources") window.openInspector(2)
                             else { inspectorOpen = false; history.positionViewAtEnd(); composer.forceActiveFocus() }
