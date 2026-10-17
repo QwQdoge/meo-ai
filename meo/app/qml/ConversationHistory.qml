@@ -33,6 +33,18 @@ Item {
         exportDialog.open()
     }
 
+    function openConversation(item) {
+        if (!item || agent.busy || agent.actionBusy || agent.options.length > 0)
+            return
+        const id = String(item.id || "")
+        if (!id.length)
+            return
+        if (root.searching)
+            searchField.text = ""
+        if (id !== agent.conversationId)
+            agent.resumeConversation(id)
+    }
+
     onVisibleChanged: {
         if (visible && agent.serviceMode && !agent.actionBusy)
             agent.refreshConversations()
@@ -93,6 +105,7 @@ Item {
                 placeholderText: qsTr("Search all chats")
                 selectByMouse: true
                 color: MeoTheme.contentOnSurface
+                Accessible.name: qsTr("Search all saved chats")
                 onTextChanged: {
                     if (text.trim().length === 0) {
                         searchDebounce.stop()
@@ -101,11 +114,33 @@ Item {
                         searchDebounce.restart()
                     }
                 }
+                onAccepted: {
+                    if (!agent.conversationSearchBusy && agent.conversationSearchResults.length > 0)
+                        root.openConversation(agent.conversationSearchResults[0])
+                }
+                Keys.onEscapePressed: {
+                    text = ""
+                    event.accepted = true
+                }
                 background: Rectangle {
                     radius: 15 * root.uiScale
                     color: MeoTheme.surfaceContainerLowest
                     border.width: Math.max(1, root.uiScale)
                     border.color: searchField.activeFocus ? MeoTheme.primary : MeoTheme.outlineVariant
+                }
+            }
+
+            MeoIconButton {
+                visible: root.searching
+                icon.name: "close"
+                type: "standard"
+                size: "xs"
+                Accessible.name: qsTr("Clear chat search")
+                ToolTip.visible: hovered
+                ToolTip.text: Accessible.name
+                onClicked: {
+                    searchField.text = ""
+                    searchField.forceActiveFocus()
                 }
             }
 
@@ -139,6 +174,15 @@ Item {
             Layout.fillWidth: true
             visible: root.searching && agent.conversationSearchBusy
             text: qsTr("Searching message history…")
+            typeRole: "label"
+            typeSize: "small"
+            color: MeoTheme.contentOnSurfaceVariant
+        }
+
+        MeoText {
+            Layout.fillWidth: true
+            visible: root.searching && !agent.conversationSearchBusy && agent.conversationSearchResults.length > 0
+            text: qsTr("%1 matching chats · Enter opens the first result").arg(agent.conversationSearchResults.length)
             typeRole: "label"
             typeSize: "small"
             color: MeoTheme.contentOnSurfaceVariant
@@ -232,11 +276,8 @@ Item {
                                 text: conversationCard.currentConversation ? qsTr("Current") : qsTr("Open")
                                 type: conversationCard.currentConversation ? "tonal" : "text"
                                 size: "xs"
-                                enabled: !conversationCard.currentConversation
-                                    && !agent.busy
-                                    && !agent.actionBusy
-                                    && agent.options.length === 0
-                                onClicked: agent.resumeConversation(String(modelData.id || ""))
+                                enabled: !agent.busy && !agent.actionBusy && agent.options.length === 0
+                                onClicked: root.openConversation(modelData)
                             }
 
                             MeoButton {
@@ -287,7 +328,7 @@ Item {
         MeoText {
             Layout.fillWidth: true
             text: root.searching
-                ? qsTr("Search checks saved chat titles and visible message text on this device.")
+                ? qsTr("Search checks saved chat titles and visible message text on this device. Press Esc to clear the search.")
                 : qsTr("Switching chats restores saved visible messages only. It never replays old model or tool actions.")
             typeRole: "label"
             typeSize: "small"
