@@ -93,6 +93,7 @@ Drawer {
             delegate: NavigationButton {
                 required property var modelData
                 objectName: "meoAiMobileNav-" + modelData.action
+                visible: root.visible
                 Layout.fillWidth: true
                 text: modelData.label
                 icon.name: modelData.icon
