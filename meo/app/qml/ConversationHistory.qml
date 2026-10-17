@@ -45,6 +45,19 @@ Item {
             agent.resumeConversation(id)
     }
 
+    function matchDetail(item) {
+        if (!root.searching || item.match_count === undefined)
+            return ""
+        const count = Number(item.match_count || 0)
+        const role = String(item.match_role || "")
+        if (count <= 0)
+            return qsTr("Title match")
+        const speaker = role === "user" ? qsTr("You")
+            : role === "assistant" ? qsTr("Assistant")
+            : qsTr("Message")
+        return qsTr("%1 · %2 matching messages").arg(speaker).arg(count)
+    }
+
     onVisibleChanged: {
         if (visible && agent.serviceMode && !agent.actionBusy)
             agent.refreshConversations()
@@ -263,7 +276,17 @@ Item {
 
                                 MeoText {
                                     Layout.fillWidth: true
-                                    visible: modelData.message_count !== undefined
+                                    visible: root.searching && modelData.match_count !== undefined
+                                    text: root.matchDetail(modelData)
+                                    typeRole: "label"
+                                    typeSize: "small"
+                                    color: MeoTheme.primary
+                                    opacity: 0.86
+                                }
+
+                                MeoText {
+                                    Layout.fillWidth: true
+                                    visible: !root.searching && modelData.message_count !== undefined
                                     text: qsTr("%1 messages").arg(Number(modelData.message_count || 0))
                                     typeRole: "label"
                                     typeSize: "small"
