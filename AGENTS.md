@@ -46,6 +46,9 @@ Unified product and navigation rules:
   and capabilities differ.
 - the primary user-facing hierarchy is `Chat`, `Work`, `Projects`, and `Skills`.
   These are task surfaces, not configuration categories.
+- compact/mobile layouts must keep that same hierarchy in a left navigation
+  drawer opened from a visible hamburger button or a left-edge swipe. Do not
+  invent a separate mobile-only bottom navigation model for these destinations.
 - `Chat` is conversational assistance. `Work` is agentic execution with an
   explicit target device/environment, visible progress, permission boundaries,
   and resumable task state. Never silently turn an ordinary Chat into Work.
