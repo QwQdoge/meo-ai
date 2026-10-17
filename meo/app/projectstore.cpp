@@ -11,10 +11,11 @@ constexpr auto kCatalog = "catalog";
 constexpr auto kActiveProjectId = "activeProjectId";
 }
 
-ProjectStore::ProjectStore(QObject *parent)
-    : QObject(parent)
+ProjectStore::ProjectStore(bool persistent, QObject *parent)
+    : QObject(parent), m_persistent(persistent)
 {
-    load();
+    if (m_persistent)
+        load();
 }
 
 QVariantList ProjectStore::projects() const
@@ -111,6 +112,8 @@ void ProjectStore::load()
 
 void ProjectStore::save() const
 {
+    if (!m_persistent)
+        return;
     QSettings settings;
     settings.beginGroup(QString::fromLatin1(kGroup));
     settings.setValue(QString::fromLatin1(kCatalog), m_projects);
