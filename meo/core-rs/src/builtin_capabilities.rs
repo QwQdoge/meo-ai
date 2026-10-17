@@ -19,8 +19,9 @@ pub fn system_diagnostics_skill() -> CapabilityDescriptor {
         capability_id: "skill.system-diagnostics".to_owned(),
         kind: CapabilityKind::Skill,
         label: "System diagnostics".to_owned(),
-        description: "Diagnose MeoArch symptoms from observed facts and available typed capabilities."
-            .to_owned(),
+        description:
+            "Diagnose MeoArch symptoms from observed facts and available typed capabilities."
+                .to_owned(),
         origin: CapabilityOrigin::Builtin,
         provider: "Meo AI".to_owned(),
         icon: "diagnostics".to_owned(),
