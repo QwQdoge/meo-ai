@@ -126,6 +126,16 @@ private slots:
         QPointer<QQuickItem> sidebar;
         QTRY_VERIFY((sidebar = item(window->contentItem(), "meoAiSidebar")) != nullptr);
         QVERIFY(sidebar);
+
+        // Chats is a primary navigation destination, not only a tab hidden in
+        // the details pane. Clicking it must select the existing Chats tab.
+        QPointer<QQuickItem> chatsNavigation;
+        QTRY_VERIFY((chatsNavigation = item(window->contentItem(), "meoAiNav-chats")) != nullptr);
+        QVERIFY(chatsNavigation->isVisible());
+        QVERIFY(QMetaObject::invokeMethod(chatsNavigation.data(), "clicked"));
+        QTRY_COMPARE(window->property("inspectorTab").toInt(), 5);
+        QTRY_VERIFY(window->property("inspectorOpen").toBool());
+
         QTest::qWait(100);
         const qreal originalWidth = sidebar->width();
         const QPoint handle = sidebar->mapToScene(QPointF(originalWidth + 6, sidebar->height() / 2)).toPoint();
