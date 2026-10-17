@@ -32,16 +32,7 @@ class NewelleMultimodalBridge:
 
     @staticmethod
     def _loaded_provider_registry() -> dict:
-        """Return Newelle's provider registry only when runtime already loaded it.
-
-        Capability inspection is used by the small headless AgentService catalog
-        and its protocol tests. Importing ``src.constants`` here would eagerly
-        import Newelle's full handler package (including optional multimedia
-        dependencies such as Pillow) merely to list models. The real Newelle
-        runtime has already loaded the registry before constructing this bridge;
-        lightweight/custom backends safely fall back to their advertised model
-        metadata or an overridden provider capability hook.
-        """
+        """Return Newelle's provider registry only when runtime already loaded it."""
         module = sys.modules.get("src.constants")
         registry = getattr(module, "AVAILABLE_LLMS", None) if module is not None else None
         return registry if isinstance(registry, dict) else {}
@@ -63,17 +54,8 @@ class NewelleMultimodalBridge:
             return False
 
     def _provider_model_supports_vision(self, provider_name: str, raw_model_id: str) -> bool:
-        """Resolve exact-model capability when a handler exposes it.
-
-        The handler-wide method remains the compatibility fallback for providers
-        whose catalog is uniformly multimodal. Account models use the exact-model
-        hook so one configured vision model cannot make sibling text models look
-        image-capable.
-        """
         provider = self._loaded_provider_registry().get(provider_name)
         if not isinstance(provider, dict):
-            # Keep test/custom bridge subclasses able to supply the legacy
-            # provider-level capability without registering a real handler.
             return self._provider_supports_vision(provider_name)
         handler_class = provider.get("class")
         if not callable(handler_class):
@@ -100,9 +82,7 @@ class NewelleMultimodalBridge:
                 provider_name, raw_model_id = item.model_id.split(":", 1)
             supports_vision = item.supports_vision
             if provider_name and raw_model_id and not supports_vision:
-                supports_vision = self._provider_model_supports_vision(
-                    provider_name, raw_model_id
-                )
+                supports_vision = self._provider_model_supports_vision(provider_name, raw_model_id)
             result.append(
                 ModelInfo(
                     item.model_id,
@@ -148,8 +128,6 @@ class NewelleMultimodalBridge:
     def _conversation_title_is_automatic(self, record: dict) -> bool:
         if record.get("name_is_default") is True:
             return True
-        # Once Meo generated a digest, do not schedule it again even if an old
-        # title happens to match the first-message heuristic by coincidence.
         summary = record.get("meo_summary")
         if isinstance(summary, str) and summary.strip():
             return False
@@ -183,18 +161,51 @@ class NewelleMultimodalBridge:
             result.append(enriched)
         return result
 
+    def search_conversations(self, query: str) -> list[dict]:
+        """Search stored visible messages and translate Newelle chat IDs to Meo IDs."""
+        query = " ".join(str(query or "").split()).strip()
+        if not query:
+            return []
+        if len(query) > 240:
+            raise ValueError("conversation search query is too long")
+        search = getattr(self._controller, "search_conversations", None)
+        if not callable(search):
+            return []
+        raw_results = search(query)
+        if not isinstance(raw_results, dict):
+            return []
+
+        id_by_chat: dict[int, str] = {}
+        for item in self._backend.list_conversations():
+            if not isinstance(item, dict):
+                continue
+            conversation_id = item.get("id")
+            chat_id = item.get("legacy_chat_id")
+            if (
+                isinstance(conversation_id, str)
+                and conversation_id.startswith("meo:")
+                and isinstance(chat_id, int)
+                and not isinstance(chat_id, bool)
+            ):
+                id_by_chat[chat_id] = conversation_id
+
+        result: list[dict] = []
+        for chat_id, excerpt in raw_results.items():
+            conversation_id = id_by_chat.get(chat_id)
+            if not conversation_id:
+                continue
+            result.append({
+                "id": conversation_id,
+                "excerpt": str(excerpt or "").strip()[:1200],
+            })
+        return result
+
     def generate_auxiliary(
         self,
         model_id: str,
         prompt: str,
         system_prompt: list[str] | None = None,
     ) -> str:
-        """Run a provider model without adding verifier prompts to chat history.
-
-        RoutedBackend serializes legacy requests, so temporarily changing the
-        provider's model setting here cannot cross-contaminate another routed
-        request. The exact settings JSON is restored in `finally`.
-        """
         if not isinstance(model_id, str) or ":" not in model_id:
             raise ValueError("auxiliary model_id must include provider:model")
         provider_name, raw_model_id = model_id.split(":", 1)
@@ -265,7 +276,6 @@ class NewelleMultimodalBridge:
         return self._conversation_title_is_automatic(record)
 
     def apply_conversation_digest(self, conversation_id: str, *, title: str, summary: str = "") -> None:
-        """Persist generated metadata without overwriting a user-renamed chat."""
         target = self._conversation_record(conversation_id)
         if target is None:
             raise ValueError("unknown conversation_id")
@@ -275,8 +285,6 @@ class NewelleMultimodalBridge:
         if not title:
             raise ValueError("generated conversation title is empty")
 
-        # Re-check immediately before mutation. A user may have renamed the chat
-        # while the cheap title model was running.
         if self._conversation_title_is_automatic(record):
             rename = getattr(self._controller, "rename_chat", None)
             if callable(rename):
