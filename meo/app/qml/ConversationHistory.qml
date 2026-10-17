@@ -7,6 +7,8 @@ Item {
     id: root
     objectName: "meoAiConversationHistory"
     readonly property real uiScale: MeoTheme.globalScale
+    property string managementConversationId: ""
+    property string managementConversationTitle: ""
 
     function matches(item) {
         const query = searchField.text.trim().toLowerCase()
@@ -15,6 +17,21 @@ Item {
         const title = String(item.title || "").toLowerCase()
         const summary = String(item.summary || "").toLowerCase()
         return title.indexOf(query) >= 0 || summary.indexOf(query) >= 0
+    }
+
+    function beginRename(item) {
+        managementConversationId = String(item.id || "")
+        managementConversationTitle = String(item.title || qsTr("Untitled chat"))
+        renameField.text = managementConversationTitle
+        renamePopup.open()
+        renameField.forceActiveFocus()
+        renameField.selectAll()
+    }
+
+    function beginDelete(item) {
+        managementConversationId = String(item.id || "")
+        managementConversationTitle = String(item.title || qsTr("Untitled chat"))
+        deletePopup.open()
     }
 
     onVisibleChanged: {
@@ -98,7 +115,7 @@ Item {
                             anchors.right: parent.right
                             anchors.top: parent.top
                             anchors.margins: 12 * root.uiScale
-                            spacing: 10 * root.uiScale
+                            spacing: 8 * root.uiScale
 
                             MeoIcon {
                                 icon: "chat_bubble"
@@ -142,6 +159,33 @@ Item {
                                     && agent.options.length === 0
                                 onClicked: agent.resumeConversation(String(modelData.id || ""))
                             }
+
+                            MeoIconButton {
+                                icon.name: "edit"
+                                type: "standard"
+                                size: "xs"
+                                enabled: !agent.busy && !agent.actionBusy
+                                Accessible.name: qsTr("Rename chat")
+                                ToolTip.visible: hovered
+                                ToolTip.text: Accessible.name
+                                onClicked: root.beginRename(modelData)
+                            }
+
+                            MeoIconButton {
+                                icon.name: "delete"
+                                type: "standard"
+                                size: "xs"
+                                enabled: !agent.busy
+                                    && !agent.actionBusy
+                                    && agent.options.length === 0
+                                    && (!conversationCard.currentConversation || agent.pendingResources.length === 0)
+                                Accessible.name: qsTr("Delete chat")
+                                ToolTip.visible: hovered
+                                ToolTip.text: conversationCard.currentConversation && agent.pendingResources.length > 0
+                                    ? qsTr("Remove pending attachments before deleting this chat")
+                                    : Accessible.name
+                                onClicked: root.beginDelete(modelData)
+                            }
                         }
                     }
                 }
@@ -161,6 +205,139 @@ Item {
             color: MeoTheme.contentOnSurfaceVariant
             opacity: 0.72
             wrapMode: Text.Wrap
+        }
+    }
+
+    Popup {
+        id: renamePopup
+        parent: Overlay.overlay
+        modal: true
+        focus: true
+        width: Math.min(420 * root.uiScale, parent ? parent.width - 32 * root.uiScale : 420 * root.uiScale)
+        padding: 0
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+
+        background: Rectangle {
+            radius: 24 * root.uiScale
+            color: MeoTheme.surface
+            border.width: Math.max(1, root.uiScale)
+            border.color: MeoTheme.outlineVariant
+        }
+
+        contentItem: ColumnLayout {
+            spacing: 14 * root.uiScale
+            anchors.margins: 20 * root.uiScale
+
+            MeoText {
+                Layout.fillWidth: true
+                text: qsTr("Rename chat")
+                typeRole: "title"
+                typeSize: "medium"
+                color: MeoTheme.contentOnSurface
+            }
+
+            TextField {
+                id: renameField
+                objectName: "meoAiConversationRenameField"
+                Layout.fillWidth: true
+                placeholderText: qsTr("Chat title")
+                selectByMouse: true
+                maximumLength: 240
+                color: MeoTheme.contentOnSurface
+                background: Rectangle {
+                    radius: 14 * root.uiScale
+                    color: MeoTheme.surfaceContainerLow
+                    border.width: Math.max(1, root.uiScale)
+                    border.color: renameField.activeFocus ? MeoTheme.primary : MeoTheme.outlineVariant
+                }
+                Keys.onReturnPressed: {
+                    if (text.trim().length > 0) {
+                        agent.renameConversation(root.managementConversationId, text)
+                        renamePopup.close()
+                    }
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                Item { Layout.fillWidth: true }
+                MeoButton {
+                    text: qsTr("Cancel")
+                    type: "text"
+                    size: "s"
+                    onClicked: renamePopup.close()
+                }
+                MeoButton {
+                    text: qsTr("Save")
+                    type: "filled"
+                    size: "s"
+                    enabled: renameField.text.trim().length > 0 && !agent.actionBusy
+                    onClicked: {
+                        agent.renameConversation(root.managementConversationId, renameField.text)
+                        renamePopup.close()
+                    }
+                }
+            }
+        }
+    }
+
+    Popup {
+        id: deletePopup
+        parent: Overlay.overlay
+        modal: true
+        focus: true
+        width: Math.min(440 * root.uiScale, parent ? parent.width - 32 * root.uiScale : 440 * root.uiScale)
+        padding: 0
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+
+        background: Rectangle {
+            radius: 24 * root.uiScale
+            color: MeoTheme.surface
+            border.width: Math.max(1, root.uiScale)
+            border.color: MeoTheme.outlineVariant
+        }
+
+        contentItem: ColumnLayout {
+            spacing: 12 * root.uiScale
+            anchors.margins: 20 * root.uiScale
+
+            MeoText {
+                Layout.fillWidth: true
+                text: qsTr("Delete chat?")
+                typeRole: "title"
+                typeSize: "medium"
+                color: MeoTheme.contentOnSurface
+            }
+
+            MeoText {
+                Layout.fillWidth: true
+                text: qsTr("“%1” will be permanently removed from this device. Conversation-scoped attachments are deleted with it.").arg(root.managementConversationTitle)
+                typeRole: "body"
+                typeSize: "medium"
+                color: MeoTheme.contentOnSurfaceVariant
+                wrapMode: Text.Wrap
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                Item { Layout.fillWidth: true }
+                MeoButton {
+                    text: qsTr("Cancel")
+                    type: "text"
+                    size: "s"
+                    onClicked: deletePopup.close()
+                }
+                MeoButton {
+                    text: qsTr("Delete")
+                    type: "filled"
+                    size: "s"
+                    enabled: !agent.busy && !agent.actionBusy
+                    onClicked: {
+                        agent.deleteConversation(root.managementConversationId)
+                        deletePopup.close()
+                    }
+                }
+            }
         }
     }
 }
