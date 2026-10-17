@@ -14,8 +14,8 @@ from meo.service.resources import ConversationResourceStore
 class ManagementBackend:
     def __init__(self):
         self.conversations = {
-            "meo:first": {"title": "First chat"},
-            "meo:second": {"title": "Second chat"},
+            "meo:first": {"title": "First chat", "summary": "Planning notes", "message_count": 4},
+            "meo:second": {"title": "Second chat", "summary": "Other work", "message_count": 2},
         }
 
     def list_conversations(self):
@@ -26,6 +26,18 @@ class ManagementBackend:
 
     def conversation_exists(self, conversation_id):
         return conversation_id in self.conversations
+
+    def search_conversations(self, query):
+        if "migration" in query.casefold():
+            return [
+                {
+                    "id": "meo:first",
+                    "excerpt": "…migration causes and consequences…",
+                    "legacy_chat_id": 999,
+                    "private": "must-not-leak",
+                }
+            ]
+        return []
 
     def rename_conversation(self, conversation_id, title):
         if conversation_id not in self.conversations:
@@ -61,6 +73,27 @@ class NativeConversationManagementTests(unittest.TestCase):
         request = urllib.request.Request(self.base + path, data=data, method=method, headers=headers)
         with urllib.request.urlopen(request, timeout=2) as response:
             return response.status, json.loads(response.read())
+
+    def test_search_returns_safe_catalog_metadata_and_message_excerpt(self):
+        query = urllib.parse.urlencode({"q": "migration causes"})
+        status, payload = self.json_request("GET", f"/v1/conversations/search?{query}")
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["query"], "migration causes")
+        self.assertEqual(len(payload["results"]), 1)
+        result = payload["results"][0]
+        self.assertEqual(result["id"], "meo:first")
+        self.assertEqual(result["title"], "First chat")
+        self.assertEqual(result["summary"], "Planning notes")
+        self.assertEqual(result["message_count"], 4)
+        self.assertIn("migration causes", result["excerpt"])
+        self.assertNotIn("legacy_chat_id", result)
+        self.assertNotIn("private", result)
+
+    def test_search_rejects_oversized_query(self):
+        query = urllib.parse.urlencode({"q": "x" * 241})
+        with self.assertRaises(urllib.error.HTTPError) as raised:
+            self.json_request("GET", f"/v1/conversations/search?{query}")
+        self.assertEqual(raised.exception.code, 400)
 
     def test_rename_normalizes_title_and_updates_backend(self):
         encoded = urllib.parse.quote("meo:first", safe="")
