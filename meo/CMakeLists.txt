@@ -114,6 +114,11 @@ if(BUILD_TESTING)
     target_link_libraries(meo-ai-conversation-catalog-test PRIVATE meo-agent-client Qt6::Test)
     add_test(NAME meo-ai.conversation-catalog COMMAND meo-ai-conversation-catalog-test)
 
+    qt_add_executable(meo-ai-conversation-export-test tests/conversation-export-test.cpp)
+    target_include_directories(meo-ai-conversation-export-test PRIVATE app)
+    target_link_libraries(meo-ai-conversation-export-test PRIVATE meo-agent-client Qt6::Test)
+    add_test(NAME meo-ai.conversation-export COMMAND meo-ai-conversation-export-test)
+
     qt_add_executable(meo-ai-stale-conversation-recovery-test tests/stale-conversation-recovery-test.cpp)
     target_include_directories(meo-ai-stale-conversation-recovery-test PRIVATE app)
     target_link_libraries(meo-ai-stale-conversation-recovery-test PRIVATE meo-agent-client Qt6::Test)
