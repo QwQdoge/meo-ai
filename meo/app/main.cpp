@@ -177,7 +177,7 @@ int main(int argc, char **argv) {
     engine.rootContext()->setContextProperty("usage", &usageBackend);
     engine.rootContext()->setContextProperty("accountAI", &accountAiBackend);
     engine.rootContext()->setContextProperty("uiPreview", app.arguments().contains("--ui-demo"));
-    engine.load(QUrl("qrc:/meo/app/qml/Main.qml"));
+    engine.load(QUrl("qrc:/meo/app/qml/App.qml"));
     if (engine.rootObjects().isEmpty()) return 1;
 
     QObject *rootObject = engine.rootObjects().first();
