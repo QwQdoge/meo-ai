@@ -50,14 +50,6 @@ public:
     QVariantMap agentState() const { return m_agentState; }
     QVariantList models() const { return m_models; }
     QVariantList modelRoles() const {
-        // AgentService deliberately preserves a configured preference even
-        // when that model is currently unavailable. Native dropdowns need the
-        // effective selectable value instead: MeoExposedDropdown renders an
-        // unknown currentValue as an empty selection. Keep the configured ID
-        // available for diagnostics while presenting the runtime fallback as
-        // the preferred value consumed by existing native views. Older service
-        // versions may not report preferred_available; in that case preserve
-        // their original preference rather than guessing that it is stale.
         QVariantList roles;
         roles.reserve(m_modelRoles.size());
         for (const QVariant &value : m_modelRoles) {
@@ -94,6 +86,8 @@ public:
     Q_INVOKABLE virtual void newChat();
     Q_INVOKABLE void refreshConversations();
     Q_INVOKABLE void resumeConversation(const QString &conversationId);
+    Q_INVOKABLE void renameConversation(const QString &conversationId, const QString &title);
+    Q_INVOKABLE void deleteConversation(const QString &conversationId);
     Q_INVOKABLE void refreshServiceMetadata();
     Q_INVOKABLE void refreshMemory(const QString &query = QString());
     Q_INVOKABLE void setConversationModel(const QString &modelId);
