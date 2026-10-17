@@ -4,7 +4,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 include(CTest)
-find_package(Qt6 6.8 REQUIRED COMPONENTS Core DBus Gui Quick QuickControls2 Network)
+find_package(Qt6 6.8 REQUIRED COMPONENTS Core DBus Gui Qml Quick QuickControls2 Network)
 set(MEO_UI_ROOT "" CACHE PATH "MeoUI source directory")
 if(NOT EXISTS "${MEO_UI_ROOT}/CMakeLists.txt")
     message(FATAL_ERROR "Set MEO_UI_ROOT to a MeoUI checkout")
@@ -37,6 +37,11 @@ set(MEO_ACCOUNT_AI_SOURCES
     app/accountaibackend.h
 )
 
+set(MEO_DRAFT_SOURCES
+    app/draftpersistence.cpp
+    app/draftpersistence.h
+)
+
 set(MEO_APP_QML
     app/qml/Main.qml
     app/qml/AiLogo.qml
@@ -61,10 +66,10 @@ add_library(meo-agent-client STATIC ${MEO_AGENT_CLIENT_SOURCES})
 target_include_directories(meo-agent-client PUBLIC app)
 target_link_libraries(meo-agent-client PUBLIC Qt6::Gui Qt6::Network)
 
-qt_add_executable(meo-ai app/main.cpp ${MEO_USAGE_SOURCES} ${MEO_ACCOUNT_AI_SOURCES})
+qt_add_executable(meo-ai app/main.cpp ${MEO_USAGE_SOURCES} ${MEO_ACCOUNT_AI_SOURCES} ${MEO_DRAFT_SOURCES})
 qt_add_resources(meo-ai "meo_app" PREFIX "/meo" FILES ${MEO_APP_QML})
 add_dependencies(meo-ai meoui_moduleplugin)
-target_link_libraries(meo-ai PRIVATE meo-agent-client Qt6::DBus Qt6::Gui Qt6::Quick Qt6::QuickControls2 Qt6::Network)
+target_link_libraries(meo-ai PRIVATE meo-agent-client Qt6::DBus Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2 Qt6::Network)
 if(BUILD_TESTING)
     find_package(Qt6 REQUIRED COMPONENTS Test)
     qt_add_executable(meo-ai-ui-layout-test tests/ui-layout-test.cpp)
@@ -75,6 +80,12 @@ if(BUILD_TESTING)
     target_compile_definitions(meo-ai-ui-layout-test PRIVATE MEOUI_IMPORT_PATH="${CMAKE_CURRENT_BINARY_DIR}/meoui")
     add_test(NAME meo-ai.ui-layout COMMAND meo-ai-ui-layout-test)
     set_tests_properties(meo-ai.ui-layout PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QSG_RHI_BACKEND=software")
+
+    qt_add_executable(meo-ai-draft-persistence-test tests/draft-persistence-test.cpp ${MEO_DRAFT_SOURCES})
+    target_include_directories(meo-ai-draft-persistence-test PRIVATE app)
+    target_link_libraries(meo-ai-draft-persistence-test PRIVATE Qt6::Core Qt6::Qml Qt6::Test)
+    add_test(NAME meo-ai.draft-persistence COMMAND meo-ai-draft-persistence-test)
+
     # Live use still requires an explicit endpoint. CTest only runs this client
     # against a local Python stub; it never uses a configured provider/profile.
     qt_add_executable(meo-ai-live-client tests/live-native-client.cpp)
