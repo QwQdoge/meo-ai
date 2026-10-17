@@ -18,6 +18,7 @@ use serde_json::{json, Value};
 use tokio::sync::broadcast;
 use tower_http::trace::TraceLayer;
 
+use crate::capabilities::CapabilityError;
 use crate::protocol::{CoreEvent, SendMessageRequest};
 use crate::service::{MeoService, ServiceError};
 
@@ -280,6 +281,18 @@ impl From<ServiceError> for ApiError {
             ServiceError::UnknownModel(_) | ServiceError::EmptyMessage => {
                 (StatusCode::BAD_REQUEST, "invalid_request")
             }
+            ServiceError::Capability(capability_error) => match capability_error {
+                CapabilityError::InvalidId(_) | CapabilityError::Unknown(_) => {
+                    (StatusCode::BAD_REQUEST, "invalid_capability")
+                }
+                CapabilityError::Disabled(_) | CapabilityError::NotConnected(_) => {
+                    (StatusCode::CONFLICT, "capability_unavailable")
+                }
+                CapabilityError::Duplicate(_) | CapabilityError::DuplicateTool(_) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "capability_registry_error",
+                ),
+            },
             ServiceError::RequestTerminal => (StatusCode::CONFLICT, "request_terminal"),
             ServiceError::Provider(_) => (StatusCode::BAD_GATEWAY, "provider_error"),
         };
