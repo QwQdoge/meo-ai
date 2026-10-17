@@ -8,6 +8,7 @@
 //! - Jetpack Compose Material 3 Expressive on Android
 
 pub mod blocks;
+pub mod capabilities;
 pub mod protocol;
 pub mod stream;
 
@@ -26,6 +27,11 @@ mod android;
 pub use blocks::{
     BlockAction, ChartKind, ChartSeries, ContentBlock, HtmlSandbox, PluginAction,
     PluginPresentation, TableColumn, ToolActivityState,
+};
+pub use capabilities::{
+    CapabilityCatalog, CapabilityConnectionState, CapabilityDescriptor, CapabilityEffect,
+    CapabilityError, CapabilityKind, CapabilityOrigin, CapabilityPermission, CapabilityResolution,
+    CapabilityTool,
 };
 pub use protocol::{
     Conversation, CoreEvent, InputResource, Message, RequestSnapshot, RequestState, Role,
