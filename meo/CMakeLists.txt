@@ -19,6 +19,7 @@ set(BUILD_TESTING ${BUILD_TESTING_SAVED})
 
 set(MEO_AGENT_CLIENT_SOURCES
     app/agentclient.cpp
+    app/agentclient_clipboard.cpp
     app/agentclient_conversations.cpp
     app/agentclient_resources.cpp
     app/agentclient_settings.cpp
