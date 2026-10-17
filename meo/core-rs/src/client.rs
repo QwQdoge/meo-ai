@@ -9,6 +9,7 @@ use serde_json::{json, Value};
 use thiserror::Error;
 use url::Url;
 
+use crate::capabilities::CapabilityDescriptor;
 use crate::protocol::{Conversation, CoreEvent, Message, RequestSnapshot, SendMessageRequest};
 
 #[derive(Debug, Error)]
@@ -59,6 +60,42 @@ impl MeoClient {
 
     pub async fn agent_state(&self) -> Result<Value, ClientError> {
         self.get_json("/v1/agent-state").await
+    }
+
+    pub async fn capabilities(&self) -> Result<Vec<CapabilityDescriptor>, ClientError> {
+        let value: Value = self.get_json("/v1/capabilities").await?;
+        serde_json::from_value(
+            value
+                .get("capabilities")
+                .cloned()
+                .unwrap_or(Value::Array(vec![])),
+        )
+        .map_err(|error| ClientError::InvalidPayload(error.to_string()))
+    }
+
+    pub async fn capability(&self, capability_id: &str) -> Result<CapabilityDescriptor, ClientError> {
+        validate_capability_path_id(capability_id)?;
+        let value: Value = self
+            .get_json(&format!("/v1/capabilities/{capability_id}"))
+            .await?;
+        serde_json::from_value(value.get("capability").cloned().unwrap_or(Value::Null))
+            .map_err(|error| ClientError::InvalidPayload(error.to_string()))
+    }
+
+    pub async fn set_capability_enabled(
+        &self,
+        capability_id: &str,
+        enabled: bool,
+    ) -> Result<CapabilityDescriptor, ClientError> {
+        validate_capability_path_id(capability_id)?;
+        let value: Value = self
+            .post_json(
+                &format!("/v1/capabilities/{capability_id}/state"),
+                &json!({"enabled": enabled}),
+            )
+            .await?;
+        serde_json::from_value(value.get("capability").cloned().unwrap_or(Value::Null))
+            .map_err(|error| ClientError::InvalidPayload(error.to_string()))
     }
 
     pub async fn create_conversation(&self, model_id: &str) -> Result<Conversation, ClientError> {
@@ -218,6 +255,21 @@ impl MeoClient {
         }
         Ok(request)
     }
+}
+
+fn validate_capability_path_id(capability_id: &str) -> Result<(), ClientError> {
+    let value = capability_id.trim();
+    if value.is_empty()
+        || value.len() > 128
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b':'))
+    {
+        return Err(ClientError::InvalidPayload(
+            "invalid capability identifier".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 async fn ensure_success(response: Response) -> Result<Response, ClientError> {
