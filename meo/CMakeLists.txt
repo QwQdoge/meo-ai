@@ -53,6 +53,7 @@ set(MEO_APP_QML
     app/qml/ActivityDashboard.qml
     app/qml/PresentationCard.qml
     app/qml/NavigationButton.qml
+    app/qml/PrimaryModeLanding.qml
     app/qml/AiControlsPopup.qml
     app/qml/SettingsCenter.qml
     app/qml/MemoryPanel.qml
