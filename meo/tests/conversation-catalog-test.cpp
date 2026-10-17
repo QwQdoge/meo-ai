@@ -103,6 +103,52 @@ private slots:
         historySocket->deleteLater();
     }
 
+    void searchesPersistedMessageHistoryAndCanOpenResult() {
+        QSettings().clear();
+        QTcpServer server;
+        QVERIFY(server.listen(QHostAddress::LocalHost));
+        qputenv("MEO_AI_SERVICE_ENDPOINT",
+                QString("http://127.0.0.1:%1").arg(server.serverPort()).toUtf8());
+
+        AgentClient client;
+        client.searchConversations("migration causes");
+        QTRY_VERIFY(server.hasPendingConnections());
+        auto searchSocket = server.nextPendingConnection();
+        const QByteArray request = readRequest(searchSocket);
+        QVERIFY(request.contains("GET /v1/conversations/search?q=migration%20causes ")
+                || request.contains("GET /v1/conversations/search?q=migration+causes "));
+        replyJson(searchSocket, 200, "OK",
+                  "{\"query\":\"migration causes\",\"results\":[{"
+                  "\"id\":\"meo:history\","
+                  "\"title\":\"Migration notes\","
+                  "\"summary\":\"School research\","
+                  "\"excerpt\":\"…migration causes and consequences…\","
+                  "\"message_count\":12,"
+                  "\"legacy_chat_id\":77}]}" );
+        QTRY_VERIFY(!client.conversationSearchBusy());
+        QTRY_COMPARE(client.conversationSearchResults().size(), 1);
+        const QVariantMap item = client.conversationSearchResults().constFirst().toMap();
+        QCOMPARE(item.value("id").toString(), QString("meo:history"));
+        QCOMPARE(item.value("title").toString(), QString("Migration notes"));
+        QCOMPARE(item.value("excerpt").toString(), QString("…migration causes and consequences…"));
+        QCOMPARE(item.value("message_count").toInt(), 12);
+        QVERIFY(!item.contains("legacy_chat_id"));
+        searchSocket->deleteLater();
+
+        client.resumeConversation("meo:history");
+        QTRY_VERIFY(server.hasPendingConnections());
+        auto historySocket = server.nextPendingConnection();
+        QVERIFY(readRequest(historySocket).contains("GET /v1/conversations/meo:history/messages"));
+        replyJson(historySocket, 200, "OK",
+                  "{\"conversation_id\":\"meo:history\",\"messages\":["
+                  "{\"role\":\"user\",\"text\":\"migration causes\"}]}" );
+        QTRY_COMPARE(client.conversationId(), QString("meo:history"));
+        historySocket->deleteLater();
+
+        client.searchConversations("");
+        QCOMPARE(client.conversationSearchResults().size(), 0);
+    }
+
     void renamesAndDeletesCurrentConversationWithFallback() {
         QSettings().clear();
         QTcpServer server;
