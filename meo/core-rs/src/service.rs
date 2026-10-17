@@ -14,10 +14,10 @@ use tokio::sync::{broadcast, Notify};
 use tokio::time::{timeout, Instant};
 use uuid::Uuid;
 
-use crate::provider::{Provider, ProviderError, ProviderEvent, ProviderRequest};
 use crate::protocol::{
     Conversation, CoreEvent, Message, RequestSnapshot, RequestState, Role, SendMessageRequest,
 };
+use crate::provider::{Provider, ProviderError, ProviderEvent, ProviderRequest};
 
 const EVENT_CHANNEL_CAPACITY: usize = 512;
 
@@ -127,7 +127,10 @@ impl RequestRuntime {
     }
 
     fn transition(&self, state: RequestState) {
-        self.snapshot.write().expect("request snapshot poisoned").state = state;
+        self.snapshot
+            .write()
+            .expect("request snapshot poisoned")
+            .state = state;
     }
 
     fn fail(&self, code: &str, message: &str) {
@@ -217,7 +220,10 @@ impl MeoService {
     pub fn register_provider(&self, provider: Arc<dyn Provider>) {
         let provider_id = provider.id().to_owned();
         {
-            let mut routes = self.model_provider.write().expect("model route lock poisoned");
+            let mut routes = self
+                .model_provider
+                .write()
+                .expect("model route lock poisoned");
             for model in provider.models() {
                 routes.insert(model.model_id.clone(), provider_id.clone());
             }
@@ -320,7 +326,10 @@ impl MeoService {
     }
 
     pub fn request_snapshot(&self, request_id: &str) -> Result<RequestSnapshot, ServiceError> {
-        let request = self.requests.get(request_id).ok_or(ServiceError::UnknownRequest)?;
+        let request = self
+            .requests
+            .get(request_id)
+            .ok_or(ServiceError::UnknownRequest)?;
         let snapshot = request
             .snapshot
             .read()
@@ -334,7 +343,10 @@ impl MeoService {
         request_id: &str,
         after_seq: u64,
     ) -> Result<Vec<CoreEvent>, ServiceError> {
-        let request = self.requests.get(request_id).ok_or(ServiceError::UnknownRequest)?;
+        let request = self
+            .requests
+            .get(request_id)
+            .ok_or(ServiceError::UnknownRequest)?;
         let events = request
             .journal
             .read()
@@ -346,13 +358,22 @@ impl MeoService {
         Ok(events)
     }
 
-    pub fn subscribe(&self, request_id: &str) -> Result<broadcast::Receiver<CoreEvent>, ServiceError> {
-        let request = self.requests.get(request_id).ok_or(ServiceError::UnknownRequest)?;
+    pub fn subscribe(
+        &self,
+        request_id: &str,
+    ) -> Result<broadcast::Receiver<CoreEvent>, ServiceError> {
+        let request = self
+            .requests
+            .get(request_id)
+            .ok_or(ServiceError::UnknownRequest)?;
         Ok(request.sender.subscribe())
     }
 
     pub fn cancel_request(&self, request_id: &str) -> Result<(), ServiceError> {
-        let request = self.requests.get(request_id).ok_or(ServiceError::UnknownRequest)?;
+        let request = self
+            .requests
+            .get(request_id)
+            .ok_or(ServiceError::UnknownRequest)?;
         if request.is_terminal() {
             return Err(ServiceError::RequestTerminal);
         }
@@ -407,7 +428,9 @@ impl MeoService {
             created_at_ms: now,
         };
         let history = {
-            let mut runtime = conversation_runtime.write().expect("conversation lock poisoned");
+            let mut runtime = conversation_runtime
+                .write()
+                .expect("conversation lock poisoned");
             runtime.messages.push(user_message);
             runtime.conversation.model_id = model_id.clone();
             runtime.conversation.updated_at_ms = now;
