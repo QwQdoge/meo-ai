@@ -96,6 +96,11 @@ pub struct CapabilityDescriptor {
     pub permissions: Vec<CapabilityPermission>,
     #[serde(default)]
     pub tools: Vec<CapabilityTool>,
+    /// Lower-level runtime capability IDs supplied by this user-visible app or
+    /// connector (for example `agent.chat` or `file.search`). These IDs are used
+    /// for routing/intersection and should not be rendered as separate Apps.
+    #[serde(default)]
+    pub provides: Vec<String>,
     /// Capability IDs required for the workflow to be useful. Dependencies do
     /// not grant or auto-connect those capabilities.
     #[serde(default)]
@@ -126,6 +131,8 @@ impl CapabilityDescriptor {
 pub struct CapabilityResolution {
     /// Selected top-level capability descriptors in stable ID order.
     pub capabilities: Vec<CapabilityDescriptor>,
+    /// Deduplicated lower-level runtime capabilities provided by connectors.
+    pub provided_capabilities: Vec<String>,
     /// Deduplicated tools exposed by the selected connected capabilities.
     pub tools: Vec<CapabilityTool>,
     /// Deterministic, compact hints suitable for the static capability prefix.
@@ -164,10 +171,7 @@ impl CapabilityCatalog {
     }
 
     pub fn register(&mut self, descriptor: CapabilityDescriptor) -> Result<(), CapabilityError> {
-        validate_capability_id(&descriptor.capability_id)?;
-        for dependency in &descriptor.requires {
-            validate_capability_id(dependency)?;
-        }
+        validate_descriptor_ids(&descriptor)?;
         let id = descriptor.capability_id.clone();
         if self.items.contains_key(&id) {
             return Err(CapabilityError::Duplicate(id));
@@ -177,10 +181,7 @@ impl CapabilityCatalog {
     }
 
     pub fn upsert(&mut self, descriptor: CapabilityDescriptor) -> Result<(), CapabilityError> {
-        validate_capability_id(&descriptor.capability_id)?;
-        for dependency in &descriptor.requires {
-            validate_capability_id(dependency)?;
-        }
+        validate_descriptor_ids(&descriptor)?;
         self.items
             .insert(descriptor.capability_id.clone(), normalize_descriptor(descriptor));
         Ok(())
@@ -228,11 +229,11 @@ impl CapabilityCatalog {
         Ok(item.clone())
     }
 
-    /// Resolve exactly the capabilities selected for one request.
+    /// Resolve exactly the user-visible capabilities selected for one request.
     ///
     /// This never auto-enables dependencies. If a skill requires a connector,
     /// the caller must separately enable/connect/select that connector before
-    /// its tools are exposed.
+    /// its tools or lower-level runtime capabilities are exposed.
     pub fn resolve<I, S>(&self, requested_ids: I) -> Result<CapabilityResolution, CapabilityError>
     where
         I: IntoIterator<Item = S>,
@@ -246,6 +247,7 @@ impl CapabilityCatalog {
         }
 
         let mut capabilities = Vec::with_capacity(ids.len());
+        let mut provided_capabilities = BTreeSet::new();
         let mut tools = Vec::new();
         let mut tool_ids = BTreeSet::new();
         let mut context_hints = Vec::new();
@@ -265,6 +267,7 @@ impl CapabilityCatalog {
                 return Err(CapabilityError::NotConnected(id));
             }
 
+            provided_capabilities.extend(item.provides.iter().cloned());
             if !item.context_hint.trim().is_empty() {
                 context_hints.push(item.context_hint.trim().to_owned());
             }
@@ -282,10 +285,22 @@ impl CapabilityCatalog {
         context_hints.dedup();
         Ok(CapabilityResolution {
             capabilities,
+            provided_capabilities: provided_capabilities.into_iter().collect(),
             tools,
             context_hints,
         })
     }
+}
+
+fn validate_descriptor_ids(descriptor: &CapabilityDescriptor) -> Result<(), CapabilityError> {
+    validate_capability_id(&descriptor.capability_id)?;
+    for dependency in &descriptor.requires {
+        validate_capability_id(dependency)?;
+    }
+    for provided in &descriptor.provides {
+        validate_capability_id(provided)?;
+    }
+    Ok(())
 }
 
 fn normalize_descriptor(mut descriptor: CapabilityDescriptor) -> CapabilityDescriptor {
@@ -296,6 +311,7 @@ fn normalize_descriptor(mut descriptor: CapabilityDescriptor) -> CapabilityDescr
     descriptor.icon = descriptor.icon.trim().to_owned();
     descriptor.context_hint = descriptor.context_hint.trim().to_owned();
 
+    descriptor.provides = normalized_strings(descriptor.provides);
     descriptor.requires = normalized_strings(descriptor.requires);
     descriptor.tags = normalized_strings(descriptor.tags);
     descriptor.permissions.sort_by(|left, right| left.permission_id.cmp(&right.permission_id));
