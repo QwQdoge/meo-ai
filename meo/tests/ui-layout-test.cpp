@@ -258,8 +258,10 @@ private slots:
         QCOMPARE(mobileDrawer->property("edge").toInt(), static_cast<int>(Qt::LeftEdge));
         QVERIFY(QMetaObject::invokeMethod(mobileMenuButton.data(), "clicked"));
         QTRY_VERIFY(mobileDrawer->property("visible").toBool());
-        QPointer<QObject> mobileWork = window->findChild<QObject *>("meoAiMobileNav-work");
-        QTRY_VERIFY(mobileWork);
+        auto *drawerContent = mobileDrawer->property("contentItem").value<QQuickItem *>();
+        QVERIFY(drawerContent);
+        QPointer<QQuickItem> mobileWork;
+        QTRY_VERIFY((mobileWork = item(drawerContent, "meoAiMobileNav-work")) != nullptr);
         QVERIFY(QMetaObject::invokeMethod(mobileWork.data(), "clicked"));
         QTRY_COMPARE(window->property("primaryMode").toString(), QString("work"));
         QTRY_VERIFY(!mobileDrawer->property("visible").toBool());
