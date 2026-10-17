@@ -40,6 +40,15 @@ Unified web/cloud/device rules:
 - do not vendor a large web upstream merely for physical repository purity;
   record its exact upstream commit/license and keep the Meo patch surface small.
 
+TODO — remote realtime sync:
+- evaluate Neon Realtime for cross-device synchronization of conversation metadata,
+  completed messages, remote job/device state, and account/settings changes.
+- keep AI token streaming on the Meo API transport (for example SSE); do not write
+  token-by-token output through Postgres/Realtime. Persist completed state, then
+  use realtime only to fan out durable changes to other clients.
+- treat realtime as an enhancement, not a core dependency: clients must be able
+  to reconnect/resync or fall back without breaking normal Chat or Work flows.
+
 Unified product and navigation rules:
 - Meo AI is one product across Web, Linux, Windows, macOS and Android. Keep the
   information architecture and feature names aligned even when platform layouts
