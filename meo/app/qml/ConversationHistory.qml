@@ -7,17 +7,9 @@ Item {
     id: root
     objectName: "meoAiConversationHistory"
     readonly property real uiScale: MeoTheme.globalScale
+    readonly property bool searching: searchField.text.trim().length > 0
     property string managementConversationId: ""
     property string managementConversationTitle: ""
-
-    function matches(item) {
-        const query = searchField.text.trim().toLowerCase()
-        if (!query.length)
-            return true
-        const title = String(item.title || "").toLowerCase()
-        const summary = String(item.summary || "").toLowerCase()
-        return title.indexOf(query) >= 0 || summary.indexOf(query) >= 0
-    }
 
     function beginRename(item) {
         managementConversationId = String(item.id || "")
@@ -40,6 +32,12 @@ Item {
     }
 
     Timer {
+        id: searchDebounce
+        interval: 250
+        onTriggered: agent.searchConversations(searchField.text)
+    }
+
+    Timer {
         id: newChatRefresh
         interval: 100
         repeat: true
@@ -48,6 +46,8 @@ Item {
                 return
             stop()
             agent.refreshConversations()
+            if (root.searching)
+                searchDebounce.restart()
         }
     }
 
@@ -75,9 +75,17 @@ Item {
                 id: searchField
                 objectName: "meoAiConversationSearch"
                 Layout.fillWidth: true
-                placeholderText: qsTr("Search chats")
+                placeholderText: qsTr("Search all chats")
                 selectByMouse: true
                 color: MeoTheme.contentOnSurface
+                onTextChanged: {
+                    if (text.trim().length === 0) {
+                        searchDebounce.stop()
+                        agent.searchConversations("")
+                    } else {
+                        searchDebounce.restart()
+                    }
+                }
                 background: Rectangle {
                     radius: 15 * root.uiScale
                     color: MeoTheme.surfaceContainerLowest
@@ -94,14 +102,37 @@ Item {
                 Accessible.name: qsTr("Refresh chats")
                 ToolTip.visible: hovered
                 ToolTip.text: Accessible.name
-                onClicked: agent.refreshConversations()
+                onClicked: {
+                    agent.refreshConversations()
+                    if (root.searching)
+                        searchDebounce.restart()
+                }
             }
         }
 
         MeoText {
             Layout.fillWidth: true
-            visible: agent.conversations.length === 0 && !agent.actionBusy
+            visible: !root.searching && agent.conversations.length === 0 && !agent.actionBusy
             text: qsTr("No saved Meo AI conversations yet.")
+            typeRole: "body"
+            typeSize: "small"
+            color: MeoTheme.contentOnSurfaceVariant
+            wrapMode: Text.Wrap
+        }
+
+        MeoText {
+            Layout.fillWidth: true
+            visible: root.searching && agent.conversationSearchBusy
+            text: qsTr("Searching message history…")
+            typeRole: "label"
+            typeSize: "small"
+            color: MeoTheme.contentOnSurfaceVariant
+        }
+
+        MeoText {
+            Layout.fillWidth: true
+            visible: root.searching && !agent.conversationSearchBusy && agent.conversationSearchResults.length === 0
+            text: qsTr("No chats matched this search.")
             typeRole: "body"
             typeSize: "small"
             color: MeoTheme.contentOnSurfaceVariant
@@ -119,15 +150,14 @@ Item {
                 spacing: 8 * root.uiScale
 
                 Repeater {
-                    model: agent.conversations
+                    model: root.searching ? agent.conversationSearchResults : agent.conversations
 
                     delegate: Rectangle {
                         id: conversationCard
                         required property var modelData
                         readonly property bool currentConversation: String(modelData.id || "") === agent.conversationId
-                        visible: root.matches(modelData)
                         Layout.fillWidth: true
-                        implicitHeight: visible ? conversationRow.implicitHeight + 24 * root.uiScale : 0
+                        implicitHeight: conversationRow.implicitHeight + 24 * root.uiScale
                         radius: 18 * root.uiScale
                         color: currentConversation ? MeoTheme.surfaceContainer : MeoTheme.surfaceContainerLowest
                         border.width: currentConversation ? Math.max(1, root.uiScale) : 0
@@ -162,14 +192,24 @@ Item {
 
                                 MeoText {
                                     Layout.fillWidth: true
-                                    visible: String(modelData.summary || "").length > 0
-                                    text: String(modelData.summary || "")
+                                    visible: String(modelData.excerpt || modelData.summary || "").length > 0
+                                    text: String(modelData.excerpt || modelData.summary || "")
                                     typeRole: "body"
                                     typeSize: "small"
                                     color: MeoTheme.contentOnSurfaceVariant
                                     maximumLineCount: 2
                                     elide: Text.ElideRight
                                     wrapMode: Text.Wrap
+                                }
+
+                                MeoText {
+                                    Layout.fillWidth: true
+                                    visible: modelData.message_count !== undefined
+                                    text: qsTr("%1 messages").arg(Number(modelData.message_count || 0))
+                                    typeRole: "label"
+                                    typeSize: "small"
+                                    color: MeoTheme.contentOnSurfaceVariant
+                                    opacity: 0.72
                                 }
                             }
 
@@ -223,7 +263,9 @@ Item {
 
         MeoText {
             Layout.fillWidth: true
-            text: qsTr("Switching chats restores saved visible messages only. It never replays old model or tool actions.")
+            text: root.searching
+                ? qsTr("Search checks saved chat titles and visible message text on this device.")
+                : qsTr("Switching chats restores saved visible messages only. It never replays old model or tool actions.")
             typeRole: "label"
             typeSize: "small"
             color: MeoTheme.contentOnSurfaceVariant
