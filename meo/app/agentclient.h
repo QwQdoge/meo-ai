@@ -14,6 +14,7 @@ class AgentClient : public QObject {
     Q_PROPERTY(bool busy READ busy NOTIFY changed)
     Q_PROPERTY(bool actionBusy READ actionBusy NOTIFY changed)
     Q_PROPERTY(bool metadataBusy READ metadataBusy NOTIFY changed)
+    Q_PROPERTY(bool conversationSearchBusy READ conversationSearchBusy NOTIFY changed)
     Q_PROPERTY(bool serviceMode READ serviceMode CONSTANT)
     Q_PROPERTY(QString status READ status NOTIFY changed)
     Q_PROPERTY(QString metadataStatus READ metadataStatus NOTIFY changed)
@@ -22,6 +23,7 @@ class AgentClient : public QObject {
     Q_PROPERTY(QString requestError READ requestError NOTIFY changed)
     Q_PROPERTY(QString conversationId READ conversationId NOTIFY changed)
     Q_PROPERTY(QVariantList conversations READ conversations NOTIFY changed)
+    Q_PROPERTY(QVariantList conversationSearchResults READ conversationSearchResults NOTIFY changed)
     Q_PROPERTY(QVariantList options READ options NOTIFY changed)
     Q_PROPERTY(QVariantMap agentState READ agentState NOTIFY changed)
     Q_PROPERTY(QVariantList models READ models NOTIFY changed)
@@ -38,6 +40,7 @@ public:
     bool busy() const { return m_reply != nullptr; }
     bool actionBusy() const { return m_actionReply != nullptr; }
     bool metadataBusy() const { return m_metadataReply != nullptr; }
+    bool conversationSearchBusy() const { return m_conversationSearchReply != nullptr; }
     bool serviceMode() const { return m_serviceMode; }
     QString status() const { return m_status; }
     QString metadataStatus() const { return m_metadataStatus; }
@@ -46,6 +49,7 @@ public:
     QString requestError() const { return m_requestError; }
     QString conversationId() const { return m_conversationId; }
     QVariantList conversations() const { return m_conversations; }
+    QVariantList conversationSearchResults() const { return m_conversationSearchResults; }
     QVariantList options() const { return m_options; }
     QVariantMap agentState() const { return m_agentState; }
     QVariantList models() const { return m_models; }
@@ -86,6 +90,7 @@ public:
     Q_INVOKABLE void retryLastRequest();
     Q_INVOKABLE virtual void newChat();
     Q_INVOKABLE void refreshConversations();
+    Q_INVOKABLE void searchConversations(const QString &query);
     Q_INVOKABLE void resumeConversation(const QString &conversationId);
     Q_INVOKABLE void renameConversation(const QString &conversationId, const QString &title);
     Q_INVOKABLE void deleteConversation(const QString &conversationId);
@@ -153,6 +158,7 @@ private:
     QNetworkReply *m_reply = nullptr;
     QNetworkReply *m_actionReply = nullptr;
     QNetworkReply *m_metadataReply = nullptr;
+    QNetworkReply *m_conversationSearchReply = nullptr;
     QByteArray m_buffer;
     QString m_user;
     QString m_conversationId;
@@ -165,6 +171,7 @@ private:
     QString m_requestError;
     QString m_memoryQuery;
     QVariantList m_conversations;
+    QVariantList m_conversationSearchResults;
     QVariantList m_options;
     QVariantMap m_agentState;
     QVariantList m_models;
