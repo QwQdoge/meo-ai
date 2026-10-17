@@ -34,6 +34,10 @@ QVariantMap safeConversation(const QJsonObject &object) {
     if (!summary.isEmpty()) result.insert(QStringLiteral("summary"), summary.left(1200));
     if (!excerpt.isEmpty()) result.insert(QStringLiteral("excerpt"), excerpt.left(1200));
 
+    const QString matchRole = object.value(QStringLiteral("match_role")).toString().trimmed();
+    if (matchRole == QStringLiteral("user") || matchRole == QStringLiteral("assistant"))
+        result.insert(QStringLiteral("match_role"), matchRole);
+
     for (const QString &key : {QStringLiteral("title_is_default"), QStringLiteral("title_is_automatic")}) {
         if (object.value(key).isBool()) result.insert(key, object.value(key).toBool());
     }
@@ -41,10 +45,11 @@ QVariantMap safeConversation(const QJsonObject &object) {
         const QString value = object.value(key).toString().trimmed();
         if (!value.isEmpty()) result.insert(key, value.left(128));
     }
-    const QJsonValue messageCount = object.value(QStringLiteral("message_count"));
-    if (messageCount.isDouble()) {
-        const int count = messageCount.toInt(-1);
-        if (count >= 0) result.insert(QStringLiteral("message_count"), count);
+    for (const QString &key : {QStringLiteral("message_count"), QStringLiteral("match_count")}) {
+        const QJsonValue countValue = object.value(key);
+        if (!countValue.isDouble()) continue;
+        const int count = countValue.toInt(-1);
+        if (count >= 0) result.insert(key, count);
     }
     return result;
 }
