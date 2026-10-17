@@ -230,8 +230,8 @@ impl ContextEngine {
         }
         selected_recent.reverse();
 
-        let memory_limit = ((dynamic_budget as f32) * budget.memory_fraction.clamp(0.0, 1.0))
-            .round() as usize;
+        let memory_limit =
+            ((dynamic_budget as f32) * budget.memory_fraction.clamp(0.0, 1.0)).round() as usize;
         let mut memory_budget = remaining.min(memory_limit);
         let mut memory_ranked = memories.to_vec();
         memory_ranked.sort_by(|left, right| {
@@ -252,7 +252,11 @@ impl ContextEngine {
             .enumerate()
             .map(|(index, message)| {
                 let recency = (index + 1) as f64 / older.len().max(1) as f64;
-                (message_score(message, current_message, recency), index, message)
+                (
+                    message_score(message, current_message, recency),
+                    index,
+                    message,
+                )
             })
             .collect::<Vec<_>>();
         scored.sort_by(|left, right| {
@@ -318,9 +322,7 @@ impl ContextEngine {
                 raw_tokens,
                 selected_tokens,
                 budget_tokens: dynamic_budget,
-                recent_messages: final_messages
-                    .len()
-                    .saturating_sub(selected_old_messages),
+                recent_messages: final_messages.len().saturating_sub(selected_old_messages),
                 selected_old_messages,
                 memory_items: selected_memories.len(),
                 compacted_tool_outputs,
@@ -508,10 +510,7 @@ fn strip_ansi(text: &str) -> String {
 
 fn is_important_tool_line(line: &str) -> bool {
     let lower = line.to_lowercase();
-    TOOL_IMPORTANT_TERMS
-        .iter()
-        .any(|term| lower.contains(term))
-        || has_nonzero_exit_code(&lower)
+    TOOL_IMPORTANT_TERMS.iter().any(|term| lower.contains(term)) || has_nonzero_exit_code(&lower)
 }
 
 fn has_nonzero_exit_code(line: &str) -> bool {
@@ -612,7 +611,13 @@ mod tests {
     #[test]
     fn recent_messages_survive_small_budget() {
         let messages = (0..12)
-            .map(|index| message(index, Role::User, format!("turn {index} {}", "x".repeat(80))))
+            .map(|index| {
+                message(
+                    index,
+                    Role::User,
+                    format!("turn {index} {}", "x".repeat(80)),
+                )
+            })
             .collect::<Vec<_>>();
         let prepared = ContextEngine::new(4, 0.18).prepare(
             &messages,
@@ -626,17 +631,32 @@ mod tests {
             },
         );
         assert_eq!(prepared.messages.last().unwrap().message_id, "message:11");
-        assert!(prepared.messages.iter().any(|item| item.message_id == "message:10"));
+        assert!(prepared
+            .messages
+            .iter()
+            .any(|item| item.message_id == "message:10"));
         assert_eq!(messages.len(), 12, "raw transcript is never mutated");
     }
 
     #[test]
     fn relevant_old_message_beats_irrelevant_history() {
         let mut messages = (0..9)
-            .map(|index| message(index, Role::Assistant, format!("unrelated weather note {index}")))
+            .map(|index| {
+                message(
+                    index,
+                    Role::Assistant,
+                    format!("unrelated weather note {index}"),
+                )
+            })
             .collect::<Vec<_>>();
-        messages[1] = message(1, Role::User, "project constraint: use Neon for account storage");
-        messages.extend((9..13).map(|index| message(index, Role::User, format!("recent chat {index}"))));
+        messages[1] = message(
+            1,
+            Role::User,
+            "project constraint: use Neon for account storage",
+        );
+        messages.extend(
+            (9..13).map(|index| message(index, Role::User, format!("recent chat {index}"))),
+        );
         let prepared = ContextEngine::new(4, 0.18).prepare(
             &messages,
             "what database constraint did we choose for Neon?",
@@ -648,7 +668,10 @@ mod tests {
                 memory_fraction: 0.2,
             },
         );
-        assert!(prepared.messages.iter().any(|item| item.message_id == "message:1"));
+        assert!(prepared
+            .messages
+            .iter()
+            .any(|item| item.message_id == "message:1"));
     }
 
     #[test]
