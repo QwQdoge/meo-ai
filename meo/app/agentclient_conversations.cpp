@@ -5,6 +5,7 @@
 #include <QJsonObject>
 #include <QNetworkRequest>
 #include <QSettings>
+#include <QTimer>
 
 namespace {
 
@@ -204,6 +205,173 @@ void AgentClient::resumeConversation(const QString &conversationId) {
                 m_status = tr("Ready");
             }
         }
+        reply->deleteLater();
+        emit changed();
+    });
+}
+
+void AgentClient::renameConversation(const QString &conversationId, const QString &title) {
+    const QString id = conversationId.trimmed();
+    const QString normalizedTitle = title.simplified();
+    if (!m_serviceMode || busy() || actionBusy()) return;
+    if (!validConversationId(id) || conversationMetadataForId(id).isEmpty()) {
+        m_status = tr("That conversation is no longer available.");
+        emit changed();
+        return;
+    }
+    if (normalizedTitle.isEmpty()) {
+        m_status = tr("Conversation title cannot be empty.");
+        emit changed();
+        return;
+    }
+    if (normalizedTitle.size() > 240) {
+        m_status = tr("Conversation title is too long.");
+        emit changed();
+        return;
+    }
+
+    QUrl base = validatedOrigin("MEO_AI_SERVICE_ENDPOINT");
+    if (!base.isValid()) {
+        m_status = tr("MEO_AI_SERVICE_ENDPOINT must be a loopback HTTP origin.");
+        emit changed();
+        return;
+    }
+    QUrl url = base;
+    url.setPath(QStringLiteral("/v1/conversations/%1/title").arg(id));
+    QNetworkRequest request(url);
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
+    request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+    const QByteArray body = QJsonDocument(QJsonObject{{QStringLiteral("title"), normalizedTitle}})
+                                .toJson(QJsonDocument::Compact);
+    m_status = tr("Renaming conversation…");
+    QNetworkReply *reply = m_network.post(request, body);
+    m_actionReply = reply;
+    emit changed();
+
+    connect(reply, &QNetworkReply::finished, this, [this, reply, id, normalizedTitle] {
+        if (m_actionReply != reply) {
+            reply->deleteLater();
+            return;
+        }
+        m_actionReply = nullptr;
+        const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        if (reply->error() == QNetworkReply::NoError && code == 200) {
+            QVariantList updated;
+            updated.reserve(m_conversations.size());
+            for (const QVariant &value : m_conversations) {
+                QVariantMap item = value.toMap();
+                if (item.value(QStringLiteral("id")).toString() == id) {
+                    item.insert(QStringLiteral("title"), normalizedTitle);
+                    item.insert(QStringLiteral("title_is_default"), false);
+                    item.insert(QStringLiteral("title_is_automatic"), false);
+                }
+                updated.append(item);
+            }
+            m_conversations = updated;
+            if (id == m_conversationId)
+                emit conversationMetadata(conversationMetadataForId(id));
+            m_status = tr("Ready");
+        } else if (code == 404) {
+            QVariantList remaining;
+            for (const QVariant &value : m_conversations) {
+                if (value.toMap().value(QStringLiteral("id")).toString() != id)
+                    remaining.append(value);
+            }
+            m_conversations = remaining;
+            m_status = tr("That conversation no longer exists.");
+        } else {
+            m_status = tr("Could not rename that conversation.");
+        }
+        reply->deleteLater();
+        emit changed();
+    });
+}
+
+void AgentClient::deleteConversation(const QString &conversationId) {
+    const QString id = conversationId.trimmed();
+    if (!m_serviceMode || busy() || actionBusy() || !m_options.isEmpty()) return;
+    if (!validConversationId(id) || conversationMetadataForId(id).isEmpty()) {
+        m_status = tr("That conversation is no longer available.");
+        emit changed();
+        return;
+    }
+    const bool deletingCurrent = id == m_conversationId;
+    if (deletingCurrent
+        && (!m_pendingResources.isEmpty() || resourceCleanupBusy() || !m_binaryResourceQueue.isEmpty())) {
+        m_status = tr("Remove pending attachments before deleting this conversation.");
+        emit changed();
+        return;
+    }
+
+    QUrl base = validatedOrigin("MEO_AI_SERVICE_ENDPOINT");
+    if (!base.isValid()) {
+        m_status = tr("MEO_AI_SERVICE_ENDPOINT must be a loopback HTTP origin.");
+        emit changed();
+        return;
+    }
+    QUrl url = base;
+    url.setPath(QStringLiteral("/v1/conversations/%1").arg(id));
+    QNetworkRequest request(url);
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
+    m_status = tr("Deleting conversation…");
+    QNetworkReply *reply = m_network.deleteResource(request);
+    m_actionReply = reply;
+    emit changed();
+
+    connect(reply, &QNetworkReply::finished, this, [this, reply, id, deletingCurrent] {
+        if (m_actionReply != reply) {
+            reply->deleteLater();
+            return;
+        }
+        m_actionReply = nullptr;
+        const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        if ((reply->error() == QNetworkReply::NoError && code == 200) || code == 404) {
+            QVariantList remaining;
+            QString fallbackId;
+            for (const QVariant &value : m_conversations) {
+                const QVariantMap item = value.toMap();
+                const QString itemId = item.value(QStringLiteral("id")).toString();
+                if (itemId == id) continue;
+                if (fallbackId.isEmpty()) fallbackId = itemId;
+                remaining.append(item);
+            }
+            m_conversations = remaining;
+
+            if (deletingCurrent) {
+                m_conversationId.clear();
+                QSettings().remove(QStringLiteral("serviceConversationId"));
+                m_requestId.clear();
+                m_decisionId.clear();
+                m_pendingServiceText.clear();
+                m_options.clear();
+                m_cancelPending = false;
+                m_staleConversationRetryUsed = false;
+                m_lastEventSeq = 0;
+                m_reconnectAttempts = 0;
+                m_lastRequestHasPendingResources = false;
+                m_responseMetadata.clear();
+                clearRequestFailure(true);
+                emit resetChat();
+                m_status = fallbackId.isEmpty() ? tr("Starting a new chat…") : tr("Opening another chat…");
+            } else {
+                m_status = code == 404 ? tr("That conversation no longer exists.") : tr("Ready");
+            }
+
+            reply->deleteLater();
+            emit changed();
+            if (deletingCurrent) {
+                QTimer::singleShot(0, this, [this, fallbackId] {
+                    if (fallbackId.isEmpty()) newChat();
+                    else resumeConversation(fallbackId);
+                });
+            }
+            return;
+        }
+
+        if (code == 409)
+            m_status = tr("Finish the active response before deleting this conversation.");
+        else
+            m_status = tr("Could not delete that conversation.");
         reply->deleteLater();
         emit changed();
     });
