@@ -14,6 +14,14 @@ ScrollView {
     readonly property var projects: data.projects || []
     readonly property var sources: data.sources || []
     readonly property var daily: data.daily || []
+    readonly property bool requestActive: agent.busy || agent.actionBusy || agent.options.length > 0
+    readonly property string selectedModelLabel: {
+        for (let i = 0; i < agent.models.length; ++i) {
+            if (agent.models[i].selected === true)
+                return String(agent.models[i].label || agent.models[i].model_id || "")
+        }
+        return ""
+    }
 
     function compactNumber(value) {
         const n = Number(value || 0)
@@ -59,6 +67,23 @@ ScrollView {
         return Math.max(4 * uiScale, available * Number(tokens || 0) / maximum)
     }
 
+    function liveTitle() {
+        if (agent.options.length > 0)
+            return qsTr("Waiting for your confirmation")
+        if (agent.actionBusy)
+            return qsTr("Finishing an AI action")
+        if (agent.busy)
+            return qsTr("Meo AI is working")
+        return qsTr("No active request")
+    }
+
+    function liveIcon() {
+        if (agent.options.length > 0) return "pending_actions"
+        if (agent.actionBusy) return "hourglass_top"
+        if (agent.busy) return "auto_awesome"
+        return "task_alt"
+    }
+
     ColumnLayout {
         width: root.availableWidth
         spacing: 16 * root.uiScale
@@ -89,6 +114,83 @@ ScrollView {
                 Accessible.name: qsTr("Refresh activity")
                 ToolTip.visible: hovered; ToolTip.text: Accessible.name
                 onClicked: usage.refresh()
+            }
+        }
+
+        Rectangle {
+            id: liveActivityCard
+            objectName: "meoAiLiveActivityCard"
+            Layout.fillWidth: true
+            visible: root.requestActive
+            implicitHeight: liveActivityRow.implicitHeight + 28 * root.uiScale
+            radius: 22 * root.uiScale
+            color: MeoTheme.surfaceContainerLowest
+            border.width: Math.max(1, root.uiScale)
+            border.color: agent.options.length > 0 ? MeoTheme.primary : MeoTheme.outlineVariant
+
+            RowLayout {
+                id: liveActivityRow
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.margins: 14 * root.uiScale
+                spacing: 12 * root.uiScale
+
+                Rectangle {
+                    Layout.preferredWidth: 40 * root.uiScale
+                    Layout.preferredHeight: 40 * root.uiScale
+                    radius: 14 * root.uiScale
+                    color: MeoTheme.primaryContainer
+                    MeoIcon {
+                        anchors.centerIn: parent
+                        icon: root.liveIcon()
+                        size: 22
+                        color: MeoTheme.contentOnPrimaryContainer
+                    }
+                }
+
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 3 * root.uiScale
+                    MeoText {
+                        Layout.fillWidth: true
+                        text: root.liveTitle()
+                        typeRole: "label"
+                        typeSize: "medium"
+                        color: MeoTheme.contentOnSurface
+                        wrapMode: Text.Wrap
+                    }
+                    MeoText {
+                        Layout.fillWidth: true
+                        text: String(agent.status || qsTr("Working…"))
+                        typeRole: "body"
+                        typeSize: "small"
+                        color: MeoTheme.contentOnSurfaceVariant
+                        wrapMode: Text.Wrap
+                        maximumLineCount: 2
+                        elide: Text.ElideRight
+                    }
+                    MeoText {
+                        Layout.fillWidth: true
+                        visible: root.selectedModelLabel.length > 0
+                        text: qsTr("Model · %1").arg(root.selectedModelLabel)
+                        typeRole: "label"
+                        typeSize: "small"
+                        color: MeoTheme.contentOnSurfaceVariant
+                        opacity: 0.76
+                        elide: Text.ElideRight
+                    }
+                }
+
+                MeoButton {
+                    visible: agent.busy && agent.serviceMode
+                    text: qsTr("Stop")
+                    icon.name: "stop"
+                    type: "outlined"
+                    size: "xs"
+                    enabled: !agent.actionBusy
+                    onClicked: agent.cancel()
+                }
             }
         }
 
