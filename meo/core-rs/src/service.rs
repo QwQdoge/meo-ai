@@ -14,6 +14,7 @@ use tokio::sync::{broadcast, Notify};
 use tokio::time::{timeout, Instant};
 use uuid::Uuid;
 
+use crate::capabilities::{CapabilityCatalog, CapabilityError, CapabilityResolution};
 use crate::protocol::{
     Conversation, CoreEvent, Message, RequestSnapshot, RequestState, Role, SendMessageRequest,
 };
@@ -69,6 +70,8 @@ pub enum ServiceError {
     UnknownModel(String),
     #[error("request text is empty")]
     EmptyMessage,
+    #[error("capability selection failed: {0}")]
+    Capability(#[from] CapabilityError),
     #[error("provider failed: {0}")]
     Provider(#[from] ProviderError),
     #[error("request is already terminal")]
@@ -165,6 +168,7 @@ pub struct MeoService {
     config: ServiceConfig,
     providers: Arc<RwLock<HashMap<String, Arc<dyn Provider>>>>,
     model_provider: Arc<RwLock<HashMap<String, String>>>,
+    capabilities: Arc<RwLock<CapabilityCatalog>>,
     conversations: Arc<DashMap<String, Arc<RwLock<ConversationRuntime>>>>,
     requests: Arc<DashMap<String, Arc<RequestRuntime>>>,
     terminal_requests: Arc<Mutex<VecDeque<String>>>,
@@ -186,10 +190,15 @@ impl MeoService {
             config: config.validated(),
             providers: Arc::new(RwLock::new(HashMap::new())),
             model_provider: Arc::new(RwLock::new(HashMap::new())),
+            capabilities: Arc::new(RwLock::new(CapabilityCatalog::new())),
             conversations: Arc::new(DashMap::new()),
             requests: Arc::new(DashMap::new()),
             terminal_requests: Arc::new(Mutex::new(VecDeque::new())),
         }
+    }
+
+    pub fn capability_catalog(&self) -> Arc<RwLock<CapabilityCatalog>> {
+        self.capabilities.clone()
     }
 
     pub fn health_snapshot(&self) -> serde_json::Value {
@@ -200,10 +209,17 @@ impl MeoService {
             .filter(|entry| !entry.value().is_terminal())
             .count();
         let terminal_requests = retained_requests.saturating_sub(active_requests);
+        let capability_count = self
+            .capabilities
+            .read()
+            .expect("capability catalog lock poisoned")
+            .list()
+            .len();
         json!({
             "ready": true,
             "runtime": "rust",
             "conversations": self.conversations.len(),
+            "capabilities": capability_count,
             "active_requests": active_requests,
             "retained_requests": retained_requests,
             "retained_terminal_requests": terminal_requests,
@@ -396,6 +412,12 @@ impl MeoService {
             .value()
             .clone();
 
+        let capability_resolution = self
+            .capabilities
+            .read()
+            .expect("capability catalog lock poisoned")
+            .resolve(&input.capability_ids)?;
+
         let model_id = if input.model_id.is_empty() {
             conversation_runtime
                 .read()
@@ -448,6 +470,7 @@ impl MeoService {
                 provider,
                 model_id,
                 history,
+                capability_resolution,
             );
             if AssertUnwindSafe(run).catch_unwind().await.is_err() {
                 if !request.is_terminal() {
@@ -488,6 +511,7 @@ impl MeoService {
         provider: Arc<dyn Provider>,
         model_id: String,
         history: Vec<Message>,
+        capability_resolution: CapabilityResolution,
     ) {
         request.transition(RequestState::RunningModel);
         request.publish(CoreEvent::RequestStarted {
@@ -496,6 +520,24 @@ impl MeoService {
             conversation_id: conversation_id.clone(),
         });
 
+        if !capability_resolution.capabilities.is_empty() {
+            request.publish(CoreEvent::ResponseMeta {
+                seq: request.next_seq(),
+                request_id: request_id.clone(),
+                metadata: json!({
+                    "capabilities": {
+                        "selected": capability_resolution
+                            .capabilities
+                            .iter()
+                            .map(|item| item.capability_id.clone())
+                            .collect::<Vec<_>>(),
+                        "provided": capability_resolution.provided_capabilities,
+                        "tool_count": capability_resolution.tools.len(),
+                    }
+                }),
+            });
+        }
+
         if request.is_cancelled() {
             self.finish_cancelled(&request_id, &request);
             return;
@@ -503,7 +545,7 @@ impl MeoService {
 
         let provider_request = ProviderRequest {
             model_id,
-            system_prompt: String::new(),
+            system_prompt: capability_context_prompt(&capability_resolution),
             messages: history,
             temperature: None,
             max_tokens: None,
@@ -736,6 +778,28 @@ impl MeoService {
     }
 }
 
+fn capability_context_prompt(resolution: &CapabilityResolution) -> String {
+    if resolution.capabilities.is_empty() {
+        return String::new();
+    }
+
+    let mut lines = vec!["Meo capability context for this request:".to_owned()];
+    for capability in &resolution.capabilities {
+        lines.push(format!(
+            "- {} [{}]",
+            capability.label, capability.capability_id
+        ));
+    }
+    for hint in &resolution.context_hints {
+        lines.push(format!("- Guidance: {hint}"));
+    }
+    lines.push(
+        "Capability descriptions are context, not authorization. Do not claim a connector action completed unless a verified tool result is present."
+            .to_owned(),
+    );
+    lines.join("\n")
+}
+
 fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -807,6 +871,7 @@ mod tests {
                         text: "hi".to_owned(),
                         model_id: String::new(),
                         resource_ids: vec![],
+                        capability_ids: vec![],
                     },
                 )
                 .unwrap();
@@ -824,5 +889,26 @@ mod tests {
         }
         let health = service.health_snapshot();
         assert!(health["retained_requests"].as_u64().unwrap_or_default() <= 2);
+    }
+
+    #[test]
+    fn unknown_capability_selection_fails_closed() {
+        let service = test_service(2);
+        let conversation = service.create_conversation("test-model");
+        let error = service
+            .send_message(
+                &conversation.conversation_id,
+                SendMessageRequest {
+                    text: "hi".to_owned(),
+                    model_id: String::new(),
+                    resource_ids: vec![],
+                    capability_ids: vec!["connector.missing".to_owned()],
+                },
+            )
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            ServiceError::Capability(CapabilityError::Unknown(_))
+        ));
     }
 }
