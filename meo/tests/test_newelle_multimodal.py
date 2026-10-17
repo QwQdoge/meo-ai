@@ -52,6 +52,18 @@ class FakeController:
 
 
 class SearchController(FakeController):
+    chats = {
+        12: {
+            "chat": [
+                {"User": "User", "Message": "Migration causes can be economic or political."},
+                {"User": "Console", "Message": "migration causes hidden tool output"},
+                {"User": "Assistant", "Message": "Here are the main migration causes."},
+                {"User": "User", "Message": "migration causes hidden context", "ToolContext": True},
+            ]
+        },
+        4: {"chat": [{"User": "User", "Message": "A title-only search result has no body match."}]},
+    }
+
     def search_conversations(self, query):
         self.query = query
         return {
@@ -97,7 +109,7 @@ class NewelleMultimodalBridgeTests(unittest.TestCase):
             next(item for item in catalog if item.model_id == "mixed:camera").supports_vision
         )
 
-    def test_full_history_search_translates_legacy_ids_and_clamps_excerpt(self) -> None:
+    def test_full_history_search_translates_ids_and_counts_visible_message_matches(self) -> None:
         controller = SearchController()
         bridge = TestBridge(FakeBackend(), controller)
         results = bridge.search_conversations("  migration   causes  ")
@@ -105,8 +117,13 @@ class NewelleMultimodalBridgeTests(unittest.TestCase):
         self.assertEqual(
             results,
             [
-                {"id": "meo:new", "excerpt": "…matching text from newest conversation…"},
-                {"id": "meo:old", "excerpt": ""},
+                {
+                    "id": "meo:new",
+                    "excerpt": "…matching text from newest conversation…",
+                    "match_count": 2,
+                    "match_role": "user",
+                },
+                {"id": "meo:old", "excerpt": "", "match_count": 0},
             ],
         )
         for item in results:
