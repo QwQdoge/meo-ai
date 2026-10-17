@@ -94,6 +94,7 @@ public:
     Q_INVOKABLE void resumeConversation(const QString &conversationId);
     Q_INVOKABLE void renameConversation(const QString &conversationId, const QString &title);
     Q_INVOKABLE void deleteConversation(const QString &conversationId);
+    Q_INVOKABLE void exportConversation(const QString &conversationId, const QUrl &fileUrl);
     Q_INVOKABLE void refreshServiceMetadata();
     Q_INVOKABLE void refreshMemory(const QString &query = QString());
     Q_INVOKABLE void setConversationModel(const QString &modelId);
