@@ -11,7 +11,7 @@ class ProjectStore final : public QObject
     Q_PROPERTY(QString activeProjectName READ activeProjectName NOTIFY activeProjectChanged)
 
 public:
-    explicit ProjectStore(QObject *parent = nullptr);
+    explicit ProjectStore(bool persistent = true, QObject *parent = nullptr);
 
     QVariantList projects() const;
     QString activeProjectId() const;
@@ -30,6 +30,7 @@ private:
     void save() const;
     int indexOf(const QString &projectId) const;
 
+    bool m_persistent = true;
     QVariantList m_projects;
     QString m_activeProjectId;
 };
