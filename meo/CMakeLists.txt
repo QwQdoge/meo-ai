@@ -43,6 +43,7 @@ set(MEO_DRAFT_SOURCES
 )
 
 set(MEO_APP_QML
+    app/qml/App.qml
     app/qml/Main.qml
     app/qml/AiLogo.qml
     app/qml/ResponseDetails.qml
@@ -54,6 +55,8 @@ set(MEO_APP_QML
     app/qml/PresentationCard.qml
     app/qml/NavigationButton.qml
     app/qml/PrimaryModeLanding.qml
+    app/qml/MobileNavigationDrawer.qml
+    app/qml/MobileNavigationOverlay.qml
     app/qml/AiControlsPopup.qml
     app/qml/SettingsCenter.qml
     app/qml/MemoryPanel.qml
