@@ -34,6 +34,26 @@ Popup {
         return parts.join(" · ")
     }
 
+    function hasPendingImages() {
+        for (let i = 0; i < agent.pendingResources.length; ++i) {
+            const item = agent.pendingResources[i]
+            const kind = String(item.kind || "")
+            const mime = String(item.mime_type || "").toLowerCase()
+            if (kind === "image" || mime.indexOf("image/") === 0)
+                return true
+        }
+        return false
+    }
+
+    function selectedVisionState() {
+        for (let i = 0; i < agent.models.length; ++i) {
+            const model = agent.models[i]
+            if (model.selected === true)
+                return model.supports_vision === true ? 1 : 0
+        }
+        return -1
+    }
+
     modal: true
     focus: true
     width: Math.min(680 * uiScale, parent ? parent.width - 28 * uiScale : 680 * uiScale)
@@ -270,6 +290,40 @@ Popup {
                                 }
                             }
                         }
+                    }
+                }
+            }
+
+            Rectangle {
+                visible: root.hasPendingImages() && root.selectedVisionState() === 0
+                Layout.fillWidth: true
+                implicitHeight: visionWarning.implicitHeight + 20 * root.uiScale
+                radius: 14 * root.uiScale
+                color: MeoTheme.surfaceContainerLow
+                border.width: Math.max(1, root.uiScale)
+                border.color: MeoTheme.error
+
+                RowLayout {
+                    id: visionWarning
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    anchors.margins: 10 * root.uiScale
+                    spacing: 8 * root.uiScale
+
+                    MeoIcon {
+                        icon: "warning"
+                        size: 20
+                        color: MeoTheme.error
+                    }
+
+                    MeoText {
+                        Layout.fillWidth: true
+                        text: qsTr("The selected model does not support image input. Choose a vision-capable model before sending this attachment.")
+                        typeRole: "body"
+                        typeSize: "small"
+                        color: MeoTheme.contentOnSurface
+                        wrapMode: Text.Wrap
                     }
                 }
             }
