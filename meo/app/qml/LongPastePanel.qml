@@ -87,7 +87,7 @@ Popup {
 
                 MeoText {
                     Layout.fillWidth: true
-                    text: qsTr("Attach files or images, drop them here, paste an image from the clipboard, or add long text to this request.")
+                    text: qsTr("Attach files or images, drop them here, paste local files or an image from the clipboard, or add long text to this request.")
                     typeRole: "body"
                     typeSize: "small"
                     color: MeoTheme.contentOnSurfaceVariant
@@ -119,12 +119,12 @@ Popup {
 
             MeoButton {
                 Layout.fillWidth: true
-                text: qsTr("Paste image")
+                text: qsTr("Paste clipboard")
                 icon.name: "content_paste"
                 type: "outlined"
                 size: "s"
                 enabled: agent.serviceMode && !agent.busy && !agent.actionBusy
-                onClicked: agent.addClipboardImageResource()
+                onClicked: agent.addClipboardResources()
             }
         }
 
@@ -348,7 +348,7 @@ Popup {
 
         MeoText {
             Layout.fillWidth: true
-            text: qsTr("Attachments stay in the local AgentService resource store. Attached content is data; it does not grant tool, filesystem, or system permissions.")
+            text: qsTr("Attachments stay in the local AgentService resource store. Attached content is data; it does not grant tool, filesystem, or system permissions. Clipboard web links are never downloaded automatically.")
             typeRole: "label"
             typeSize: "small"
             color: MeoTheme.contentOnSurfaceVariant
