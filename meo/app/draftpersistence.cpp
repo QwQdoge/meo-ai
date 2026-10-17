@@ -5,8 +5,6 @@
 #include <QSettings>
 
 namespace {
-constexpr auto kDraftGroup = "NativeDraft";
-constexpr auto kDraftKey = "composerText";
 constexpr int kDraftDebounceMs = 300;
 }
 
@@ -37,8 +35,8 @@ bool DraftPersistence::attach(QObject *composer)
     m_composer = composer;
 
     QSettings settings;
-    settings.beginGroup(QStringLiteral(kDraftGroup));
-    const QString storedDraft = settings.value(QStringLiteral(kDraftKey)).toString();
+    settings.beginGroup(QStringLiteral("NativeDraft"));
+    const QString storedDraft = settings.value(QStringLiteral("composerText")).toString();
     settings.endGroup();
 
     if (textProperty.read().toString().isEmpty() && !storedDraft.isEmpty())
@@ -66,8 +64,8 @@ QString DraftPersistence::currentText() const
 void DraftPersistence::clearStoredDraft()
 {
     QSettings settings;
-    settings.beginGroup(QStringLiteral(kDraftGroup));
-    settings.remove(QStringLiteral(kDraftKey));
+    settings.beginGroup(QStringLiteral("NativeDraft"));
+    settings.remove(QStringLiteral("composerText"));
     settings.endGroup();
     settings.sync();
 }
@@ -97,8 +95,8 @@ void DraftPersistence::flush()
     }
 
     QSettings settings;
-    settings.beginGroup(QStringLiteral(kDraftGroup));
-    settings.setValue(QStringLiteral(kDraftKey), text);
+    settings.beginGroup(QStringLiteral("NativeDraft"));
+    settings.setValue(QStringLiteral("composerText"), text);
     settings.endGroup();
     settings.sync();
 }
