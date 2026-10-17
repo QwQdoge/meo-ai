@@ -127,14 +127,40 @@ private slots:
         QTRY_VERIFY((sidebar = item(window->contentItem(), "meoAiSidebar")) != nullptr);
         QVERIFY(sidebar);
 
-        // Chats is a primary navigation destination, not only a tab hidden in
-        // the details pane. Clicking it must select the existing Chats tab.
-        QPointer<QQuickItem> chatsNavigation;
-        QTRY_VERIFY((chatsNavigation = item(window->contentItem(), "meoAiNav-chats")) != nullptr);
-        QVERIFY(chatsNavigation->isVisible());
-        QVERIFY(QMetaObject::invokeMethod(chatsNavigation.data(), "clicked"));
-        QTRY_COMPARE(window->property("inspectorTab").toInt(), 5);
-        QTRY_VERIFY(window->property("inspectorOpen").toBool());
+        // Primary navigation is task-oriented. Work must be a distinct mode,
+        // while model/memory/resource configuration is no longer top-level.
+        QPointer<QQuickItem> workNavigation;
+        QPointer<QQuickItem> chatNavigation;
+        QPointer<QQuickItem> projectsNavigation;
+        QPointer<QQuickItem> skillsNavigation;
+        QTRY_VERIFY((workNavigation = item(window->contentItem(), "meoAiNav-work")) != nullptr);
+        QTRY_VERIFY((chatNavigation = item(window->contentItem(), "meoAiNav-chat")) != nullptr);
+        QTRY_VERIFY((projectsNavigation = item(window->contentItem(), "meoAiNav-projects")) != nullptr);
+        QTRY_VERIFY((skillsNavigation = item(window->contentItem(), "meoAiNav-skills")) != nullptr);
+        QVERIFY(workNavigation->isVisible());
+        QVERIFY(projectsNavigation->isVisible());
+        QVERIFY(skillsNavigation->isVisible());
+        QVERIFY(item(window->contentItem(), "meoAiNav-models") == nullptr);
+        QVERIFY(item(window->contentItem(), "meoAiNav-memory") == nullptr);
+        QVERIFY(item(window->contentItem(), "meoAiNav-resources") == nullptr);
+
+        QVERIFY(QMetaObject::invokeMethod(workNavigation.data(), "clicked"));
+        QTRY_COMPARE(window->property("primaryMode").toString(), QString("work"));
+        QPointer<QQuickItem> workLanding;
+        QPointer<QQuickItem> workTarget;
+        QTRY_VERIFY((workLanding = item(window->contentItem(), "meoAiModeLanding-work")) != nullptr);
+        QTRY_VERIFY(workLanding->isVisible());
+        QTRY_VERIFY((workTarget = item(window->contentItem(), "meoAiWorkTarget")) != nullptr);
+        QTRY_VERIFY(workTarget->isVisible());
+        QPointer<QQuickItem> composerShell;
+        QTRY_VERIFY((composerShell = item(window->contentItem(), "meoAiComposerShell")) != nullptr);
+        QVERIFY(!composerShell->isVisible());
+
+        QVERIFY(QMetaObject::invokeMethod(chatNavigation.data(), "clicked"));
+        QTRY_COMPARE(window->property("primaryMode").toString(), QString("chat"));
+        QTRY_VERIFY(composerShell->isVisible());
+        QVERIFY(QMetaObject::invokeMethod(window, "openInspector", Q_ARG(QVariant, 0)));
+        QTRY_VERIFY(window->property("showDock").toBool());
 
         QTest::qWait(100);
         const qreal originalWidth = sidebar->width();
