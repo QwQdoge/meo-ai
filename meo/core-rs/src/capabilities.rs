@@ -182,8 +182,10 @@ impl CapabilityCatalog {
 
     pub fn upsert(&mut self, descriptor: CapabilityDescriptor) -> Result<(), CapabilityError> {
         validate_descriptor_ids(&descriptor)?;
-        self.items
-            .insert(descriptor.capability_id.clone(), normalize_descriptor(descriptor));
+        self.items.insert(
+            descriptor.capability_id.clone(),
+            normalize_descriptor(descriptor),
+        );
         Ok(())
     }
 
@@ -314,10 +316,18 @@ fn normalize_descriptor(mut descriptor: CapabilityDescriptor) -> CapabilityDescr
     descriptor.provides = normalized_strings(descriptor.provides);
     descriptor.requires = normalized_strings(descriptor.requires);
     descriptor.tags = normalized_strings(descriptor.tags);
-    descriptor.permissions.sort_by(|left, right| left.permission_id.cmp(&right.permission_id));
-    descriptor.permissions.dedup_by(|left, right| left.permission_id == right.permission_id);
-    descriptor.tools.sort_by(|left, right| left.tool_id.cmp(&right.tool_id));
-    descriptor.tools.dedup_by(|left, right| left.tool_id == right.tool_id);
+    descriptor
+        .permissions
+        .sort_by(|left, right| left.permission_id.cmp(&right.permission_id));
+    descriptor
+        .permissions
+        .dedup_by(|left, right| left.permission_id == right.permission_id);
+    descriptor
+        .tools
+        .sort_by(|left, right| left.tool_id.cmp(&right.tool_id));
+    descriptor
+        .tools
+        .dedup_by(|left, right| left.tool_id == right.tool_id);
     descriptor
 }
 
