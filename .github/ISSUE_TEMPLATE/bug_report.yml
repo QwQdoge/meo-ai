@@ -85,7 +85,7 @@ body:
     id: diagnostics
     attributes:
       label: Diagnostics
-      description: Add relevant status text, logs, screenshots, or request IDs. Remove secrets and private prompt contents first.
+      description: In the native app, open AI Activity and use Copy diagnostics, then review the text before pasting it here. Add other relevant logs/screenshots/request IDs only after removing secrets and private prompt contents.
       render: shell
 
   - type: checkboxes
