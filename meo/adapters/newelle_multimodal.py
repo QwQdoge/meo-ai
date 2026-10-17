@@ -125,6 +125,32 @@ class NewelleMultimodalBridge:
             and not entry.get("ToolContext")
         )
 
+    @staticmethod
+    def _search_match_metadata(record: dict, query: str) -> tuple[str, int]:
+        """Return first visible speaker and number of visible messages matching query."""
+        entries = record.get("chat", [])
+        if not isinstance(entries, list):
+            return "", 0
+        needle = query.casefold()
+        first_role = ""
+        match_count = 0
+        for entry in entries:
+            if not isinstance(entry, dict) or entry.get("ToolContext"):
+                continue
+            raw_role = entry.get("User")
+            if raw_role not in {"User", "Assistant"}:
+                continue
+            raw_text = entry.get("Message")
+            if not isinstance(raw_text, str):
+                continue
+            text = " ".join(raw_text.split())
+            if needle not in text.casefold():
+                continue
+            match_count += 1
+            if not first_role:
+                first_role = "user" if raw_role == "User" else "assistant"
+        return first_role, match_count
+
     def _conversation_title_is_automatic(self, record: dict) -> bool:
         if record.get("name_is_default") is True:
             return True
@@ -189,15 +215,24 @@ class NewelleMultimodalBridge:
             ):
                 id_by_chat[chat_id] = conversation_id
 
+        chats = getattr(self._controller, "chats", None)
+        chat_map = chats if isinstance(chats, dict) else {}
         result: list[dict] = []
         for chat_id, excerpt in raw_results.items():
             conversation_id = id_by_chat.get(chat_id)
             if not conversation_id:
                 continue
-            result.append({
+            item = {
                 "id": conversation_id,
                 "excerpt": str(excerpt or "").strip()[:1200],
-            })
+            }
+            record = chat_map.get(chat_id)
+            if isinstance(record, dict):
+                match_role, match_count = self._search_match_metadata(record, query)
+                item["match_count"] = match_count
+                if match_role:
+                    item["match_role"] = match_role
+            result.append(item)
         return result
 
     def generate_auxiliary(
