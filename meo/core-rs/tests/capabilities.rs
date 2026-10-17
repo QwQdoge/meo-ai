@@ -18,6 +18,7 @@ fn skill(id: &str, requires: Vec<String>) -> CapabilityDescriptor {
         connection_state: CapabilityConnectionState::NotRequired,
         permissions: vec![],
         tools: vec![],
+        provides: vec![],
         requires,
         context_hint: "Use observed facts before proposing a repair.".to_owned(),
         tags: vec!["system".to_owned()],
@@ -54,6 +55,7 @@ fn connector(id: &str, state: CapabilityConnectionState) -> CapabilityDescriptor
                 "required": ["query"]
             }),
         }],
+        provides: vec!["file.search".to_owned()],
         requires: vec![],
         context_hint: String::new(),
         tags: vec!["files".to_owned(), "productivity".to_owned()],
@@ -79,7 +81,7 @@ fn catalog_is_deterministic_and_groups_skills_with_connectors() {
 }
 
 #[test]
-fn skill_dependency_does_not_grant_connector_tools() {
+fn skill_dependency_does_not_grant_connector_tools_or_runtime_abilities() {
     let mut catalog = CapabilityCatalog::new();
     catalog
         .register(connector("connector.drive", CapabilityConnectionState::Connected))
@@ -90,6 +92,7 @@ fn skill_dependency_does_not_grant_connector_tools() {
 
     let skill_only = catalog.resolve(["skill.system-diagnostics"]).unwrap();
     assert!(skill_only.tools.is_empty());
+    assert!(skill_only.provided_capabilities.is_empty());
     assert_eq!(skill_only.context_hints.len(), 1);
 
     let with_connector = catalog
@@ -97,6 +100,7 @@ fn skill_dependency_does_not_grant_connector_tools() {
         .unwrap();
     assert_eq!(with_connector.tools.len(), 1);
     assert_eq!(with_connector.tools[0].tool_id, "drive.search");
+    assert_eq!(with_connector.provided_capabilities, vec!["file.search"]);
 }
 
 #[test]
@@ -124,4 +128,5 @@ fn catalog_never_needs_credentials_in_the_descriptor() {
     assert!(!serialized.contains("cookie"));
     assert_eq!(value["connection_state"], "connected");
     assert_eq!(value["tools"][0]["tool_id"], "drive.search");
+    assert_eq!(value["provides"][0], "file.search");
 }
