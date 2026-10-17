@@ -10,6 +10,7 @@
 pub mod blocks;
 pub mod builtin_capabilities;
 pub mod capabilities;
+pub mod context;
 pub mod protocol;
 pub mod stream;
 
@@ -36,6 +37,11 @@ pub use capabilities::{
     CapabilityCatalog, CapabilityConnectionState, CapabilityDescriptor, CapabilityEffect,
     CapabilityError, CapabilityKind, CapabilityOrigin, CapabilityPermission, CapabilityResolution,
     CapabilityTool,
+};
+pub use context::{
+    estimate_tokens, stable_static_prompt, ContextBudget, ContextEngine, ContextStats,
+    PreparedContext, TaskMemoryItem, DEFAULT_CONTEXT_OUTPUT_RESERVE_TOKENS,
+    DEFAULT_CONTEXT_TOTAL_TOKENS, DEFAULT_RECENT_WINDOW,
 };
 pub use protocol::{
     Conversation, CoreEvent, InputResource, Message, RequestSnapshot, RequestState, Role,
