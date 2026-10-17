@@ -17,6 +17,12 @@ class FakeBackend:
             ModelInfo("vision:model", "Vision", selected=self.vision_selected),
         ]
 
+    def list_conversations(self):
+        return [
+            {"id": "meo:new", "legacy_chat_id": 12},
+            {"id": "meo:old", "legacy_chat_id": 4},
+        ]
+
     def send_message(self, conversation_id: str, text: str, callbacks: BackendCallbacks):
         self.calls.append(("send", conversation_id, text))
         callbacks.on_done()
@@ -43,6 +49,16 @@ class FakeController:
         directory = "/tmp"
 
     handlers = Handlers()
+
+
+class SearchController(FakeController):
+    def search_conversations(self, query):
+        self.query = query
+        return {
+            12: "…matching text from newest conversation…",
+            99: "unmapped chat must be ignored",
+            4: None,
+        }
 
 
 class TestBridge(NewelleMultimodalBridge):
@@ -80,6 +96,26 @@ class NewelleMultimodalBridgeTests(unittest.TestCase):
         self.assertTrue(
             next(item for item in catalog if item.model_id == "mixed:camera").supports_vision
         )
+
+    def test_full_history_search_translates_legacy_ids_and_clamps_excerpt(self) -> None:
+        controller = SearchController()
+        bridge = TestBridge(FakeBackend(), controller)
+        results = bridge.search_conversations("  migration   causes  ")
+        self.assertEqual(controller.query, "migration causes")
+        self.assertEqual(
+            results,
+            [
+                {"id": "meo:new", "excerpt": "…matching text from newest conversation…"},
+                {"id": "meo:old", "excerpt": ""},
+            ],
+        )
+        for item in results:
+            self.assertNotIn("legacy_chat_id", item)
+
+    def test_full_history_search_rejects_oversized_query(self) -> None:
+        bridge = TestBridge(FakeBackend(), SearchController())
+        with self.assertRaisesRegex(ValueError, "too long"):
+            bridge.search_conversations("x" * 241)
 
     def test_image_bytes_become_existing_newelle_image_block(self) -> None:
         backend = FakeBackend()
