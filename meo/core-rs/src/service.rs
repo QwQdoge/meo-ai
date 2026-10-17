@@ -15,6 +15,7 @@ use tokio::time::{timeout, Instant};
 use uuid::Uuid;
 
 use crate::capabilities::{CapabilityCatalog, CapabilityError, CapabilityResolution};
+use crate::context::{estimate_tokens, ContextBudget, ContextEngine};
 use crate::protocol::{
     Conversation, CoreEvent, Message, RequestSnapshot, RequestState, Role, SendMessageRequest,
 };
@@ -169,6 +170,7 @@ pub struct MeoService {
     providers: Arc<RwLock<HashMap<String, Arc<dyn Provider>>>>,
     model_provider: Arc<RwLock<HashMap<String, String>>>,
     capabilities: Arc<RwLock<CapabilityCatalog>>,
+    context_engine: ContextEngine,
     conversations: Arc<DashMap<String, Arc<RwLock<ConversationRuntime>>>>,
     requests: Arc<DashMap<String, Arc<RequestRuntime>>>,
     terminal_requests: Arc<Mutex<VecDeque<String>>>,
@@ -191,6 +193,7 @@ impl MeoService {
             providers: Arc::new(RwLock::new(HashMap::new())),
             model_provider: Arc::new(RwLock::new(HashMap::new())),
             capabilities: Arc::new(RwLock::new(CapabilityCatalog::new())),
+            context_engine: ContextEngine::default(),
             conversations: Arc::new(DashMap::new()),
             requests: Arc::new(DashMap::new()),
             terminal_requests: Arc::new(Mutex::new(VecDeque::new())),
@@ -220,6 +223,7 @@ impl MeoService {
             "runtime": "rust",
             "conversations": self.conversations.len(),
             "capabilities": capability_count,
+            "context_strategy": "balanced-v1",
             "active_requests": active_requests,
             "retained_requests": retained_requests,
             "retained_terminal_requests": terminal_requests,
@@ -543,10 +547,30 @@ impl MeoService {
             return;
         }
 
+        let system_prompt = capability_context_prompt(&capability_resolution);
+        let current_message = history
+            .last()
+            .map(|message| message.text.as_str())
+            .unwrap_or_default();
+        let prepared_context = self.context_engine.prepare(
+            &history,
+            current_message,
+            &[],
+            ContextBudget {
+                static_tokens: estimate_tokens(&system_prompt),
+                ..ContextBudget::default()
+            },
+        );
+        request.publish(CoreEvent::ResponseMeta {
+            seq: request.next_seq(),
+            request_id: request_id.clone(),
+            metadata: json!({"context_stats": prepared_context.stats.public_value()}),
+        });
+
         let provider_request = ProviderRequest {
             model_id,
-            system_prompt: capability_context_prompt(&capability_resolution),
-            messages: history,
+            system_prompt,
+            messages: prepared_context.messages,
             temperature: None,
             max_tokens: None,
             extra: HashMap::new(),
