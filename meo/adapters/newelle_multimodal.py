@@ -130,6 +130,21 @@ class NewelleMultimodalBridge:
                 return newelle_automatic_chat_title(value)
         return ""
 
+    @staticmethod
+    def _visible_message_count(record: dict) -> int:
+        entries = record.get("chat", [])
+        if not isinstance(entries, list):
+            return 0
+        return sum(
+            1
+            for entry in entries
+            if isinstance(entry, dict)
+            and entry.get("User") in {"User", "Assistant"}
+            and isinstance(entry.get("Message"), str)
+            and bool(entry.get("Message", "").strip())
+            and not entry.get("ToolContext")
+        )
+
     def _conversation_title_is_automatic(self, record: dict) -> bool:
         if record.get("name_is_default") is True:
             return True
@@ -162,6 +177,7 @@ class NewelleMultimodalBridge:
                     enriched["title"] = title.strip()
                 if isinstance(summary, str) and summary.strip():
                     enriched["summary"] = summary.strip()
+                enriched["message_count"] = self._visible_message_count(record)
                 enriched["title_is_default"] = record.get("name_is_default") is True
                 enriched["title_is_automatic"] = self._conversation_title_is_automatic(record)
             result.append(enriched)
