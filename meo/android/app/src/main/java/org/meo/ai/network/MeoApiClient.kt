@@ -222,6 +222,7 @@ class MeoApiClient {
         }
     }
 
+    /** Chat context and consent are assembled by Meo API, never by Android. */
     fun prepareInference(
         accessToken: String,
         clientId: String,
@@ -229,18 +230,14 @@ class MeoApiClient {
         model: String,
         userPrompt: String,
         dataCategories: List<String>,
+        conversationId: String? = null,
     ): ConsentPreview {
-        val data = broker(
-            accessToken,
-            inferenceBody(
-                action = "prepare_inference",
-                clientId = clientId,
-                credentialId = credentialId,
-                model = model,
-                userPrompt = userPrompt,
-                dataCategories = dataCategories,
-            ),
-        )
+        val payload = JSONObject()
+            .put("credentialId", credentialId)
+            .put("model", model)
+            .put("prompt", userPrompt)
+        if (conversationId != null) payload.put("conversationId", conversationId)
+        val data = requestJson("POST", "$API_BASE/v1/chat/prepare", accessToken, payload)
         val consent = data.getJSONObject("consent")
         return ConsentPreview(
             requestId = consent.getString("requestId"),
@@ -261,26 +258,19 @@ class MeoApiClient {
         userPrompt: String,
         dataCategories: List<String>,
         consent: ConsentPreview,
+        conversationId: String? = null,
         onDelta: (String) -> Unit,
     ) {
-        val body = inferenceBody(
-            action = "stream_invoke",
-            clientId = clientId,
-            credentialId = credentialId,
-            model = model,
-            userPrompt = userPrompt,
-            dataCategories = dataCategories,
-        ).put(
-            "consent",
-            JSONObject()
-                .put("approved", true)
-                .put("confirmedAt", Instant.now().toString())
+        val body = JSONObject()
+            .put("credentialId", credentialId)
+            .put("model", model)
+            .put("prompt", userPrompt)
+            .put("consent", JSONObject()
                 .put("requestId", consent.requestId)
                 .put("payloadSha256", consent.payloadSha256)
-                .put("confirmationVersion", 1),
-        )
-
-        val connection = openConnection("$API_BASE/v1/ai/provider-broker", "POST", accessToken)
+                .put("confirmationVersion", 1))
+        if (conversationId != null) body.put("conversationId", conversationId)
+        val connection = openConnection("$API_BASE/v1/chat/stream", "POST", accessToken)
         connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
         connection.setRequestProperty("Accept", "text/event-stream")
         connection.doOutput = true
