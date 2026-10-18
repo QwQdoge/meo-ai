@@ -33,6 +33,15 @@ int main(int argc, char **argv) {
     QQmlApplicationEngine engine;
     engine.addImportPath(QStringLiteral(MEOUI_IMPORT_PATH));
     engine.rootContext()->setContextProperty("agent", &client);
+    // Live native transport tests do not use real Account credentials.
+    engine.rootContext()->setContextProperty(
+        "cloudPersonalization",
+        QVariantMap{{QStringLiteral("signedIn"), false},
+                    {QStringLiteral("busy"), false},
+                    {QStringLiteral("status"), QStringLiteral("Offline test")},
+                    {QStringLiteral("settings"), QVariantMap{}},
+                    {QStringLiteral("memories"), QVariantList{}},
+                    {QStringLiteral("archived"), false}});
     int messages = 0, deltas = 0;
     bool submitted = false, cancelled = false, finishing = false;
     QString answer;
