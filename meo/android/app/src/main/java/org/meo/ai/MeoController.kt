@@ -120,6 +120,7 @@ class MeoController(private val activity: MainActivity) {
     }
 
     fun newChat() {
+        if (state.loading || state.streaming || state.pendingSend != null) return
         state = state.copy(
             currentConversationId = null,
             messages = emptyList(),
@@ -197,28 +198,41 @@ class MeoController(private val activity: MainActivity) {
             state = state.copy(error = "Choose a model first.")
             return
         }
-        val prompt = conversationPrompt(state.messages, clean)
+        // The shared Chat API owns conversation context; never stitch history here.
         val categories = if (state.messages.isEmpty()) {
             listOf("chat_text")
         } else {
             listOf("chat_text", "conversation_context")
         }
         state = state.copy(loading = true, error = null)
+        val initialConversationId = state.currentConversationId
         executor.execute {
             try {
                 val session = ensureFreshSession()
+                val conversationId = initialConversationId ?: run {
+                    val conversation = client.createConversation(session.accessToken, titleFor(clean))
+                    post {
+                        state = state.copy(
+                            currentConversationId = conversation.id,
+                            conversations = listOf(conversation) +
+                                state.conversations.filterNot { it.id == conversation.id },
+                        )
+                    }
+                    conversation.id
+                }
                 val preview = client.prepareInference(
                     accessToken = session.accessToken,
                     clientId = BuildConfig.MEO_OAUTH_CLIENT_ID,
                     credentialId = credentialId,
                     model = model,
-                    userPrompt = prompt,
+                    userPrompt = clean,
                     dataCategories = categories,
+                    conversationId = conversationId,
                 )
                 post {
                     state = state.copy(
                         loading = false,
-                        pendingSend = PendingSend(clean, prompt, categories, preview),
+                        pendingSend = PendingSend(clean, clean, categories, preview),
                     )
                 }
             } catch (cause: Throwable) {
@@ -240,22 +254,12 @@ class MeoController(private val activity: MainActivity) {
         state = state.copy(pendingSend = null, streaming = true, loading = false, error = null)
 
         executor.execute {
-            var conversationId = existingConversationId
             val output = StringBuilder()
             try {
                 val session = ensureFreshSession()
-                if (conversationId == null) {
-                    val conversation = client.createConversation(session.accessToken, titleFor(pending.text))
-                    conversationId = conversation.id
-                    post {
-                        state = state.copy(
-                            currentConversationId = conversation.id,
-                            conversations = listOf(conversation) + state.conversations.filterNot { it.id == conversation.id },
-                        )
-                    }
-                }
-                val id = requireNotNull(conversationId)
-                client.appendMessage(session.accessToken, id, "user", pending.text)
+                val id = requireNotNull(existingConversationId) { "Create a conversation before consent." }
+                // Persist only after streaming: inserting the user message here
+                // changes server context and invalidates the approved payload hash.
                 post {
                     state = state.copy(
                         messages = state.messages + UiMessage.user(pending.text) +
@@ -268,8 +272,9 @@ class MeoController(private val activity: MainActivity) {
                     clientId = BuildConfig.MEO_OAUTH_CLIENT_ID,
                     credentialId = credentialId,
                     model = model,
-                    userPrompt = pending.userPrompt,
+                    userPrompt = pending.text,
                     dataCategories = pending.dataCategories,
+                    conversationId = id,
                     consent = pending.consent,
                 ) { delta ->
                     output.append(delta)
@@ -289,6 +294,7 @@ class MeoController(private val activity: MainActivity) {
 
                 val finalText = output.toString().trim()
                 if (finalText.isBlank()) throw ApiException(502, "empty_response", "AI returned an empty response")
+                client.appendMessage(session.accessToken, id, "user", pending.text)
                 client.appendMessage(session.accessToken, id, "assistant", finalText)
                 val conversations = client.listConversations(session.accessToken)
                 post {
