@@ -1,4 +1,5 @@
 #include "accountaibackend.h"
+#include "cloudpersonalizationbackend.h"
 #include "draftpersistence.h"
 #include "nativeagentclient.h"
 #include "projectstore.h"
@@ -163,6 +164,7 @@ int main(int argc, char **argv) {
 
     UsageBackend usageBackend;
     AccountAiBackend accountAiBackend;
+    CloudPersonalizationBackend cloudPersonalization;
     ProjectStore projectStore(!isSideEffectFreePreview(app.arguments()));
     QObject::connect(
         &accountAiBackend, &AccountAiBackend::modelActivationRequested,
@@ -178,6 +180,7 @@ int main(int argc, char **argv) {
     engine.rootContext()->setContextProperty("agent", &client);
     engine.rootContext()->setContextProperty("usage", &usageBackend);
     engine.rootContext()->setContextProperty("accountAI", &accountAiBackend);
+    engine.rootContext()->setContextProperty("cloudPersonalization", &cloudPersonalization);
     engine.rootContext()->setContextProperty("projectStore", &projectStore);
     engine.rootContext()->setContextProperty("uiPreview", app.arguments().contains("--ui-demo"));
     engine.load(QUrl("qrc:/meo/app/qml/App.qml"));
