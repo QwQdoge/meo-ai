@@ -53,6 +53,10 @@ fun PersonalizationScreen(controller: MeoController, onBack: () -> Unit) {
 
     BackHandler(onBack = onBack)
     LaunchedEffect(Unit) { controller.loadPersonalization() }
+    // Retain typed content on failure; clear only after the server accepted it.
+    LaunchedEffect(state.memoryCreatedSerial) {
+        if (state.memoryCreatedSerial > 0) newMemory = ""
+    }
 
     editing?.let { item ->
         var content by remember(item.id) { mutableStateOf(item.content) }
@@ -212,10 +216,7 @@ fun PersonalizationScreen(controller: MeoController, onBack: () -> Unit) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Button(
                                     enabled = !state.personalizationBusy && newMemory.isNotBlank(),
-                                    onClick = {
-                                        controller.addPersonalMemory(newMemory.trim())
-                                        newMemory = ""
-                                    },
+                                    onClick = { controller.addPersonalMemory(newMemory.trim()) },
                                 ) { Text("Add memory") }
                                 if (state.personalizationBusy) {
                                     Spacer(Modifier.padding(8.dp))
