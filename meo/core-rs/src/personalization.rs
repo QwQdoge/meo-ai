@@ -103,7 +103,8 @@ mod tests {
         let settings: CloudSettingsResponse = serde_json::from_str(
             r#"{"settings":{"version":2,"personalInstructions":"Use short replies",
             "memoryEnabled":false,"uiPreferences":{"appearance":{"theme":"dark"}}}}"#,
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(settings.settings.version, 2);
         assert!(!settings.settings.memory_enabled);
         let patch = CloudSettingsPatch {
@@ -125,7 +126,8 @@ mod tests {
             "enabled":true,"archived_at":null,"version":1,
             "created_at":"2026-10-18T00:00:00Z",
             "updated_at":"2026-10-18T00:00:00Z"}}"#,
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(memory.memory.kind, PersonalMemoryKind::Preference);
         let request = PersonalMemoryPatch {
             expected_version: memory.memory.version,
