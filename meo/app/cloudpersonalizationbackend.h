@@ -35,6 +35,7 @@ public:
 
 signals:
     void changed();
+    void memoryCreated();
 
 private slots:
     void accountChanged();
