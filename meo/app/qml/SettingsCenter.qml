@@ -22,7 +22,8 @@ Popup {
         { title: qsTr("Tools & MCP"), icon: "extension" },
         { title: qsTr("Memory"), icon: "neurology" },
         { title: qsTr("Account & activity"), icon: "account_circle" },
-        { title: qsTr("Diagnostics"), icon: "monitor_heart" }
+        { title: qsTr("Diagnostics"), icon: "monitor_heart" },
+        { title: qsTr("Cloud sync"), icon: "cloud_sync" }
     ]
 
     readonly property var selectedConnection: {
@@ -90,6 +91,10 @@ Popup {
     onOpened: {
         if (agent.serviceMode) agent.refreshServiceMetadata()
         if (root.accountBackend) root.accountBackend.refresh()
+        if (root.currentPage === 8) cloudPersonalization.refresh()
+    }
+    onCurrentPageChanged: {
+        if (root.currentPage === 8 && root.opened) cloudPersonalization.refresh()
     }
 
     background: Rectangle {
@@ -881,6 +886,12 @@ Popup {
                         }
                         Item { Layout.fillHeight: true; Layout.minimumHeight: 8 * root.uiScale }
                     }
+                }
+
+                // Cloud account-scoped instructions and memory. This is
+                // deliberately separate from the device-local AgentService store.
+                CloudPersonalizationPage {
+                    objectName: "meoAiCloudPersonalizationPage"
                 }
             }
         }
