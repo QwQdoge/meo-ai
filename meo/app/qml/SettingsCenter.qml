@@ -743,8 +743,8 @@ Popup {
                                 MeoIcon { icon: "neurology"; size: 30; color: MeoTheme.primary }
                                 ColumnLayout {
                                     Layout.fillWidth: true; spacing: 2 * root.uiScale
-                                    MeoText { text: agent.memoryState.supported === true ? qsTr("Managed memory") : qsTr("Memory is unavailable in this runtime"); typeRole: "title"; typeSize: "small"; color: MeoTheme.contentOnSurface }
-                                    MeoText { Layout.fillWidth: true; text: agent.memoryState.supported === true ? qsTr("%1 saved · automatic recall %2").arg(agent.memories.length).arg(agent.memoryState.enabled === true ? qsTr("on") : qsTr("off")) : qsTr("Switch to AgentService mode to use the managed memory store."); typeRole: "body"; typeSize: "small"; color: MeoTheme.contentOnSurfaceVariant; wrapMode: Text.Wrap }
+                                    MeoText { text: agent.memoryState.supported === true ? qsTr("On-device memory") : qsTr("Memory is unavailable in this runtime"); typeRole: "title"; typeSize: "small"; color: MeoTheme.contentOnSurface }
+                                    MeoText { Layout.fillWidth: true; text: agent.memoryState.supported === true ? qsTr("%1 stored on this device · automatic recall %2").arg(agent.memories.length).arg(agent.memoryState.enabled === true ? qsTr("on") : qsTr("off")) : qsTr("Switch to AgentService mode to use the managed memory store."); typeRole: "body"; typeSize: "small"; color: MeoTheme.contentOnSurfaceVariant; wrapMode: Text.Wrap }
                                 }
                                 Switch {
                                     visible: agent.memoryState.supported === true
