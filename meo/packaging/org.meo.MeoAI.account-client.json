@@ -17,6 +17,7 @@
   ],
   "capabilities": [
     "ai_usage_sync",
-    "local_ai"
+    "local_ai",
+    "ai_personalization"
   ]
 }
