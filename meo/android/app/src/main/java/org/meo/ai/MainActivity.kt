@@ -79,6 +79,7 @@ import org.meo.ai.model.ConsentPreview
 import org.meo.ai.model.Credential
 import org.meo.ai.model.UiMessage
 import org.meo.ai.ui.MeoExpressiveTheme
+import org.meo.ai.ui.PersonalizationScreen
 import org.meo.ai.ui.RichBlockRenderer
 import java.net.URI
 
@@ -221,6 +222,12 @@ private fun ChatScreen(controller: MeoController, snackbar: SnackbarHostState) {
     var composer by remember { mutableStateOf("") }
     var historyOpen by remember { mutableStateOf(false) }
     var accountOpen by remember { mutableStateOf(false) }
+    var personalizationOpen by remember { mutableStateOf(false) }
+
+    if (personalizationOpen) {
+        PersonalizationScreen(controller = controller, onBack = { personalizationOpen = false })
+        return
+    }
 
     LaunchedEffect(state.messages.size, state.messages.lastOrNull()?.text) {
         if (state.messages.isNotEmpty()) listState.animateScrollToItem(state.messages.lastIndex)
@@ -313,6 +320,14 @@ private fun ChatScreen(controller: MeoController, snackbar: SnackbarHostState) {
                                 onClick = { accountOpen = false },
                             )
                             HorizontalDivider()
+                            DropdownMenuItem(
+                                text = { Text("Personalization & memory") },
+                                onClick = {
+                                    accountOpen = false
+                                    personalizationOpen = true
+                                },
+                                enabled = !state.streaming && !state.loading && state.pendingSend == null,
+                            )
                             DropdownMenuItem(
                                 text = { Text("Sign out") },
                                 leadingIcon = { Icon(Icons.Rounded.Logout, contentDescription = null) },
