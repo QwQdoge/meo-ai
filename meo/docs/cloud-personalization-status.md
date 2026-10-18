@@ -18,27 +18,30 @@
 | Web | Typed API adapter; functional Personalization/Memory editor; responsive sidebar; Pages CI | Signed-in E2E test against deployed unified API |
 | Android | Native Compose account settings and memory UI, Kotlin API adapter, shared Chat orchestration | Release build and real-device account/login/sync tests |
 | Rust Core | Shared serializable settings and memory contract | Use types in desktop bridge and end-to-end cloud transport |
-| Desktop Qt/MeoUI | Existing device-local memory preserved and clearly labeled | Secure account-scoped API transport and native cloud settings page |
+| Desktop Qt/MeoUI | C++ `CloudPersonalizationBackend` and native `CloudPersonalizationPage`; Meo Account's bounded `StartAiPersonalizationOperation` D-Bus broker; device memory remains separate | Desktop native build and signed-in request/refresh/permission tests |
 
-## Desktop authorization blocker
+## Desktop bridge implemented (source, not production-proven)
 
-The existing Meo Account desktop D-Bus interface uses an account-owned broker,
-but **does not expose a safe Meo AI cloud settings request operation**.
-Meo AI must not read Account's encrypted token store, leak bearer tokens to QML,
-use an arbitrary inherited cookie, or bypass Account permission checks.
-
-Preferred implementation:
-1. Add a Meo Account broker operation for fixed-method, fixed-path
-   `/v1/ai/settings` and `/v1/ai/memories` requests, bound to the authorized
-   `org.meo.MeoAI` client and read/write scope.
-2. Keep OAuth access and refresh tokens *inside* the Account broker.
-3. Return only validated JSON data or structured errors over D-Bus.
-4. Expose a C++ QObject adapter to QML, rendering native MeoUI controls.
-5. Validate with two OS users, expired tokens, unauthorized callers,
-   concurrent version conflicts, broker disconnect and service restart.
-
-Do not infer cloud sync from the existing AgentService `memories` controls:
-those are **on-device** memories and have different lifecycle and authority.
+- `MeoArch-account/desktop/src/aipersonalizationroute.h` restricts callers to
+  fixed settings/memory methods, typed arguments, scoped read/write permissions,
+  size and version constraints. Client-supplied URLs and tokens are forbidden.
+- `AccountBroker::StartAiPersonalizationOperation` verifies the native
+  `org.meo.MeoAI` caller executable and manifest's `ai_personalization`
+  capability. OAuth access tokens remain inside Meo Account/KWallet. The
+  request result includes private data only via owner-checked `GetRequest`,
+  never via the public D-Bus completion signal.
+- `CloudPersonalizationBackend` exposes native Qt/QML-safe state and actions
+  for a dedicated MeoUI cloud settings page, separate from on-device memory.
+- Edited instructions and toggles are not overwritten by intermediate
+  request signals. Optimistic-concurrency conflicts and authorization failures
+  have actionable UI messages.
+- Cloud memory mutations are not usable in production until the reconciled
+  Worker with `/v1/ai/*` support is deployed. Broker tests cover route
+  validation; desktop build and full OAuth, D-Bus caller isolation and
+  cross-user tests remain release gates.
+- OS-specific token refresh, broker restart, expired credentials, concurrent
+  edit conflicts, multiple-user isolation and AppImage/packaging path parity
+  must be validated on real Linux installations.
 
 ## Release gates
 
