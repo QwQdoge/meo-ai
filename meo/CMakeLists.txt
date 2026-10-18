@@ -52,6 +52,7 @@ set(MEO_PROJECT_SOURCES
 set(MEO_APP_QML
     app/qml/App.qml
     app/qml/Main.qml
+    app/qml/GeneratedNavigation.js
     app/qml/AiLogo.qml
     app/qml/ResponseDetails.qml
     app/qml/ResponseContent.qml
