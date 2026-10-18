@@ -148,10 +148,9 @@ ScrollView {
                 type: "tonal"; size: "s"
                 enabled: cloudPersonalization.signedIn && !cloudPersonalization.busy
                          && newMemory.text.trim().length > 0
-                onClicked: {
-                    cloudPersonalization.addMemory(newMemory.text)
-                    newMemory.clear()
-                }
+                // Keep the draft on HTTP 409, 401 or network failure.
+                // memoryCreated is emitted only after confirmed API success.
+                onClicked: cloudPersonalization.addMemory(newMemory.text)
             }
         }
 
@@ -275,6 +274,9 @@ ScrollView {
 
     Connections {
         target: cloudPersonalization
+        function onMemoryCreated() {
+            newMemory.clear()
+        }
         function onChanged() {
             if (!cloudPersonalization.signedIn) {
                 root.loadedSettingsVersion = -1
