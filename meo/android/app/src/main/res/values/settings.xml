@@ -1,0 +1,32 @@
+<resources>
+    <string name="meo_settings_title">Settings</string>
+    <string name="meo_settings_back">Back</string>
+    <string name="meo_settings_general">General</string>
+    <string name="meo_settings_personalization">Personalization &amp; memory</string>
+    <string name="meo_settings_models">Models &amp; connections</string>
+    <string name="meo_settings_connectors">Apps &amp; connectors</string>
+    <string name="meo_settings_devices">Devices &amp; Work</string>
+    <string name="meo_settings_privacy">Data &amp; privacy</string>
+    <string name="meo_settings_usage">Usage</string>
+    <string name="meo_settings_account">Account &amp; security</string>
+    <string name="meo_settings_enter">Enter to send</string>
+    <string name="meo_settings_enter_hint">Physical keyboard: otherwise Ctrl/⌘ + Enter sends. Shift + Enter adds a line.</string>
+    <string name="meo_settings_theme">Theme</string>
+    <string name="meo_settings_system">System</string>
+    <string name="meo_settings_light">Light</string>
+    <string name="meo_settings_dark">Dark</string>
+    <string name="meo_settings_motion">Reduce motion</string>
+    <string name="meo_settings_motion_hint">Use standard motion and skip animated chat scrolling. System animation preferences still apply.</string>
+    <string name="meo_settings_device_scope">Saved on this device. These preferences do not sync yet.</string>
+    <string name="meo_settings_open_account">Open Meo Account</string>
+    <string name="meo_settings_sign_out">Sign out</string>
+    <string name="meo_settings_connections_hint">Provider connections and keys are managed by Meo Account.</string>
+    <string name="meo_settings_privacy_hint">Manage account data and privacy in Meo Account.</string>
+    <string name="meo_settings_personalization_unavailable">The authenticated shared settings and memory service is not connected in this build. No cloud changes have been made.</string>
+    <string name="meo_settings_connectors_unavailable">The capability catalog is not connected. Connector permissions remain enforced by the service.</string>
+    <string name="meo_settings_devices_unavailable">Device registration and remote Work are not connected in this build.</string>
+    <string name="meo_settings_usage_unavailable">Usage has not been loaded. Missing values are not shown as zero.</string>
+    <string name="meo_navigation_title">Navigation</string>
+    <string name="meo_workspace_unavailable">This workspace is not connected to its shared API yet. No tasks or results have been loaded.</string>
+    <string name="meo_return_chat">Return to Chat</string>
+</resources>

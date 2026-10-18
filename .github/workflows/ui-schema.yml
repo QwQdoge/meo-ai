@@ -1,0 +1,23 @@
+name: Meo UI Schema
+on:
+  push:
+    branches: [main]
+    paths: ['meo/ui-schema/**', '.github/workflows/ui-schema.yml']
+  pull_request:
+    paths: ['meo/ui-schema/**', '.github/workflows/ui-schema.yml']
+permissions:
+  contents: read
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Validate and generate native configurations
+        run: node meo/ui-schema/generate.mjs --output "${{ runner.temp }}/meo-ui-schema"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: meo-ui-schema-${{ github.sha }}
+          path: ${{ runner.temp }}/meo-ui-schema
+          if-no-files-found: error

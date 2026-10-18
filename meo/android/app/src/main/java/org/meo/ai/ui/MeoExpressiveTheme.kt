@@ -24,9 +24,9 @@ import androidx.compose.ui.unit.dp
  */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-fun MeoExpressiveTheme(content: @Composable () -> Unit) {
+fun MeoExpressiveTheme(themeMode: String = "system", reduceMotion: Boolean = false, content: @Composable () -> Unit) {
     val context = LocalContext.current
-    val dark = isSystemInDarkTheme()
+    val dark = when (themeMode) { "dark" -> true; "light" -> false; else -> isSystemInDarkTheme() }
     val supportsDynamicColor = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
 
     val colors = when {
@@ -47,7 +47,7 @@ fun MeoExpressiveTheme(content: @Composable () -> Unit) {
 
     MaterialExpressiveTheme(
         colorScheme = colors,
-        motionScheme = MotionScheme.expressive(),
+        motionScheme = if (reduceMotion) MotionScheme.standard() else MotionScheme.expressive(),
         shapes = shapes,
         content = content,
     )

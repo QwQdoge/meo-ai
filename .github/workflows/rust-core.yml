@@ -5,11 +5,13 @@ on:
     branches: [main, master, 'meo/**']
     paths:
       - 'meo/core-rs/**'
+      - 'meo/ui-schema/**'
       - 'meo/android/**'
       - '.github/workflows/rust-core.yml'
   pull_request:
     paths:
       - 'meo/core-rs/**'
+      - 'meo/ui-schema/**'
       - 'meo/android/**'
       - '.github/workflows/rust-core.yml'
 
@@ -36,13 +38,16 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: meo/core-rs
-      - run: cargo check --all-features
-      - run: cargo clippy --all-features --all-targets -- -D warnings
-      - run: cargo test --all-features
+      - run: cargo check --locked --all-features
+      - run: cargo clippy --locked --all-features --all-targets -- -D warnings
+      - run: cargo test --locked --all-features
       - run: cargo fmt --check
 
   android-project:
     runs-on: ubuntu-latest
+    env:
+      MEO_OUTPUT_ROOT: ${{ runner.temp }}/meo-output
+      CARGO_BUILD_JOBS: 1
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:

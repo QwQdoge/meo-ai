@@ -47,7 +47,24 @@ set(MEO_PROJECT_SOURCES
     app/projectstore.h
 )
 
+# UI Schema is generated in the external CMake build tree, never in source.
+find_program(MEO_NODE_EXECUTABLE node REQUIRED)
+set(MEO_SCHEMA_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated-ui-schema")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/ui-schema/generate.mjs"
+    "${CMAKE_CURRENT_SOURCE_DIR}/ui-schema/navigation.json"
+    "${CMAKE_CURRENT_SOURCE_DIR}/ui-schema/pages.json"
+    "${CMAKE_CURRENT_SOURCE_DIR}/ui-schema/features.json"
+    "${CMAKE_CURRENT_SOURCE_DIR}/ui-schema/tokens.json"
+    "${CMAKE_CURRENT_SOURCE_DIR}/ui-schema/settings.json")
+execute_process(COMMAND "${MEO_NODE_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/ui-schema/generate.mjs" --output "${MEO_SCHEMA_OUTPUT}"
+    COMMAND_ERROR_IS_FATAL ANY)
+set_source_files_properties("${MEO_SCHEMA_OUTPUT}/qml/MeoUiSchema.js"
+    PROPERTIES QT_RESOURCE_ALIAS "app/qml/MeoUiSchema.js")
+
 set(MEO_APP_QML
+    "${MEO_SCHEMA_OUTPUT}/qml/MeoUiSchema.js"
     app/qml/App.qml
     app/qml/Main.qml
     app/qml/AiLogo.qml
@@ -59,6 +76,7 @@ set(MEO_APP_QML
     app/qml/ActivityDashboard.qml
     app/qml/PresentationCard.qml
     app/qml/NavigationButton.qml
+    app/qml/ProductNavigation.js
     app/qml/PrimaryModeLanding.qml
     app/qml/ProjectsPage.qml
     app/qml/MobileNavigationDrawer.qml
@@ -204,9 +222,8 @@ install(FILES packaging/org.meo.MeoAI.account-client.json
         DESTINATION ${CMAKE_INSTALL_DATADIR}/meo-account/clients)
 install(FILES packaging/org.meo.MeoAI.desktop
         DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
-install(FILES "${MEO_UI_ROOT}/assets/icons/meo-ai-f.svg"
-        DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps
-        RENAME meo-ai.svg)
+# The shared meo-ai icon is installed by meoui-qml. Installing it here too
+# makes the native package conflict with its required UI dependency.
 target_compile_definitions(meo-ai PRIVATE
     MEOUI_IMPORT_PATH="${CMAKE_CURRENT_BINARY_DIR}/meoui"
     MEO_AI_VERSION="${PROJECT_VERSION}"

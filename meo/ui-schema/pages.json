@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "pages": [
+    {
+      "id": "chat",
+      "renderer": "conversation",
+      "feature": "chat",
+      "sections": ["messages", "composer", "response_details"],
+      "states": [
+        "loading",
+        "empty",
+        "ready",
+        "streaming",
+        "approval",
+        "cancelled",
+        "error",
+        "offline"
+      ]
+    },
+    {
+      "id": "work",
+      "renderer": "work",
+      "feature": "work",
+      "sections": ["target", "runs", "progress", "approvals", "artifacts"],
+      "states": [
+        "loading",
+        "empty",
+        "ready",
+        "running",
+        "approval",
+        "cancelled",
+        "error",
+        "offline",
+        "unavailable"
+      ]
+    },
+    {
+      "id": "projects",
+      "renderer": "projects",
+      "feature": "projects",
+      "sections": [
+        "instructions",
+        "files",
+        "memory",
+        "conversations",
+        "workspaces"
+      ],
+      "states": ["loading", "empty", "ready", "error", "offline", "unavailable"]
+    },
+    {
+      "id": "skills",
+      "renderer": "skills",
+      "feature": "skills",
+      "sections": ["catalog", "enabled", "permissions", "availability"],
+      "states": ["loading", "empty", "ready", "error", "offline", "unavailable"]
+    },
+    {
+      "id": "settings",
+      "renderer": "settings",
+      "feature": "settings",
+      "sections": ["settings_catalog"],
+      "states": ["loading", "ready", "error", "offline"]
+    }
+  ]
+}

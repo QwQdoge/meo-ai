@@ -6,6 +6,7 @@ import MeoUI 1.0
 Rectangle {
     id: root
     objectName: "meoAiDetailsPane"
+    property var clientPreferences: null
     property var metadata: ({})
     property var toolEvents: []
     property var memoryState: ({})
@@ -266,6 +267,7 @@ Rectangle {
     SettingsCenter {
         id: settingsCenter
         parent: Overlay.overlay
+        clientPreferences: root.clientPreferences
         accountBackend: typeof accountAI !== "undefined" ? accountAI : null
         onManageMemoryRequested: root.manageMemoryRequested()
         onOpenQuickControlsRequested: root.controlsRequested()

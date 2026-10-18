@@ -1,0 +1,83 @@
+{
+  "repository": "https://github.com/QwQdoge/meo-ai-web",
+  "commit": "ae796b230ec17d65ab298523d9c1dd59cf714bb7",
+  "license": "MIT; see LICENSE.librechat",
+  "edgeIncludesLocalChatContextFix": true,
+  "files": [
+    {
+      "source": "client/src/components/Meo/MeoChat.tsx",
+      "target": "src/meo/MeoChat.tsx",
+      "sha256": "941a6ace929152b80ece91e754d53fffd0a067bb772c1d14c6730f031d475c90"
+    },
+    {
+      "source": "client/src/components/Meo/MeoConsentDialog.tsx",
+      "target": "src/meo/MeoConsentDialog.tsx",
+      "sha256": "abab91f88a84b3bfc2c0ae2dbd422b7dcc5c4f289128a5e71e0762aa0747b293"
+    },
+    {
+      "source": "client/src/components/Meo/MeoDesktopApp.css",
+      "target": "src/meo/MeoDesktopApp.css",
+      "sha256": "93d951547ed914592552c20371d35eb37c41bab2e55b67e976f220a602715a12"
+    },
+    {
+      "source": "client/src/components/Meo/MeoDesktopApp.tsx",
+      "target": "src/meo/MeoDesktopApp.tsx",
+      "sha256": "86fe900d241f5d3b0d70de5e3c272721925eb06675c5a510d39bae35608b1702"
+    },
+    {
+      "source": "client/src/components/Meo/MeoRoute.tsx",
+      "target": "src/meo/MeoRoute.tsx",
+      "sha256": "c15774df92ee6e1341f207be67eac157be05ab84b153f5a73434591836eca32c"
+    },
+    {
+      "source": "client/src/components/Meo/chatContext.ts",
+      "target": "src/meo/chatContext.ts",
+      "sha256": "d7c411285545f4f0528fb07e324c37f3a73be1ed980d2fcff0a9295a012b47fd"
+    },
+    {
+      "source": "client/src/components/Meo/request.ts",
+      "target": "src/meo/request.ts",
+      "sha256": "b70f67c9a005d306a595f2918ae880b2a1447b353e2df08173735edc749c186c"
+    },
+    {
+      "source": "client/src/components/Meo/session.tsx",
+      "target": "src/meo/session.tsx",
+      "sha256": "7aaa53d9863e70dd2e1a96a52a069bcf2853a705380779d870308959f1dddd40"
+    },
+    {
+      "source": "meo-pages/functions/_lib/account.js",
+      "target": "functions/_lib/account.js",
+      "sha256": "76922128f1e6662d5a238574a99c4a9e10e38937f514b449c9f9a6101d3480dd"
+    },
+    {
+      "source": "meo-pages/functions/_lib/session.js",
+      "target": "functions/_lib/session.js",
+      "sha256": "18ec6106ceda6f3ed2c28c013cdfc295569bdcf026a2c643a0f52b8d8a4acb26"
+    },
+    {
+      "source": "meo-pages/functions/api/meo/[[path]].js",
+      "target": "functions/api/meo/[[path]].js",
+      "sha256": "f47fd4e0f883800ef7022038ebb1b73500d34607a4ceb38047da6926e1de0853"
+    },
+    {
+      "source": "meo-pages/functions/api/meo/session.js",
+      "target": "functions/api/meo/session.js",
+      "sha256": "23435a929732fa17e342f355f102dc55a0500417f834fbe7bb415d56e32c97eb"
+    },
+    {
+      "source": "meo-pages/functions/oauth/openid/callback.js",
+      "target": "functions/oauth/openid/callback.js",
+      "sha256": "81d2fb01c9a46609df8965c51ae94664b4964bc6118585df0e405da6a7a0d6d1"
+    },
+    {
+      "source": "meo-pages/functions/oauth/openid/index.js",
+      "target": "functions/oauth/openid/index.js",
+      "sha256": "5c376b08adfa8978514d501c682182852e8c6e1fed6df289bb730c71d2802daa"
+    }
+  ],
+  "translationImport": {
+    "source": "client/src/locales/en/translation.json",
+    "target": "src/locales/en.json",
+    "selection": "keys starting with meo_"
+  }
+}

@@ -98,6 +98,7 @@ fn send(service: &MeoService, conversation_id: &str) -> String {
                 text: "hello".to_owned(),
                 model_id: String::new(),
                 resource_ids: vec![],
+                capability_ids: vec![],
             },
         )
         .expect("request should be accepted")

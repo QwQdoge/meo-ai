@@ -3,6 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import QtCore
 import MeoUI 1.0
+import "ProductNavigation.js" as Navigation
 
 ApplicationWindow {
     id: window
@@ -57,6 +58,7 @@ ApplicationWindow {
     }
     function selectPrimaryMode(mode) {
         const nextMode = String(mode || "chat")
+        if (nextMode === "settings") { openInspector(3); return }
         if (nextMode !== "chat" && nextMode !== "work" && nextMode !== "projects" && nextMode !== "skills")
             return
         primaryMode = nextMode
@@ -87,6 +89,20 @@ ApplicationWindow {
         property bool sidebarHidden: false
         property bool inspectorOpen: true
     }
+
+    Settings {
+        id: clientPreferencesStore
+        category: previewMode ? "PreviewClientPreferences" : "ClientPreferences"
+        property bool enterToSend: true
+        property bool reduceMotion: false
+        property string themeMode: "system"
+    }
+    Binding {
+        target: MeoTheme
+        property: "isDarkMode"
+        value: clientPreferencesStore.themeMode === "system" ? Application.styleHints.colorScheme === Qt.Dark : clientPreferencesStore.themeMode === "dark"
+    }
+    Binding { target: MeoTheme; property: "reduceMotion"; value: clientPreferencesStore.reduceMotion }
 
     function submit(text) {
         const value = String(text).trim()
@@ -372,12 +388,7 @@ ApplicationWindow {
                     Accessible.name: qsTr("Find in this conversation")
                 }
                 Repeater {
-                    model: [
-                        {label: qsTr("Chat"), icon: "chat_bubble", action: "chat"},
-                        {label: qsTr("Work"), icon: "work", action: "work"},
-                        {label: qsTr("Projects"), icon: "folder_open", action: "projects"},
-                        {label: qsTr("Skills"), icon: "extension", action: "skills"}
-                    ]
+                    model: Navigation.destinations("primary")
                     delegate: NavigationButton {
                         required property var modelData
                         objectName: "meoAiNav-" + modelData.action
@@ -417,12 +428,16 @@ ApplicationWindow {
                     color: MeoTheme.contentOnSurfaceVariant
                 }
                 Item { Layout.fillHeight: true }
-                NavigationButton {
-                    Layout.fillWidth: true
-                    text: window.showSidebar ? qsTr("AI settings") : ""
-                    icon.name: "tune"; type: "text"; size: "s"
-                    Accessible.name: qsTr("AI settings")
-                    onClicked: window.openInspector(3)
+                Repeater {
+                    model: Navigation.destinations("secondary")
+                    delegate: NavigationButton {
+                        required property var modelData
+                        Layout.fillWidth: true
+                        text: window.showSidebar ? modelData.label : ""
+                        icon.name: modelData.icon; type: "text"; size: "s"
+                        Accessible.name: modelData.label
+                        onClicked: window.selectPrimaryMode(modelData.action)
+                    }
                 }
                 Rectangle {
                     visible: window.showSidebar
@@ -792,7 +807,9 @@ ApplicationWindow {
                         background: null
                         Keys.onPressed: function(event) {
                             const enter = event.key === Qt.Key_Return || event.key === Qt.Key_Enter
-                            if (enter && !(event.modifiers & Qt.ShiftModifier) && !inputMethodComposing) {
+                            const modified = !!(event.modifiers & (Qt.ControlModifier | Qt.MetaModifier))
+                            const shouldSend = clientPreferencesStore.enterToSend ? !modified : modified
+                            if (enter && shouldSend && !(event.modifiers & Qt.ShiftModifier) && !inputMethodComposing) {
                                 window.submit(text)
                                 event.accepted = true
                             }
@@ -825,7 +842,7 @@ ApplicationWindow {
                         Item { Layout.fillWidth: true }
                         MeoText {
                             visible: !window.compact
-                            text: agent.busy ? qsTr("Working…") : qsTr("Shift + Enter for a new line")
+                            text: agent.busy ? qsTr("Working…") : clientPreferencesStore.enterToSend ? qsTr("Shift + Enter for a new line") : qsTr("Ctrl/⌘ + Enter to send")
                             typeRole: "label"; typeSize: "small"
                             color: MeoTheme.contentOnSurfaceVariant
                         }
@@ -889,6 +906,7 @@ ApplicationWindow {
     Component {
         id: detailsComponent
         DetailsPane {
+            clientPreferences: clientPreferencesStore
             metadata: window.inspectedMetadata
             toolEvents: window.toolEvents.filter(function(event) {
                 return !window.inspectedMetadata.request_id || event.request_id === window.inspectedMetadata.request_id

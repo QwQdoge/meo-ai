@@ -54,7 +54,7 @@ QUrl accountPageUrl(const QString &page)
     if (normalized == QLatin1String("privacy"))
         return QUrl(QStringLiteral("https://account.meoarch.org/settings/privacy"));
     if (normalized == QLatin1String("providers"))
-        return QUrl(QStringLiteral("https://account.meoarch.org/services"));
+        return QUrl(QStringLiteral("https://account.meoarch.org/settings/services"));
     return QUrl(QStringLiteral("https://account.meoarch.org/"));
 }
 }

@@ -51,13 +51,24 @@ class MeoAccountLLMHandler(LLMHandler):
             name = str(connection.get("displayName") or connection.get("provider") or "Meo Account").strip()
             known_connections[connection_id] = name
             model = str(connection.get("defaultModel") or "").strip()
-            if not model:
-                continue
-            raw_id = f"{connection_id}:{model}"
-            if raw_id in seen:
-                continue
-            seen.add(raw_id)
-            choices.append((raw_id, f"{name} · {model}"))
+            models = [model] if model else []
+            if str(connection.get("source") or "") == "cloud":
+                try:
+                    discovered = account_ai_client().discover_models(connection_id, source="cloud")
+                    models.extend(str(item.get("id") or "").strip() for item in discovered)
+                except AccountAiUnavailable:
+                    # The Account settings screen reports the actionable provider
+                    # error. Do not turn a temporary catalog fault into a guessed
+                    # model name or an unusable selection here.
+                    pass
+            for candidate in models:
+                if not candidate:
+                    continue
+                raw_id = f"{connection_id}:{candidate}"
+                if raw_id in seen:
+                    continue
+                seen.add(raw_id)
+                choices.append((raw_id, f"{name} · {candidate}"))
 
         # A model discovered in the native Settings Center may not be the
         # connection's default model. Keep the active explicit selection visible
@@ -119,6 +130,7 @@ class MeoAccountLLMHandler(LLMHandler):
         system_prompt: list[str],
     ) -> str:
         connection_id, model = self._selection()
+        source = "local"
         system_text = self._system_text(system_prompt)
         user_text, images = context_payload(prompt, history)
         categories = ["user_prompt"]
@@ -130,6 +142,14 @@ class MeoAccountLLMHandler(LLMHandler):
             categories.append("user_images")
 
         client = account_ai_client()
+        try:
+            connections = client.list_connections()
+            source = next((str(item.get("source") or "local") for item in connections
+                           if str(item.get("id") or "") == connection_id), "local")
+        except Exception:
+            pass
+        if source == "cloud" and images:
+            raise AccountAiUnavailable("The selected cloud connection does not support image input yet")
         arguments = client.inference_arguments(
             connection_id=connection_id,
             model=model,
@@ -141,7 +161,7 @@ class MeoAccountLLMHandler(LLMHandler):
             temperature=0.3,
             max_output_tokens=4096,
         )
-        prepared = client.prepare_inference(arguments)
+        prepared = client.prepare_inference(arguments, source=source)
         interaction = request_account_ai_consent(prepared)
         try:
             approved = interaction.wait()

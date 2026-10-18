@@ -24,6 +24,7 @@ class FakeBus:
 class FakeAccountInterface:
     def __init__(self):
         self.operations = []
+        self.cloud_operations = []
         self.requests = {}
         self.get_counts = {}
 
@@ -81,6 +82,55 @@ class FakeAccountInterface:
             self.requests[request_id] = [{"id": request_id, "state": "failed"}]
         return request_id
 
+    async def call_start_cloud_ai_operation(self, client_id, action, arguments):
+        assert client_id == MEO_AI_CLIENT_ID
+        request_id = f"cloud-request-{len(self.cloud_operations) + 1}"
+        decoded = DbusNextAccountAiClient._unwrap(arguments)
+        self.cloud_operations.append((action, decoded))
+        if action == "list_connections":
+            self.requests[request_id] = [{
+                "id": request_id,
+                "state": "completed",
+                "connections": [{
+                    "id": "cloud-connection",
+                    "provider": "openai_compatible",
+                    "displayName": "Cloud Provider",
+                    "source": "cloud",
+                }],
+            }]
+        elif action == "discover_models":
+            self.requests[request_id] = [{
+                "id": request_id,
+                "state": "completed",
+                "models": [{"id": "cloud-model", "name": "Cloud Model"}],
+            }]
+        elif action == "prepare_inference":
+            self.requests[request_id] = [{
+                "id": request_id,
+                "state": "completed",
+                "consent": {
+                    "requestId": "cloud-consent",
+                    "payloadSha256": "b" * 64,
+                    "confirmationVersion": 1,
+                    "provider": "openai_compatible",
+                    "providerName": "Cloud Provider",
+                    "model": decoded["model"],
+                    "purpose": decoded["purpose"],
+                    "dataCategories": decoded["dataCategories"],
+                },
+            }]
+        elif action == "invoke":
+            self.requests[request_id] = [{
+                "id": request_id,
+                "state": "completed",
+                "text": "cloud brokered answer",
+            }]
+        elif action == "deny_inference":
+            self.requests[request_id] = [{"id": request_id, "state": "denied"}]
+        else:
+            self.requests[request_id] = [{"id": request_id, "state": "failed"}]
+        return request_id
+
     async def call_get_request(self, request_id):
         sequence = self.requests[request_id]
         count = self.get_counts.get(request_id, 0)
@@ -113,6 +163,30 @@ class AccountAiClientTest(unittest.TestCase):
         self.assertEqual(connections[0]["defaultModel"], "model-one")
         self.assertNotIn("apiKey", connections[0])
         self.assertNotIn("secret", connections[0])
+
+    def test_cloud_connections_models_and_inference_stay_brokered(self):
+        connections = self.client.list_connections()
+        cloud = next(item for item in connections if item.get("source") == "cloud")
+        self.assertNotIn("apiKey", cloud)
+        self.assertNotIn("secret", cloud)
+        models = self.client.discover_models(cloud["id"], source="cloud")
+        self.assertEqual(models, [{"id": "cloud-model", "name": "Cloud Model"}])
+
+        prepared = self.client.prepare_inference(
+            self.client.inference_arguments(
+                connection_id=cloud["id"],
+                model="cloud-model",
+                purpose="conversation_response",
+                user_prompt="Hello cloud",
+            ),
+            source="cloud",
+        )
+        result = self.client.invoke_prepared(prepared)
+        self.assertEqual(result["text"], "cloud brokered answer")
+        self.assertEqual([entry[0] for entry in self.interface.cloud_operations], [
+            "list_connections", "discover_models", "prepare_inference", "invoke",
+        ])
+        self.assertTrue(prepared.source == "cloud")
 
     def test_prepare_and_invoke_reuse_identical_broker_arguments(self):
         arguments = self.client.inference_arguments(

@@ -9,6 +9,7 @@ use serde_json::{json, Value};
 use thiserror::Error;
 use url::Url;
 
+use crate::capabilities::CapabilityDescriptor;
 use crate::protocol::{Conversation, CoreEvent, Message, RequestSnapshot, SendMessageRequest};
 
 #[derive(Debug, Error)]
@@ -57,8 +58,94 @@ impl MeoClient {
         self
     }
 
+    pub async fn memories(&self) -> Result<crate::memory::MemoryResponse, ClientError> {
+        self.get_json("/v1/ai/memory").await
+    }
+    pub async fn create_memory(
+        &self,
+        input: &crate::memory::MemoryWrite,
+    ) -> Result<crate::memory::MemoryResponse, ClientError> {
+        self.post_json("/v1/ai/memory", input).await
+    }
+    pub async fn update_memory(
+        &self,
+        id: &str,
+        input: &crate::memory::MemoryWrite,
+    ) -> Result<crate::memory::MemoryResponse, ClientError> {
+        validate_capability_path_id(id)?;
+        let response = self
+            .request_builder(reqwest::Method::PUT, &format!("/v1/ai/memory/{id}"))?
+            .json(input)
+            .send()
+            .await?;
+        ensure_success(response)
+            .await?
+            .json()
+            .await
+            .map_err(ClientError::Http)
+    }
+
+    pub async fn settings(&self) -> Result<crate::settings::SettingsResponse, ClientError> {
+        self.get_json("/v1/ai/settings").await
+    }
+
+    pub async fn update_settings(
+        &self,
+        update: &crate::settings::SettingsUpdate,
+    ) -> Result<crate::settings::SettingsResponse, ClientError> {
+        let response = self
+            .request_builder(reqwest::Method::PATCH, "/v1/ai/settings")?
+            .json(update)
+            .send()
+            .await?;
+        ensure_success(response)
+            .await?
+            .json()
+            .await
+            .map_err(ClientError::Http)
+    }
+
     pub async fn agent_state(&self) -> Result<Value, ClientError> {
         self.get_json("/v1/agent-state").await
+    }
+
+    pub async fn capabilities(&self) -> Result<Vec<CapabilityDescriptor>, ClientError> {
+        let value: Value = self.get_json("/v1/capabilities").await?;
+        serde_json::from_value(
+            value
+                .get("capabilities")
+                .cloned()
+                .unwrap_or(Value::Array(vec![])),
+        )
+        .map_err(|error| ClientError::InvalidPayload(error.to_string()))
+    }
+
+    pub async fn capability(
+        &self,
+        capability_id: &str,
+    ) -> Result<CapabilityDescriptor, ClientError> {
+        validate_capability_path_id(capability_id)?;
+        let value: Value = self
+            .get_json(&format!("/v1/capabilities/{capability_id}"))
+            .await?;
+        serde_json::from_value(value.get("capability").cloned().unwrap_or(Value::Null))
+            .map_err(|error| ClientError::InvalidPayload(error.to_string()))
+    }
+
+    pub async fn set_capability_enabled(
+        &self,
+        capability_id: &str,
+        enabled: bool,
+    ) -> Result<CapabilityDescriptor, ClientError> {
+        validate_capability_path_id(capability_id)?;
+        let value: Value = self
+            .post_json(
+                &format!("/v1/capabilities/{capability_id}/state"),
+                &json!({"enabled": enabled}),
+            )
+            .await?;
+        serde_json::from_value(value.get("capability").cloned().unwrap_or(Value::Null))
+            .map_err(|error| ClientError::InvalidPayload(error.to_string()))
     }
 
     pub async fn create_conversation(&self, model_id: &str) -> Result<Conversation, ClientError> {
@@ -218,6 +305,21 @@ impl MeoClient {
         }
         Ok(request)
     }
+}
+
+fn validate_capability_path_id(capability_id: &str) -> Result<(), ClientError> {
+    let value = capability_id.trim();
+    if value.is_empty()
+        || value.len() > 128
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b':'))
+    {
+        return Err(ClientError::InvalidPayload(
+            "invalid capability identifier".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 async fn ensure_success(response: Response) -> Result<Response, ClientError> {

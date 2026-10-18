@@ -28,6 +28,7 @@ class PreparedAccountInference:
     arguments: Mapping[str, Any]
     consent: Mapping[str, Any]
     request_id: str
+    source: str = "local"
 
 
 class DbusNextAccountAiClient:
@@ -177,9 +178,25 @@ class DbusNextAccountAiClient:
 
     async def _list_connections(self):
         interface = await self._get_interface()
-        return self._unwrap(
+        local = self._unwrap(
             await interface.call_list_available_local_ai_connections(MEO_AI_CLIENT_ID)
         )
+        try:
+            cloud_request = self._unwrap(await interface.call_start_cloud_ai_operation(
+                MEO_AI_CLIENT_ID, "list_connections", {}
+            ))
+            cloud_state = await self._wait_request(str(cloud_request))
+            cloud = cloud_state.get("connections") if cloud_state.get("state") == "completed" else []
+        except Exception:
+            # Local connections remain usable when the optional cloud catalog is
+            # temporarily unavailable. The caller never receives an access token
+            # or provider credential through either branch.
+            cloud = []
+        if not isinstance(local, list):
+            local = []
+        if not isinstance(cloud, list):
+            cloud = []
+        return [*local, *cloud]
 
     def list_connections(self) -> list[Mapping[str, Any]]:
         value = self._run(self._list_connections())
@@ -195,6 +212,14 @@ class DbusNextAccountAiClient:
             )
         )
 
+    async def _start_cloud_operation(self, action: str, encoded_arguments: Mapping[str, object]):
+        interface = await self._get_interface()
+        return self._unwrap(
+            await interface.call_start_cloud_ai_operation(
+                MEO_AI_CLIENT_ID, action, dict(encoded_arguments)
+            )
+        )
+
     def start_operation(self, action: str, arguments: Mapping[str, Any]) -> str:
         if action not in {"discover_models", "prepare_inference", "invoke", "deny_inference"}:
             raise ValueError("unsupported Meo Account AI operation")
@@ -203,6 +228,34 @@ class DbusNextAccountAiClient:
         if not isinstance(value, str) or not value:
             raise AccountAiUnavailable("Meo Account rejected the AI operation")
         return value
+
+    def start_cloud_operation(self, action: str, arguments: Mapping[str, Any]) -> str:
+        if action not in {"list_connections", "discover_models", "prepare_inference", "invoke", "deny_inference"}:
+            raise ValueError("unsupported Meo Account cloud AI operation")
+        encoded = self._variant_map(arguments)
+        value = self._run(self._start_cloud_operation(action, encoded))
+        if not isinstance(value, str) or not value:
+            raise AccountAiUnavailable("Meo Account rejected the cloud AI operation")
+        return value
+
+    def discover_models(self, connection_id: str, *, source: str = "local") -> list[Mapping[str, Any]]:
+        if source == "cloud":
+            request_id = self.start_cloud_operation("discover_models", {"connectionId": connection_id})
+            result = self.wait_request(request_id)
+            if result.get("state") != "completed":
+                raise AccountAiUnavailable(str(result.get("error") or "Cloud model discovery failed"))
+            models = result.get("models")
+            if not isinstance(models, list):
+                return []
+            return [item for item in models if isinstance(item, Mapping)]
+        request_id = self.start_operation("discover_models", {"connectionId": connection_id})
+        result = self.wait_request(request_id)
+        if result.get("state") != "completed":
+            raise AccountAiUnavailable(str(result.get("error") or "Model discovery failed"))
+        models = result.get("models")
+        if not isinstance(models, list):
+            return []
+        return [{"id": item, "name": item} for item in models if isinstance(item, str)]
 
     async def _get_request(self, request_id: str):
         interface = await self._get_interface()
@@ -295,9 +348,11 @@ class DbusNextAccountAiClient:
             raise ValueError("max_output_tokens must be between 1 and 4096")
         return values
 
-    def prepare_inference(self, arguments: Mapping[str, Any]) -> PreparedAccountInference:
+    def prepare_inference(self, arguments: Mapping[str, Any], *, source: str = "local") -> PreparedAccountInference:
         immutable_arguments = dict(arguments)
-        request_id = self.start_operation("prepare_inference", immutable_arguments)
+        request_id = (self.start_cloud_operation if source == "cloud" else self.start_operation)(
+            "prepare_inference", immutable_arguments
+        )
         result = self.wait_request(request_id)
         if result.get("state") != "completed":
             raise AccountAiUnavailable(str(result.get("error") or "Account AI preparation failed"))
@@ -307,14 +362,16 @@ class DbusNextAccountAiClient:
         required = {"requestId", "payloadSha256", "confirmationVersion", "provider", "model"}
         if not required.issubset(consent):
             raise AccountAiUnavailable("Meo Account returned an incomplete inference consent")
-        return PreparedAccountInference(immutable_arguments, dict(consent), request_id)
+        return PreparedAccountInference(immutable_arguments, dict(consent), request_id, source)
 
     def invoke_prepared(self, prepared: PreparedAccountInference) -> Mapping[str, Any]:
         consent = dict(prepared.consent)
         consent.update({"approved": True, "remember": False})
         arguments = dict(prepared.arguments)
         arguments["consent"] = consent
-        request_id = self.start_operation("invoke", arguments)
+        request_id = (self.start_cloud_operation if prepared.source == "cloud" else self.start_operation)(
+            "invoke", arguments
+        )
         result = self.wait_request(request_id)
         if result.get("state") != "completed":
             raise AccountAiUnavailable(str(result.get("error") or "Account AI inference failed"))
@@ -328,7 +385,9 @@ class DbusNextAccountAiClient:
         consent.update({"approved": False, "remember": False})
         arguments = dict(prepared.arguments)
         arguments["consent"] = consent
-        request_id = self.start_operation("deny_inference", arguments)
+        request_id = (self.start_cloud_operation if prepared.source == "cloud" else self.start_operation)(
+            "deny_inference", arguments
+        )
         result = self.wait_request(request_id)
         if result.get("state") != "denied":
             raise AccountAiUnavailable(str(result.get("error") or "Account AI denial failed"))

@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "navigation": [
+    {
+      "id": "chat",
+      "label": "Chat",
+      "labelKey": "meo.nav.chat",
+      "icon": "chat",
+      "page": "chat",
+      "placement": "primary",
+      "order": 10
+    },
+    {
+      "id": "work",
+      "label": "Work",
+      "labelKey": "meo.nav.work",
+      "icon": "work",
+      "page": "work",
+      "placement": "primary",
+      "order": 20
+    },
+    {
+      "id": "projects",
+      "label": "Projects",
+      "labelKey": "meo.nav.projects",
+      "icon": "projects",
+      "page": "projects",
+      "placement": "primary",
+      "order": 30
+    },
+    {
+      "id": "skills",
+      "label": "Skills",
+      "labelKey": "meo.nav.skills",
+      "icon": "skills",
+      "page": "skills",
+      "placement": "primary",
+      "order": 40
+    },
+    {
+      "id": "settings",
+      "label": "Settings",
+      "labelKey": "meo.nav.settings",
+      "icon": "settings",
+      "page": "settings",
+      "placement": "secondary",
+      "order": 100
+    }
+  ]
+}

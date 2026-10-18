@@ -42,18 +42,32 @@ android {
     }
 }
 
-val rustOutput = layout.projectDirectory.dir("src/main/jniLibs")
+val schemaOutput = layout.buildDirectory.dir("generated/ui-schema")
+val generateUiSchema = tasks.register<Exec>("generateMeoUiSchema") {
+    val schemaRoot = rootProject.layout.projectDirectory.dir("../ui-schema")
+    inputs.dir(schemaRoot)
+    outputs.dir(schemaOutput)
+    commandLine("node", schemaRoot.file("generate.mjs").asFile.absolutePath,
+        "--output", schemaOutput.get().asFile.absolutePath)
+}
+android.sourceSets.getByName("main").java.srcDir(schemaOutput.map { it.dir("kotlin") })
+tasks.named("preBuild").configure { dependsOn(generateUiSchema) }
+val rustOutput = layout.buildDirectory.dir("generated/jniLibs")
+android.sourceSets.getByName("main").jniLibs.srcDir(rustOutput)
+
 val rustCrate = rootProject.layout.projectDirectory.dir("../core-rs")
 
 fun registerRustBuild(name: String, release: Boolean) = tasks.register<Exec>(name) {
     workingDir(rustCrate.asFile)
+    environment("CARGO_BUILD_JOBS", providers.environmentVariable("CARGO_BUILD_JOBS").orElse("1").get())
+    environment("CARGO_TARGET_DIR", layout.buildDirectory.dir("rust-target").get().asFile.absolutePath)
     val args = mutableListOf(
         "cargo", "ndk",
         "-t", "arm64-v8a",
         "-t", "armeabi-v7a",
         "-t", "x86_64",
-        "-o", rustOutput.asFile.absolutePath,
-        "build",
+        "-o", rustOutput.get().asFile.absolutePath,
+        "build", "--locked",
         "--features", "android-jni",
     )
     if (release) args += "--release"

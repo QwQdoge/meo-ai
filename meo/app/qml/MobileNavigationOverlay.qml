@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import MeoUI 1.0
+import "ProductNavigation.js" as Navigation
 
 Item {
     id: root
@@ -46,12 +47,8 @@ Item {
         interactive: root.compact
         primaryMode: root.hostWindow ? String(root.hostWindow.primaryMode || "chat") : "chat"
         deviceReady: !!agent.agentState.ready
-        destinations: [
-            { label: qsTr("Chat"), icon: "chat_bubble", action: "chat" },
-            { label: qsTr("Work"), icon: "work", action: "work" },
-            { label: qsTr("Projects"), icon: "folder_open", action: "projects" },
-            { label: qsTr("Skills"), icon: "extension", action: "skills" }
-        ]
+        destinations: Navigation.destinations("primary")
+        secondaryDestinations: Navigation.destinations("secondary")
 
         onModeSelected: function(mode) {
             if (root.hostWindow)

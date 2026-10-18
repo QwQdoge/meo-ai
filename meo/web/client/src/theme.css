@@ -1,0 +1,57 @@
+@import "@meo-tokens";
+@import "tailwindcss";
+@source "./";
+@theme inline {
+  --color-surface-primary: rgb(var(--surface-primary));
+  --color-surface-secondary: rgb(var(--surface-secondary));
+  --color-surface-tertiary: rgb(var(--surface-tertiary));
+  --color-text-primary: rgb(var(--text-primary));
+  --color-text-secondary: rgb(var(--text-secondary));
+  --color-border-light: rgb(var(--border-light));
+  --color-accent-primary: rgb(var(--accent-primary));
+  --color-status-error-strong: rgb(var(--status-error-strong));
+}
+:root {
+  font-family: system-ui, sans-serif;
+  --surface-primary: var(--meo-color-canvas);
+  --surface-secondary: var(--meo-color-panel);
+  --surface-tertiary: var(--meo-color-raised);
+  --text-primary: var(--meo-color-text);
+  --text-secondary: var(--meo-color-mutedText);
+  --border-light: var(--meo-color-border);
+  --accent-primary: var(--meo-color-accent);
+  --status-error-strong: var(--meo-color-error);
+}
+html,
+body,
+#root {
+  margin: 0;
+  min-height: 100%;
+}
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+button:not(:disabled),
+select {
+  cursor: pointer;
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+:focus-visible {
+  outline: 2px solid rgb(var(--accent-primary));
+  outline-offset: 3px;
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}

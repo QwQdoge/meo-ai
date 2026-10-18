@@ -1,111 +1,59 @@
 # Meo AI Web integration contract
 
-## Authority
+## Source and authority
 
-Meo Account owns authentication/session identity and BYOK credential metadata,
-encrypted provider keys, model discovery, endpoint validation and provider
-execution. Meo AI Cloud owns conversation/message and AgentRun state. The Web
-owns browser UI and calls both services through its authenticated same-origin
-server adapter. The browser receives credential IDs and masked metadata only;
-provider keys never enter the browser, Account access tokens stay server-side,
-and neither appears in URLs, local storage or Mongo configuration.
+The product source is now `meo-ai/meo/web/client`. The import originates from
+`QwQdoge/meo-ai-web` at `ae796b230ec17d65ab298523d9c1dd59cf714bb7`, with the
+local Chat-context proxy repair included. File hashes and MIT attribution are
+preserved in `client/import-manifest.json` and `client/LICENSE.librechat`.
+The original LibreChat upstream lineage remains in the source repository and
+its `UPSTREAM.md`; that backend is not required by this standalone React build.
 
-## Account broker calls
+The production Pages deployment remains on its existing source until explicitly
+cut over. Do not delete or repurpose the old repository as part of this import.
 
-The LibreChat API adapter forwards the authenticated server-side OIDC access
-token to `POST {MEO_API_URL}/v1/ai/provider-broker` with
-`redirect: error` and `Cache-Control: no-store` handling.
+Meo Account owns identity/session/OAuth and encrypted provider credentials.
+Meo API owns actor-scoped data, Chat orchestration, context, consent/broker and
+cloud tasks. Shared Meo AI behavior is developed in Rust Core; UI code only
+renders shared state and uses platform adapters.
 
-- `list_credentials` returns enabled connection metadata.
-- `list_models` returns normalized model IDs/metadata. `supported: false` means
-  the UI must accept a manually entered model ID.
-- `prepare_inference` returns a five-minute, payload-bound consent preview.
-- `stream_invoke` includes only the approved request ID, payload hash and
-  confirmation version. OpenAI-compatible providers stream `stream: true` SSE
-  through Account; the broker normalizes text deltas and aborts its provider
-  fetch when the downstream request is cancelled. Provider keys remain inside
-  the broker. Buffered `invoke` remains available to other Account clients.
+## Browser transport
 
-This is the target Meo API contract. The `/v1/ai/provider-broker` handler is not
-implemented in `meo-api` yet, so this path must not be treated as production
-ready until the Account-owned credential/consent logic is exposed behind it
-and its authorization and streaming tests pass.
+The browser calls same-origin Pages Functions:
 
-Chat purpose is `meo_ai_web_chat`. Categories are `chat_text` and, when history
-is attached, `conversation_context`. The Account broker validates the complete
-payload again at invocation time. No client supplied endpoint is accepted.
+| Browser request | Upstream authority |
+| --- | --- |
+| `/oauth/openid` and callback | Account OAuth/OIDC PKCE |
+| `/api/meo/session` | Encrypted HttpOnly browser session and Account UserInfo |
+| `/api/meo/connections` and model discovery | Meo API provider broker |
+| `/api/meo/conversations` and messages | Meo API conversation routes |
+| `/api/meo/chat/prepare` and `/stream` | Meo API `/v1/chat/*` |
 
-## Web routes and SSE
+Chat forwards `credentialId`, `model`, optional `conversationId`, `prompt` and
+consent unchanged. Context selection and provider request assembly do not live
+in the edge. Do not revert to a direct inference-broker translation that drops
+conversation identity.
 
-The authenticated same-origin adapter exposes:
+Access/refresh tokens remain in encrypted `Secure`/`HttpOnly` cookies and on the
+edge. Provider keys remain server-owned. No token, API key or secret is accepted
+in query parameters or frontend storage. An upstream API 401 must not erase an
+otherwise valid browser session.
 
-```text
-GET  /api/meo/connections
-GET  /api/meo/connections/:credentialId/models
-GET  /api/meo/conversations
-POST /api/meo/conversations
-GET  /api/meo/conversations/:conversationId/messages
-POST /api/meo/conversations/:conversationId/messages
-POST /api/meo/chat/prepare
-POST /api/meo/chat/stream
-```
+The edge preserves incremental response bodies and cancellation signals.
+Production provider cancellation, real Account login/refresh and saved history
+still require separate end-to-end acceptance; mocked transport tests are not
+proof of those behaviors. React's imported Chat still performs message writes
+separately from inference; it is not a durable background AgentRun.
 
-`/chat/prepare` accepts a credential ID, model ID and bounded user/assistant
-messages, then returns the Account consent summary. `/chat/stream` repeats that
-payload with the approved consent fields and forwards provider-backed
-`event: delta`, `event: done` and sanitized `event: error` SSE events. Disconnects
-propagate to the Account broker and provider request; no response is buffered
-before the first token.
+## Shared settings integration
 
-The deep link is `/new?connection=<credential-id>&model=<model-id>`. Query
-parameters are allowlisted to those two identifiers. No token or secret appears
-in a URL. LibreChat's same-origin session must already be authenticated through
-Meo Account OIDC.
+The first new settings/memory domain API is implemented by the Rust loopback
+Core for isolated candidate validation. The authenticated cloud API must adopt
+that same domain contract with actor-scoped persistence before Web/Android can
+claim account-wide settings or memory synchronization. The production BFF does
+not forward unimplemented cloud settings routes, and never silently falls back
+to loopback or localStorage.
 
-## Conversation and future cloud boundary
-
-Conversation history uses Meo Cloud `conversations` and `messages`, with the
-Account verified user ID as owner. The server adapter forwards the Account
-session only to the cloud service; every read and write is owner-scoped. New
-conversations and user/assistant messages are persisted remotely, so refreshes
-and another browser using the same Account see the same history. `localStorage`
-contains only the selected conversation pointer. The separate AgentRun client
-remains an integration seam for a later feature and resumes event streams by
-`run_id` and cursor; ordinary text chat does not wait for AgentRun.
-
-## Upstream pin and maintenance
-
-The integration is on the `main` default branch of `QwQdoge/meo-ai-web`. Its
-LibreChat upstream base is `e1dfc10449ff713faffacd60273fddcfe2c0a698`
-(`fix: Require Colon in API-Key Header Detection`, PR #16803). At integration
-completion, the fork head is `1c47fa13ecd5ff556db3ec21fe7dd483f883503d`.
-Earlier Meo Account activity-sync commits are already on that fork branch and
-remain alongside the chat integration. A temporary integration branch was
-tested against upstream `dev` commit
-`4afd5e17f85e95d610e606c0cdfddf3b2ba97978`; it was not merged wholesale, so
-its unrelated upstream commits are not part of the default branch.
-
-LibreChat is MIT-licensed. Keep the upstream `LICENSE`, copyright notices and
-license text in the fork and every release. Review the license and attribution
-when updating the upstream base.
-
-Meo patch surface:
-
-1. `packages/api/src/meo/accountProviderClient.ts` and
-   `cloudConversationClient.ts` contain the Account broker and Meo Cloud clients;
-   their `*.spec.ts` files cover the adapters.
-2. `api/server/routes/meo.js`, `api/server/routes/index.js`, and
-   `api/server/index.js` expose the authenticated same-origin API while retaining
-   the separate `meoActivity` route.
-3. `client/src/components/Meo/MeoChat.tsx`, `client/src/routes/index.tsx`,
-   `client/src/hooks/Nav/useUnifiedSidebarLinks.ts`, and the English translation
-   entries provide chat, deep links, history navigation and labels.
-4. `meo/` contains local configuration and startup instructions. The root
-   LibreChat application and upstream `LICENSE` remain upstream-owned.
-
-For upgrades, fetch the `upstream` remote and update from its `main` branch.
-Record the new exact upstream base SHA, review security and authentication
-changes, and reapply only the listed Meo surface while preserving Meo activity
-sync. Run the adapter tests, API TypeScript check, affected static checks,
-client typecheck/build and Lighthouse. Review dependency and MIT attribution
-changes. Do not vendor a second LibreChat tree into `meo-ai`.
+Schema definitions, capability availability and server permissions are different
+things. Do not treat a declared page or a successful local save as cross-platform
+feature completion.

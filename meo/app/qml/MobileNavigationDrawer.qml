@@ -10,6 +10,7 @@ Drawer {
     property real uiScale: MeoTheme.globalScale
     property string primaryMode: "chat"
     property var destinations: []
+    property var secondaryDestinations: []
     property bool deviceReady: false
 
     signal modeSelected(string mode)
@@ -102,7 +103,8 @@ Drawer {
                 Accessible.name: modelData.label
                 onClicked: {
                     root.close()
-                    root.modeSelected(String(modelData.action))
+                    if (modelData.action === "settings") root.settingsRequested()
+                    else root.modeSelected(String(modelData.action))
                 }
             }
         }
@@ -132,17 +134,22 @@ Drawer {
 
         Item { Layout.fillHeight: true }
 
-        NavigationButton {
-            objectName: "meoAiMobileSettings"
-            Layout.fillWidth: true
-            text: qsTr("AI settings")
-            icon.name: "tune"
-            type: "text"
-            size: "s"
-            Accessible.name: qsTr("AI settings")
-            onClicked: {
-                root.close()
-                root.settingsRequested()
+        Repeater {
+            model: root.secondaryDestinations
+            delegate: NavigationButton {
+                required property var modelData
+                objectName: modelData.action === "settings" ? "meoAiMobileSettings" : "meoAiMobileSecondary-" + modelData.action
+                Layout.fillWidth: true
+                text: modelData.label
+                icon.name: modelData.icon
+                type: "text"
+                size: "s"
+                Accessible.name: modelData.label
+                onClicked: {
+                    root.close()
+                    if (modelData.action === "settings") root.settingsRequested()
+                    else root.modeSelected(String(modelData.action))
+                }
             }
         }
 

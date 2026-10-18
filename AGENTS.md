@@ -37,8 +37,10 @@ Unified web/cloud/device rules:
 - a remote AgentRun may bind to one local AgentService request; reconnect must
   resume that request/event stream rather than submitting a replacement request.
 - local workspaces stay local unless an explicit file-upload path says otherwise.
-- do not vendor a large web upstream merely for physical repository purity;
-  record its exact upstream commit/license and keep the Meo patch surface small.
+- the user selected a unified product repository on 2026-10-18. Meo-owned Web
+  source belongs under `meo/web/client`, alongside desktop, Android and Core.
+  Preserve import provenance/license and keep the old Web repository for rollback;
+  do not import its unrelated Express/Mongo backend or generated artifacts.
 
 TODO — remote realtime sync:
 - evaluate Neon Realtime for cross-device synchronization of conversation metadata,
@@ -101,3 +103,21 @@ For Python changes run `python3 -m compileall -q src meo/service meo/system meo/
 For native changes configure/build `meo/` with MeoUI and run CTest offscreen.
 Distinguish mock protocol tests, native builds, real agent/provider execution,
 and live Plasma integration in reports. No release/tag/signing is implied.
+
+
+## Selected UI architecture (2026-10-18)
+
+- Desktop applications on Linux, Windows and macOS use C++/Qt/QML + MeoUI.
+  Keep desktop application/platform integration in C++; consume shared Core/API
+  contracts instead of mandating a Rust UI binding migration.
+- Web uses React/TypeScript; Android uses Kotlin/Compose. No shared rendering
+  framework is required.
+- `meo/ui-schema/` is the only editable product configuration for navigation
+  placement/order, page hierarchy/states, feature entry points and token aliases.
+  MeoUI owns the referenced shared token values and reusable controls.
+- Render primary/secondary groups natively, including compact navigation. A
+  placement change must preserve destination identity, state and permissions.
+- Use a restrained Pixel/Material direction: function and information first,
+  quiet surfaces, limited accents, subtle motion and system reduced motion.
+- Schema data never executes code, grants capabilities or replaces server-side
+  authorization. Page/feature declarations do not prove implementation parity.

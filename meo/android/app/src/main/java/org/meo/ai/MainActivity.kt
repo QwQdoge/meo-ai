@@ -68,10 +68,15 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import org.meo.ai.core.MeoCore
@@ -92,7 +97,7 @@ class MainActivity : ComponentActivity() {
         controller.handleOAuthCallback(intent?.data)
         enableEdgeToEdge()
         setContent {
-            MeoExpressiveTheme {
+            MeoExpressiveTheme(themeMode = controller.devicePreferences.values.theme, reduceMotion = controller.devicePreferences.values.reduceMotion) {
                 MeoApp(controller)
             }
         }
@@ -130,7 +135,7 @@ private fun MeoApp(controller: MeoController) {
         return
     }
 
-    ChatScreen(controller, snackbar)
+    org.meo.ai.ui.ProductWorkspace(controller) { openNavigation, openSettings -> ChatScreen(controller, snackbar, openNavigation, openSettings) }
 }
 
 @Composable
@@ -180,7 +185,7 @@ private fun SignInScreen(
                             fontWeight = FontWeight.SemiBold,
                         )
                         Text(
-                            "Your conversations, models and Meo Account stay in sync across Android, Web and desktop.",
+                            "Use your Meo Account to access conversations and provider connections.",
                             modifier = Modifier.padding(top = 8.dp),
                             style = MaterialTheme.typography.bodyLarge,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -215,16 +220,20 @@ private fun SignInScreen(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ChatScreen(controller: MeoController, snackbar: SnackbarHostState) {
+private fun ChatScreen(controller: MeoController, snackbar: SnackbarHostState, openNavigation: () -> Unit, openSettings: () -> Unit) {
     val state = controller.state
     val listState = rememberLazyListState()
     val topBarScroll = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
-    var composer by remember { mutableStateOf("") }
+    var composer by rememberSaveable { mutableStateOf("") }
     var historyOpen by remember { mutableStateOf(false) }
     var accountOpen by remember { mutableStateOf(false) }
 
+
     LaunchedEffect(state.messages.size, state.messages.lastOrNull()?.text) {
-        if (state.messages.isNotEmpty()) listState.animateScrollToItem(state.messages.lastIndex)
+        if (state.messages.isNotEmpty()) {
+            if (controller.devicePreferences.values.reduceMotion) listState.scrollToItem(state.messages.lastIndex)
+            else listState.animateScrollToItem(state.messages.lastIndex)
+        }
     }
 
     state.pendingSend?.let { pending ->
@@ -259,9 +268,14 @@ private fun ChatScreen(controller: MeoController, snackbar: SnackbarHostState) {
                     }
                 },
                 navigationIcon = {
+                    IconButton(onClick = openNavigation) {
+                        Icon(Icons.Rounded.Menu, contentDescription = androidx.compose.ui.res.stringResource(org.meo.ai.R.string.meo_navigation_title))
+                    }
+                },
+                actions = {
                     Box {
                         FilledTonalIconButton(onClick = { historyOpen = true }) {
-                            Icon(Icons.Rounded.Menu, contentDescription = "Conversation history")
+                            Icon(Icons.Rounded.History, contentDescription = "Conversation history")
                         }
                         DropdownMenu(expanded = historyOpen, onDismissRequest = { historyOpen = false }) {
                             DropdownMenuItem(
@@ -288,8 +302,6 @@ private fun ChatScreen(controller: MeoController, snackbar: SnackbarHostState) {
                             }
                         }
                     }
-                },
-                actions = {
                     IconButton(onClick = controller::newChat, enabled = !state.streaming) {
                         Icon(Icons.Rounded.Add, contentDescription = "New chat")
                     }
@@ -312,6 +324,10 @@ private fun ChatScreen(controller: MeoController, snackbar: SnackbarHostState) {
                                     }
                                 },
                                 onClick = { accountOpen = false },
+                            )
+                            DropdownMenuItem(
+                                text = { Text(androidx.compose.ui.res.stringResource(org.meo.ai.R.string.meo_settings_title)) },
+                                onClick = { accountOpen = false; openSettings() },
                             )
                             HorizontalDivider()
                             DropdownMenuItem(
@@ -344,6 +360,7 @@ private fun ChatScreen(controller: MeoController, snackbar: SnackbarHostState) {
                     onModel = controller::selectModel,
                 )
                 Composer(
+                    enterToSend = controller.devicePreferences.values.enterToSend,
                     value = composer,
                     onValueChange = { composer = it },
                     sending = state.streaming || state.loading,
@@ -610,12 +627,15 @@ private fun MessageRow(message: UiMessage) {
 
 @Composable
 private fun Composer(
+    enterToSend: Boolean,
     value: String,
     onValueChange: (String) -> Unit,
     sending: Boolean,
     enabled: Boolean,
     onSend: () -> Unit,
 ) {
+    var fieldValue by remember { mutableStateOf(TextFieldValue(value)) }
+    LaunchedEffect(value) { if (fieldValue.text != value) fieldValue = TextFieldValue(value) }
     Surface(
         modifier = Modifier
             .fillMaxWidth()
@@ -631,10 +651,19 @@ private fun Composer(
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             OutlinedTextField(
-                value = value,
-                onValueChange = onValueChange,
+                value = fieldValue,
+                onValueChange = { fieldValue = it; onValueChange(it.text) },
                 enabled = !sending,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().onPreviewKeyEvent { event ->
+                    val native = event.nativeKeyEvent
+                    val modified = native.isCtrlPressed || native.isMetaPressed
+                    val shouldSend = if (enterToSend) !modified else modified
+                    if (event.type == KeyEventType.KeyDown && native.keyCode == android.view.KeyEvent.KEYCODE_ENTER &&
+                        !native.isShiftPressed && fieldValue.composition == null && shouldSend) {
+                        if (enabled && !sending && value.isNotBlank()) onSend()
+                        true
+                    } else false
+                },
                 placeholder = { Text(if (enabled) "Ask anything" else "Select an AI connection and model") },
                 maxLines = 7,
                 shape = MaterialTheme.shapes.extraLarge,

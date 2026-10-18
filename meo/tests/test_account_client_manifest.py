@@ -18,6 +18,9 @@ class AccountClientManifestTest(unittest.TestCase):
         self.assertIn("local_ai", manifest["capabilities"])
         self.assertIn("ai_usage_sync", manifest["capabilities"])
         self.assertNotIn("*", "".join(manifest["executables"]))
+        # The local broker accepts identity scopes only; cloud OAuth scopes
+        # cause it to reject the entire manifest, including local AI access.
+        self.assertEqual(set(manifest["scopes"]), {"openid", "profile", "email"})
 
 
 if __name__ == "__main__":

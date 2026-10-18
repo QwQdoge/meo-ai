@@ -1,3 +1,5 @@
+> **Unified product source (2026-10-18):** Desktop is `app/` (C++/QML + MeoUI), Web is `web/client/` (React/TypeScript), Android is `android/` (Kotlin/Compose), shared Core is `core-rs/` (Rust), and design configuration is `ui-schema/`. Meo API and Meo Account remain separate. See [workspace.json](workspace.json). The old Web deployment has not been promoted to this source.
+
 # Meo AI preview
 
 Native C++/QML MeoUI client for the Newelle-derived agent engine. GPL-3.0;

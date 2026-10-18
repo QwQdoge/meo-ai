@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import MeoUI 1.0
+import "MeoUiSchema.js" as ProductSchema
 
 Popup {
     id: root
@@ -9,7 +10,15 @@ Popup {
 
     property var accountBackend: null
     property real uiScale: MeoTheme.globalScale
-    property int currentPage: 0
+    property int currentPage: 0 // Existing runtime page identity, preserved for callers.
+    property int currentSection: 0
+    property var clientPreferences: null
+    readonly property var sections: ProductSchema.configuration.settings.sections
+    readonly property var sectionPages: ({general: [0, 3, 7], personalization: [5], models: [1, 2], connectors: [4], devices: [8], privacy: [9], usage: [6], account: [6]})
+    function selectSection(index) {
+        currentSection = index
+        currentPage = sectionPages[sections[index].id][0]
+    }
 
     signal manageMemoryRequested()
     signal openQuickControlsRequested()
@@ -46,6 +55,9 @@ Popup {
 
     function openPage(page) {
         currentPage = Math.max(0, Math.min(root.pages.length - 1, Number(page || 0)))
+        for (let i = 0; i < sections.length; ++i) {
+            if (sectionPages[sections[i].id].indexOf(currentPage) >= 0) { currentSection = i; break }
+        }
         open()
     }
 
@@ -153,17 +165,17 @@ Popup {
                 }
 
                 Repeater {
-                    model: root.pages
+                    model: root.sections
                     delegate: NavigationButton {
                         required property var modelData
                         required property int index
                         objectName: "meoAiSettingsNav-" + index
                         Layout.fillWidth: true
-                        text: modelData.title
-                        icon.name: modelData.icon
-                        type: root.currentPage === index ? "tonal" : "text"
+                        text: qsTranslate("MeoSettings", modelData.label)
+                        icon.name: ({general:"tune",personalization:"neurology",models:"deployed_code",connectors:"extension",devices:"devices",privacy:"shield",usage:"monitor_heart",account:"account_circle"})[modelData.id]
+                        type: root.currentSection === index ? "tonal" : "text"
                         size: "s"
-                        onClicked: root.currentPage = index
+                        onClicked: root.selectSection(index)
                     }
                 }
 
@@ -196,7 +208,7 @@ Popup {
                     Layout.fillWidth: true
                     spacing: 2 * root.uiScale
                     MeoText {
-                        text: root.pages[root.currentPage].title
+                        text: qsTranslate("MeoSettings", root.sections[root.currentSection].label)
                         typeRole: "title"
                         typeSize: "medium"
                         color: MeoTheme.contentOnSurface
@@ -233,6 +245,24 @@ Popup {
                 opacity: 0.4
             }
 
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.leftMargin: 24 * root.uiScale
+                Layout.topMargin: 8 * root.uiScale
+                Repeater {
+                    model: root.sectionPages[root.sections[root.currentSection].id]
+                    delegate: MeoButton {
+                        required property var modelData
+                        visible: root.sectionPages[root.sections[root.currentSection].id].length > 1
+                        text: modelData < root.pages.length ? root.pages[modelData].title : ""
+                        type: root.currentPage === modelData ? "tonal" : "text"
+                        size: "xs"
+                        onClicked: root.currentPage = modelData
+                    }
+                }
+                Item { Layout.fillWidth: true }
+            }
+
             StackLayout {
                 id: settingsStack
                 objectName: "meoAiSettingsPages"
@@ -248,6 +278,37 @@ Popup {
                         width: parent.width
                         spacing: 12 * root.uiScale
                         anchors.margins: 22 * root.uiScale
+
+                        Repeater {
+                            model: ProductSchema.configuration.settings.sections.filter(function(section) { return section.id === "general" })[0].items
+                            delegate: RowLayout {
+                                required property var modelData
+                                Layout.fillWidth: true
+                                Layout.leftMargin: 22 * root.uiScale
+                                Layout.rightMargin: 22 * root.uiScale
+                                spacing: 20 * root.uiScale
+                                MeoText { Layout.fillWidth: true; text: qsTranslate("MeoSettings", modelData.label); typeRole: "body"; typeSize: "medium"; color: MeoTheme.contentOnSurface }
+                                Switch {
+                                    visible: modelData.kind === "toggle" && ["enter_to_send", "reduce_motion"].indexOf(modelData.id) >= 0
+                                    enabled: root.clientPreferences !== null
+                                    checked: root.clientPreferences ? (modelData.id === "enter_to_send" ? root.clientPreferences.enterToSend : root.clientPreferences.reduceMotion) : false
+                                    Accessible.name: qsTranslate("MeoSettings", modelData.label)
+                                    onToggled: {
+                                        if (modelData.id === "enter_to_send") root.clientPreferences.enterToSend = checked
+                                        else root.clientPreferences.reduceMotion = checked
+                                    }
+                                }
+                                ComboBox {
+                                    visible: modelData.id === "theme"
+                                    enabled: root.clientPreferences !== null
+                                    model: [qsTr("Follow system"), qsTr("Light"), qsTr("Dark")]
+                                    currentIndex: root.clientPreferences ? ["system", "light", "dark"].indexOf(root.clientPreferences.themeMode) : 0
+                                    Accessible.name: qsTr("Theme")
+                                    onActivated: function(index) { root.clientPreferences.themeMode = ["system", "light", "dark"][index] }
+                                }
+                            }
+                        }
+                        MeoText { Layout.fillWidth: true; Layout.leftMargin: 22 * root.uiScale; text: qsTr("Saved on this device. Enter sends when enabled; otherwise use Ctrl/⌘ + Enter. Shift + Enter adds a line."); typeRole: "body"; typeSize: "small"; color: MeoTheme.contentOnSurfaceVariant; wrapMode: Text.Wrap }
 
                         Rectangle {
                             Layout.fillWidth: true
@@ -881,6 +942,20 @@ Popup {
                         }
                         Item { Layout.fillHeight: true; Layout.minimumHeight: 8 * root.uiScale }
                     }
+                }
+                // Authenticated remote devices are separate from the local runtime.
+                ColumnLayout {
+                    Layout.margins: 24 * root.uiScale
+                    MeoText { text: qsTr("Remote device service is not connected"); typeRole: "title"; typeSize: "medium"; color: MeoTheme.contentOnSurface }
+                    MeoText { Layout.fillWidth: true; text: qsTr("Device registration, revocation and remote Work require the authenticated Meo API. Local runtime readiness does not establish a remote device session."); typeRole: "body"; typeSize: "medium"; color: MeoTheme.contentOnSurfaceVariant; wrapMode: Text.Wrap }
+                    Item { Layout.fillHeight: true }
+                }
+                ColumnLayout {
+                    Layout.margins: 24 * root.uiScale
+                    MeoText { text: qsTr("Data & privacy"); typeRole: "title"; typeSize: "medium"; color: MeoTheme.contentOnSurface }
+                    MeoText { Layout.fillWidth: true; text: qsTr("Manage account data and privacy in Meo Account. Local conversation export and deletion remain available from Chats."); typeRole: "body"; typeSize: "medium"; color: MeoTheme.contentOnSurfaceVariant; wrapMode: Text.Wrap }
+                    MeoButton { text: qsTr("Open Meo Account"); type: "tonal"; onClicked: Qt.openUrlExternally("https://account.meoarch.org") }
+                    Item { Layout.fillHeight: true }
                 }
             }
         }

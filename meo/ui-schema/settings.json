@@ -1,0 +1,118 @@
+{
+  "schemaVersion": 1,
+  "sections": [
+    {
+      "id": "general",
+      "label": "General",
+      "labelKey": "meo.settings.general",
+      "owner": "client",
+      "items": [
+        {
+          "id": "enter_to_send",
+          "label": "Enter to send",
+          "labelKey": "meo.settings.enterToSend",
+          "kind": "toggle",
+          "binding": "general.enter_to_send"
+        },
+        {
+          "id": "theme",
+          "label": "Theme",
+          "labelKey": "meo.settings.theme",
+          "kind": "select",
+          "binding": "appearance.theme",
+          "options": ["system", "light", "dark"]
+        },
+        {
+          "id": "reduce_motion",
+          "label": "Reduce motion",
+          "labelKey": "meo.settings.reduceMotion",
+          "kind": "toggle",
+          "binding": "appearance.reduce_motion"
+        }
+      ]
+    },
+    {
+      "id": "personalization",
+      "label": "Personalization & memory",
+      "labelKey": "meo.settings.personalization",
+      "owner": "core",
+      "items": [
+        {
+          "id": "custom_instructions",
+          "label": "Custom instructions",
+          "labelKey": "meo.settings.instructions",
+          "kind": "text",
+          "binding": "personalization.custom_instructions",
+          "maxLength": 8000
+        },
+        {
+          "id": "response_language",
+          "label": "Response language",
+          "labelKey": "meo.settings.language",
+          "kind": "select",
+          "binding": "personalization.response_language",
+          "options": [
+            "system",
+            "en",
+            "zh-CN",
+            "zh-TW",
+            "ja",
+            "ko",
+            "es",
+            "fr",
+            "de"
+          ]
+        },
+        {
+          "id": "memory_enabled",
+          "label": "Use saved memories",
+          "labelKey": "meo.settings.memoryEnabled",
+          "kind": "toggle",
+          "binding": "memory.enabled"
+        }
+      ]
+    },
+    {
+      "id": "models",
+      "label": "Models & connections",
+      "labelKey": "meo.settings.models",
+      "owner": "account",
+      "items": []
+    },
+    {
+      "id": "connectors",
+      "label": "Apps & connectors",
+      "labelKey": "meo.settings.connectors",
+      "owner": "core",
+      "items": []
+    },
+    {
+      "id": "devices",
+      "label": "Devices & Work",
+      "labelKey": "meo.settings.devices",
+      "owner": "api",
+      "items": []
+    },
+    {
+      "id": "privacy",
+      "label": "Data & privacy",
+      "labelKey": "meo.settings.privacy",
+      "owner": "account",
+      "items": []
+    },
+    {
+      "id": "usage",
+      "label": "Usage",
+      "labelKey": "meo.settings.usage",
+      "owner": "api",
+      "items": []
+    },
+    {
+      "id": "account",
+      "label": "Account & security",
+      "labelKey": "meo.settings.account",
+      "owner": "account",
+      "items": []
+    }
+  ]
+}

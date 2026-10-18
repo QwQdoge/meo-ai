@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "features": [
+    { "id": "chat", "capability": "chat", "unavailable": "explain" },
+    { "id": "work", "capability": "agent_runs", "unavailable": "explain" },
+    { "id": "projects", "capability": "projects", "unavailable": "explain" },
+    { "id": "skills", "capability": "skills", "unavailable": "explain" },
+    { "id": "settings", "capability": "settings", "unavailable": "explain" }
+  ]
+}

@@ -41,6 +41,7 @@ data class MeoUiState(
 )
 
 class MeoController(private val activity: MainActivity) {
+    val devicePreferences = DevicePreferences(activity)
     private val sessionStore = SecureSessionStore(activity)
     private val client = MeoApiClient()
     private val executor = Executors.newSingleThreadExecutor()

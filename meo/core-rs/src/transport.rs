@@ -18,6 +18,7 @@ use serde_json::{json, Value};
 use tokio::sync::broadcast;
 use tower_http::trace::TraceLayer;
 
+use crate::capabilities::CapabilityError;
 use crate::protocol::{CoreEvent, SendMessageRequest};
 use crate::service::{MeoService, ServiceError};
 
@@ -36,6 +37,14 @@ type EventStream = Pin<Box<dyn Stream<Item = Result<Event, Infallible>> + Send>>
 
 pub fn router(service: MeoService) -> Router {
     Router::new()
+        .route("/v1/ai/memory", get(get_memory).post(create_memory))
+        .route(
+            "/v1/ai/memory/{memory_id}",
+            axum::routing::put(update_memory),
+        )
+        .route("/v1/ai/settings", get(get_settings).patch(update_settings))
+        .route("/v1/ai/settings/catalog", get(settings_catalog))
+        .route("/v1/models", get(list_models))
         .route("/v1/agent-state", get(agent_state))
         .route("/v1/health", get(agent_state))
         .route(
@@ -52,7 +61,130 @@ pub fn router(service: MeoService) -> Router {
         .route("/v1/requests/{request_id}/events", get(request_events))
         .route("/v1/requests/{request_id}/cancel", post(cancel_request))
         .layer(TraceLayer::new_for_http())
+        .layer(axum::middleware::from_fn(local_origin_guard))
         .with_state(Arc::new(HttpState { service }))
+}
+
+/// This router is a single-device service, never a public multi-tenant API.
+/// Reject foreign Host/Origin values rather than relying on browser CORS alone.
+pub(crate) async fn local_origin_guard(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let allowed_host = request
+        .headers()
+        .get(header::HOST)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<axum::http::uri::Authority>().ok())
+        .is_some_and(|value| matches!(value.host(), "127.0.0.1" | "localhost" | "[::1]"));
+    let allowed_origin = match request.headers().get(header::ORIGIN) {
+        None => true,
+        Some(origin) => origin
+            .to_str()
+            .ok()
+            .and_then(|value| url::Url::parse(value).ok())
+            .is_some_and(|value| {
+                matches!(value.scheme(), "http" | "https")
+                    && matches!(value.host_str(), Some("127.0.0.1" | "localhost" | "[::1]"))
+                    && value.username().is_empty()
+                    && value.password().is_none()
+            }),
+    };
+    if !allowed_host || !allowed_origin {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({"error":{"code":"local_origin_required"}})),
+        )
+            .into_response();
+    }
+    next.run(request).await
+}
+
+async fn get_memory(State(state): State<Arc<HttpState>>) -> Result<Json<Value>, ApiError> {
+    Ok(Json(
+        json!({"scope":"device","memory":state.service.memory().snapshot().map_err(memory_error)?}),
+    ))
+}
+async fn create_memory(
+    State(state): State<Arc<HttpState>>,
+    Json(input): Json<crate::memory::MemoryWrite>,
+) -> Result<Json<Value>, ApiError> {
+    let store = state.service.memory();
+    let document = tokio::task::spawn_blocking(move || store.write(None, input))
+        .await
+        .map_err(|_| ApiError::internal("Memory storage task failed."))?
+        .map_err(memory_error)?;
+    Ok(Json(json!({"scope":"device","memory":document})))
+}
+async fn update_memory(
+    State(state): State<Arc<HttpState>>,
+    Path(memory_id): Path<String>,
+    Json(input): Json<crate::memory::MemoryWrite>,
+) -> Result<Json<Value>, ApiError> {
+    let store = state.service.memory();
+    let document = tokio::task::spawn_blocking(move || store.write(Some(&memory_id), input))
+        .await
+        .map_err(|_| ApiError::internal("Memory storage task failed."))?
+        .map_err(memory_error)?;
+    Ok(Json(json!({"scope":"device","memory":document})))
+}
+
+fn memory_error(error: crate::settings::SettingsError) -> ApiError {
+    let mut response = settings_error(error);
+    response.code = match response.code {
+        "invalid_preferences" => "invalid_memory",
+        "settings_conflict" => "memory_conflict",
+        _ => "memory_unavailable",
+    };
+    response.message = "Memory operation could not be completed.".to_owned();
+    response
+}
+
+async fn settings_catalog() -> Json<Value> {
+    Json(
+        serde_json::from_str(include_str!("../../ui-schema/settings.json"))
+            .expect("checked-in settings catalog must be valid"),
+    )
+}
+
+async fn get_settings(State(state): State<Arc<HttpState>>) -> Result<Json<Value>, ApiError> {
+    let document = state
+        .service
+        .preferences()
+        .snapshot()
+        .map_err(settings_error)?;
+    Ok(Json(json!({"scope": "device", "settings": document})))
+}
+
+async fn update_settings(
+    State(state): State<Arc<HttpState>>,
+    Json(update): Json<crate::settings::SettingsUpdate>,
+) -> Result<Json<Value>, ApiError> {
+    let store = state.service.preferences();
+    let document = tokio::task::spawn_blocking(move || store.update(&update))
+        .await
+        .map_err(|_| ApiError::internal("Settings storage task failed."))?
+        .map_err(settings_error)?;
+    Ok(Json(json!({"scope": "device", "settings": document})))
+}
+
+fn settings_error(error: crate::settings::SettingsError) -> ApiError {
+    let (status, code) = match error {
+        crate::settings::SettingsError::Invalid => (StatusCode::BAD_REQUEST, "invalid_preferences"),
+        crate::settings::SettingsError::Conflict => (StatusCode::CONFLICT, "settings_conflict"),
+        crate::settings::SettingsError::Storage => {
+            (StatusCode::SERVICE_UNAVAILABLE, "settings_unavailable")
+        }
+    };
+    ApiError {
+        status,
+        code,
+        message: error.to_string(),
+    }
+}
+
+async fn list_models(State(state): State<Arc<HttpState>>) -> Json<Value> {
+    Json(json!({"models": state.service.registered_models()}))
 }
 
 async fn agent_state(State(state): State<Arc<HttpState>>) -> Json<Value> {
@@ -280,6 +412,18 @@ impl From<ServiceError> for ApiError {
             ServiceError::UnknownModel(_) | ServiceError::EmptyMessage => {
                 (StatusCode::BAD_REQUEST, "invalid_request")
             }
+            ServiceError::Capability(capability_error) => match capability_error {
+                CapabilityError::InvalidId(_) | CapabilityError::Unknown(_) => {
+                    (StatusCode::BAD_REQUEST, "invalid_capability")
+                }
+                CapabilityError::Disabled(_) | CapabilityError::NotConnected(_) => {
+                    (StatusCode::CONFLICT, "capability_unavailable")
+                }
+                CapabilityError::Duplicate(_) | CapabilityError::DuplicateTool(_) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "capability_registry_error",
+                ),
+            },
             ServiceError::RequestTerminal => (StatusCode::CONFLICT, "request_terminal"),
             ServiceError::Provider(_) => (StatusCode::BAD_GATEWAY, "provider_error"),
         };

@@ -1,0 +1,32 @@
+<resources>
+    <string name="meo_settings_title">设置</string>
+    <string name="meo_settings_back">返回</string>
+    <string name="meo_settings_general">通用</string>
+    <string name="meo_settings_personalization">个性化与记忆</string>
+    <string name="meo_settings_models">模型与连接</string>
+    <string name="meo_settings_connectors">应用与连接器</string>
+    <string name="meo_settings_devices">设备与 Work</string>
+    <string name="meo_settings_privacy">数据与隐私</string>
+    <string name="meo_settings_usage">用量</string>
+    <string name="meo_settings_account">账号与安全</string>
+    <string name="meo_settings_enter">按 Enter 发送</string>
+    <string name="meo_settings_enter_hint">外接键盘：关闭后使用 Ctrl/⌘ + Enter 发送，Shift + Enter 换行。</string>
+    <string name="meo_settings_theme">外观模式</string>
+    <string name="meo_settings_system">跟随系统</string>
+    <string name="meo_settings_light">浅色</string>
+    <string name="meo_settings_dark">深色</string>
+    <string name="meo_settings_motion">减少动态效果</string>
+    <string name="meo_settings_motion_hint">使用标准动效，关闭聊天滚动动画，同时遵循系统动画偏好。</string>
+    <string name="meo_settings_device_scope">保存到当前设备，偏好尚未跨端同步。</string>
+    <string name="meo_settings_open_account">打开 Meo Account</string>
+    <string name="meo_settings_sign_out">退出登录</string>
+    <string name="meo_settings_connections_hint">服务商连接与密钥由 Meo Account 管理。</string>
+    <string name="meo_settings_privacy_hint">在 Meo Account 中管理账号数据与隐私。</string>
+    <string name="meo_settings_personalization_unavailable">此版本尚未接通经过认证的共享设置与记忆服务，未修改云端数据。</string>
+    <string name="meo_settings_connectors_unavailable">能力目录尚未接通，连接器权限仍由服务端执行。</string>
+    <string name="meo_settings_devices_unavailable">此版本尚未接通设备注册与远程 Work。</string>
+    <string name="meo_settings_usage_unavailable">用量尚未读取，不会用 0 代替缺失数据。</string>
+    <string name="meo_navigation_title">主导航</string>
+    <string name="meo_workspace_unavailable">此工作区尚未接通共享 API，未读取任务与结果。</string>
+    <string name="meo_return_chat">返回聊天</string>
+</resources>

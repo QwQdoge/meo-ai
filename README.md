@@ -27,7 +27,28 @@ For the full build, service, provider and live-acceptance workflow, see **[meo/R
 
 ### Web
 
-The browser experience is maintained separately in **[QwQdoge/meo-ai-web](https://github.com/QwQdoge/meo-ai-web)**. `meo-ai` remains the product source of truth for the service contract, web integration boundary, cloud/device protocol and Meo-specific web policy.
+The React/TypeScript product source is now **[meo/web/client](meo/web/client/README.md)**, beside desktop, Android and Rust Core. The original `QwQdoge/meo-ai-web` repository remains deployment/rollback history until explicit cutover. See the [workspace source map](meo/workspace.json).
+
+## Selected client architecture
+
+| Surface | Technology |
+| --- | --- |
+| Desktop: Linux, Windows, macOS | C++ + Qt/QML + MeoUI |
+| Web | React + TypeScript |
+| Android | Kotlin + Jetpack Compose |
+| Shared presentation contract | [Meo Design & UI Schema](meo/ui-schema/README.md) |
+| Shared business capabilities | Meo AI Core + versioned Meo API |
+
+Desktop application and native adapters remain C++; the shared Core is consumed
+through typed IPC/API boundaries. UI Schema owns product navigation placement,
+page structure, feature entry points and semantic token bindings. MeoUI owns
+reusable controls and actual shared design values. Each toolkit renders natively.
+The visual direction is restrained Pixel/Material: function, information and
+readability first, quiet surfaces and limited decorative emphasis.
+
+Navigation placement and the eight settings groups now consume shared configuration in the React/QML/Compose source. The approved settings visual has been promoted from its isolated candidate. Local Web/native build checks do not establish Android device parity or account-wide settings sync. See the schema contract
+for build artifacts, capability boundaries and the absence of runtime remote UI
+configuration in v1.
 
 ## What is usable now
 

@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "product": "Meo AI",
+  "applications": {
+    "desktop": {
+      "path": ".",
+      "source": "app",
+      "technology": "C++ / Qt QML / MeoUI"
+    },
+    "web": {
+      "path": "web/client",
+      "source": "src",
+      "technology": "React / TypeScript"
+    },
+    "android": {
+      "path": "android",
+      "source": "app/src/main",
+      "technology": "Kotlin / Compose"
+    }
+  },
+  "core": { "path": "core-rs", "technology": "Rust" },
+  "uiSchema": { "path": "ui-schema" },
+  "external": {
+    "api": {
+      "repository": "https://github.com/QwQdoge/meo-api",
+      "origin": "https://api.meoarch.org"
+    },
+    "account": {
+      "repository": "https://github.com/QwQdoge/MeoArch-account",
+      "origin": "https://account.meoarch.org"
+    },
+    "designSystem": {
+      "repository": "https://github.com/QwQdoge/MeoUI",
+      "module": "MeoUI 1.0"
+    }
+  }
+}
