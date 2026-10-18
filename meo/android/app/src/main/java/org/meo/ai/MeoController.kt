@@ -57,6 +57,7 @@ data class MeoUiState(
     val archivedMemories: Boolean = false,
     val personalizationBusy: Boolean = false,
     val personalizationError: String? = null,
+    val memoryCreatedSerial: Int = 0,
 )
 
 class MeoController(private val activity: MainActivity) {
@@ -396,7 +397,12 @@ class MeoController(private val activity: MainActivity) {
             try {
                 val token = ensureFreshSession().accessToken
                 client.addPersonalMemory(token, "fact", content.trim())
-                post { state = state.copy(personalizationBusy = false) }
+                post {
+                    state = state.copy(
+                        personalizationBusy = false,
+                        memoryCreatedSerial = state.memoryCreatedSerial + 1,
+                    )
+                }
                 post { loadPersonalization() }
             } catch (cause: Throwable) { personalizationFailure(cause) }
         }
