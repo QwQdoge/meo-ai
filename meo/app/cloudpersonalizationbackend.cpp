@@ -157,6 +157,9 @@ void CloudPersonalizationBackend::inspect(const QString &requestId)
 
     if (action == QStringLiteral("settings.update")
         || action.startsWith(QStringLiteral("memories."))) {
+        // Clear the editor only when the server actually accepted creation.
+        if (action == QStringLiteral("memories.create"))
+            emit memoryCreated();
         refresh(m_archived);
         return;
     }
