@@ -1,4 +1,11 @@
+import org.gradle.api.DefaultTask
+import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.tasks.InputDirectory
+import org.gradle.api.tasks.OutputDirectory
+import org.gradle.api.tasks.TaskAction
 import org.gradle.api.tasks.Exec
+import org.gradle.process.ExecOperations
+import javax.inject.Inject
 
 plugins {
     id("com.android.application")
@@ -42,18 +49,42 @@ android {
     }
 }
 
-val schemaOutput = layout.buildDirectory.dir("generated/ui-schema")
-val generateUiSchema = tasks.register<Exec>("generateMeoUiSchema") {
-    val schemaRoot = rootProject.layout.projectDirectory.dir("../ui-schema")
-    inputs.dir(schemaRoot)
-    outputs.dir(schemaOutput)
-    commandLine("node", schemaRoot.file("generate.mjs").asFile.absolutePath,
-        "--output", schemaOutput.get().asFile.absolutePath)
+abstract class GenerateMeoUiSchema : DefaultTask() {
+    @get:InputDirectory abstract val schemaRoot: DirectoryProperty
+    @get:OutputDirectory abstract val outputDirectory: DirectoryProperty
+    @get:Inject abstract val execOperations: ExecOperations
+
+    @TaskAction
+    fun generate() {
+        execOperations.exec {
+            commandLine(
+                "node",
+                schemaRoot.file("generate.mjs").get().asFile.absolutePath,
+                "--output",
+                outputDirectory.get().asFile.absolutePath,
+            )
+        }
+    }
 }
-android.sourceSets.getByName("main").java.srcDir(schemaOutput.map { it.dir("kotlin") })
-tasks.named("preBuild").configure { dependsOn(generateUiSchema) }
+
+val generateUiSchema = tasks.register<GenerateMeoUiSchema>("generateMeoUiSchema") {
+    schemaRoot.set(rootProject.layout.projectDirectory.dir("../ui-schema"))
+    outputDirectory.set(layout.buildDirectory.dir("generated/ui-schema"))
+}
+androidComponents {
+    onVariants(selector().all()) { variant ->
+        // AGP 9 requires generated sources to be registered via the Variant API.
+        // The output contains kotlin/MeoUiSchema.kt plus non-source metadata.
+        variant.sources.java?.addGeneratedSourceDirectory(
+            generateUiSchema, GenerateMeoUiSchema::outputDirectory,
+        )
+    }
+}
+
 val rustOutput = layout.buildDirectory.dir("generated/jniLibs")
-android.sourceSets.getByName("main").jniLibs.srcDir(rustOutput)
+// JNI libs are built in preDebugBuild/preReleaseBuild below; pass a concrete
+// filesystem path instead of an unsupported Provider<Directory> source entry.
+android.sourceSets.getByName("main").jniLibs.srcDir(rustOutput.get().asFile)
 
 val rustCrate = rootProject.layout.projectDirectory.dir("../core-rs")
 
