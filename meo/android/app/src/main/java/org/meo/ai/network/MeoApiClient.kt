@@ -92,16 +92,22 @@ class MeoApiClient {
         expectedVersion: Int,
         enabled: Boolean? = null,
         archived: Boolean? = null,
+        content: String? = null,
     ): JSONObject {
         val input = JSONObject().put("expectedVersion", expectedVersion)
         if (enabled != null) input.put("enabled", enabled)
         if (archived != null) input.put("archived", archived)
+        if (content != null) input.put("content", content)
         return requestJson(
             "PATCH",
             "$API_BASE/v1/ai/memories/${encodePath(id)}",
             accessToken,
             input,
         ).getJSONObject("memory")
+    }
+
+    fun deletePersonalMemory(accessToken: String, id: String) {
+        requestJson("DELETE", "$API_BASE/v1/ai/memories/${encodePath(id)}", accessToken)
     }
 
     fun listConversations(accessToken: String): List<Conversation> {
