@@ -67,6 +67,7 @@ set(MEO_APP_QML
     app/qml/MobileNavigationOverlay.qml
     app/qml/AiControlsPopup.qml
     app/qml/SettingsCenter.qml
+    app/qml/CloudPersonalizationPage.qml
     app/qml/MemoryPanel.qml
     app/qml/LongPastePanel.qml
 )
