@@ -209,6 +209,7 @@ fun PersonalizationScreen(controller: MeoController, onBack: () -> Unit) {
                             OutlinedTextField(
                                 value = newMemory,
                                 onValueChange = { if (it.length <= 2000) newMemory = it },
+                                enabled = !state.personalizationBusy,
                                 modifier = Modifier.fillMaxWidth(),
                                 label = { Text("Add a memory") },
                                 minLines = 2,
