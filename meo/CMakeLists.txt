@@ -35,6 +35,8 @@ set(MEO_USAGE_SOURCES
 set(MEO_ACCOUNT_AI_SOURCES
     app/accountaibackend.cpp
     app/accountaibackend.h
+    app/cloudpersonalizationbackend.cpp
+    app/cloudpersonalizationbackend.h
 )
 
 set(MEO_DRAFT_SOURCES
