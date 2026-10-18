@@ -115,10 +115,17 @@ void CloudPersonalizationBackend::inspect(const QString &requestId)
     if (state != QStringLiteral("completed")) {
         if (state == QStringLiteral("failed") || state == QStringLiteral("denied")
             || state == QStringLiteral("expired")) {
-            fail(result.value(QStringLiteral("error"))
-                     .toString().left(256).isEmpty()
-                     ? tr("The cloud request failed.")
-                     : result.value(QStringLiteral("error")).toString().left(256));
+            const QString code = result.value(QStringLiteral("errorCode")).toString();
+            if (code == QStringLiteral("version_conflict")) {
+                fail(tr("These settings changed on another device. Review your draft, then refresh."));
+            } else if (code == QStringLiteral("account_authorization_required")) {
+                fail(tr("Your Meo Account session needs renewed authorization."));
+            } else if (code == QStringLiteral("personalization_unavailable")) {
+                fail(tr("Cloud personalization is not available on this server yet."));
+            } else {
+                const QString detail = result.value(QStringLiteral("error")).toString().left(256);
+                fail(detail.isEmpty() ? tr("The cloud request failed.") : detail);
+            }
         }
         return;
     }
