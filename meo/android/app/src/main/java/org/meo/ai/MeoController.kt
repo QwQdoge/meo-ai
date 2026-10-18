@@ -130,7 +130,7 @@ class MeoController(private val activity: MainActivity) {
     }
 
     fun openConversation(id: String) {
-        if (state.streaming || state.loading) return
+        if (state.streaming || state.loading || state.pendingSend != null) return
         state = state.copy(loading = true, error = null)
         executor.execute {
             try {
@@ -150,7 +150,7 @@ class MeoController(private val activity: MainActivity) {
     }
 
     fun selectCredential(id: String) {
-        if (state.streaming) return
+        if (state.streaming || state.loading || state.pendingSend != null) return
         val credential = state.credentials.firstOrNull { it.id == id } ?: return
         state = state.copy(
             selectedCredentialId = id,
@@ -182,12 +182,13 @@ class MeoController(private val activity: MainActivity) {
     }
 
     fun selectModel(id: String) {
-        if (!state.streaming) state = state.copy(selectedModelId = id, error = null)
+        if (!state.streaming && !state.loading && state.pendingSend == null)
+            state = state.copy(selectedModelId = id, error = null)
     }
 
     fun beginSend(text: String) {
         val clean = text.trim()
-        if (clean.isBlank() || state.streaming || state.pendingSend != null) return
+        if (clean.isBlank() || state.loading || state.streaming || state.pendingSend != null) return
         val credentialId = state.selectedCredentialId
         val model = state.selectedModelId
         if (credentialId.isNullOrBlank()) {
