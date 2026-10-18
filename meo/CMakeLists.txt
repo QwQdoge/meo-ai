@@ -35,6 +35,8 @@ set(MEO_USAGE_SOURCES
 set(MEO_ACCOUNT_AI_SOURCES
     app/accountaibackend.cpp
     app/accountaibackend.h
+    app/cloudpersonalizationbackend.cpp
+    app/cloudpersonalizationbackend.h
 )
 
 set(MEO_DRAFT_SOURCES
@@ -67,6 +69,7 @@ set(MEO_APP_QML
     "${MEO_SCHEMA_OUTPUT}/qml/MeoUiSchema.js"
     app/qml/App.qml
     app/qml/Main.qml
+    app/qml/GeneratedNavigation.js
     app/qml/AiLogo.qml
     app/qml/ResponseDetails.qml
     app/qml/ResponseContent.qml
@@ -83,6 +86,7 @@ set(MEO_APP_QML
     app/qml/MobileNavigationOverlay.qml
     app/qml/AiControlsPopup.qml
     app/qml/SettingsCenter.qml
+    app/qml/CloudPersonalizationPage.qml
     app/qml/MemoryPanel.qml
     app/qml/LongPastePanel.qml
 )

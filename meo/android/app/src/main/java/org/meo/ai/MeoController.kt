@@ -24,6 +24,20 @@ import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.Executors
 
+data class CloudSettings(
+    val version: Int,
+    val personalInstructions: String,
+    val memoryEnabled: Boolean,
+)
+
+data class CloudMemory(
+    val id: String,
+    val version: Int,
+    val kind: String,
+    val content: String,
+    val enabled: Boolean,
+)
+
 data class MeoUiState(
     val signedIn: Boolean = false,
     val loading: Boolean = false,
@@ -38,6 +52,12 @@ data class MeoUiState(
     val selectedModelId: String? = null,
     val pendingSend: PendingSend? = null,
     val error: String? = null,
+    val cloudSettings: CloudSettings? = null,
+    val cloudMemories: List<CloudMemory> = emptyList(),
+    val archivedMemories: Boolean = false,
+    val personalizationBusy: Boolean = false,
+    val personalizationError: String? = null,
+    val memoryCreatedSerial: Int = 0,
 )
 
 class MeoController(private val activity: MainActivity) {
@@ -121,6 +141,7 @@ class MeoController(private val activity: MainActivity) {
     }
 
     fun newChat() {
+        if (state.loading || state.streaming || state.pendingSend != null) return
         state = state.copy(
             currentConversationId = null,
             messages = emptyList(),
@@ -130,7 +151,7 @@ class MeoController(private val activity: MainActivity) {
     }
 
     fun openConversation(id: String) {
-        if (state.streaming || state.loading) return
+        if (state.streaming || state.loading || state.pendingSend != null) return
         state = state.copy(loading = true, error = null)
         executor.execute {
             try {
@@ -150,7 +171,7 @@ class MeoController(private val activity: MainActivity) {
     }
 
     fun selectCredential(id: String) {
-        if (state.streaming) return
+        if (state.streaming || state.loading || state.pendingSend != null) return
         val credential = state.credentials.firstOrNull { it.id == id } ?: return
         state = state.copy(
             selectedCredentialId = id,
@@ -182,12 +203,13 @@ class MeoController(private val activity: MainActivity) {
     }
 
     fun selectModel(id: String) {
-        if (!state.streaming) state = state.copy(selectedModelId = id, error = null)
+        if (!state.streaming && !state.loading && state.pendingSend == null)
+            state = state.copy(selectedModelId = id, error = null)
     }
 
     fun beginSend(text: String) {
         val clean = text.trim()
-        if (clean.isBlank() || state.streaming || state.pendingSend != null) return
+        if (clean.isBlank() || state.loading || state.streaming || state.pendingSend != null) return
         val credentialId = state.selectedCredentialId
         val model = state.selectedModelId
         if (credentialId.isNullOrBlank()) {
@@ -198,28 +220,41 @@ class MeoController(private val activity: MainActivity) {
             state = state.copy(error = "Choose a model first.")
             return
         }
-        val prompt = conversationPrompt(state.messages, clean)
+        // The shared Chat API owns conversation context; never stitch history here.
         val categories = if (state.messages.isEmpty()) {
             listOf("chat_text")
         } else {
             listOf("chat_text", "conversation_context")
         }
         state = state.copy(loading = true, error = null)
+        val initialConversationId = state.currentConversationId
         executor.execute {
             try {
                 val session = ensureFreshSession()
+                val conversationId = initialConversationId ?: run {
+                    val conversation = client.createConversation(session.accessToken, titleFor(clean))
+                    post {
+                        state = state.copy(
+                            currentConversationId = conversation.id,
+                            conversations = listOf(conversation) +
+                                state.conversations.filterNot { it.id == conversation.id },
+                        )
+                    }
+                    conversation.id
+                }
                 val preview = client.prepareInference(
                     accessToken = session.accessToken,
                     clientId = BuildConfig.MEO_OAUTH_CLIENT_ID,
                     credentialId = credentialId,
                     model = model,
-                    userPrompt = prompt,
+                    userPrompt = clean,
                     dataCategories = categories,
+                    conversationId = conversationId,
                 )
                 post {
                     state = state.copy(
                         loading = false,
-                        pendingSend = PendingSend(clean, prompt, categories, preview),
+                        pendingSend = PendingSend(clean, clean, categories, preview),
                     )
                 }
             } catch (cause: Throwable) {
@@ -241,22 +276,12 @@ class MeoController(private val activity: MainActivity) {
         state = state.copy(pendingSend = null, streaming = true, loading = false, error = null)
 
         executor.execute {
-            var conversationId = existingConversationId
             val output = StringBuilder()
             try {
                 val session = ensureFreshSession()
-                if (conversationId == null) {
-                    val conversation = client.createConversation(session.accessToken, titleFor(pending.text))
-                    conversationId = conversation.id
-                    post {
-                        state = state.copy(
-                            currentConversationId = conversation.id,
-                            conversations = listOf(conversation) + state.conversations.filterNot { it.id == conversation.id },
-                        )
-                    }
-                }
-                val id = requireNotNull(conversationId)
-                client.appendMessage(session.accessToken, id, "user", pending.text)
+                val id = requireNotNull(existingConversationId) { "Create a conversation before consent." }
+                // Persist only after streaming: inserting the user message here
+                // changes server context and invalidates the approved payload hash.
                 post {
                     state = state.copy(
                         messages = state.messages + UiMessage.user(pending.text) +
@@ -269,8 +294,9 @@ class MeoController(private val activity: MainActivity) {
                     clientId = BuildConfig.MEO_OAUTH_CLIENT_ID,
                     credentialId = credentialId,
                     model = model,
-                    userPrompt = pending.userPrompt,
+                    userPrompt = pending.text,
                     dataCategories = pending.dataCategories,
+                    conversationId = id,
                     consent = pending.consent,
                 ) { delta ->
                     output.append(delta)
@@ -290,6 +316,7 @@ class MeoController(private val activity: MainActivity) {
 
                 val finalText = output.toString().trim()
                 if (finalText.isBlank()) throw ApiException(502, "empty_response", "AI returned an empty response")
+                client.appendMessage(session.accessToken, id, "user", pending.text)
                 client.appendMessage(session.accessToken, id, "assistant", finalText)
                 val conversations = client.listConversations(session.accessToken)
                 post {
@@ -304,6 +331,120 @@ class MeoController(private val activity: MainActivity) {
                 }
             }
         }
+    }
+
+    /** Cloud settings are account state; Compose owns only their native presentation. */
+    fun loadPersonalization(archived: Boolean = false) {
+        if (state.personalizationBusy || state.streaming || state.pendingSend != null) return
+        state = state.copy(personalizationBusy = true, personalizationError = null)
+        executor.execute {
+            try {
+                val token = ensureFreshSession().accessToken
+                val row = client.getAiSettings(token)
+                val items = client.listPersonalMemories(token, archived)
+                val settings = CloudSettings(
+                    version = row.optInt("version", 0),
+                    personalInstructions = row.optString("personalInstructions"),
+                    memoryEnabled = row.optBoolean("memoryEnabled", true),
+                )
+                val memories = buildList {
+                    for (index in 0 until items.length()) {
+                        val item = items.optJSONObject(index) ?: continue
+                        add(CloudMemory(
+                            id = item.optString("id"),
+                            version = item.optInt("version", 1),
+                            kind = item.optString("kind", "fact"),
+                            content = item.optString("content"),
+                            enabled = item.optBoolean("enabled", true),
+                        ))
+                    }
+                }
+                post {
+                    state = state.copy(
+                        cloudSettings = settings, cloudMemories = memories,
+                        archivedMemories = archived, personalizationBusy = false,
+                    )
+                }
+            } catch (cause: Throwable) { personalizationFailure(cause) }
+        }
+    }
+
+    fun savePersonalization(instructions: String, memoryEnabled: Boolean) {
+        val current = state.cloudSettings ?: return
+        if (state.personalizationBusy) return
+        state = state.copy(personalizationBusy = true, personalizationError = null)
+        executor.execute {
+            try {
+                val token = ensureFreshSession().accessToken
+                val row = client.saveAiSettings(token, current.version, instructions, memoryEnabled)
+                post {
+                    state = state.copy(
+                        cloudSettings = CloudSettings(
+                            row.optInt("version", current.version + 1),
+                            row.optString("personalInstructions"),
+                            row.optBoolean("memoryEnabled", true),
+                        ),
+                        personalizationBusy = false,
+                    )
+                }
+            } catch (cause: Throwable) { personalizationFailure(cause) }
+        }
+    }
+
+    fun addPersonalMemory(content: String) {
+        if (content.isBlank() || state.personalizationBusy) return
+        state = state.copy(personalizationBusy = true, personalizationError = null)
+        executor.execute {
+            try {
+                val token = ensureFreshSession().accessToken
+                client.addPersonalMemory(token, "fact", content.trim())
+                post {
+                    state = state.copy(
+                        personalizationBusy = false,
+                        memoryCreatedSerial = state.memoryCreatedSerial + 1,
+                    )
+                }
+                post { loadPersonalization() }
+            } catch (cause: Throwable) { personalizationFailure(cause) }
+        }
+    }
+
+    fun changePersonalMemory(
+        item: CloudMemory, content: String? = null,
+        enabled: Boolean? = null, archived: Boolean? = null,
+    ) {
+        if (state.personalizationBusy) return
+        state = state.copy(personalizationBusy = true, personalizationError = null)
+        val viewArchived = state.archivedMemories
+        executor.execute {
+            try {
+                val token = ensureFreshSession().accessToken
+                client.updatePersonalMemory(token, item.id, item.version, enabled, archived, content)
+                post { state = state.copy(personalizationBusy = false) }
+                post { loadPersonalization(viewArchived) }
+            } catch (cause: Throwable) { personalizationFailure(cause) }
+        }
+    }
+
+    fun deletePersonalMemory(item: CloudMemory) {
+        if (state.personalizationBusy) return
+        state = state.copy(personalizationBusy = true, personalizationError = null)
+        val viewArchived = state.archivedMemories
+        executor.execute {
+            try {
+                val token = ensureFreshSession().accessToken
+                client.deletePersonalMemory(token, item.id)
+                post { state = state.copy(personalizationBusy = false) }
+                post { loadPersonalization(viewArchived) }
+            } catch (cause: Throwable) { personalizationFailure(cause) }
+        }
+    }
+
+    private fun personalizationFailure(cause: Throwable) {
+        val description = if (cause is ApiException && cause.status == 409)
+            "Changes were made elsewhere. Reload settings before trying again."
+        else readableError(cause)
+        post { state = state.copy(personalizationBusy = false, personalizationError = description) }
     }
 
     fun clearError() {

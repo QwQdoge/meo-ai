@@ -28,6 +28,7 @@ class AgentClient : public QObject {
     Q_PROPERTY(QVariantMap agentState READ agentState NOTIFY changed)
     Q_PROPERTY(QVariantList models READ models NOTIFY changed)
     Q_PROPERTY(QVariantList modelRoles READ modelRoles NOTIFY changed)
+    Q_PROPERTY(QVariantList capabilities READ capabilities NOTIFY changed)
     Q_PROPERTY(QVariantList skills READ skills NOTIFY changed)
     Q_PROPERTY(QVariantList mcpServers READ mcpServers NOTIFY changed)
     Q_PROPERTY(QVariantList controls READ controls NOTIFY changed)
@@ -69,6 +70,69 @@ public:
             roles.append(role);
         }
         return roles;
+    }
+    QVariantList capabilities() const {
+        // Migration bridge: old AgentService still publishes Skills and MCP as
+        // separate lists. Present them to QML through the same descriptor shape
+        // as the Rust capability catalog so the UI has one product model.
+        QVariantList values;
+        values.reserve(m_skills.size() + m_mcpServers.size());
+        for (const QVariant &value : m_skills) {
+            const QVariantMap source = value.toMap();
+            const QString sourceId = source.value(QStringLiteral("skill_id")).toString();
+            if (sourceId.isEmpty()) continue;
+            QVariantMap item;
+            item.insert(QStringLiteral("capability_id"),
+                        sourceId.startsWith(QStringLiteral("skill."))
+                            ? sourceId
+                            : QStringLiteral("skill.") + sourceId);
+            item.insert(QStringLiteral("source_id"), sourceId);
+            item.insert(QStringLiteral("kind"), QStringLiteral("skill"));
+            item.insert(QStringLiteral("label"), source.value(QStringLiteral("label"), sourceId));
+            item.insert(QStringLiteral("description"), QString());
+            item.insert(QStringLiteral("origin"),
+                        sourceId == QStringLiteral("system-diagnostics")
+                            ? QStringLiteral("builtin")
+                            : QStringLiteral("plugin"));
+            item.insert(QStringLiteral("provider"), QStringLiteral("Meo AI"));
+            item.insert(QStringLiteral("icon"), QStringLiteral("skills"));
+            item.insert(QStringLiteral("enabled"), source.value(QStringLiteral("enabled"), true));
+            item.insert(QStringLiteral("configurable"), true);
+            item.insert(QStringLiteral("connection_state"), QStringLiteral("not_required"));
+            item.insert(QStringLiteral("permissions"), QVariantList{});
+            item.insert(QStringLiteral("tools"), QVariantList{});
+            item.insert(QStringLiteral("requires"), QVariantList{});
+            item.insert(QStringLiteral("tags"), QVariantList{QStringLiteral("skill")});
+            values.append(item);
+        }
+        for (const QVariant &value : m_mcpServers) {
+            const QVariantMap source = value.toMap();
+            const QString sourceId = source.value(QStringLiteral("server_id")).toString();
+            if (sourceId.isEmpty()) continue;
+            const QString compactId = sourceId.startsWith(QStringLiteral("mcp:"))
+                ? sourceId.mid(4)
+                : sourceId;
+            const bool enabled = source.value(QStringLiteral("enabled"), false).toBool();
+            QVariantMap item;
+            item.insert(QStringLiteral("capability_id"), QStringLiteral("connector.mcp.") + compactId);
+            item.insert(QStringLiteral("source_id"), sourceId);
+            item.insert(QStringLiteral("kind"), QStringLiteral("connector"));
+            item.insert(QStringLiteral("label"), source.value(QStringLiteral("label"), sourceId));
+            item.insert(QStringLiteral("description"), QString());
+            item.insert(QStringLiteral("origin"), QStringLiteral("mcp"));
+            item.insert(QStringLiteral("provider"), QStringLiteral("MCP"));
+            item.insert(QStringLiteral("icon"), QStringLiteral("extension"));
+            item.insert(QStringLiteral("enabled"), enabled);
+            item.insert(QStringLiteral("configurable"), false);
+            item.insert(QStringLiteral("connection_state"),
+                        enabled ? QStringLiteral("connected") : QStringLiteral("disconnected"));
+            item.insert(QStringLiteral("permissions"), QVariantList{});
+            item.insert(QStringLiteral("tools"), QVariantList{});
+            item.insert(QStringLiteral("requires"), QVariantList{});
+            item.insert(QStringLiteral("tags"), QVariantList{QStringLiteral("mcp"), QStringLiteral("connector")});
+            values.append(item);
+        }
+        return values;
     }
     QVariantList skills() const { return m_skills; }
     QVariantList mcpServers() const { return m_mcpServers; }

@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable, Iterable, Protocol, runtime_checkable
 
+from .context_engine import PreparedContext
+
 
 @dataclass(frozen=True)
 class ModelInfo:
@@ -70,6 +72,38 @@ class ResourceInputBackend(Protocol):
         conversation_id: str,
         text: str,
         resources: tuple[InputResource, ...],
+        callbacks: BackendCallbacks,
+    ) -> object: ...
+
+
+@runtime_checkable
+class ContextInputBackend(Protocol):
+    """Optional extension for backends where Meo owns model-facing history.
+
+    Legacy backends that reconstruct history internally must not implement this
+    merely to report token savings. ``PreparedContext`` is a model-facing copy;
+    durable transcript persistence remains owned by the backend/store.
+    """
+
+    def send_message_with_context(
+        self,
+        conversation_id: str,
+        text: str,
+        context: PreparedContext,
+        callbacks: BackendCallbacks,
+    ) -> object: ...
+
+
+@runtime_checkable
+class ResourceAndContextInputBackend(Protocol):
+    """Optional extension combining explicit context and request resources."""
+
+    def send_message_with_resources_and_context(
+        self,
+        conversation_id: str,
+        text: str,
+        resources: tuple[InputResource, ...],
+        context: PreparedContext,
         callbacks: BackendCallbacks,
     ) -> object: ...
 

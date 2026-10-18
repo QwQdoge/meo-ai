@@ -54,6 +54,62 @@ class MeoApiClient {
         return data.optString("sub") to data.optString("email")
     }
 
+    // Shared cloud personalization API. This is the transport adapter only;
+    // Compose owns the platform-specific UI and local preference storage.
+    fun getAiSettings(accessToken: String): JSONObject =
+        requestJson("GET", "$API_BASE/v1/ai/settings", accessToken).getJSONObject("settings")
+
+    fun saveAiSettings(
+        accessToken: String,
+        expectedVersion: Int,
+        personalInstructions: String,
+        memoryEnabled: Boolean,
+    ): JSONObject {
+        require(expectedVersion >= 0)
+        val data = JSONObject()
+            .put("expectedVersion", expectedVersion)
+            .put("personalInstructions", personalInstructions)
+            .put("memoryEnabled", memoryEnabled)
+        return requestJson("PATCH", "$API_BASE/v1/ai/settings", accessToken, data)
+            .getJSONObject("settings")
+    }
+
+    fun listPersonalMemories(accessToken: String, archived: Boolean = false): JSONArray {
+        val suffix = if (archived) "?archived=true" else ""
+        return requestJson("GET", "$API_BASE/v1/ai/memories$suffix", accessToken)
+            .optJSONArray("memories") ?: JSONArray()
+    }
+
+    fun addPersonalMemory(accessToken: String, kind: String, content: String): JSONObject {
+        val input = JSONObject().put("kind", kind).put("content", content)
+        return requestJson("POST", "$API_BASE/v1/ai/memories", accessToken, input)
+            .getJSONObject("memory")
+    }
+
+    fun updatePersonalMemory(
+        accessToken: String,
+        id: String,
+        expectedVersion: Int,
+        enabled: Boolean? = null,
+        archived: Boolean? = null,
+        content: String? = null,
+    ): JSONObject {
+        val input = JSONObject().put("expectedVersion", expectedVersion)
+        if (enabled != null) input.put("enabled", enabled)
+        if (archived != null) input.put("archived", archived)
+        if (content != null) input.put("content", content)
+        return requestJson(
+            "PATCH",
+            "$API_BASE/v1/ai/memories/${encodePath(id)}",
+            accessToken,
+            input,
+        ).getJSONObject("memory")
+    }
+
+    fun deletePersonalMemory(accessToken: String, id: String) {
+        requestJson("DELETE", "$API_BASE/v1/ai/memories/${encodePath(id)}", accessToken)
+    }
+
     fun listConversations(accessToken: String): List<Conversation> {
         val data = requestJson("GET", "$API_BASE/v1/conversations", accessToken)
         val rows = data.optJSONArray("conversations") ?: JSONArray()
@@ -172,6 +228,7 @@ class MeoApiClient {
         }
     }
 
+    /** Chat context and consent are assembled by Meo API, never by Android. */
     fun prepareInference(
         accessToken: String,
         clientId: String,
@@ -179,18 +236,14 @@ class MeoApiClient {
         model: String,
         userPrompt: String,
         dataCategories: List<String>,
+        conversationId: String? = null,
     ): ConsentPreview {
-        val data = broker(
-            accessToken,
-            inferenceBody(
-                action = "prepare_inference",
-                clientId = clientId,
-                credentialId = credentialId,
-                model = model,
-                userPrompt = userPrompt,
-                dataCategories = dataCategories,
-            ),
-        )
+        val payload = JSONObject()
+            .put("credentialId", credentialId)
+            .put("model", model)
+            .put("prompt", userPrompt)
+        if (conversationId != null) payload.put("conversationId", conversationId)
+        val data = requestJson("POST", "$API_BASE/v1/chat/prepare", accessToken, payload)
         val consent = data.getJSONObject("consent")
         return ConsentPreview(
             requestId = consent.getString("requestId"),
@@ -211,26 +264,19 @@ class MeoApiClient {
         userPrompt: String,
         dataCategories: List<String>,
         consent: ConsentPreview,
+        conversationId: String? = null,
         onDelta: (String) -> Unit,
     ) {
-        val body = inferenceBody(
-            action = "stream_invoke",
-            clientId = clientId,
-            credentialId = credentialId,
-            model = model,
-            userPrompt = userPrompt,
-            dataCategories = dataCategories,
-        ).put(
-            "consent",
-            JSONObject()
-                .put("approved", true)
-                .put("confirmedAt", Instant.now().toString())
+        val body = JSONObject()
+            .put("credentialId", credentialId)
+            .put("model", model)
+            .put("prompt", userPrompt)
+            .put("consent", JSONObject()
                 .put("requestId", consent.requestId)
                 .put("payloadSha256", consent.payloadSha256)
-                .put("confirmationVersion", 1),
-        )
-
-        val connection = openConnection("$API_BASE/v1/ai/provider-broker", "POST", accessToken)
+                .put("confirmationVersion", 1))
+        if (conversationId != null) body.put("conversationId", conversationId)
+        val connection = openConnection("$API_BASE/v1/chat/stream", "POST", accessToken)
         connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
         connection.setRequestProperty("Accept", "text/event-stream")
         connection.doOutput = true

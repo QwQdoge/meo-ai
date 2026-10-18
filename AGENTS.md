@@ -92,6 +92,40 @@ Unified product and navigation rules:
   do not force every platform to share one renderer. Web and native clients may
   use different rendering stacks while remaining the same product.
 
+Context and token-budget invariants:
+- `meo/service/context_engine.py` owns provider-agnostic context selection. Keep
+  provider SDKs, storage and UI concerns outside the strategy interface.
+- raw conversation messages and raw tool results are authoritative. Context
+  trimming/compaction is model-facing and non-destructive; never delete or
+  overwrite raw history merely to save prompt tokens.
+- every compacted tool result must retain a stable raw source reference so a
+  later agent step can retrieve the original result when detail is needed.
+- keep recent turns verbatim when budget permits. Rank older evidence by current
+  task relevance, recency and explicit importance, and expand context when
+  selection confidence is low instead of silently pretending a lossy summary is
+  authoritative.
+- persistent Memory and transcript history are different data classes. Structured
+  task memory may include decisions, constraints, files, blockers and TODOs, but
+  it must retain source references and obey the same user memory controls.
+- static system instructions, tool schemas and capability descriptions should be
+  serialized deterministically and kept separate from dynamic task context so
+  provider prompt caches can hit. Do not inject timestamps/random IDs into the
+  static prefix unless semantically required.
+- terse/"caveman" output is permitted only for internal planner/executor/subagent
+  handoffs. Never force terse mode onto the final response shown to the user.
+- context diagnostics exposed to UI/telemetry are aggregate-only: token counts,
+  saving ratio, selected item counts, strategy, confidence and fallback status.
+  Never expose hidden system prompts, private memory contents or raw tool output
+  through diagnostics.
+- TOMC, LCC or future compression algorithms must implement the context strategy
+  abstraction instead of being coupled directly to providers/frontends. Do not
+  vendor or copy an external algorithm without first checking its license.
+- legacy backends that build history internally must not claim Meo context/token
+  savings unless Meo actually controls the model-facing history for that request.
+- tests for context work must cover recent-turn preservation, relevant-old-item
+  selection, tool-output compaction/raw refs, low-confidence fallback, aggregate
+  diagnostic privacy and the final-user-response terse-mode guard.
+
 Do not move/delete the Newelle-derived root tree as incidental cleanup. The split
 gates are defined in `docs/ownership.md`; until those gates are met, reduce coupling
 through adapters rather than creating a second engine copy or breaking the build.

@@ -12,6 +12,7 @@ pub mod builtin_capabilities;
 pub mod capabilities;
 pub mod context;
 pub mod memory;
+pub mod personalization;
 pub mod protocol;
 pub mod settings;
 pub mod stream;
@@ -44,6 +45,11 @@ pub use context::{
     estimate_tokens, stable_static_prompt, ContextBudget, ContextEngine, ContextStats,
     PreparedContext, TaskMemoryItem, DEFAULT_CONTEXT_OUTPUT_RESERVE_TOKENS,
     DEFAULT_CONTEXT_TOTAL_TOKENS, DEFAULT_RECENT_WINDOW,
+};
+pub use personalization::{
+    CloudSettings, CloudSettingsPatch, CloudSettingsResponse, PersonalMemoriesResponse,
+    PersonalMemory, PersonalMemoryCreate, PersonalMemoryKind, PersonalMemoryPatch,
+    PersonalMemoryResponse,
 };
 pub use protocol::{
     Conversation, CoreEvent, InputResource, Message, RequestSnapshot, RequestState, Role,

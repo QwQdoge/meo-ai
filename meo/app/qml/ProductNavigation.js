@@ -8,6 +8,6 @@ function destinations(placement) {
     return Schema.configuration.navigation.navigation.filter(function(item) {
         return item.placement === placement
     }).sort(function(a,b) { return a.order - b.order || a.id.localeCompare(b.id) }).map(function(item) {
-        return {label: qsTranslate("MeoNavigation", item.label), icon: icons[item.icon] || "apps", action: item.id}
+        return {id: item.id, label: qsTranslate("MeoNavigation", item.label), icon: icons[item.icon] || "apps", action: item.id}
     })
 }

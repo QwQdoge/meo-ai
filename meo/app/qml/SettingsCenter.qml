@@ -14,7 +14,7 @@ Popup {
     property int currentSection: 0
     property var clientPreferences: null
     readonly property var sections: ProductSchema.configuration.settings.sections
-    readonly property var sectionPages: ({general: [0, 3, 7], personalization: [5], models: [1, 2], connectors: [4], devices: [8], privacy: [9], usage: [6], account: [6]})
+    readonly property var sectionPages: ({general: [0, 3, 7], personalization: [10, 5], models: [1, 2], connectors: [4], devices: [8], privacy: [9], usage: [6], account: [6]})
     function selectSection(index) {
         currentSection = index
         currentPage = sectionPages[sections[index].id][0]
@@ -31,7 +31,10 @@ Popup {
         { title: qsTr("Tools & MCP"), icon: "extension" },
         { title: qsTr("Memory"), icon: "neurology" },
         { title: qsTr("Account & activity"), icon: "account_circle" },
-        { title: qsTr("Diagnostics"), icon: "monitor_heart" }
+        { title: qsTr("Diagnostics"), icon: "monitor_heart" },
+        { title: qsTr("Remote devices"), icon: "devices" },
+        { title: qsTr("Data & privacy"), icon: "shield" },
+        { title: qsTr("Cloud sync"), icon: "cloud_sync" }
     ]
 
     readonly property var selectedConnection: {
@@ -102,6 +105,10 @@ Popup {
     onOpened: {
         if (agent.serviceMode) agent.refreshServiceMetadata()
         if (root.accountBackend) root.accountBackend.refresh()
+        if (root.currentPage === 8) cloudPersonalization.refresh()
+    }
+    onCurrentPageChanged: {
+        if (root.currentPage === 8 && root.opened) cloudPersonalization.refresh()
     }
 
     background: Rectangle {
@@ -804,8 +811,8 @@ Popup {
                                 MeoIcon { icon: "neurology"; size: 30; color: MeoTheme.primary }
                                 ColumnLayout {
                                     Layout.fillWidth: true; spacing: 2 * root.uiScale
-                                    MeoText { text: agent.memoryState.supported === true ? qsTr("Managed memory") : qsTr("Memory is unavailable in this runtime"); typeRole: "title"; typeSize: "small"; color: MeoTheme.contentOnSurface }
-                                    MeoText { Layout.fillWidth: true; text: agent.memoryState.supported === true ? qsTr("%1 saved · automatic recall %2").arg(agent.memories.length).arg(agent.memoryState.enabled === true ? qsTr("on") : qsTr("off")) : qsTr("Switch to AgentService mode to use the managed memory store."); typeRole: "body"; typeSize: "small"; color: MeoTheme.contentOnSurfaceVariant; wrapMode: Text.Wrap }
+                                    MeoText { text: agent.memoryState.supported === true ? qsTr("On-device memory") : qsTr("Memory is unavailable in this runtime"); typeRole: "title"; typeSize: "small"; color: MeoTheme.contentOnSurface }
+                                    MeoText { Layout.fillWidth: true; text: agent.memoryState.supported === true ? qsTr("%1 stored on this device · automatic recall %2").arg(agent.memories.length).arg(agent.memoryState.enabled === true ? qsTr("on") : qsTr("off")) : qsTr("Switch to AgentService mode to use the managed memory store."); typeRole: "body"; typeSize: "small"; color: MeoTheme.contentOnSurfaceVariant; wrapMode: Text.Wrap }
                                 }
                                 Switch {
                                     visible: agent.memoryState.supported === true
@@ -956,6 +963,12 @@ Popup {
                     MeoText { Layout.fillWidth: true; text: qsTr("Manage account data and privacy in Meo Account. Local conversation export and deletion remain available from Chats."); typeRole: "body"; typeSize: "medium"; color: MeoTheme.contentOnSurfaceVariant; wrapMode: Text.Wrap }
                     MeoButton { text: qsTr("Open Meo Account"); type: "tonal"; onClicked: Qt.openUrlExternally("https://account.meoarch.org") }
                     Item { Layout.fillHeight: true }
+                }
+
+                // Cloud account-scoped instructions and memory. This is
+                // deliberately separate from the device-local AgentService store.
+                CloudPersonalizationPage {
+                    objectName: "meoAiCloudPersonalizationPage"
                 }
             }
         }

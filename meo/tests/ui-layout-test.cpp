@@ -44,6 +44,16 @@ private slots:
         engine.rootContext()->setContextProperty(
             "usage", QVariantMap{{QStringLiteral("status"), QStringLiteral("Fixture activity")},
                                  {QStringLiteral("busy"), false}});
+        // UI fixture intentionally has no real Account session or OAuth token.
+        // The MeoUI cloud page must render a safe signed-out state.
+        engine.rootContext()->setContextProperty(
+            "cloudPersonalization",
+            QVariantMap{{QStringLiteral("signedIn"), false},
+                        {QStringLiteral("busy"), false},
+                        {QStringLiteral("status"), QStringLiteral("Sign in to Meo Account")},
+                        {QStringLiteral("settings"), QVariantMap{}},
+                        {QStringLiteral("memories"), QVariantList{}},
+                        {QStringLiteral("archived"), false}});
         engine.rootContext()->setContextProperty("uiPreview", true);
         engine.load(QUrl("qrc:/meo/app/qml/App.qml"));
         QVERIFY(!engine.rootObjects().isEmpty());

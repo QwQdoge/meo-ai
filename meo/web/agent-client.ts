@@ -10,6 +10,45 @@ export type MeoAgentEvent = {
   data: Record<string, unknown>;
 };
 
+export type MeoCapabilityKind = "skill" | "connector";
+export type MeoCapabilityOrigin = "builtin" | "official" | "mcp" | "plugin" | "system";
+export type MeoCapabilityConnectionState = "not_required" | "disconnected" | "connected" | "error";
+export type MeoCapabilityEffect = "read" | "write" | "execute";
+
+export type MeoCapabilityPermission = {
+  permission_id: string;
+  label: string;
+  effect: MeoCapabilityEffect;
+  sensitive?: boolean;
+};
+
+export type MeoCapabilityTool = {
+  tool_id: string;
+  label: string;
+  description?: string;
+  effect: MeoCapabilityEffect;
+  confirmation_required?: boolean;
+  input_schema?: Record<string, unknown>;
+};
+
+export type MeoCapability = {
+  capability_id: string;
+  kind: MeoCapabilityKind;
+  label: string;
+  description?: string;
+  origin: MeoCapabilityOrigin;
+  provider?: string;
+  icon?: string;
+  enabled: boolean;
+  configurable: boolean;
+  connection_state: MeoCapabilityConnectionState;
+  permissions?: MeoCapabilityPermission[];
+  tools?: MeoCapabilityTool[];
+  requires?: string[];
+  context_hint?: string;
+  tags?: string[];
+};
+
 export type MeoAgentClientConfig = {
   cloudBaseUrl: string;
   eventsUrl: string;
@@ -25,6 +64,32 @@ export class MeoAgentClient {
     this.cloudBaseUrl = httpsUrl(config.cloudBaseUrl, "cloudBaseUrl");
     this.eventsUrl = httpsUrl(config.eventsUrl, "eventsUrl");
     this.getAccessToken = config.getAccessToken;
+  }
+
+  async listCapabilities(): Promise<MeoCapability[]> {
+    const response = await this.authorizedFetch(`${this.cloudBaseUrl}/v1/capabilities`, {
+      method: "GET",
+      headers: { Accept: "application/json" },
+    });
+    const value = await jsonObject(response);
+    const capabilities = value.capabilities;
+    if (!Array.isArray(capabilities)) throw new Error("Meo Cloud did not return capabilities");
+    return capabilities.map(parseCapability);
+  }
+
+  async setCapabilityEnabled(capabilityId: string, enabled: boolean): Promise<MeoCapability> {
+    const id = capabilityId.trim();
+    if (!validCapabilityId(id)) throw new Error("Invalid capability identifier");
+    const response = await this.authorizedFetch(
+      `${this.cloudBaseUrl}/v1/capabilities/${encodeURIComponent(id)}/state`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled }),
+      },
+    );
+    const value = await jsonObject(response);
+    return parseCapability(value.capability);
   }
 
   async createRun(request: MeoAgentRequest): Promise<{ runId: string }> {
@@ -127,6 +192,33 @@ export class MeoAgentClient {
     }
     throw new Error(message);
   }
+}
+
+function parseCapability(value: unknown): MeoCapability {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Meo capability payload is invalid");
+  }
+  const item = value as Record<string, unknown>;
+  const id = typeof item.capability_id === "string" ? item.capability_id : "";
+  const kind = item.kind;
+  const origin = item.origin;
+  const connection = item.connection_state;
+  if (
+    !validCapabilityId(id) ||
+    (kind !== "skill" && kind !== "connector") ||
+    !["builtin", "official", "mcp", "plugin", "system"].includes(String(origin)) ||
+    !["not_required", "disconnected", "connected", "error"].includes(String(connection)) ||
+    typeof item.label !== "string" ||
+    typeof item.enabled !== "boolean" ||
+    typeof item.configurable !== "boolean"
+  ) {
+    throw new Error("Meo capability payload is invalid");
+  }
+  return item as unknown as MeoCapability;
+}
+
+function validCapabilityId(value: string): boolean {
+  return /^[A-Za-z0-9._:-]{1,128}$/.test(value);
 }
 
 function parseSseBlock(block: string): MeoAgentEvent | null {

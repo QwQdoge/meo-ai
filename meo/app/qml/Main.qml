@@ -391,16 +391,17 @@ ApplicationWindow {
                     model: Navigation.destinations("primary")
                     delegate: NavigationButton {
                         required property var modelData
-                        objectName: "meoAiNav-" + modelData.action
+                        objectName: "meoAiNav-" + modelData.id
                         Layout.fillWidth: true
-                        text: window.showSidebar ? modelData.label : ""
+                        text: window.showSidebar ? qsTr(modelData.label) : ""
                         icon.name: modelData.icon
-                        type: window.primaryMode === modelData.action ? "tonal" : "text"
+                        type: window.primaryMode === modelData.id ? "tonal" : "text"
                         size: "s"
                         Accessible.name: modelData.label
                         ToolTip.visible: hovered && !window.showSidebar
                         ToolTip.text: modelData.label
-                        onClicked: window.selectPrimaryMode(modelData.action)
+                        onClicked: modelData.id === "settings"
+                            ? window.openInspector(3) : window.selectPrimaryMode(modelData.id)
                     }
                 }
                 MeoText {

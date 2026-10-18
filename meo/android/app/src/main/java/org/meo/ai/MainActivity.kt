@@ -19,7 +19,6 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -85,6 +84,7 @@ import org.meo.ai.model.ConsentPreview
 import org.meo.ai.model.Credential
 import org.meo.ai.model.UiMessage
 import org.meo.ai.ui.MeoExpressiveTheme
+import org.meo.ai.ui.PersonalizationScreen
 import org.meo.ai.ui.RichBlockRenderer
 import java.net.URI
 
@@ -227,6 +227,12 @@ private fun ChatScreen(controller: MeoController, snackbar: SnackbarHostState, o
     var composer by rememberSaveable { mutableStateOf("") }
     var historyOpen by remember { mutableStateOf(false) }
     var accountOpen by remember { mutableStateOf(false) }
+    var personalizationOpen by remember { mutableStateOf(false) }
+
+    if (personalizationOpen) {
+        PersonalizationScreen(controller = controller, onBack = { personalizationOpen = false })
+        return
+    }
 
 
     LaunchedEffect(state.messages.size, state.messages.lastOrNull()?.text) {
@@ -330,6 +336,14 @@ private fun ChatScreen(controller: MeoController, snackbar: SnackbarHostState, o
                                 onClick = { accountOpen = false; openSettings() },
                             )
                             HorizontalDivider()
+                            DropdownMenuItem(
+                                text = { Text("Personalization & memory") },
+                                onClick = {
+                                    accountOpen = false
+                                    personalizationOpen = true
+                                },
+                                enabled = !state.streaming && !state.loading && state.pendingSend == null,
+                            )
                             DropdownMenuItem(
                                 text = { Text("Sign out") },
                                 leadingIcon = { Icon(Icons.Rounded.Logout, contentDescription = null) },
