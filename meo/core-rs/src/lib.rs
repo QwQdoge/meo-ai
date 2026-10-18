@@ -12,6 +12,7 @@ pub mod builtin_capabilities;
 pub mod capabilities;
 pub mod context;
 pub mod protocol;
+pub mod personalization;
 pub mod stream;
 
 #[cfg(feature = "service")]
@@ -46,6 +47,11 @@ pub use context::{
 pub use protocol::{
     Conversation, CoreEvent, InputResource, Message, RequestSnapshot, RequestState, Role,
     SendMessageRequest, ToolDecision, ToolOption,
+};
+pub use personalization::{
+    CloudSettings, CloudSettingsPatch, CloudSettingsResponse, PersonalMemoriesResponse,
+    PersonalMemory, PersonalMemoryCreate, PersonalMemoryKind, PersonalMemoryPatch,
+    PersonalMemoryResponse,
 };
 pub use stream::{decode_sse_line, StreamEvent, StreamEventError};
 
