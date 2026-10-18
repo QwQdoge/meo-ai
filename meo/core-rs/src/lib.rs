@@ -11,8 +11,8 @@ pub mod blocks;
 pub mod builtin_capabilities;
 pub mod capabilities;
 pub mod context;
-pub mod protocol;
 pub mod personalization;
+pub mod protocol;
 pub mod stream;
 
 #[cfg(feature = "service")]
@@ -44,14 +44,14 @@ pub use context::{
     PreparedContext, TaskMemoryItem, DEFAULT_CONTEXT_OUTPUT_RESERVE_TOKENS,
     DEFAULT_CONTEXT_TOTAL_TOKENS, DEFAULT_RECENT_WINDOW,
 };
-pub use protocol::{
-    Conversation, CoreEvent, InputResource, Message, RequestSnapshot, RequestState, Role,
-    SendMessageRequest, ToolDecision, ToolOption,
-};
 pub use personalization::{
     CloudSettings, CloudSettingsPatch, CloudSettingsResponse, PersonalMemoriesResponse,
     PersonalMemory, PersonalMemoryCreate, PersonalMemoryKind, PersonalMemoryPatch,
     PersonalMemoryResponse,
+};
+pub use protocol::{
+    Conversation, CoreEvent, InputResource, Message, RequestSnapshot, RequestState, Role,
+    SendMessageRequest, ToolDecision, ToolOption,
 };
 pub use stream::{decode_sse_line, StreamEvent, StreamEventError};
 
