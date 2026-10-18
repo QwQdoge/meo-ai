@@ -90,3 +90,10 @@ spacing and shape tokens, concise motion and system reduced-motion preferences.
 Avoid decorative cards, large empty hero sections, excessive pills, gradients
 and competing accent colors. Preserve Meo branding. Platform typography and
 dynamic color may differ while hierarchy, meaning and interaction stay aligned.
+
+## Checked navigation adapters
+
+The generator also maintains the existing public `GeneratedNavigation.js` and
+`GeneratedNavigation.kt` bindings from the same schema. `--check` detects drift;
+`--web-output <path>` writes/checks the retained Web navigation adapter. Shared
+configuration and external build artifacts continue to use `--output <dir>`.
