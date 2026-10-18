@@ -3,6 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import QtCore
 import MeoUI 1.0
+import "GeneratedNavigation.js" as NavSpec
 
 ApplicationWindow {
     id: window
@@ -372,24 +373,20 @@ ApplicationWindow {
                     Accessible.name: qsTr("Find in this conversation")
                 }
                 Repeater {
-                    model: [
-                        {label: qsTr("Chat"), icon: "chat_bubble", action: "chat"},
-                        {label: qsTr("Work"), icon: "work", action: "work"},
-                        {label: qsTr("Projects"), icon: "folder_open", action: "projects"},
-                        {label: qsTr("Skills"), icon: "extension", action: "skills"}
-                    ]
+                    model: NavSpec.items("primary")
                     delegate: NavigationButton {
                         required property var modelData
-                        objectName: "meoAiNav-" + modelData.action
+                        objectName: "meoAiNav-" + modelData.id
                         Layout.fillWidth: true
-                        text: window.showSidebar ? modelData.label : ""
+                        text: window.showSidebar ? qsTr(modelData.label) : ""
                         icon.name: modelData.icon
-                        type: window.primaryMode === modelData.action ? "tonal" : "text"
+                        type: window.primaryMode === modelData.id ? "tonal" : "text"
                         size: "s"
                         Accessible.name: modelData.label
                         ToolTip.visible: hovered && !window.showSidebar
                         ToolTip.text: modelData.label
-                        onClicked: window.selectPrimaryMode(modelData.action)
+                        onClicked: modelData.id === "settings"
+                            ? window.openInspector(3) : window.selectPrimaryMode(modelData.id)
                     }
                 }
                 MeoText {
@@ -417,12 +414,22 @@ ApplicationWindow {
                     color: MeoTheme.contentOnSurfaceVariant
                 }
                 Item { Layout.fillHeight: true }
-                NavigationButton {
-                    Layout.fillWidth: true
-                    text: window.showSidebar ? qsTr("AI settings") : ""
-                    icon.name: "tune"; type: "text"; size: "s"
-                    Accessible.name: qsTr("AI settings")
-                    onClicked: window.openInspector(3)
+                Repeater {
+                    model: NavSpec.items("secondary")
+                    delegate: NavigationButton {
+                        required property var modelData
+                        objectName: "meoAiNav-" + modelData.id
+                        Layout.fillWidth: true
+                        text: window.showSidebar ? qsTr(modelData.label) : ""
+                        icon.name: modelData.icon
+                        type: window.primaryMode === modelData.id ? "tonal" : "text"
+                        size: "s"
+                        Accessible.name: modelData.label
+                        ToolTip.visible: hovered && !window.showSidebar
+                        ToolTip.text: modelData.label
+                        onClicked: modelData.id === "settings"
+                            ? window.openInspector(3) : window.selectPrimaryMode(modelData.id)
+                    }
                 }
                 Rectangle {
                     visible: window.showSidebar
