@@ -11,6 +11,10 @@ ScrollView {
     property string editingId: ""
     property int editingVersion: 0
     property string deletingId: ""
+    // Do not replace draft edits when the Account broker emits intermediate states.
+    property int loadedSettingsVersion: -1
+    readonly property bool settingsDirty: instructions.text !== String(cloudPersonalization.settings.personalInstructions || "")
+                                          || memoryToggle.checked !== (cloudPersonalization.settings.memoryEnabled !== false)
 
     ColumnLayout {
         width: root.availableWidth
@@ -74,7 +78,7 @@ ScrollView {
             wrapMode: TextEdit.Wrap
             selectByMouse: true
             color: MeoTheme.contentOnSurface
-            text: String(cloudPersonalization.settings.personalInstructions || "")
+            text: ""
             enabled: cloudPersonalization.signedIn && !cloudPersonalization.busy
         }
         RowLayout {
@@ -89,14 +93,14 @@ ScrollView {
             Switch {
                 id: memoryToggle
                 text: qsTr("Use saved memories")
-                checked: cloudPersonalization.settings.memoryEnabled !== false
+                checked: true
                 enabled: cloudPersonalization.signedIn && !cloudPersonalization.busy
             }
             MeoButton {
                 text: qsTr("Save")
                 type: "filled"; size: "s"
                 enabled: cloudPersonalization.signedIn && !cloudPersonalization.busy
-                         && instructions.length <= 5000
+                         && root.settingsDirty && instructions.length <= 5000
                 onClicked: cloudPersonalization.saveSettings(instructions.text, memoryToggle.checked)
             }
         }
@@ -272,10 +276,21 @@ ScrollView {
     Connections {
         target: cloudPersonalization
         function onChanged() {
-            if (!instructions.activeFocus)
-                instructions.text = String(cloudPersonalization.settings.personalInstructions || "")
-            if (!memoryToggle.activeFocus)
-                memoryToggle.checked = cloudPersonalization.settings.memoryEnabled !== false
+            if (!cloudPersonalization.signedIn) {
+                root.loadedSettingsVersion = -1
+                instructions.text = ""
+                memoryToggle.checked = true
+                return
+            }
+            const data = cloudPersonalization.settings
+            const version = Number(data.version ?? -1)
+            // Broker busy / network signals must not wipe unsaved text or a
+            // changed toggle. Apply server state only after its version advances.
+            if (version >= 0 && version !== root.loadedSettingsVersion) {
+                root.loadedSettingsVersion = version
+                instructions.text = String(data.personalInstructions || "")
+                memoryToggle.checked = data.memoryEnabled !== false
+            }
         }
     }
 }
