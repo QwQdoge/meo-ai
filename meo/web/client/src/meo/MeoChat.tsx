@@ -604,6 +604,8 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
         if (done) break;
       }
       if (!completed) throw new Error(t('meo_web_stream_incomplete'));
+      // The stream is finished; the Stop control must not claim to cancel persistence.
+      setStreamingActive(false);
       setRequestPhase('saving');
       if (assistantText) {
         await json(`/api/meo/conversations/${encodeURIComponent(conversationId)}/messages`, {
