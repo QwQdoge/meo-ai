@@ -26,6 +26,7 @@ export default function PluginLibrary() {
   const [items, setItems] = useState<Plugin[]>([]);
   const [selected, setSelected] = useState<Plugin | null>(null);
   const [skills, setSkills] = useState<Skill[]>([]);
+  const [skillsDirty, setSkillsDirty] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -50,12 +51,15 @@ export default function PluginLibrary() {
   useEffect(() => { void reload(); }, [reload]);
 
   async function showPlugin(id: string) {
+    if (selected && selected.id !== id && skillsDirty &&
+        !window.confirm('Discard unsaved Skill edits in ' + selected.name + '?')) return;
     setSaving(true);
     setError('');
     try {
       const data = await settingsRequest<PluginResult>('/ai/plugins/' + id);
       setSelected(data.plugin);
       setSkills(data.plugin.skills ?? []);
+      setSkillsDirty(false);
       setMessage('');
     } catch (reason) { setError((reason as Error).message || 'failed'); }
     finally { setSaving(false); }
@@ -120,6 +124,7 @@ export default function PluginLibrary() {
       });
       setSelected({ ...selected, version: result.version, skills: result.skills });
       setSkills(result.skills);
+      setSkillsDirty(false);
       await reload();
       setMessage('Skills saved to your Meo Account.');
     } catch (reason) { setError((reason as Error).message || 'failed'); }
@@ -134,6 +139,7 @@ export default function PluginLibrary() {
         '?expectedVersion=' + selected.version, { method: 'DELETE' });
       setSelected(null);
       setSkills([]);
+      setSkillsDirty(false);
       await reload();
       setMessage('Plugin removed from your account.');
     } catch (reason) { setError((reason as Error).message || 'failed'); }
@@ -141,6 +147,7 @@ export default function PluginLibrary() {
   }
   function changeSkill(index: number, field: keyof Skill, value: string | boolean) {
     setSkills((previous) => previous.map((item, i) => i === index ? { ...item, [field]: value } : item));
+    setSkillsDirty(true);
     setMessage('');
   }
 
@@ -177,7 +184,10 @@ export default function PluginLibrary() {
         onImportSkill={(skill) => {
           // Keep imported Skill text in the current draft. Only Save skills
           // writes it to Meo Account, preventing unexpected draft overwrites.
-          if (selected && skills.length < 32) setSkills((existing) => [...existing, skill]);
+          if (selected && skills.length < 32) {
+            setSkills((existing) => [...existing, skill]);
+            setSkillsDirty(true);
+          }
         }}
       />
 
@@ -237,8 +247,8 @@ export default function PluginLibrary() {
             <div className="meo-plugin-subheading">
               <strong>Skills ({skills.length}/32)</strong>
               <button type="button" disabled={saving || skills.length >= 32}
-                onClick={() => setSkills((existing) => [...existing,
-                  { name: '', description: '', content: '', enabled: true }])}>+ New skill</button>
+                onClick={() => { setSkills((existing) => [...existing,
+                  { name: '', description: '', content: '', enabled: true }]); setSkillsDirty(true); }}>+ New skill</button>
             </div>
             {skills.map((skill, index) => (
               <fieldset className="meo-plugin-skill" key={skill.id || 'new-' + index} disabled={saving}>
@@ -257,15 +267,15 @@ export default function PluginLibrary() {
                 <div className="meo-plugin-subheading">
                   <label className="meo-plugin-checkbox"><input type="checkbox" checked={skill.enabled}
                     onChange={(event) => changeSkill(index, 'enabled', event.target.checked)} /> Enabled</label>
-                  <button type="button" onClick={() => setSkills((existing) => existing.filter((_, i) => i !== index))}>
+                  <button type="button" onClick={() => { setSkills((existing) => existing.filter((_, i) => i !== index)); setSkillsDirty(true); }}>
                     Remove skill
                   </button>
                 </div>
               </fieldset>
             ))}
             <div className="meo-plugin-actions">
-              <button type="button" className="meo-plugin-primary" disabled={saving}
-                onClick={() => void saveSkills()}>Save skills</button>
+              <button type="button" className="meo-plugin-primary" disabled={saving || !skillsDirty}
+                onClick={() => void saveSkills()}>Save skills{skillsDirty ? ' · unsaved' : ''}</button>
               <button type="button" className="meo-plugin-danger" disabled={saving}
                 onClick={() => void removePlugin()}>Remove plugin</button>
             </div>
