@@ -22,6 +22,8 @@ type Connection = {
   secretHint: string;
 };
 type Model = { id: string; name: string; description?: string };
+type AgentWorkspaceOption = { project_id: string; project_name: string; capabilities?: string[] };
+type AgentProposal = { task: string; projectId: string; conversationId: string };
 type SkillPlugin = { id: string; name: string; enabled: boolean; skills: Array<{ id: string; name: string; description: string }> };
 type Message = { role: 'user' | 'assistant'; content: string };
 type Conversation = { id: string; title: string; createdAt: string; updatedAt: string };
@@ -228,7 +230,7 @@ type MeoChatProps = {
   searchRequest: number;
   onBusyChange: (busy: boolean) => void;
   onSelectConversation: () => void;
-  onDelegateToWork: (text: string, conversationId: string) => void;
+  onDelegateToWork: (text: string, conversationId: string, projectId?: string) => void;
   active: boolean;
 };
 
@@ -270,6 +272,9 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
   const [modelDiscovery, setModelDiscovery] = useState<'idle' | 'unsupported' | 'ready'>('idle');
   const [skillPlugins, setSkillPlugins] = useState<SkillPlugin[]>([]);
   const [selectedSkillId, setSelectedSkillId] = useState('');
+  const [agentWorkspaces, setAgentWorkspaces] = useState<AgentWorkspaceOption[]>([]);
+  const [workAgentProjectId, setWorkAgentProjectId] = useState('');
+  const [agentProposal, setAgentProposal] = useState<AgentProposal | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [windowState, setWindowState] = useState({ conversationId: '', count: MESSAGE_WINDOW_SIZE });
   const visibleCount = windowState.conversationId === activeConversationId ? windowState.count : MESSAGE_WINDOW_SIZE;
@@ -393,6 +398,22 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
       .catch(() => { if (live) setSkillPlugins([]); });
     return () => { live = false; };
   }, [active]);
+
+  useEffect(() => {
+    if (!active || !user?.id) return;
+    let live = true;
+    json<{ workspaces: AgentWorkspaceOption[] }>('/api/meo/workspaces')
+      .then(({ workspaces }) => {
+        if (!live) return;
+        const values = (workspaces || []).filter((item) => item.capabilities?.includes('agent.chat'));
+        const unique = values.filter((item, index) =>
+          values.findIndex((next) => next.project_id === item.project_id) === index);
+        setAgentWorkspaces(unique);
+        setWorkAgentProjectId((previous) => previous && !unique.some((item) => item.project_id === previous) ? '' : previous);
+      })
+      .catch(() => { if (live) { setAgentWorkspaces([]); setWorkAgentProjectId(''); } });
+    return () => { live = false; };
+  }, [active, user?.id]);
 
   useEffect(() => {
     let active = true;
@@ -555,6 +576,7 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
     pendingOlderScrollRef.current = null;
     setActiveConversationId('');
     setMessages([]);
+    setAgentProposal(null);
     setStopNotice(false);
     localStorage.removeItem(selectedConversationKey);
   };
@@ -572,11 +594,13 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
     if (busy) return;
     setError('');
     setStopNotice(false);
+    setAgentProposal(null);
     followOutputRef.current = true;
     setShowScrollToBottom(false);
     setWindowState({ conversationId: conversation.id, count: MESSAGE_WINDOW_SIZE });
     pendingOlderScrollRef.current = null;
     setActiveConversationId(conversation.id);
+    setAgentProposal(null);
   };
 
   const loadMoreHistory = async () => {
@@ -614,6 +638,7 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
     setRequestPhase('preparing');
     const nextMessages: Message[] = [...messages, { role: 'user', content: prompt }];
     const contextConversationId = activeConversationId || null;
+    const requestedWorkProject = workAgentProjectId || null;
     try {
       const prepared = await json<{ consent: MeoConsent }>('/api/meo/chat/prepare', {
         method: 'POST',
@@ -623,6 +648,7 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
           conversationId: contextConversationId,
           prompt,
           ...(selectedSkillId ? { skillId: selectedSkillId } : {}),
+          ...(requestedWorkProject ? { workAgentProjectId: requestedWorkProject } : {}),
         }),
       });
       const consent = prepared.consent;
@@ -644,6 +670,7 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
           conversationId: contextConversationId,
           prompt,
           ...(selectedSkillId ? { skillId: selectedSkillId } : {}),
+          ...(requestedWorkProject ? { workAgentProjectId: requestedWorkProject } : {}),
           consent,
         }),
         signal: abortController.signal,
@@ -680,6 +707,7 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
       let buffer = '';
       let assistantText = '';
       let completed = false;
+      let proposal: { project_id: string; task: string } | null = null;
       while (true) {
         const { value, done } = await reader.read();
         buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
@@ -699,6 +727,12 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
                   : message,
               ),
             );
+          } else if (eventName === 'work_agent_proposal' && data) {
+            const candidate = JSON.parse(data) as { project_id?: unknown; task?: unknown };
+            if (requestedWorkProject && candidate.project_id === requestedWorkProject &&
+                typeof candidate.task === 'string' && candidate.task.trim() && candidate.task.length <= 3500) {
+              proposal = { project_id: requestedWorkProject, task: candidate.task.trim() };
+            }
           } else if (eventName === 'error' && data) {
             const failure = JSON.parse(data) as { message?: string };
             throw new Error(failure.message ?? t('meo_web_stream_failed'));
@@ -710,6 +744,7 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
         if (done) break;
       }
       if (!completed) throw new Error(t('meo_web_stream_incomplete'));
+      if (proposal) setAgentProposal({ task: proposal.task, projectId: proposal.project_id, conversationId });
       // The stream is finished; the Stop control must not claim to cancel persistence.
       setStreamingActive(false);
       setRequestPhase('saving');
@@ -801,6 +836,16 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
               <optgroup key={plugin.id} label={plugin.name}>
                 {plugin.skills.map((skill) => <option key={skill.id} value={skill.id}>{skill.name}</option>)}
               </optgroup>
+            ))}
+          </select>
+          <select className="meo-chat-agent-select" aria-label={t('meo.work.agentToolsLabel')}
+            title={t('meo.work.agentToolsHint')} value={workAgentProjectId}
+            onChange={(event) => { setWorkAgentProjectId(event.target.value); setAgentProposal(null); }} disabled={busy}>
+            <option value="">{t('meo.work.agentToolsOff')}</option>
+            {agentWorkspaces.map((item) => (
+              <option key={item.project_id} value={item.project_id}>
+                {t('meo.work.agentToolsForProject', { project: item.project_name })}
+              </option>
             ))}
           </select>
           <button type="button" className="meo-chat-export"
@@ -898,6 +943,24 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
             waiting={busy && visibleRange.start + index === messages.length - 1 && message.role === 'assistant'}
             onDelegateToWork={delegateToWork} />
         ))}
+        {agentProposal && (
+          <div className="meo-chat-agent-proposal" role="group" aria-label={t('meo.work.proposalTitle')}>
+            <div>
+              <strong>{t('meo.work.proposalTitle')}</strong>
+              <span>{t('meo.work.proposalNotExecuted')}</span>
+            </div>
+            <p>{agentProposal.task}</p>
+            <div className="meo-chat-agent-proposal-actions">
+              <button type="button" onClick={() => {
+                onDelegateToWork(agentProposal.task, agentProposal.conversationId, agentProposal.projectId);
+                setAgentProposal(null);
+              }}>{t('meo.work.reviewInWork')}</button>
+              <button type="button" onClick={() => setAgentProposal(null)}>
+                {t('meo.work.dismissProposal')}
+              </button>
+            </div>
+          </div>
+        )}
         {stopNotice && <p role="status" className="meo-chat-stop-notice">{t('meo_web_stop_notice')}</p>}
         {error && (
           <p role="alert" className="text-status-error-strong text-sm">
