@@ -24,6 +24,38 @@ class PresentationContractTests(unittest.TestCase):
         self.assertEqual(event["card"]["kind"], "metric")
         self.assertEqual(event["card"]["value"], "31 °C")
 
+    def test_real_agent_child_nodes_are_typed_bounded_and_identified(self):
+        from uuid import uuid4
+        child_id = f"local:{uuid4()}"
+        event = normalize_presentation_card({
+            "type": "presentation_card",
+            "card": {
+                "card_id": "agent-run:local:root",
+                "kind": "status",
+                "title": "Analyzing",
+                "task_tree": [{
+                    "id": child_id, "title": "Inspect tests",
+                    "status": "running", "execution": "local",
+                    "command": "never forward privileged arguments",
+                }],
+            },
+        })
+        self.assertEqual(event["card"]["task_tree"], [{
+            "id": child_id, "title": "Inspect tests",
+            "status": "running", "execution": "local",
+        }])
+        for invalid in (
+            [{"id": "not-a-uuid", "title": "unsafe", "status": "completed", "execution": "local"}],
+            [{"id": child_id, "title": "bad", "status": "success", "execution": "local"}],
+            [{"id": child_id, "title": "bad", "status": "running", "execution": "shell"}],
+            [{"id": child_id, "title": "bad", "status": "running", "execution": "local"}] * 4,
+        ):
+            with self.assertRaises(ValueError):
+                normalize_presentation_card({
+                    "type": "presentation_card",
+                    "card": {"kind": "status", "title": "Analysis", "task_tree": invalid},
+                })
+
     def test_rejects_arbitrary_ui_kind_and_oversized_text(self):
         with self.assertRaisesRegex(ValueError, "unsupported presentation card kind"):
             normalize_presentation_card(
