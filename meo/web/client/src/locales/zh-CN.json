@@ -151,5 +151,22 @@
   "meo_web_copy_code": "复制代码",
   "meo_web_copy_response": "复制回复",
   "meo_web_scroll_latest": "跳到最新消息",
-  "meo_web_copy_failed": "无法访问剪贴板，请选中文字手动复制。"
+  "meo_web_copy_failed": "无法访问剪贴板，请选中文字手动复制。",
+  "meo_web_table_region": "可横向滚动的 Markdown 表格",
+  "meo_web_image": "图片",
+  "meo_web_image_unavailable": "这张图片的地址不支持或不可用。",
+  "meo_web_load_image": "加载图片预览",
+  "meo_web_load_image_named": "加载图片：{{name}}",
+  "meo_web_external_image_notice": "加载图片可能向外部图片服务器发起请求。",
+  "meo_web_image_failed": "图片加载失败。",
+  "meo_web_retry_image": "重试",
+  "meo_web_open_image": "在新标签页中打开图片",
+  "meo_web_toggle_code_wrap": "切换长代码行换行",
+  "meo_web_code_wrap": "自动换行",
+  "meo_web_code_no_wrap": "不换行",
+  "meo_web_export": "导出",
+  "meo_web_export_visible": "将当前显示的对话导出为 Markdown 文件",
+  "meo_web_role_user": "你",
+  "meo_web_role_assistant": "Meo AI",
+  "meo_web_export_failed": "浏览器无法导出当前对话。"
 }
