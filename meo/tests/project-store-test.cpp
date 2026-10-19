@@ -35,6 +35,10 @@ private slots:
             QVERIFY(!secondId.isEmpty());
             QCOMPARE(store.activeProjectId(), secondId);
             QCOMPARE(store.projects().size(), 2);
+            QVERIFY(!store.renameProject(QStringLiteral("missing"), QStringLiteral("no")));
+            QVERIFY(!store.renameProject(firstId, QStringLiteral("   ")));
+            QVERIFY(store.renameProject(firstId, QStringLiteral("  MeoArch   Project "))); 
+            QCOMPARE(store.projects().last().toMap().value(QStringLiteral("name")).toString(), QStringLiteral("MeoArch Project"));
             QVERIFY(!store.openProject(QStringLiteral("missing")));
             QVERIFY(store.openProject(firstId));
             QCOMPARE(store.activeProjectId(), firstId);
@@ -45,7 +49,7 @@ private slots:
             ProjectStore restored;
             QCOMPARE(restored.projects().size(), 2);
             QCOMPARE(restored.activeProjectId(), firstId);
-            QCOMPARE(restored.activeProjectName(), QStringLiteral("MeoArch OS"));
+            QCOMPARE(restored.activeProjectName(), QStringLiteral("MeoArch Project"));
             restored.closeProject();
             QVERIFY(restored.activeProjectId().isEmpty());
         }
