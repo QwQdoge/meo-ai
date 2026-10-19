@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { settingsRequest } from './settingsClient';
 import PluginDiscovery from './PluginDiscovery';
+import McpToolPanel from './McpToolPanel';
 import './PluginLibrary.css';
 
 type Skill = { id?: string; name: string; description: string; content: string; enabled: boolean };
@@ -232,6 +233,7 @@ export default function PluginLibrary() {
               </label>
             </div>
             {selected.remoteUrl && <p className="meo-plugin-endpoint">Endpoint: <code>{selected.remoteUrl}</code></p>}
+            {selected.remoteUrl && <McpToolPanel key={selected.id} id={selected.id} enabled={selected.enabled} />}
             <div className="meo-plugin-subheading">
               <strong>Skills ({skills.length}/32)</strong>
               <button type="button" disabled={saving || skills.length >= 32}
