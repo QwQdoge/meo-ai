@@ -91,6 +91,35 @@ class CloudNetworkIntegrationTests(unittest.IsolatedAsyncioTestCase):
         await self.http.close()
         await self.runner.cleanup()
 
+    async def test_agent_run_discovery_owner_isolation_and_metadata(self):
+        run_id = "00000000-0000-4000-8000-000000000021"
+        await self.store.create_agent_run(
+            run_id=run_id, user_id="test-user", conversation_id=None,
+            device_id="test-device", status="running", project_id=None,
+            workspace_ref="private/local/workspace", permission_mode="ask",
+        )
+        async with self.http.get(self.base + "/v1/agent-runs",
+                                 headers={"Authorization": "Bearer test-user"}) as response:
+            self.assertEqual(response.status, 200)
+            runs = (await response.json())["runs"]
+            self.assertEqual(len(runs), 1)
+            self.assertEqual(runs[0]["id"], run_id)
+            self.assertNotIn("workspace_ref", runs[0])
+            self.assertNotIn("user_id", runs[0])
+        async with self.http.get(self.base + "/v1/agent-runs/" + run_id,
+                                 headers={"Authorization": "Bearer test-user"}) as response:
+            self.assertEqual(response.status, 200)
+            self.assertEqual((await response.json())["run"]["status"], "running")
+        for path in ("/v1/agent-runs", "/v1/agent-runs/" + run_id):
+            async with self.http.get(self.base + path,
+                                     headers={"Authorization": "Bearer other-user"}) as response:
+                self.assertEqual(response.status, 200 if path == "/v1/agent-runs" else 404)
+                if path == "/v1/agent-runs":
+                    self.assertEqual((await response.json())["runs"], [])
+        async with self.http.get(self.base + "/v1/agent-runs?limit=500",
+                                 headers={"Authorization": "Bearer test-user"}) as response:
+            self.assertEqual(response.status, 400)
+
     async def run_browser(self, mode):
         module = (Path(__file__).resolve().parents[1] / "web/agent-client.ts").as_uri()
         script = '''
