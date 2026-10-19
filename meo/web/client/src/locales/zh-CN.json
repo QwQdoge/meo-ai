@@ -1,4 +1,7 @@
 {
+  "meo.settings.searchLabel": "搜索设置",
+  "meo.settings.searchPlaceholder": "搜索分类或设置项",
+  "meo.settings.noResults": "没有找到匹配的设置",
   "meo.settings.title": "设置",
   "meo.settings.categories": "设置分类",
   "meo.settings.openAccount": "打开 Meo Account",
