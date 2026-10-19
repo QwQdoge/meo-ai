@@ -18,6 +18,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlin.coroutines.coroutineContext
 import org.json.JSONObject
 import org.meo.ai.MeoController
 import org.meo.ai.R
@@ -47,10 +50,15 @@ fun SettingsScreen(controller: MeoController, onClose: () -> Unit) {
     var section by remember { mutableStateOf(groups.first().id) }
     val preferences = controller.devicePreferences.values
     val state = controller.state
-    // Refresh the shared account inventory whenever Connectors is opened.
-    // This does not exchange MCP credentials or launch native executables.
+    // Recheck shared metadata while Connectors remains visible. No secrets or
+    // local executable permissions are synchronized through this operation.
     LaunchedEffect(section, state.signedIn) {
-        if (section == "connectors" && state.signedIn) controller.loadAccountPlugins()
+        if (section == "connectors" && state.signedIn) {
+            while (coroutineContext.isActive) {
+                controller.loadAccountPlugins()
+                delay(120_000)
+            }
+        }
     }
     fun openAccount(services: Boolean = false) {
         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://account.meoarch.org" + if(services) "/settings/services" else "")))
@@ -103,7 +111,7 @@ fun SettingsScreen(controller: MeoController, onClose: () -> Unit) {
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Text("Account plugins & Skills", style = MaterialTheme.typography.titleMedium)
                                 Text(
-                                    "The list comes from your Meo Account. Changes saved on the web appear after a refresh. " +
+                                    "The list comes from your Meo Account. Changes saved on the web appear automatically while this page is open (or after Refresh). " +
                                         "Android MCP execution is not connected yet.",
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     style = MaterialTheme.typography.bodySmall,
