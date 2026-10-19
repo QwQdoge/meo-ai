@@ -56,6 +56,7 @@ function targetFor(request, env, relativePath) {
   }
   const getRun = relativePath.match(/^\/work\/agent-runs\/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i);
   if (cloud && getRun && method === 'GET') {
+    if (new URL(request.url).search) return null;
     return { url: `${cloud}/v1/agent-runs/${getRun[1]}`, method, body: null, agent: true };
   }
   if (cloud && relativePath === '/work/agent-runs' && method === 'POST') {
