@@ -6,7 +6,7 @@ import { useTranslation } from 'react-i18next';
  * Wide tables remain real semantic HTML tables. The wrapper scrolls independently
  * on small screens, and keyboard users can focus it to navigate large tables.
  */
-export function ChatMarkdownTable(props: ComponentProps<'table'>) {
+export function ChatMarkdownTable({ node: _node, ...props }: ComponentProps<'table'> & { node?: unknown }) {
   const { t } = useTranslation();
   return (
     <div className="meo-chat-table-scroll" role="region" tabIndex={0}
