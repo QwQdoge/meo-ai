@@ -233,5 +233,9 @@
   "meo.work.requestCancel": "Request cancellation",
   "meo.work.disconnectNote": "Closing this page disconnects event updates, not the running Agent. Reconnect to the same run instead of starting another.",
   "meo.work.delegateMessage": "Use Work Agent",
-  "meo.work.delegateDraft": "Send this draft to Work"
+  "meo.work.delegateDraft": "Send this draft to Work",
+  "meo.work.approvalTitle": "Agent needs your decision",
+  "meo.work.streamTooLarge": "The Agent event stream exceeded the safe browser buffer limit.",
+  "meo.work.newTask": "New task",
+  "meo.work.newTaskWarning": "This Agent run may still be active. Leaving its view will not stop it. Start another task anyway?"
 }
