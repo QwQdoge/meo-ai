@@ -28,6 +28,15 @@ export function authHeaders(env, token, extra = {}) {
   return headers;
 }
 
+// Distinguish an unavailable UserInfo upstream from a rejected identity.
+// A 5xx must never cause an OAuth login loop or delete browser credentials.
+export class AccountUserInfoUnavailable extends Error {
+  constructor() {
+    super('Meo Account UserInfo temporarily unavailable');
+    this.name = 'AccountUserInfoUnavailable';
+  }
+}
+
 export class OAuthTokenExchangeError extends Error {
   constructor(reason) {
     super('Meo Account token exchange failed');
@@ -87,13 +96,22 @@ export async function accountUser(env, accessToken) {
   // UserInfo is the identity endpoint for the OAuth/OIDC flow. Keep API resource
   // tokens for meo-api calls, but use the provider's UserInfo response to bind
   // the browser session to the Meo Account subject.
-  const response = await fetch(`${accountUrl(env)}/v1/auth/oauth2/userinfo`, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      Accept: 'application/json',
-      'Cache-Control': 'no-store',
-    },
-  });
+  let response;
+  try {
+    response = await fetch(`${accountUrl(env)}/v1/auth/oauth2/userinfo`, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: 'application/json',
+        'Cache-Control': 'no-store',
+      },
+    });
+  } catch {
+    throw new AccountUserInfoUnavailable();
+  }
+  if (response.status === 429 || response.status >= 500) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new AccountUserInfoUnavailable();
+  }
   if (!response.ok) return null;
 
   const payload = await response.json().catch(() => null);
