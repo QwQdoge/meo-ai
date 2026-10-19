@@ -14,7 +14,7 @@ class LiveRecoveryBackend final : public QObject {
     Q_PROPERTY(QString status READ status NOTIFY stateChanged)
     Q_PROPERTY(QString errorText READ errorText NOTIFY stateChanged)
 public:
-    explicit LiveRecoveryBackend(QObject *parent = nullptr);
+    explicit LiveRecoveryBackend(bool active, QObject *parent = nullptr);
     QVariantList networks() const { return m_networks; }
     bool busy() const { return m_scan != nullptr || m_connect != nullptr; }
     QString status() const { return m_status; }
