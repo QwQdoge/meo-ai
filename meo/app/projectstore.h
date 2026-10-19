@@ -18,6 +18,7 @@ public:
     QString activeProjectName() const;
 
     Q_INVOKABLE QString createProject(const QString &name);
+    Q_INVOKABLE bool renameProject(const QString &projectId, const QString &name);
     Q_INVOKABLE bool openProject(const QString &projectId);
     Q_INVOKABLE void closeProject();
 
