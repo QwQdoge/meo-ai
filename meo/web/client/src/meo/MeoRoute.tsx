@@ -1,4 +1,5 @@
 import MeoDesktopApp from './MeoDesktopApp';
+import UiReview from './UiReview';
 import { MeoSessionProvider, useMeoSession } from './session';
 
 function restartSessionCheck() {
@@ -48,6 +49,11 @@ function MeoSessionGate() {
 }
 
 export default function MeoRoute() {
+  // This build-only route has no account/session, API, or device permissions.
+  // Normal releases do not set VITE_UI_REVIEW; OAuth is always enforced there.
+  if (import.meta.env.VITE_UI_REVIEW === 'true' && window.location.pathname === '/ui-review') {
+    return <UiReview />;
+  }
   return (
     <MeoSessionProvider>
       <MeoSessionGate />
