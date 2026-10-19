@@ -55,3 +55,12 @@ button:disabled {
     scroll-behavior: auto !important;
   }
 }
+
+/* The browser's explicit accessibility preference augments the system preference. */
+:root[data-reduce-motion="true"] *,
+:root[data-reduce-motion="true"] *::before,
+:root[data-reduce-motion="true"] *::after {
+  animation: none !important;
+  transition: none !important;
+  scroll-behavior: auto !important;
+}
