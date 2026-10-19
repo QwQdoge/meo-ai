@@ -140,7 +140,8 @@ export default function WorkSurface({ handoff, onChat }: {
         item && uuid.test(item.id) && typeof item.device_id === 'string' &&
         typeof item.status === 'string' &&
         (item.project_id === null || uuid.test(item.project_id)) &&
-        typeof item.conversation_id === 'string' && uuid.test(item.conversation_id));
+        (item.conversation_id === null ||
+          (typeof item.conversation_id === 'string' && uuid.test(item.conversation_id))));
       if (accountIdRef.current === accountId) {
         setRecentRuns(known.slice(0, 30));
         setRecentOwner(accountId);
@@ -319,15 +320,15 @@ export default function WorkSurface({ handoff, onChat }: {
 
   function resumeKnownRun(item: RemoteRun) {
     // Read-only switch to one known account-owned run. Never re-dispatch.
-    if (!user?.id || !uuid.test(item.id) || !item.conversation_id ||
-        !uuid.test(item.conversation_id)) return;
+    if (!user?.id || !uuid.test(item.id) ||
+        (item.conversation_id !== null && !uuid.test(item.conversation_id))) return;
     if (run?.id === item.id) {
       if (!following) void followRun(item.id, lastSeqRef.current);
       return;
     }
     const restored: SavedRun = {
       id: item.id, projectId: item.project_id ?? '',
-      conversationId: item.conversation_id, text: '',
+      conversationId: item.conversation_id ?? '', text: '',
     };
     streamAbortRef.current?.abort();
     resumedRunRef.current = '';
