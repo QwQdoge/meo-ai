@@ -107,6 +107,7 @@ export default function MeoDesktopApp() {
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [historyTarget, setHistoryTarget] = useState<HTMLDivElement | null>(null);
   const [newChatRequest, setNewChatRequest] = useState(0);
+  const [searchRequest, setSearchRequest] = useState(0);
   const [chatBusy, setChatBusy] = useState(false);
   const [compact, setCompact] = useState(
     () => window.matchMedia("(max-width: 759px)").matches,
@@ -131,6 +132,18 @@ export default function MeoDesktopApp() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.isComposing || event.repeat || event.altKey) return;
+      if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        if (mode === "settings" && settingsDirty && !window.confirm(t("meo.settings.discardConfirm")))
+          return;
+        setMode("chat");
+        setInspectorOpen(false);
+        setSidebarHidden(false);
+        if (compact) setMobileOpen(true);
+        setSearchRequest((current) => current + 1);
+        return;
+      }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "n") {
         event.preventDefault();
         if (chatBusy) return;
@@ -148,7 +161,7 @@ export default function MeoDesktopApp() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [navigate, mode, settingsDirty, t, chatBusy]);
+  }, [navigate, mode, settingsDirty, t, chatBusy, compact]);
 
   const accountLabel = useMemo(
     () => user?.name || user?.email || "Meo Account",
@@ -350,6 +363,7 @@ export default function MeoDesktopApp() {
             <MeoChat
               historyTarget={historyTarget}
               newChatRequest={newChatRequest}
+              searchRequest={searchRequest}
               onBusyChange={setChatBusy}
               onSelectConversation={() => setMobileOpen(false)}
             />
