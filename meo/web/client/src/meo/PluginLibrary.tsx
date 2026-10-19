@@ -49,6 +49,33 @@ export default function PluginLibrary() {
     }
   }, []);
   useEffect(() => { void reload(); }, [reload]);
+  // Account-synced changes from another browser/device are observed on return.
+  // Never overwrite a local unsaved Skill draft during an automatic refresh.
+  useEffect(() => {
+    let live = true;
+    const refresh = () => {
+      if (!live || saving) return;
+      void reload();
+      if (!selected || skillsDirty) return;
+      void settingsRequest<PluginResult>('/ai/plugins/' + selected.id)
+        .then(({ plugin }) => {
+          if (!live) return;
+          setSelected((current) => current?.id === plugin.id ? plugin : current);
+          setSkills(plugin.skills ?? []);
+        })
+        .catch(() => { /* Keep cached draft; list reload surfaces connectivity. */ });
+    };
+    const onVisibility = () => { if (document.visibilityState === 'visible') refresh(); };
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      live = false;
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [reload, saving, selected?.id, skillsDirty]);
+
+
 
   async function showPlugin(id: string) {
     if (selected && selected.id !== id && skillsDirty &&
