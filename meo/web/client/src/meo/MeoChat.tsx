@@ -183,7 +183,12 @@ function CopyMessageButton({ content, role = 'assistant' }: { content: string; r
   );
 }
 
-const ChatMessage = memo(function ChatMessage({ message, waiting }: { message: Message; waiting: boolean }) {
+const ChatMessage = memo(function ChatMessage({ message, waiting, onDelegateToWork }: {
+  message: Message;
+  waiting: boolean;
+  onDelegateToWork: (text: string) => void;
+}) {
+  const { t } = useTranslation();
   return (
     <article className={`meo-chat-message ${message.role === 'user' ? 'meo-chat-message-user' : 'meo-chat-message-assistant'}`}>
       {message.role === 'assistant' ? (
@@ -195,6 +200,11 @@ const ChatMessage = memo(function ChatMessage({ message, waiting }: { message: M
         <>
           <p className="whitespace-pre-wrap">{message.content}</p>
           <CopyMessageButton content={message.content} role="user" />
+          <button type="button" className="meo-chat-delegate-message"
+            title={t('meo.work.delegateMessage')}
+            onClick={() => onDelegateToWork(message.content)}>
+            {t('meo.work.delegateMessage')}
+          </button>
         </>
       )}
     </article>
@@ -218,10 +228,11 @@ type MeoChatProps = {
   searchRequest: number;
   onBusyChange: (busy: boolean) => void;
   onSelectConversation: () => void;
+  onDelegateToWork: (text: string, conversationId: string) => void;
   active: boolean;
 };
 
-export default function MeoChat({ historyTarget, newChatRequest, searchRequest, onBusyChange, onSelectConversation, active }: MeoChatProps) {
+export default function MeoChat({ historyTarget, newChatRequest, searchRequest, onBusyChange, onSelectConversation, onDelegateToWork, active }: MeoChatProps) {
   const preferences = useBrowserPreferences();
   const { t } = useTranslation();
   const { user } = useMeoSession();
@@ -521,6 +532,11 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
       updateDeepLink(id, nextModel);
     },
     [connections, updateDeepLink],
+  );
+
+  const delegateToWork = useCallback(
+    (text: string) => { if (!busy && text.trim()) onDelegateToWork(text, activeConversationId); },
+    [busy, onDelegateToWork, activeConversationId],
   );
 
   const changeModel = (value: string) => {
@@ -879,7 +895,8 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
         {messages.slice(visibleRange.start).map((message, index) => (
           <ChatMessage key={`${visibleRange.start + index}-${message.role}`}
             message={message}
-            waiting={busy && visibleRange.start + index === messages.length - 1 && message.role === 'assistant'} />
+            waiting={busy && visibleRange.start + index === messages.length - 1 && message.role === 'assistant'}
+            onDelegateToWork={delegateToWork} />
         ))}
         {stopNotice && <p role="status" className="meo-chat-stop-notice">{t('meo_web_stop_notice')}</p>}
         {error && (
@@ -928,6 +945,11 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
           aria-describedby="meo-chat-input-hint"
           disabled={busy || !selected}
         />
+        <button className="meo-chat-delegate-draft" type="button"
+          onClick={() => delegateToWork(draft)} disabled={busy || !draft.trim()}
+          aria-label={t('meo.work.delegateDraft')} title={t('meo.work.delegateDraft')}>
+          {t('meo.nav.work')}
+        </button>
         {streamingActive ? (
           <button className="meo-chat-send is-stop" type="button" onClick={stopReceiving} aria-label={t('meo_web_stop_receiving')} title={t('meo_web_stop_receiving')}>
             <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true" fill="currentColor"><rect x="5" y="5" width="14" height="14" rx="2" /></svg>

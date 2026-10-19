@@ -6,6 +6,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMeoSession } from "./session";
 import MeoChat from "./MeoChat";
+import WorkSurface from "./WorkSurface";
+import type { WorkHandoff } from "./WorkSurface";
 import "./MeoDesktopApp.css";
 
 type PrimaryMode = "chat" | "work" | "projects" | "skills";
@@ -110,6 +112,7 @@ export default function MeoDesktopApp() {
   const [newChatRequest, setNewChatRequest] = useState(0);
   const [searchRequest, setSearchRequest] = useState(0);
   const [chatBusy, setChatBusy] = useState(false);
+  const [workHandoff, setWorkHandoff] = useState<WorkHandoff | null>(null);
   const [compact, setCompact] = useState(
     () => window.matchMedia("(max-width: 759px)").matches,
   );
@@ -168,6 +171,14 @@ export default function MeoDesktopApp() {
     () => user?.name || user?.email || "Meo Account",
     [user],
   );
+
+  const handoffToWork = (text: string, conversationId: string) => {
+    if (chatBusy || !text.trim()) return;
+    setWorkHandoff((current) => ({ id: (current?.id ?? 0) + 1, text, conversationId }));
+    setMode("work");
+    setMobileOpen(false);
+    setInspectorOpen(false);
+  };
 
   const selectMode = (next: PrimaryMode | "settings") => {
     if (
@@ -243,7 +254,7 @@ export default function MeoDesktopApp() {
 
         <nav className="meo-desktop-nav-list" aria-label="Meo AI">
           {[...navigation.navigation]
-            .filter((item) => item.placement === "primary")
+            .filter((item) => item.placement === "primary" && item.id !== "chat" && item.id !== "work")
             .sort((a, b) => a.order - b.order)
             .map(
               (item) =>
@@ -326,7 +337,16 @@ export default function MeoDesktopApp() {
           >
             <Icon name="menu" />
           </button>
-          <div className="meo-desktop-header-copy">
+          <div className="meo-desktop-header-center">
+            <div className="meo-desktop-mode-switch" role="group" aria-label={t("meo.work.modeSwitch")}>
+              <button type="button" aria-pressed={mode === "chat"}
+                className={mode === "chat" ? "is-active" : ""}
+                onClick={() => selectMode("chat")}>{t("meo.nav.chat")}</button>
+              <button type="button" aria-pressed={mode === "work"}
+                className={mode === "work" ? "is-active" : ""}
+                onClick={() => selectMode("work")}>{t("meo.nav.work")}</button>
+            </div>
+            <div className="meo-desktop-header-copy">
             <strong>
               {mode === "settings"
                 ? t("meo.settings.title")
@@ -345,6 +365,7 @@ export default function MeoDesktopApp() {
                       ? "Persistent context for related work"
                       : "Reusable capabilities"}
             </span>
+            </div>
           </div>
           <button
             className={`meo-desktop-icon-button ${inspectorOpen ? "is-active" : ""}`}
@@ -368,10 +389,13 @@ export default function MeoDesktopApp() {
               searchRequest={searchRequest}
               onBusyChange={setChatBusy}
               onSelectConversation={() => setMobileOpen(false)}
+              onDelegateToWork={handoffToWork}
             />
           </div>
           {mode === "settings" ? (
             <SettingsCenter onDirty={setSettingsDirty} />
+          ) : mode === "work" ? (
+            <WorkSurface handoff={workHandoff} onChat={() => selectMode("chat")} />
           ) : mode === "skills" ? (
             <PluginLibrary />
           ) : mode !== "chat" ? (
