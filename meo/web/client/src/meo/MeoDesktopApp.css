@@ -373,3 +373,9 @@
   .meo-chat-message { font-size: 14px; }
   .meo-chat-composer { width: calc(100% - 22px); margin: 8px auto max(12px, env(safe-area-inset-bottom)); }
 }
+
+
+.meo-chat-send.is-stop { color: rgb(var(--text-primary)); background: rgb(var(--surface-tertiary)); }
+.meo-chat-stop-notice { width: 100%; max-width: 800px; margin: 0; color: rgb(var(--text-secondary)); font-size: 13px; line-height: 1.5; }
+.meo-chat-history-panel .meo-desktop-section-label { margin-top: 0; }
+.meo-desktop-inspector-empty { height: calc(100% - 80px); }
