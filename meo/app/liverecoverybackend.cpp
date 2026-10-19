@@ -27,8 +27,8 @@ void englishNmcli(QProcess *process) {
 }
 }
 
-LiveRecoveryBackend::LiveRecoveryBackend(QObject *parent) : QObject(parent) {
-    updateStatus();
+LiveRecoveryBackend::LiveRecoveryBackend(bool active, QObject *parent) : QObject(parent) {
+    if (active) updateStatus();
 }
 
 void LiveRecoveryBackend::updateStatus() {
