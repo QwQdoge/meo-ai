@@ -469,3 +469,6 @@
 @media (max-width: 759px) {
   .meo-chat-model-description { margin-inline: 15px; max-width: calc(100% - 30px); }
 }
+
+.meo-chat-message-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.meo-chat-copy-error { display: inline-block; padding: 5px 12px; color: rgb(var(--status-error-strong)); font-size: 12px; line-height: 1.4; }
