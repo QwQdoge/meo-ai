@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
 import { settingsRequest } from './settingsClient';
-import PluginDiscovery from './PluginDiscovery';
 import './PluginLibrary.css';
 
 type Skill = { id?: string; name: string; description: string; content: string; enabled: boolean };
@@ -159,7 +158,6 @@ export default function PluginLibrary() {
         <span>Discover:</span>
         <a href="https://registry.modelcontextprotocol.io/" target="_blank" rel="noreferrer">Official MCP Registry ↗</a>
         <a href="https://skills.sh/" target="_blank" rel="noreferrer">skills.sh ↗</a>
-        <a href="https://smithery.ai/servers" target="_blank" rel="noreferrer">Smithery ↗</a>
         <span className="meo-plugin-muted">Review a publisher before connecting it.</span>
       </div>
       <p className="meo-plugin-info">Configurations and skill text are stored in your account. Remote MCP execution,
@@ -169,16 +167,6 @@ export default function PluginLibrary() {
         <button type="button" onClick={() => void reload()}>Reload</button>
       </p>}
       {message && <p role="status" className="meo-plugin-success">{message}</p>}
-
-      <PluginDiscovery
-        selectedPluginName={selected && skills.length < 32 ? selected.name : undefined}
-        onInstalled={async (id) => { await reload(); await showPlugin(id); }}
-        onImportSkill={(skill) => {
-          // Keep imported Skill text in the current draft. Only Save skills
-          // writes it to Meo Account, preventing unexpected draft overwrites.
-          if (selected && skills.length < 32) setSkills((existing) => [...existing, skill]);
-        }}
-      />
 
       {showAdd && (
         <form className="meo-plugin-add" onSubmit={(event) => { event.preventDefault(); void addPlugin(); }}>

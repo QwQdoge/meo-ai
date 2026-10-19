@@ -21,8 +21,49 @@ function sameOrigin(request) {
   }
 }
 
+function workCloudUrl(env) {
+  const configured = String(env.MEO_AGENT_CLOUD_URL ?? '').trim();
+  if (!configured) return null;
+  try {
+    const url = new URL(configured);
+    if (url.protocol !== 'https:' || !url.hostname || url.username || url.password ||
+        url.search || url.hash || !['', '/'].includes(url.pathname)) return null;
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
+
 function targetFor(request, env, relativePath) {
   const method = request.method;
+  if (relativePath === '/work/status' && method === 'GET') {
+    return { local: 'work-status' };
+  }
+  if (relativePath === '/workspaces' && method === 'GET') {
+    return { url: `${apiUrl(env)}/v1/ai/workspaces`, method, body: null };
+  }
+  const cloud = workCloudUrl(env);
+  if (cloud && relativePath === '/work/agent-runs' && method === 'POST') {
+    return { url: `${cloud}/v1/agent-runs`, method, body: null };
+  }
+  if (cloud && relativePath === '/work/agent-runs/events' && method === 'GET') {
+    const incoming = new URL(request.url);
+    const upstream = new URL(`${cloud}/v1/agent-runs/events`);
+    // Upstream validates the account-owned run ID and cursor.
+    for (const field of ['run_id', 'after']) {
+      const value = incoming.searchParams.get(field);
+      if (value !== null) upstream.searchParams.set(field, value);
+    }
+    return { url: upstream.toString(), method, body: null };
+  }
+  const cancelRun = relativePath.match(/^\/work\/agent-runs\/([0-9a-f-]{36})\/cancel$/i);
+  if (cloud && cancelRun && method === 'POST') {
+    return { url: `${cloud}/v1/agent-runs/${cancelRun[1]}/cancel`, method, body: null };
+  }
+  const decideRun = relativePath.match(/^\/work\/agent-runs\/([0-9a-f-]{36})\/decisions\/([A-Za-z0-9._:-]{1,128})$/i);
+  if (cloud && decideRun && method === 'POST') {
+    return { url: `${cloud}/v1/agent-runs/${decideRun[1]}/decisions/${encodeURIComponent(decideRun[2])}`, method, body: null };
+  }
   if (relativePath === '/connections' && method === 'GET') {
     return {
       url: brokerUrl(env),
@@ -86,7 +127,7 @@ function targetFor(request, env, relativePath) {
   return null;
 }
 
-function forwardedHeaders(request, accessToken, hasBody) {
+function forwardedHeaders(request, accessToken, hasBody, forwardCookies = true) {
   const headers = new Headers();
   headers.set('Authorization', `Bearer ${accessToken}`);
   // Origin was checked against the incoming request before reaching this BFF.
@@ -96,7 +137,7 @@ function forwardedHeaders(request, accessToken, hasBody) {
   // when the Pages BFF calls the first-party API so its session authenticator
   // can validate the same user before considering the OAuth bearer fallback.
   const cookie = request.headers.get('Cookie');
-  if (cookie) headers.set('Cookie', cookie);
+  if (cookie && forwardCookies) headers.set('Cookie', cookie);
   headers.set('Cache-Control', 'no-store');
   const accept = request.headers.get('Accept');
   if (accept) headers.set('Accept', accept);
@@ -134,6 +175,12 @@ export async function onRequest({ request, env }) {
     return response;
   }
 
+  if (route.local === 'work-status') {
+    const result = json({ agent_available: Boolean(workCloudUrl(env)) });
+    if (cookie) result.headers.append('Set-Cookie', cookie);
+    return result;
+  }
+
   let body = route.body;
   if (body == null && !['GET', 'HEAD'].includes(route.method)) {
     body = await request.arrayBuffer();
@@ -141,7 +188,8 @@ export async function onRequest({ request, env }) {
 
   const upstream = await fetch(route.url, {
     method: route.method,
-    headers: forwardedHeaders(request, session.accessToken, body != null),
+    headers: forwardedHeaders(request, session.accessToken, body != null,
+      !route.url.startsWith(`${workCloudUrl(env) ?? 'no-configured-agent-host'}/v1/agent-runs`)),
     body: ['GET', 'HEAD'].includes(route.method) ? undefined : body,
     redirect: 'manual',
     signal: request.signal,
