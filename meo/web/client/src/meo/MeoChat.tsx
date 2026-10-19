@@ -362,6 +362,10 @@ export default function MeoChat({ historyTarget, newChatRequest, onBusyChange, o
     () => connections.find((item) => item.id === credentialId),
     [connections, credentialId],
   );
+  const selectedModelInfo = useMemo(
+    () => models.find((item) => item.id === model),
+    [models, model],
+  );
 
   const changeConnection = useCallback(
     (id: string) => {
@@ -579,6 +583,8 @@ export default function MeoChat({ historyTarget, newChatRequest, onBusyChange, o
           </select>
           {models.length > 0 && modelDiscovery === 'ready' ? (
             <select aria-label={t('meo_web_model')} className="meo-chat-model-select"
+              aria-describedby={selectedModelInfo?.description ? 'meo-chat-model-description' : undefined}
+              title={selectedModelInfo?.description}
               value={model} onChange={(event) => changeModel(event.target.value)} disabled={busy}>
               {models.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
             </select>
@@ -589,6 +595,10 @@ export default function MeoChat({ historyTarget, newChatRequest, onBusyChange, o
           )}
         </div>
       </header>
+      {selectedModelInfo?.description && modelDiscovery === 'ready' && (
+        <p id="meo-chat-model-description" className="meo-chat-model-description"
+          title={selectedModelInfo.description}>{selectedModelInfo.description}</p>
+      )}
       {modelDiscovery === 'unsupported' && (
         <p className="text-text-secondary text-sm">{t('meo_web_model_manual_fallback')}</p>
       )}
