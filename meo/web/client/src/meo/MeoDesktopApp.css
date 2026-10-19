@@ -881,3 +881,27 @@
   .meo-chat-agent-select { max-width: min(100%, 180px); }
   .meo-chat-agent-proposal { padding: 14px; }
 }
+
+
+/* Agent-managed MCP execution: quiet and visible, not an unrelated dialog. */
+.meo-chat-mcp-toggle {
+  display: inline-flex; align-items: center; gap: 7px; cursor: pointer;
+  white-space: nowrap; font-size: 12px; color: rgb(var(--text-secondary));
+}
+.meo-chat-mcp-toggle input { accent-color: rgb(var(--accent-primary)); }
+.meo-chat-mcp-status, .meo-chat-mcp-permission {
+  padding: 13px 16px; border: 1px solid rgb(var(--border-light));
+  border-radius: 15px; background: rgb(var(--surface-secondary)); margin: 12px 0;
+  font-size: 12px; line-height: 1.55; overflow-wrap: anywhere;
+}
+.meo-chat-mcp-status strong, .meo-chat-mcp-permission strong { font-size: 13px; font-weight: 600; }
+.meo-chat-mcp-permission p { margin: 9px 0; color: rgb(var(--text-secondary)); }
+.meo-chat-mcp-status summary, .meo-chat-mcp-permission summary {
+  cursor: pointer; margin-top: 8px; font-size: 12px;
+}
+.meo-chat-mcp-status pre, .meo-chat-mcp-permission pre {
+  max-height: 180px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere;
+  background: rgb(var(--surface-primary)); border-radius: 10px;
+  padding: 10px; font-size: 11px;
+}
+.meo-chat-mcp-permission button { cursor: pointer; }
