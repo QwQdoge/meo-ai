@@ -25,15 +25,35 @@ private fun statusResource(status: String) = when (status) {
     else -> R.string.meo_work_state_unknown
 }
 
-/** Native account-owned remote Work *viewer*. The Cloud runner and device
- * AgentService own execution. A listed task is never re-dispatched here.
+/** Native account-owned remote Work state and explicit cancellation UI.
+ * The Cloud runner/device AgentService own execution. Never re-dispatch here.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun WorkRunsScreen(controller: MeoController, openNavigation: () -> Unit) {
     val state = controller.state
     val configured = controller.hasRemoteAgentCloud()
+    var pendingCancelId by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(configured) { if (configured) controller.loadRemoteAgentRuns() }
+
+    if (pendingCancelId != null) {
+        AlertDialog(
+            onDismissRequest = { pendingCancelId = null },
+            title = { Text(stringResource(R.string.meo_work_cancel_title)) },
+            text = { Text(stringResource(R.string.meo_work_cancel_warning)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingCancelId?.let { controller.requestCancelRemoteRun(it) }
+                    pendingCancelId = null
+                }) { Text(stringResource(R.string.meo_work_request_cancel)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingCancelId = null }) {
+                    Text(stringResource(R.string.meo_work_keep_running))
+                }
+            },
+        )
+    }
 
     Scaffold(contentWindowInsets = WindowInsets.safeDrawing, topBar = {
         TopAppBar(
@@ -100,6 +120,15 @@ fun WorkRunsScreen(controller: MeoController, openNavigation: () -> Unit) {
                             Text(stringResource(R.string.meo_work_device, run.deviceId),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            if (run.status in setOf("queued", "dispatching", "running", "awaiting_approval")) {
+                                TextButton(
+                                    enabled = state.remoteAgentRunCancelId == null,
+                                    onClick = { pendingCancelId = run.id },
+                                ) { Text(stringResource(R.string.meo_work_request_cancel)) }
+                            }
+                            if (state.remoteAgentRunCancelId == run.id) {
+                                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                            }
                         }
                     }
                 }
