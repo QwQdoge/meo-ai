@@ -98,6 +98,8 @@ export default function WorkSurface({ handoff, onChat }: {
   const lastSeqRef = useRef(-1);
   const streamAbortRef = useRef<AbortController | null>(null);
   const resumedRunRef = useRef('');
+  const accountIdRef = useRef(user?.id);
+  accountIdRef.current = user?.id;
 
   const projects = useMemo(() => {
     const seen = new Set<string>();
@@ -126,7 +128,8 @@ export default function WorkSurface({ handoff, onChat }: {
   }, [t]);
 
   const loadRecentRuns = useCallback(async () => {
-    if (!user?.id) return;
+    const accountId = user?.id;
+    if (!accountId) return;
     setRecentBusy(true);
     setRecentError('');
     try {
@@ -137,10 +140,13 @@ export default function WorkSurface({ handoff, onChat }: {
         typeof item.status === 'string' &&
         (item.project_id === null || uuid.test(item.project_id)) &&
         typeof item.conversation_id === 'string' && uuid.test(item.conversation_id));
-      setRecentRuns(known.slice(0, 30));
+      if (accountIdRef.current === accountId) setRecentRuns(known.slice(0, 30));
     } catch (cause) {
-      setRecentError(cause instanceof Error ? cause.message : t('meo.work.recentUnavailable'));
-    } finally { setRecentBusy(false); }
+      if (accountIdRef.current === accountId)
+        setRecentError(cause instanceof Error ? cause.message : t('meo.work.recentUnavailable'));
+    } finally {
+      if (accountIdRef.current === accountId) setRecentBusy(false);
+    }
   }, [user?.id, t]);
 
   useEffect(() => { void refresh(); }, [refresh]);
@@ -298,8 +304,10 @@ export default function WorkSurface({ handoff, onChat }: {
       if (!controller.signal.aborted)
         setRunError(cause instanceof Error ? cause.message : t('meo.work.runFailed'));
     } finally {
-      if (streamAbortRef.current === controller) streamAbortRef.current = null;
-      setFollowing(false);
+      if (streamAbortRef.current === controller) {
+        streamAbortRef.current = null;
+        setFollowing(false);
+      }
     }
   };
 
