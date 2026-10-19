@@ -38,6 +38,12 @@ data class CloudMemory(
     val enabled: Boolean,
 )
 
+data class CloudProject(
+    val id: String,
+    val name: String,
+    val description: String,
+)
+
 /** Account-owned plugin metadata; this is not an executable native MCP connection. */
 data class AccountPlugin(
     val id: String,
@@ -66,6 +72,10 @@ data class MeoUiState(
     val cloudSettings: CloudSettings? = null,
     val cloudMemories: List<CloudMemory> = emptyList(),
     val archivedMemories: Boolean = false,
+    val projects: List<CloudProject> = emptyList(),
+    val projectsBusy: Boolean = false,
+    val projectsError: String? = null,
+    val selectedProjectId: String? = null,
     val plugins: List<AccountPlugin> = emptyList(),
     val pluginsBusy: Boolean = false,
     val pluginsError: String? = null,
@@ -343,6 +353,82 @@ class MeoController(private val activity: MainActivity) {
                 post {
                     state = state.copy(streaming = false, loading = false, error = readableError(cause))
                 }
+            }
+        }
+    }
+
+    private val projectIdPattern = Regex("^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[1-8][a-fA-F0-9]{3}-[89abAB][a-fA-F0-9]{3}-[a-fA-F0-9]{12}$")
+
+    private fun cloudProject(row: org.json.JSONObject): CloudProject? {
+        val id = row.optString("id")
+        val name = row.optString("name").trim()
+        if (!projectIdPattern.matches(id) || name.isBlank()) return null
+        return CloudProject(id, name, row.optString("description"))
+    }
+
+    fun selectProject(id: String) {
+        if (state.projects.any { it.id == id }) state = state.copy(selectedProjectId = id)
+    }
+
+    fun loadProjects() {
+        if (!state.signedIn || state.projectsBusy) return
+        val actor = state.email
+        state = state.copy(projectsBusy = true, projectsError = null)
+        executor.execute {
+            try {
+                val rows = client.listProjects(ensureFreshSession().accessToken)
+                val projects = buildList {
+                    for (index in 0 until rows.length()) {
+                        rows.optJSONObject(index)?.let { row -> cloudProject(row)?.let { add(it) } }
+                    }
+                }
+                post {
+                    if (state.signedIn && state.email == actor)
+                        state = state.copy(projects = projects, projectsBusy = false, projectsError = null)
+                }
+            } catch (cause: Throwable) {
+                post { if (state.signedIn && state.email == actor)
+                    state = state.copy(projectsBusy = false, projectsError = readableError(cause)) }
+            }
+        }
+    }
+
+    fun createProject(name: String) {
+        val normalized = name.trim()
+        if (!state.signedIn || state.projectsBusy || normalized.isEmpty() || normalized.length > 160) return
+        val actor = state.email
+        state = state.copy(projectsBusy = true, projectsError = null)
+        executor.execute {
+            try {
+                val project = cloudProject(client.createProject(ensureFreshSession().accessToken, normalized))
+                    ?: throw IllegalStateException("Invalid Project API response")
+                post { if (state.signedIn && state.email == actor)
+                    state = state.copy(projects = listOf(project) + state.projects.filter { it.id != project.id },
+                        selectedProjectId = project.id, projectsBusy = false, projectsError = null) }
+            } catch (cause: Throwable) {
+                post { if (state.signedIn && state.email == actor)
+                    state = state.copy(projectsBusy = false, projectsError = readableError(cause)) }
+            }
+        }
+    }
+
+    fun renameProject(id: String, name: String) {
+        val normalized = name.trim()
+        if (!state.signedIn || state.projectsBusy || state.projects.none { it.id == id } ||
+            normalized.isEmpty() || normalized.length > 160) return
+        val actor = state.email
+        state = state.copy(projectsBusy = true, projectsError = null)
+        executor.execute {
+            try {
+                val project = cloudProject(client.renameProject(ensureFreshSession().accessToken, id, normalized))
+                    ?: throw IllegalStateException("Invalid Project API response")
+                if (project.id != id) throw IllegalStateException("Unexpected project identity")
+                post { if (state.signedIn && state.email == actor)
+                    state = state.copy(projects = state.projects.map { if (it.id == id) project else it },
+                        projectsBusy = false, projectsError = null) }
+            } catch (cause: Throwable) {
+                post { if (state.signedIn && state.email == actor)
+                    state = state.copy(projectsBusy = false, projectsError = readableError(cause)) }
             }
         }
     }

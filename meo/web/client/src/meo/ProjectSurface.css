@@ -1,0 +1,24 @@
+.meo-projects { width: 100%; max-width: 1120px; height: 100%; overflow: auto; padding: 36px 40px; color: rgb(var(--text-primary)); }
+.meo-projects-header { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-bottom: 24px; }
+.meo-projects-header h1 { margin: 0 0 8px; font-size: 27px; font-weight: 650; letter-spacing: -.03em; }
+.meo-projects-header p, .meo-projects-details p { margin: 0; font-size: 13px; line-height: 1.6; color: rgb(var(--text-secondary)); }
+.meo-projects-action, .meo-projects-form button, .meo-projects-error button { border: 1px solid rgb(var(--border-light)); color: rgb(var(--text-primary)); background: rgb(var(--surface-secondary)); border-radius: 12px; padding: 10px 15px; cursor: pointer; }
+.meo-projects-action:hover, .meo-projects-form button:hover { background: rgb(var(--surface-tertiary)); }
+.meo-projects-form { padding: 18px; border-radius: 16px; background: rgb(var(--surface-secondary)); margin-bottom: 24px; }
+.meo-projects-form label { display: block; margin-bottom: 9px; font-size: 13px; }
+.meo-projects-form-row { display: flex; gap: 10px; flex-wrap: wrap; }
+.meo-projects-form input { padding: 10px 12px; color: inherit; min-width: 120px; flex: 1; background: rgb(var(--surface-primary)); border: 1px solid rgb(var(--border-light)); border-radius: 10px; }
+.meo-projects-layout { display: grid; grid-template-columns: minmax(230px, 350px) minmax(0, 1fr); gap: 22px; }
+.meo-projects-list { display: grid; align-content: start; gap: 8px; }
+.meo-projects-list button { display: grid; gap: 7px; width: 100%; border-radius: 14px; border: 1px solid rgb(var(--border-light)); padding: 16px; color: inherit; background: rgb(var(--surface-secondary)); text-align: left; cursor: pointer; }
+.meo-projects-list button.active { border-color: rgb(var(--accent-primary)); background: rgb(var(--surface-tertiary)); }
+.meo-projects-list button strong { font-size: 14px; overflow-wrap: anywhere; }
+.meo-projects-list button span { font-size: 12px; color: rgb(var(--text-secondary)); overflow-wrap: anywhere; }
+.meo-projects-details { border-radius: 18px; border: 1px solid rgb(var(--border-light)); padding: 22px; align-self: start; }
+.meo-projects-details h2 { margin: 0 0 10px; font-size: 21px; overflow-wrap: anywhere; }
+.meo-projects-details p { margin-bottom: 20px; }
+.meo-projects-empty, .meo-projects-error { padding: 22px; color: rgb(var(--text-secondary)); border: 1px solid rgb(var(--border-light)); border-radius: 14px; }
+.meo-projects-error { color: rgb(var(--status-error-strong)); margin-bottom: 16px; display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.meo-projects button:disabled { opacity: .55; cursor: default; }
+.meo-projects :focus-visible { outline: 2px solid rgb(var(--accent-primary)); outline-offset: 2px; }
+@media (max-width: 760px) { .meo-projects { padding: 22px 18px; } .meo-projects-layout { grid-template-columns: 1fr; } .meo-projects-header { flex-wrap: wrap; } }

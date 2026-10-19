@@ -53,6 +53,7 @@ fun ProductWorkspace(controller: MeoController, chat: @Composable (openNavigatio
             when(selected) {
                 "chat" -> chat(openNavigation) { selected="settings" }
                 "settings" -> SettingsScreen(controller) { selected="chat" }
+                "projects" -> ProjectsScreen(controller, openNavigation)
                 else -> Scaffold(contentWindowInsets=WindowInsets.safeDrawing, topBar={
                     TopAppBar(title={Text(destinations.first { it.id==selected }.label)},navigationIcon={
                         IconButton(onClick=openNavigation) { Icon(Icons.Rounded.Menu,stringResource(R.string.meo_navigation_title)) }

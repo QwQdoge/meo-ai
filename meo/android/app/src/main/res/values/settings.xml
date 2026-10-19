@@ -34,4 +34,18 @@
     <string name="meo_settings_account_optional">Meo Account is optional for local settings</string>
     <string name="meo_settings_sign_in">Connect Meo Account</string>
     <string name="meo_settings_guest_settings">Local settings · no account needed</string>
+    <string name="meo_projects_title">Projects</string>
+    <string name="meo_projects_cloud_scope">Meo Account projects sync with the Web. Desktop local projects remain separate until explicitly migrated.</string>
+    <string name="meo_projects_new">New project</string>
+    <string name="meo_projects_name">Project name</string>
+    <string name="meo_projects_create">Create</string>
+    <string name="meo_projects_cancel">Cancel</string>
+    <string name="meo_projects_save">Save</string>
+    <string name="meo_projects_rename">Rename</string>
+    <string name="meo_projects_retry">Retry</string>
+    <string name="meo_projects_refresh">Refresh</string>
+    <string name="meo_projects_unavailable">Project service unavailable</string>
+    <string name="meo_projects_empty">No account projects yet.</string>
+    <string name="meo_projects_no_description">No description</string>
+    <string name="meo_projects_context_note">Project conversations and workspace files are not yet linked here.</string>
 </resources>

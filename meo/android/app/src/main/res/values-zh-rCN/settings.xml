@@ -34,4 +34,18 @@
     <string name="meo_settings_account_optional">本地设置无需登录 Meo Account</string>
     <string name="meo_settings_sign_in">连接 Meo Account</string>
     <string name="meo_settings_guest_settings">本地设置（无需登录）</string>
+    <string name="meo_projects_title">项目</string>
+    <string name="meo_projects_cloud_scope">Meo Account 云端项目与 Web 共用。桌面端本地项目暂不会自动迁移。</string>
+    <string name="meo_projects_new">新建项目</string>
+    <string name="meo_projects_name">项目名称</string>
+    <string name="meo_projects_create">创建</string>
+    <string name="meo_projects_cancel">取消</string>
+    <string name="meo_projects_save">保存</string>
+    <string name="meo_projects_rename">重命名</string>
+    <string name="meo_projects_retry">重试</string>
+    <string name="meo_projects_refresh">刷新</string>
+    <string name="meo_projects_unavailable">项目服务不可用</string>
+    <string name="meo_projects_empty">还没有云端项目。</string>
+    <string name="meo_projects_no_description">暂无描述</string>
+    <string name="meo_projects_context_note">这里尚未接通对话归属与工作区文件。</string>
 </resources>

@@ -10,6 +10,7 @@ Item {
     property var store: null
     property real uiScale: MeoTheme.globalScale
     property bool creating: false
+    property string editingProjectId: ""
     readonly property var projectList: store ? store.projects : []
 
     ColumnLayout {
@@ -184,7 +185,17 @@ Item {
                     ColumnLayout {
                         Layout.fillWidth: true
                         spacing: 3 * root.uiScale
+                        MeoTextField {
+                            id: renameField
+                            Layout.fillWidth: true
+                            visible: root.editingProjectId === String(modelData.id)
+                            text: String(modelData.name || "")
+                            placeholder: qsTr("Project name")
+                            size: "s"
+                            Accessible.name: qsTr("Rename project")
+                        }
                         MeoText {
+                            visible: root.editingProjectId !== String(modelData.id)
                             Layout.fillWidth: true
                             text: String(modelData.name || "")
                             typeRole: "title"
@@ -203,6 +214,30 @@ Item {
                         }
                     }
 
+                    MeoButton {
+                        objectName: "meoAiRenameProject-" + String(modelData.id || "")
+                        text: root.editingProjectId === String(modelData.id) ? qsTr("Save") : qsTr("Rename")
+                        type: "text"
+                        size: "s"
+                        enabled: !!root.store && (root.editingProjectId !== String(modelData.id) || renameField.text.trim().length > 0)
+                        onClicked: {
+                            const id = String(modelData.id || "")
+                            if (root.editingProjectId === id) {
+                                if (root.store.renameProject(id, renameField.text))
+                                    root.editingProjectId = ""
+                            } else {
+                                root.editingProjectId = id
+                                Qt.callLater(function() { renameField.forceActiveFocus() })
+                            }
+                        }
+                    }
+                    MeoButton {
+                        visible: root.editingProjectId === String(modelData.id)
+                        text: qsTr("Cancel")
+                        type: "text"
+                        size: "s"
+                        onClicked: root.editingProjectId = ""
+                    }
                     MeoButton {
                         objectName: "meoAiOpenProject-" + String(modelData.id || "")
                         text: root.store && root.store.activeProjectId === String(modelData.id)
