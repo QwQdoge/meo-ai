@@ -141,6 +141,18 @@ class MeoApiClient {
      */
     fun remoteAgentCloudConfigured(): Boolean = BuildConfig.MEO_AGENT_CLOUD_URL.isNotBlank()
 
+    fun requestRemoteAgentRunCancellation(accessToken: String, runId: String): String {
+        if (!remoteAgentCloudConfigured())
+            throw ApiException(503, "agent_cloud_not_configured", "Remote Work is not configured for this build")
+        require(Regex("^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[1-8][a-fA-F0-9]{3}-[89abAB][a-fA-F0-9]{3}-[a-fA-F0-9]{12}$").matches(runId))
+        // User-initiated, authenticated POST; never retry automatically.
+        // A cancel_requested response is not proof the device stopped or rolled back.
+        val result = requestJson("POST",
+            "${BuildConfig.MEO_AGENT_CLOUD_URL}/v1/agent-runs/${runId}/cancel",
+            accessToken)
+        return result.getString("status")
+    }
+
     fun listRecentAgentRuns(accessToken: String): JSONArray {
         if (!remoteAgentCloudConfigured())
             throw ApiException(503, "agent_cloud_not_configured", "Remote Work is not configured for this build")

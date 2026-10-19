@@ -57,7 +57,7 @@
     <string name="meo_work_empty">No remote tasks found.</string>
     <string name="meo_work_task_id">Task · %1$s</string>
     <string name="meo_work_device">Device: %1$s</string>
-    <string name="meo_work_viewer_only">Status view only. Approvals, starting tasks and event playback are not yet connected on Android.</string>
+    <string name="meo_work_viewer_only">Approval and event replay are not yet available on Android. Cancellation requests do not roll back completed actions.</string>
     <string name="meo_work_state_queued">Queued</string>
     <string name="meo_work_state_dispatching">Connecting to device</string>
     <string name="meo_work_state_running">Running</string>
@@ -67,4 +67,8 @@
     <string name="meo_work_state_cancelled">Cancelled</string>
     <string name="meo_work_state_failed">Failed</string>
     <string name="meo_work_state_unknown">Unknown</string>
+    <string name="meo_work_cancel_title">Request task cancellation?</string>
+    <string name="meo_work_cancel_warning">The remote agent may already have changed files or completed actions. This requests it to stop; it cannot undo completed work.</string>
+    <string name="meo_work_request_cancel">Request cancellation</string>
+    <string name="meo_work_keep_running">Keep running</string>
 </resources>
