@@ -126,7 +126,7 @@ export async function exchangeCode(env, code, verifier, redirectUri) {
 function isTransientTokenError(error) {
   if (!(error instanceof OAuthTokenExchangeError)) return false;
   return error.reason === 'token_network_error' ||
-    /^token_(?:http_)?(?:429|5\\d\\d)(?:_|$)/.test(error.reason);
+    /^token_(?:http_)?(?:429|5[0-9][0-9])(?:_|$)/.test(error.reason);
 }
 
 export async function refreshTokens(env, refreshToken) {
