@@ -44,7 +44,7 @@ function targetFor(request, env, relativePath) {
   }
   const cloud = workCloudUrl(env);
   if (cloud && relativePath === '/work/agent-runs' && method === 'POST') {
-    return { url: `${cloud}/v1/agent-runs`, method, body: null };
+    return { url: `${cloud}/v1/agent-runs`, method, body: null, agent: true };
   }
   if (cloud && relativePath === '/work/agent-runs/events' && method === 'GET') {
     const incoming = new URL(request.url);
@@ -54,15 +54,15 @@ function targetFor(request, env, relativePath) {
       const value = incoming.searchParams.get(field);
       if (value !== null) upstream.searchParams.set(field, value);
     }
-    return { url: upstream.toString(), method, body: null };
+    return { url: upstream.toString(), method, body: null, agent: true };
   }
   const cancelRun = relativePath.match(/^\/work\/agent-runs\/([0-9a-f-]{36})\/cancel$/i);
   if (cloud && cancelRun && method === 'POST') {
-    return { url: `${cloud}/v1/agent-runs/${cancelRun[1]}/cancel`, method, body: null };
+    return { url: `${cloud}/v1/agent-runs/${cancelRun[1]}/cancel`, method, body: null, agent: true };
   }
   const decideRun = relativePath.match(/^\/work\/agent-runs\/([0-9a-f-]{36})\/decisions\/([A-Za-z0-9._:-]{1,128})$/i);
   if (cloud && decideRun && method === 'POST') {
-    return { url: `${cloud}/v1/agent-runs/${decideRun[1]}/decisions/${encodeURIComponent(decideRun[2])}`, method, body: null };
+    return { url: `${cloud}/v1/agent-runs/${decideRun[1]}/decisions/${encodeURIComponent(decideRun[2])}`, method, body: null, agent: true };
   }
   if (relativePath === '/connections' && method === 'GET') {
     return {
@@ -188,8 +188,9 @@ export async function onRequest({ request, env }) {
 
   const upstream = await fetch(route.url, {
     method: route.method,
-    headers: forwardedHeaders(request, session.accessToken, body != null,
-      !route.url.startsWith(`${workCloudUrl(env) ?? 'no-configured-agent-host'}/v1/agent-runs`)),
+    // Never forward the browser's Meo Account cookies to a separately
+    // configured Agent service. The authenticated bearer is sufficient.
+    headers: forwardedHeaders(request, session.accessToken, body != null, !route.agent),
     body: ['GET', 'HEAD'].includes(route.method) ? undefined : body,
     redirect: 'manual',
     signal: request.signal,
