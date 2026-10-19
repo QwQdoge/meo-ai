@@ -81,6 +81,7 @@ data class MeoUiState(
     val archivedMemories: Boolean = false,
     val remoteAgentRuns: List<RemoteAgentRun> = emptyList(),
     val remoteAgentRunsBusy: Boolean = false,
+    val remoteAgentRunCancelId: String? = null,
     val remoteAgentRunsError: String? = null,
     val projects: List<CloudProject> = emptyList(),
     val projectsBusy: Boolean = false,
@@ -400,6 +401,39 @@ class MeoController(private val activity: MainActivity) {
                 post { if (state.signedIn && state.email == actor)
                     state = state.copy(remoteAgentRunsBusy = false,
                         remoteAgentRunsError = readableError(cause)) }
+            }
+        }
+    }
+
+    /** The user must confirm cancellation in the native UI. This requests a
+     * stop from the owning cloud/device; already committed effects remain.
+     */
+    fun requestCancelRemoteRun(runId: String) {
+        val current = state.remoteAgentRuns.find { it.id == runId } ?: return
+        if (!state.signedIn || state.remoteAgentRunCancelId != null ||
+            current.status !in setOf("queued", "dispatching", "running", "awaiting_approval")) return
+        val actor = state.email
+        state = state.copy(remoteAgentRunCancelId = runId, remoteAgentRunsError = null)
+        executor.execute {
+            try {
+                val nextStatus = client.requestRemoteAgentRunCancellation(
+                    ensureFreshSession().accessToken, runId)
+                if (nextStatus !in setOf("cancel_requested", "cancelled", "completed", "failed"))
+                    throw IllegalStateException("Invalid AgentRun cancellation state")
+                post {
+                    if (state.signedIn && state.email == actor) {
+                        state = state.copy(remoteAgentRunCancelId = null,
+                            remoteAgentRuns = state.remoteAgentRuns.map { run ->
+                                if (run.id == runId) run.copy(status = nextStatus) else run
+                            })
+                    }
+                }
+            } catch (cause: Throwable) {
+                post {
+                    if (state.signedIn && state.email == actor)
+                        state = state.copy(remoteAgentRunCancelId = null,
+                            remoteAgentRunsError = readableError(cause))
+                }
             }
         }
     }
