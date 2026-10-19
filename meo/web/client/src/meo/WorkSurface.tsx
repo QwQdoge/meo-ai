@@ -2,7 +2,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 're
 import { useTranslation } from 'react-i18next';
 import { useMeoSession } from './session';
 import AgentActivityPanel from './AgentActivityPanel';
-import type { AgentActivityEvent, AgentApproval } from './AgentActivityPanel';
+import type { AgentActivityEvent, AgentApproval, AgentTaskNode } from './AgentActivityPanel';
 
 export type WorkHandoff = { id: number; text: string; conversationId: string; projectId?: string };
 
@@ -61,6 +61,7 @@ export default function WorkSurface({ handoff, onChat }: {
   const [busy, setBusy] = useState(false);
   const [run, setRun] = useState<SavedRun | null>(() => recoverRun(user?.id ?? ''));
   const [events, setEvents] = useState<AgentActivityEvent[]>([]);
+  const [subagents, setSubagents] = useState<AgentTaskNode[]>([]);
   const [output, setOutput] = useState('');
   const [runStatus, setRunStatus] = useState('');
   const [approval, setApproval] = useState<AgentApproval | null>(null);
@@ -68,6 +69,7 @@ export default function WorkSurface({ handoff, onChat }: {
   const [following, setFollowing] = useState(false);
   const lastSeqRef = useRef(-1);
   const streamAbortRef = useRef<AbortController | null>(null);
+  const resumedRunRef = useRef('');
 
   const projects = useMemo(() => {
     const seen = new Set<string>();
@@ -110,6 +112,19 @@ export default function WorkSurface({ handoff, onChat }: {
   // Disconnecting a browser event subscriber NEVER cancels remote AgentRun.
   useEffect(() => () => streamAbortRef.current?.abort(), []);
 
+  // A tab reload restores the same AgentRun from sessionStorage and replays its
+  // persisted Cloud events. Do not generate a replacement run on reconnect.
+  useEffect(() => {
+    if (!user?.id || !run?.id || resumedRunRef.current === run.id) return;
+    resumedRunRef.current = run.id;
+    lastSeqRef.current = -1;
+    setOutput('');
+    setEvents([]);
+    setSubagents([]);
+    setApproval(null);
+    void followRun(run.id, -1);
+  }, [user?.id, run?.id]);
+
   const selected = workspaces.filter((item) => item.project_id === projectId);
   const canDelegate = selected.some((item) => item.capabilities?.includes('agent.chat'));
 
@@ -151,6 +166,32 @@ export default function WorkSurface({ handoff, onChat }: {
               const tool = payload.event;
               if (tool && typeof tool === 'object' && !Array.isArray(tool)) {
                 const event = tool as Record<string, unknown>;
+                if (event.type === 'presentation.card' && event.card &&
+                    typeof event.card === 'object' && !Array.isArray(event.card)) {
+                  const card = event.card as Record<string, unknown>;
+                  // Task IDs and statuses were validated by AgentService.
+                  // Re-check the shape defensively; never fabricate children
+                  // from status text or event names.
+                  if (typeof card.card_id === 'string' && card.card_id.startsWith('agent-run:local:') &&
+                      Array.isArray(card.task_tree) && card.task_tree.length <= 3) {
+                    const children = card.task_tree.flatMap((item): AgentTaskNode[] => {
+                      if (!item || typeof item !== 'object' || Array.isArray(item)) return [];
+                      const node = item as Record<string, unknown>;
+                      if (typeof node.id !== 'string' || !/^local:[0-9a-f-]{36}$/i.test(node.id) ||
+                          typeof node.title !== 'string' || node.title.length > 120 ||
+                          !['queued','running','completed','failed','cancelled'].includes(String(node.status)) ||
+                          !['local','remote','cloud'].includes(String(node.execution))) return [];
+                      return [{
+                        id: node.id,
+                        title: node.title,
+                        relation: 'subagent',
+                        execution: node.execution as AgentTaskNode['execution'],
+                        status: node.status as string,
+                      }];
+                    });
+                    if (children.length === card.task_tree.length) setSubagents(children);
+                  }
+                }
                 if (event.type === 'tool.requested' &&
                     typeof event.decision_id === 'string' &&
                     Array.isArray(event.options)) {
@@ -239,9 +280,11 @@ export default function WorkSurface({ handoff, onChat }: {
       });
       if (!uuid.test(response.run_id)) throw new Error(t('meo.work.runFailed'));
       const created: SavedRun = { id: response.run_id, projectId, text, conversationId };
+      resumedRunRef.current = created.id;
       setRun(created);
       setApproval(null);
       setEvents([]);
+      setSubagents([]);
       setOutput('');
       lastSeqRef.current = -1;
       setRunStatus(response.status || 'dispatching');
@@ -271,8 +314,10 @@ export default function WorkSurface({ handoff, onChat }: {
     if (run && !terminalStatuses.has(runStatus) && !window.confirm(t('meo.work.newTaskWarning'))) return;
     // This does not cancel an active remote run; it only stops showing it here.
     streamAbortRef.current?.abort();
+    resumedRunRef.current = '';
     setRun(null);
     setEvents([]);
+    setSubagents([]);
     setOutput('');
     setApproval(null);
     setRunStatus('');
@@ -356,6 +401,7 @@ export default function WorkSurface({ handoff, onChat }: {
             title: run.text.length > 140 ? `${run.text.slice(0, 139)}…` : run.text,
             description: run.text,
             relation: 'root',
+            children: subagents,
             execution: 'remote',
             status: runStatus || 'disconnected',
             // A saved Project binding is known; a device being online is not.
