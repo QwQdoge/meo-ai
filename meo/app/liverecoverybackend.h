@@ -23,11 +23,14 @@ public:
     Q_INVOKABLE void refreshNetworks();
     Q_INVOKABLE void connectWifi(const QString &ssid, const QString &password);
     Q_INVOKABLE void openNetworkSettings();
+    Q_INVOKABLE void openInstaller();
+    Q_INVOKABLE void openQuickRepair();
 signals:
     void networksChanged();
     void stateChanged();
 private:
     void updateStatus();
+    bool m_active = false;
     QVariantList m_networks;
     QProcess *m_scan = nullptr;
     QProcess *m_connect = nullptr;
