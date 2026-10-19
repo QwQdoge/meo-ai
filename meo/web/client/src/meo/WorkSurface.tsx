@@ -353,7 +353,8 @@ export default function WorkSurface({ handoff, onChat }: {
         <AgentActivityPanel
           task={{
             id: run.id,
-            title: run.text,
+            title: run.text.length > 140 ? `${run.text.slice(0, 139)}…` : run.text,
+            description: run.text,
             relation: 'root',
             execution: 'remote',
             status: runStatus || 'disconnected',
