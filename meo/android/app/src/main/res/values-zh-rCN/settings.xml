@@ -57,7 +57,7 @@
     <string name="meo_work_empty">还没有远程任务。</string>
     <string name="meo_work_task_id">任务 · %1$s</string>
     <string name="meo_work_device">设备：%1$s</string>
-    <string name="meo_work_viewer_only">Android 的任务审批与事件回放还未接通。请求取消不会回滚已经完成的操作。</string>
+    <string name="meo_work_viewer_only">这里可以查看远程任务状态并请求取消。Android 审批和事件回放尚未接通。</string>
     <string name="meo_work_state_queued">排队中</string>
     <string name="meo_work_state_dispatching">正在连接设备</string>
     <string name="meo_work_state_running">运行中</string>
@@ -71,4 +71,7 @@
     <string name="meo_work_cancel_warning">远程 Agent 可能已经修改文件或完成部分操作。这里只会请求它停止，不能撤销已经生效的修改。</string>
     <string name="meo_work_request_cancel">请求取消</string>
     <string name="meo_work_keep_running">继续运行</string>
+    <string name="meo_work_request_cancel">请求取消</string>
+    <string name="meo_work_cancel_title">取消远程任务？</string>
+    <string name="meo_work_cancel_warning">这只会请求已连接的设备停止执行，已经发生的修改不一定能撤销。</string>
 </resources>
