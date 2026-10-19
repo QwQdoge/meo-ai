@@ -60,6 +60,17 @@ class RelayRegistry:
     def get_connection(self, device_id: str) -> DeviceConnection | None:
         return self._connections.get(device_id)
 
+    def is_current_connection(self, session: RelaySession, connection: DeviceConnection) -> bool:
+        """Reject frames from a superseded WebSocket for the same device.
+
+        A reconnect replaces the old connection. That old socket may still be
+        alive briefly but must no longer publish events or touch device state.
+        """
+        return (
+            self._connections.get(session.device_id) is connection
+            and self._sessions.get(session.device_id) == session
+        )
+
     def is_online(self, account_user_id: str, device_id: str) -> bool:
         session = self._sessions.get(device_id)
         return bool(session and session.account_user_id == account_user_id)
