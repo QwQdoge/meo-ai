@@ -905,3 +905,40 @@
   padding: 10px; font-size: 11px;
 }
 .meo-chat-mcp-permission button { cursor: pointer; }
+
+/* Account-owned Work history: read-only selection of durable AgentRun IDs. */
+.meo-work-recent {
+  max-width: 980px;
+  margin: 16px auto 24px;
+  padding: 18px;
+  border: 1px solid rgb(var(--border-light));
+  border-radius: 18px;
+  background: rgb(var(--surface-secondary));
+}
+.meo-work-recent-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.meo-work-recent-heading h2 { font-size: 17px; font-weight: 650; margin: 0; }
+.meo-work-recent-heading button {
+  color: rgb(var(--text-primary));
+  background: rgb(var(--surface-primary));
+  border: 1px solid rgb(var(--border-light));
+  border-radius: 10px;
+  padding: 8px 12px;
+}
+.meo-work-recent > p { color: rgb(var(--text-secondary)); font-size: 12px; line-height: 1.65; margin: 10px 0 14px; }
+.meo-work-recent-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr)); gap: 10px; }
+.meo-work-recent-list button {
+  display: grid;
+  text-align: start;
+  gap: 5px;
+  border: 1px solid rgb(var(--border-light));
+  border-radius: 12px;
+  padding: 13px;
+  color: rgb(var(--text-primary));
+  background: rgb(var(--surface-primary));
+  cursor: pointer;
+}
+.meo-work-recent-list button[aria-pressed="true"] { border-color: rgb(var(--accent-primary)); }
+.meo-work-recent-list strong { font-size: 14px; }
+.meo-work-recent-list span, .meo-work-recent-list small { font-size: 12px; color: rgb(var(--text-secondary)); overflow-wrap: anywhere; }
+.meo-work-recent button:disabled { opacity: .5; cursor: default; }
+.meo-work-recent button:focus-visible { outline: 2px solid rgb(var(--accent-primary)); outline-offset: 2px; }
