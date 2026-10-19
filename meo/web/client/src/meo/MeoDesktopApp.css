@@ -669,3 +669,39 @@
 @media (max-width: 759px) {
   .meo-chat-run-status { width: calc(100% - 24px); }
 }
+
+
+/* Long conversation: only a bounded tail is mounted until earlier messages are requested. */
+.meo-chat-show-earlier {
+  align-self: center;
+  flex-shrink: 0;
+  min-height: 38px;
+  margin: 0 auto 3px;
+  padding: 8px 16px;
+  border: 1px solid rgb(var(--border-light));
+  border-radius: 13px;
+  background: rgb(var(--surface-secondary));
+  color: rgb(var(--text-primary));
+  font-size: 13px;
+  line-height: 1.5;
+  cursor: pointer;
+}
+.meo-chat-show-earlier:hover { background: rgb(var(--surface-tertiary)); }
+.meo-chat-message-assistant .meo-code-token-comment {
+  color: rgb(var(--text-secondary));
+  font-style: italic;
+}
+.meo-chat-message-assistant .meo-code-token-keyword,
+.meo-chat-message-assistant .meo-code-token-variable {
+  color: rgb(var(--accent-primary));
+  font-weight: 600;
+}
+.meo-chat-message-assistant .meo-code-token-number {
+  color: rgb(var(--accent-primary));
+}
+.meo-chat-message-assistant .meo-code-token-string {
+  color: rgb(var(--text-primary));
+  text-decoration: underline;
+  text-decoration-color: rgb(var(--accent-primary) / .28);
+  text-underline-offset: 3px;
+}

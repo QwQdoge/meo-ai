@@ -177,5 +177,6 @@
   "meo_web_phase_approval": "等待你确认权限…",
   "meo_web_phase_connecting": "正在连接模型…",
   "meo_web_phase_streaming": "正在接收回复…",
-  "meo_web_phase_saving": "正在保存完整回复…"
+  "meo_web_phase_saving": "正在保存完整回复…",
+  "meo_web_show_earlier_messages": "加载更早的 {{count}} 条消息（还有 {{remaining}} 条）"
 }
