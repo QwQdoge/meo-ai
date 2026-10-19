@@ -362,6 +362,7 @@ export default function MeoDesktopApp() {
             style={mode === "chat" ? undefined : { display: "none" }}
           >
             <MeoChat
+              active={mode === "chat"}
               historyTarget={historyTarget}
               newChatRequest={newChatRequest}
               searchRequest={searchRequest}
