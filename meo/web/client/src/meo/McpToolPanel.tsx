@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { settingsRequest } from './settingsClient';
 import './McpToolPanel.css';
 
-type Tool = { name: string; description: string; inputSchema: Record<string, unknown> };
+type Tool = { name: string; description: string; inputSchema: Record<string, unknown>; canAlwaysAllow?: boolean };
+type Grant = { pluginId: string; toolName: string; eligible: boolean };
 type ToolResult = { result: { isError: boolean; content: Array<{type: string; text: string}> } };
 type Prepared = {
   approvalId: string;
@@ -28,6 +29,7 @@ function safeError(reason: unknown): string {
 }
 export default function McpToolPanel({ id, enabled }: { id: string; enabled: boolean }) {
   const [tools, setTools] = useState<Tool[] | null>(null);
+  const [grants, setGrants] = useState<Grant[]>([]);
   const [selectedName, setSelectedName] = useState('');
   const [args, setArgs] = useState('{}');
   const [review, setReview] = useState<Review | null>(null);
@@ -38,8 +40,12 @@ export default function McpToolPanel({ id, enabled }: { id: string; enabled: boo
   async function discover() {
     setBusy(true); setResult(null); setReview(null); setStatus('');
     try {
-      const data = await settingsRequest<{ tools: Tool[] }>('/ai/plugins/' + id + '/tools');
+      const [data, saved] = await Promise.all([
+        settingsRequest<{ tools: Tool[] }>('/ai/plugins/' + id + '/tools'),
+        settingsRequest<{ grants: Grant[] }>('/ai/plugins/grants'),
+      ]);
       setTools(data.tools);
+      setGrants(saved.grants);
       setSelectedName(data.tools[0]?.name ?? '');
       setArgs('{}');
       setStatus('Live tools loaded. Every invocation needs a new review.');
@@ -97,6 +103,21 @@ export default function McpToolPanel({ id, enabled }: { id: string; enabled: boo
     } finally { setBusy(false); }
   }
 
+  async function toggleAlways(name:string) {
+    const existing=grants.some((grant)=>grant.pluginId===id&&grant.toolName===name);
+    setBusy(true);setStatus('');
+    try {
+      await settingsRequest('/ai/plugins/grants',{
+        method:existing?'DELETE':'PUT',
+        body:JSON.stringify({pluginId:id,toolName:name,...(existing?{}:{mode:'always'})}),
+      });
+      const saved=await settingsRequest<{grants:Grant[]}>('/ai/plugins/grants');
+      setGrants(saved.grants);
+      setStatus(existing?'Permanent automatic permission revoked.':'Meo AI may now use this approved read-only tool automatically on your account.');
+    }catch(reason){setStatus(safeError(reason))}
+    finally{setBusy(false)}
+  }
+
   const activeTool = tools?.find((tool) => tool.name === selectedName);
   return (
     <div className="meo-mcp-tools">
@@ -122,6 +143,12 @@ export default function McpToolPanel({ id, enabled }: { id: string; enabled: boo
           </label>
           {activeTool && <>
             <p>{activeTool.description}</p>
+            {activeTool.canAlwaysAllow && <label className="meo-mcp-standing-grant">
+              <input type="checkbox" disabled={busy||!enabled}
+                checked={grants.some((grant)=>grant.pluginId===id&&grant.toolName===activeTool.name)}
+                onChange={() => void toggleAlways(activeTool.name)} />
+              Always allow Meo AI to use this read-only tool automatically (all signed-in devices)
+            </label>}
             <details><summary>Input schema</summary><pre>{JSON.stringify(activeTool.inputSchema, null, 2)}</pre></details>
           </>}
           <label>Arguments (JSON)
