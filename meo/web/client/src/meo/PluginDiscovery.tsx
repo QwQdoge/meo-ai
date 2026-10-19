@@ -1,4 +1,5 @@
 import { FormEvent, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { settingsRequest } from './settingsClient';
 import './PluginDiscovery.css';
 
@@ -22,12 +23,22 @@ type SkillPreview = {
 };
 type NewSkill = { name: string; description: string; content: string; enabled: boolean };
 
+const meoGithubWorkflow = {
+  owner: 'QwQdoge',
+  repo: 'meo-ai',
+  ref: 'main',
+  path: 'meo/skills/github-development/SKILL.md',
+} as const;
+
+type GithubSkillSource = { owner: string; repo: string; ref: string; path: string };
+
 type Props = {
   selectedPluginName?: string;
   onInstalled: (pluginId: string) => Promise<void>;
   onImportSkill: (skill: NewSkill) => void;
 };
 export default function PluginDiscovery({ selectedPluginName, onInstalled, onImportSkill }: Props) {
+  const { t } = useTranslation();
   const [source, setSource] = useState<'mcp' | 'github'>('mcp');
   const [query, setQuery] = useState('');
   const [result, setResult] = useState<SearchResult | null>(null);
@@ -74,12 +85,16 @@ export default function PluginDiscovery({ selectedPluginName, onInstalled, onImp
   }
   async function fetchSkill(event: FormEvent) {
     event.preventDefault();
+    await fetchSkillSource({ owner, repo, ref, path });
+  }
+
+  async function fetchSkillSource(source: GithubSkillSource) {
     setBusy(true);
     setStatus('');
     setPreview(null);
     try {
       const value = await settingsRequest<{ skill: SkillPreview }>('/ai/catalog/github-skill?' +
-        new URLSearchParams({ owner, repo, ref, path }));
+        new URLSearchParams(source));
       setPreview(value.skill);
     } catch (reason) {
       setStatus('Skill preview unavailable: ' + (reason as Error).message);
@@ -139,6 +154,17 @@ export default function PluginDiscovery({ selectedPluginName, onInstalled, onImp
             onClick={() => void search(undefined, result.nextCursor!)}>Load more</button>}
         </div>}
       </> : <>
+        <div className="meo-discovery-first-party-skill">
+          <strong>{t('meo.skills.githubWorkflowTitle')}</strong>
+          <p>{t('meo.skills.githubWorkflowScope')}</p>
+          <button type="button" disabled={busy} onClick={() => {
+            setOwner(meoGithubWorkflow.owner);
+            setRepo(meoGithubWorkflow.repo);
+            setRef(meoGithubWorkflow.ref);
+            setPath(meoGithubWorkflow.path);
+            void fetchSkillSource(meoGithubWorkflow);
+          }}>{t('meo.skills.previewGithubWorkflow')}</button>
+        </div>
         <p className="meo-discovery-hint">Paste a public GitHub repository and the exact path to its SKILL.md.
           Read the preview before saving; auxiliary scripts are never imported or run.</p>
         <form className="meo-discovery-skill-form" onSubmit={(event) => void fetchSkill(event)}>
