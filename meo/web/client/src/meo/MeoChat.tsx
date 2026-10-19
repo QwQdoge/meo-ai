@@ -12,6 +12,7 @@ import { useMeoSession } from './session';
 import { ChatMarkdownImage, ChatMarkdownTable } from './ChatRichContent';
 import { tokenizeCode } from './codeHighlight.mjs';
 import { takeSseFrames } from './sseFrames.mjs';
+import { appendAssistantChunk } from './streamingMessages.mjs';
 import { MESSAGE_WINDOW_SIZE, transcriptWindow } from './transcriptWindow.mjs';
 import { chatDraftKey, readChatDraft, writeChatDraft } from './chatDrafts.mjs';
 import { readSelectedChat, writeSelectedChat } from './selectedChat.mjs';
@@ -699,15 +700,21 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
         buffer+=decoder.decode(part.value??new Uint8Array(),{stream:!part.done});
         const parsed = takeSseFrames(buffer, part.done);
         buffer = parsed.remainder;
+        let pendingText = '';
         for (const {event: eventName, data} of parsed.frames) {
           if(eventName==='delta'&&data) {
             const chunk=JSON.parse(data).text as string;
             finalAnswer+=chunk;
-            setMessages((current)=>current.map((m,i)=>i===current.length-1&&m.role==='assistant'
-              ? {...m,content:m.content+chunk}:m));
+            pendingText += chunk;
           }else if(eventName==='done')done=true;
-          else if(eventName==='error')throw Error('The provider could not complete the tool follow-up.');
+          else if(eventName==='error') {
+            // Keep already received text visible even on provider errors.
+            if (pendingText) setMessages((current) => appendAssistantChunk(current, pendingText));
+            throw Error('The provider could not complete the tool follow-up.');
+          }
         }
+        // A single update per network read, not one full-array map per token.
+        if (pendingText) setMessages((current) => appendAssistantChunk(current, pendingText));
         if(part.done)break;
       }
       if(!done)throw Error('The tool follow-up did not complete.');
@@ -856,17 +863,12 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
         buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
         const parsed = takeSseFrames(buffer, done);
         buffer = parsed.remainder;
+        let pendingText = '';
         for (const { event: eventName, data } of parsed.frames) {
           if (eventName === 'delta' && data) {
             const chunk = JSON.parse(data).text as string;
             assistantText += chunk;
-            setMessages((current) =>
-              current.map((message, index) =>
-                index === current.length - 1 && message.role === 'assistant'
-                  ? { ...message, content: message.content + chunk }
-                  : message,
-              ),
-            );
+            pendingText += chunk;
           } else if (eventName === 'mcp_tool_proposal' && data && mcpAutoEnabled) {
             mcpProposal = parsedMcpProposal(JSON.parse(data));
           } else if (eventName === 'work_agent_proposal' && data) {
@@ -877,11 +879,13 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
             }
           } else if (eventName === 'error' && data) {
             const failure = JSON.parse(data) as { message?: string };
+            if (pendingText) setMessages((current) => appendAssistantChunk(current, pendingText));
             throw new Error(failure.message ?? t('meo_web_stream_failed'));
           } else if (eventName === 'done') {
             completed = true;
           }
         }
+        if (pendingText) setMessages((current) => appendAssistantChunk(current, pendingText));
         if (done) break;
       }
       if (!completed) throw new Error(t('meo_web_stream_incomplete'));
