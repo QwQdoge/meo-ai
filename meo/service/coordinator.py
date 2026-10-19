@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import asyncio
 from html import escape
 import json
 import re
@@ -9,6 +10,7 @@ from uuid import uuid4
 
 from .backend_adapter import ModelInfo
 from .model_roles import ModelRoleRegistry
+from .subagent_scheduler import SubagentTaskScheduler
 
 
 _MAX_SUBAGENTS = 3
@@ -311,3 +313,136 @@ class LocalSubagentCoordinator:
                 "tasks": public_tasks,
             },
         )
+    async def prepare_parallel(
+        self,
+        request_text: str,
+        models: Iterable[ModelInfo],
+        *,
+        owner_id: str,
+        emit: Callable[[dict], None] | None = None,
+        cancel_signal: asyncio.Event | None = None,
+        max_parallel: int = 3,
+    ) -> CoordinatorOutcome:
+        """Opt-in concurrent READ-ONLY analysis through the real scheduler.
+
+        This method is safe only with a backend that explicitly declares
+        `auxiliary_thread_safe = True`. It never calls tool registries, shells
+        or the Newelle/GTK subagent implementation. Default `prepare` remains
+        the serial compatibility path for all existing callers.
+        """
+        if not self.available or not getattr(self._backend, "auxiliary_thread_safe", False):
+            raise RuntimeError("parallel auxiliary backend has not been verified as thread-safe")
+        catalog = list(models)
+        model_id, fallback_used = self._roles.resolve_model("reasoning", catalog)
+        generate = self._backend.generate_auxiliary
+        scheduler = SubagentTaskScheduler(max_parallel=min(max_parallel, self._max_subagents), on_event=emit)
+        root = scheduler.create_root(
+            owner_id=owner_id,
+            title=request_text[:3500] or "Read-only analysis",
+            capabilities={"analysis.read"},
+            execution="local",
+            permission_mode="ask",
+        )
+        if cancel_signal is not None and cancel_signal.is_set():
+            scheduler.cancel(owner_id=owner_id, task_id=root.task_id)
+            closed = await scheduler.finish_root(owner_id=owner_id, root_run_id=root.task_id)
+            return CoordinatorOutcome("", {
+                "run_id": closed.root_run_id, "status": "cancelled",
+                "model_id": model_id, "fallback_used": fallback_used, "tasks": [],
+            })
+
+        try:
+            plan = await asyncio.to_thread(
+                generate,
+                model_id,
+                self._planner_prompt(request_text, self._max_subagents),
+                ["You are a read-only coordinator. Return JSON only; do not delegate side effects."],
+            )
+            payload = _json_object(plan)
+        except Exception:
+            # Do not include provider errors, secrets or raw prompts in task
+            # events or user-visible metadata.
+            scheduler.cancel(owner_id=owner_id, task_id=root.task_id)
+            await scheduler.finish_root(owner_id=owner_id, root_run_id=root.task_id)
+            return CoordinatorOutcome("", {
+                "run_id": root.task_id, "status": "failed", "reason": "planner_failed",
+                "model_id": model_id, "fallback_used": fallback_used, "tasks": [],
+            })
+
+        raw_tasks = payload.get("tasks", [])
+        if not isinstance(raw_tasks, list):
+            raw_tasks = []
+        planned: list[dict] = []
+        for item in raw_tasks[: self._max_subagents]:
+            if not isinstance(item, dict):
+                continue
+            instruction = item.get("instruction")
+            if not isinstance(instruction, str) or not instruction.strip():
+                continue
+            title = " ".join(str(item.get("title", "Analysis")).split())[:120] or "Analysis"
+            planned.append({"title": title, "instruction": instruction[:3500]})
+
+        def make_runner(instruction: str):
+            async def analyze(snapshot, cancelled, report):
+                if cancelled.is_set():
+                    return ""
+                report("analyzing")
+                content = await asyncio.to_thread(
+                    generate, model_id, self._subagent_prompt(request_text, instruction),
+                    ["You are a read-only analysis subagent. Do not invoke tools or claim file changes."],
+                )
+                if cancelled.is_set():
+                    return ""
+                return str(content)[:_MAX_SUBAGENT_OUTPUT_CHARS]
+            return analyze
+
+        for task in planned:
+            scheduler.spawn_child(
+                owner_id=owner_id,
+                parent_task_id=root.task_id,
+                title=task["title"],
+                requested_capabilities={"analysis.read"},
+                destination_capabilities={"analysis.read"},
+                runner=make_runner(task["instruction"]),
+            )
+
+        watcher = None
+        if cancel_signal is not None:
+            async def propagate_cancel():
+                await cancel_signal.wait()
+                scheduler.cancel(owner_id=owner_id, task_id=root.task_id)
+            watcher = asyncio.create_task(propagate_cancel())
+
+        try:
+            closed = await scheduler.finish_root(owner_id=owner_id, root_run_id=root.task_id)
+        finally:
+            if watcher is not None:
+                watcher.cancel()
+                await asyncio.gather(watcher, return_exceptions=True)
+
+        tree = scheduler.tree(owner_id=owner_id, root_run_id=root.task_id)
+        tasks = []
+        results = []
+        for entry in tree["children"]:
+            item = scheduler.snapshot(owner_id=owner_id, task_id=entry["task_id"])
+            tasks.append({
+                "task_id": item.task_id, "root_run_id": item.root_run_id,
+                "parent_task_id": item.parent_task_id,
+                "title": item.title, "status": item.status,
+                "execution": item.execution,
+            })
+            results.append({
+                "title": item.title, "status": item.status,
+                "result": item.output if item.status == "completed" else "",
+            })
+
+        usable = any(item["status"] == "completed" for item in tasks)
+        context = self._context_block(root.task_id, results) if usable and closed.status != "cancelled" else ""
+        status = "cancelled" if closed.status == "cancelled" else (
+            "completed" if usable else ("failed" if planned else "completed")
+        )
+        return CoordinatorOutcome(context, {
+            "run_id": root.task_id,
+            "status": status, "model_id": model_id,
+            "fallback_used": fallback_used, "tasks": tasks,
+        })

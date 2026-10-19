@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+import threading
+import time
 import unittest
 
 from meo.service.backend_adapter import ModelInfo
@@ -165,6 +168,88 @@ class LocalSubagentCoordinatorTests(unittest.TestCase):
         self.assertEqual(outcome.metadata["tasks"][0]["status"], "completed")
         self.assertEqual(outcome.metadata["tasks"][1]["status"], "cancelled")
         self.assertEqual(outcome.metadata["tasks"][2]["status"], "cancelled")
+
+
+class VerifiedParallelBackend:
+    auxiliary_thread_safe = True
+
+    def __init__(self):
+        self.active = 0
+        self.peak = 0
+        self.lock = threading.Lock()
+        self.calls = []
+
+    def generate_auxiliary(self, model_id, prompt, system_prompt=None):
+        with self.lock:
+            self.calls.append(prompt)
+        if "Decide which independent analysis tasks" in prompt:
+            return '{"tasks":[{"title":"Inspect","instruction":"Look at A"},' \
+                   '{"title":"Inspect","instruction":"Look at B"},' \
+                   '{"title":"Test","instruction":"Look at C"}]}'
+        with self.lock:
+            self.active += 1
+            self.peak = max(self.peak, self.active)
+        try:
+            time.sleep(0.03)
+            return "result: " + prompt.split("YOUR TASK:\\n")[-1]
+        finally:
+            with self.lock:
+                self.active -= 1
+
+
+class VerifiedParallelCoordinatorTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.models = [ModelInfo("main:reason", "Reason", selected=True)]
+        self.roles = ModelRoleRegistry()
+        self.roles.set_role("reasoning", "main:reason", self.models)
+
+    async def test_opt_in_analysis_reuses_real_backend_with_distinct_task_ids(self):
+        backend = VerifiedParallelBackend()
+        coordinator = LocalSubagentCoordinator(backend, self.roles)
+        events = []
+        outcome = await coordinator.prepare_parallel(
+            "Evaluate code and tests", self.models, owner_id="trusted-owner",
+            emit=events.append, max_parallel=3,
+        )
+        self.assertEqual(outcome.metadata["status"], "completed")
+        self.assertEqual(backend.peak, 3)
+        self.assertEqual(len(backend.calls), 4)
+        self.assertIn("Look at A", outcome.context)
+        self.assertIn("Look at B", outcome.context)
+        self.assertIn("Look at C", outcome.context)
+        tasks = outcome.metadata["tasks"]
+        self.assertEqual(len({task["task_id"] for task in tasks}), 3)
+        self.assertTrue(all(task["root_run_id"] == outcome.metadata["run_id"] for task in tasks))
+        self.assertTrue(all(task["parent_task_id"] == outcome.metadata["run_id"] for task in tasks))
+        self.assertTrue(all(event["root_run_id"] == outcome.metadata["run_id"] for event in events))
+        self.assertEqual([event["seq"] for event in events], sorted(event["seq"] for event in events))
+
+    async def test_deny_parallel_on_unverified_backend(self):
+        backend = FakeAuxiliaryBackend(['{"tasks":[]}'])
+        coordinator = LocalSubagentCoordinator(backend, self.roles)
+        with self.assertRaises(RuntimeError):
+            await coordinator.prepare_parallel("Analyze", self.models, owner_id="trusted-owner")
+        self.assertEqual(backend.calls, [])
+
+    async def test_parallel_cancel_propagates_through_child_tasks(self):
+        backend = VerifiedParallelBackend()
+        coordinator = LocalSubagentCoordinator(backend, self.roles)
+        cancellation = asyncio.Event()
+        events = []
+
+        def record(event):
+            events.append(event)
+            if event["type"] == "task.started" and event["parent_task_id"] is not None:
+                cancellation.set()
+
+        outcome = await coordinator.prepare_parallel(
+            "Cancel analysis", self.models, owner_id="trusted-owner",
+            emit=record, cancel_signal=cancellation,
+        )
+        self.assertEqual(outcome.metadata["status"], "cancelled")
+        self.assertEqual(outcome.context, "")
+        self.assertTrue(all(t["status"] == "cancelled" for t in outcome.metadata["tasks"]))
+        self.assertTrue(any(e["type"] == "task.cancel_requested" for e in events))
 
 
 if __name__ == "__main__":

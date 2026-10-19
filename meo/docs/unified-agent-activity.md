@@ -80,3 +80,50 @@ Before adding a "Spawn subagent" action, expose a headless typed AgentService
 operation, durable child-run/events endpoints, owner-scoped replay, approval
 state and native/Web end-to-end validation. Native clients may implement the
 same data contract in QML/MeoUI rather than importing React.
+
+
+## Headless subagent scheduling foundation (2026-10-19)
+
+`meo/service/subagent_scheduler.py` now implements a bounded, executable
+**in-memory** task scheduler with an injected trusted asynchronous task runner.
+This runs real injected worker functions rather than producing only a UI plan.
+The caller/service, **not a user prompt or a browser**, must create the root,
+supply the owner and effective capabilities, and install executable runners.
+
+Enforced runtime invariants:
+
+- Each root/child/grandchild receives a service-generated UUID plus immutable
+  `root_run_id`, `parent_task_id`, account owner, project and execution location.
+- Root at depth 0, at most 2 levels of children; up to 3 children per parent
+  and 13 total tasks per root. Global scheduler concurrency is capped at 3.
+- A child's capabilities must be a subset of **both** its parent's effective
+  capabilities and the server/device-provided capability set. Child permission
+  mode may stay the same or become stricter but cannot be relaxed.
+- State transitions and progress are emitted with monotonically increasing
+  per-root sequence IDs; read/replay requires the matching owner. Bounded
+  history reports cursor gaps instead of silently inventing missing events.
+- Cancellation signals propagate through descendants. `cancel_requested`
+  is **not** shown as terminal cancellation until the runner exits and
+  acknowledges a terminal state. Executor failures are recorded without
+  exposing underlying provider errors or secrets in public events.
+- Execution output is bounded. The scheduler is a scheduling and scope
+  enforcement layer **in addition to** actual device/tool/Router authority;
+  it does not replace per-tool approvals or Polkit.
+
+`LocalSubagentCoordinator.prepare_parallel(..., owner_id=...)` now provides an
+**opt-in real read-only analysis adapter** using its existing model backend
+through those bounded scheduler slots. It requires
+`backend.auxiliary_thread_safe = True`, preserves distinct repeated task
+titles, forwards typed activity events, and provides results as untrusted
+supporting context. The existing `prepare()` remains sequential and
+compatible; no unsafe concurrent use of existing unverified providers is
+silently enabled.
+
+**Still pending:** persisted child task records and replay across process
+restarts; explicit mapping of subagent task IDs to remote AgentRun/AgentService
+requests; durable account-scoped task tree endpoints; child task activity
+transport to Web/QML; server-enforced time/token budgets; remote tool-bearing
+subagent approval; and a complete real-device integration test. Do not render
+new Web child Agent cards or claim autonomous remote multi-agent execution
+until those pieces are actually connected. Existing Web `AgentActivityPanel`
+is already able to display backend-provided nested tasks when that data exists.
