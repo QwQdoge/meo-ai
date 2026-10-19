@@ -212,5 +212,6 @@
   "meo.work.approvalTitle": "Agent 正在等待你的批准",
   "meo.work.streamTooLarge": "Agent 事件流超过了浏览器允许的安全缓冲区大小。",
   "meo.work.newTask": "新任务",
-  "meo.work.newTaskWarning": "当前 Agent 任务可能仍在运行。切换到新任务不会停止原任务。仍然继续吗？"
+  "meo.work.newTaskWarning": "当前 Agent 任务可能仍在运行。切换到新任务不会停止原任务。仍然继续吗？",
+  "meo.work.eventGap": "Agent 事件记录不完整。请重新连接同一个任务并确认状态。"
 }
