@@ -472,3 +472,132 @@
 
 .meo-chat-message-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .meo-chat-copy-error { display: inline-block; padding: 5px 12px; color: rgb(var(--status-error-strong)); font-size: 12px; line-height: 1.4; }
+
+
+/* Rich chat content: resilient tables, readable code and deliberate image loading. */
+.meo-chat-code-actions { display:flex; align-items:center; gap:3px; }
+.meo-chat-message-assistant .meo-chat-code-block pre.is-wrapped {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+.meo-chat-table-scroll {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 12px 0 18px;
+  border: 1px solid rgb(var(--border-light));
+  border-radius: 12px;
+  scrollbar-width: thin;
+}
+.meo-chat-table-scroll table {
+  width: 100%;
+  min-width: max-content;
+  border-collapse: collapse;
+  font-size: 13px;
+  line-height: 1.55;
+}
+.meo-chat-table-scroll th,
+.meo-chat-table-scroll td {
+  padding: 10px 12px;
+  border-bottom: 1px solid rgb(var(--border-light));
+  text-align: start;
+  vertical-align: top;
+  max-width: 440px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.meo-chat-table-scroll th {
+  background: rgb(var(--surface-secondary));
+  font-weight: 650;
+}
+.meo-chat-table-scroll tr:last-child td { border-bottom: 0; }
+.meo-chat-table-scroll :is(th, td) + :is(th, td) {
+  border-inline-start: 1px solid rgb(var(--border-light));
+}
+.meo-chat-image-figure {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 7px;
+  max-width: 100%;
+  margin: 16px 0;
+}
+.meo-chat-image-figure > a { display: block; max-width: 100%; }
+.meo-chat-image-figure img {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  max-height: min(65vh, 520px);
+  object-fit: contain;
+  border-radius: 12px;
+  border: 1px solid rgb(var(--border-light));
+}
+.meo-chat-image-figure figcaption {
+  max-width: 100%;
+  color: rgb(var(--text-secondary));
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.meo-chat-image-load {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: min(100%, 380px);
+  min-height: 136px;
+  padding: 16px;
+  border: 1px dashed rgb(var(--border-light));
+  border-radius: 14px;
+  background: rgb(var(--surface-secondary));
+  color: rgb(var(--text-primary));
+  text-align: center;
+  font-size: 13px;
+}
+.meo-chat-image-load small {
+  max-width: 280px;
+  color: rgb(var(--text-secondary));
+  font-size: 11px;
+  line-height: 1.4;
+}
+.meo-chat-image-load:hover { background: rgb(var(--surface-tertiary)); }
+.meo-chat-image-unavailable {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 8px 0;
+  color: rgb(var(--text-secondary));
+  font-size: 13px;
+}
+.meo-chat-image-unavailable button {
+  padding: 6px 10px;
+  border: 1px solid rgb(var(--border-light));
+  border-radius: 9px;
+  background: rgb(var(--surface-secondary));
+  color: rgb(var(--text-primary));
+}
+.meo-chat-export {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex-shrink: 0;
+  min-height: 37px;
+  padding: 7px 11px;
+  border: 1px solid rgb(var(--border-light));
+  border-radius: 12px;
+  background: rgb(var(--surface-secondary));
+  color: rgb(var(--text-primary));
+  font-size: 12px;
+}
+.meo-chat-export:not(:disabled):hover { background: rgb(var(--surface-tertiary)); }
+@media (max-width: 759px) {
+  .meo-chat-toolbar { gap: 7px; }
+  .meo-chat-connection-controls { gap: 6px; }
+  .meo-chat-export { padding: 7px 9px; }
+  .meo-chat-export span { display:none; }
+  .meo-chat-table-scroll table { font-size: 12px; }
+}
