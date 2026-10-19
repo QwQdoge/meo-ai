@@ -379,7 +379,7 @@ class MeoController(private val activity: MainActivity) {
                 val rows = client.listProjects(ensureFreshSession().accessToken)
                 val projects = buildList {
                     for (index in 0 until rows.length()) {
-                        rows.optJSONObject(index)?.let { row -> cloudProject(row)?.let(::add) }
+                        rows.optJSONObject(index)?.let { row -> cloudProject(row)?.let { add(it) } }
                     }
                 }
                 post {
