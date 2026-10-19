@@ -16,6 +16,7 @@ ApplicationWindow {
     title: qsTr("Meo AI")
     color: MeoTheme.surfaceContainer
     readonly property real scale: MeoTheme.globalScale
+    readonly property bool liveRecoveryMode: typeof liveRecovery !== "undefined" && liveRecovery
     readonly property bool compact: width < 760 * scale
     readonly property bool showSidebar: width >= 1120 * scale
     readonly property bool showDock: width >= 1280 * scale && inspectorOpen && messages.count > 0
@@ -70,6 +71,21 @@ ApplicationWindow {
                 composer.forceActiveFocus()
             })
         }
+    }
+    function startLiveRecoveryChat(language, goal) {
+        selectPrimaryMode("chat")
+        const zh = language === "zh_CN"
+        const install = goal === "install"
+        // This is a visible user message, not hidden authorization or a
+        // privileged system prompt. The owner services still gate all actions.
+        const request = zh
+            ? (install
+               ? "我从 MeoArch Live ISO 启动。请用中文协助我安装 MeoArch：先了解设备和目标磁盘，再帮助准备符合现有 MeoArch Installer 的 archinstall JSON。不能跳过磁盘身份检查、配置验证和安装器确认；暂时没有工具时请明确说明，并引导我打开普通安装器。"
+               : "我从 MeoArch Live ISO 启动。请用中文协助我检查并修复现有系统。先只读诊断、确认目标系统，再提出最小修复方案；涉及系统更改时请使用 Quick Repair 已授权的操作，不要假装运行了命令。")
+            : (install
+               ? "I booted MeoArch Live ISO. Help install MeoArch: inspect hardware and target disk first, then prepare Archinstall JSON through the existing MeoArch Installer. Never bypass disk identity checks, plan verification, or installer confirmation. If no execution tool is available, tell me and open the normal Installer."
+               : "I booted MeoArch Live ISO. Help diagnose and repair an existing system. Start with read-only facts and identify the target system; use verified Quick Repair capabilities for writes. Never claim a command was run unless a tool proves it.")
+        agent.send(request)
     }
     function matchingMessages(query) {
         let count = 0
