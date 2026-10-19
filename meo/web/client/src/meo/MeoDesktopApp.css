@@ -800,3 +800,18 @@
   .meo-work-form { padding:16px; }
   .meo-chat-delegate-draft { min-height:35px; padding-inline:9px; }
 }
+
+
+.meo-work-approval {
+  margin:12px 0 18px; padding:18px;
+  border:1px solid rgb(var(--accent-primary)); border-radius:14px;
+  background:rgb(var(--surface-secondary));
+}
+.meo-work-approval > strong { font-size:14px; }
+.meo-work-approval > p { margin:7px 0 11px; color:rgb(var(--text-secondary)); overflow-wrap:anywhere; font-size:13px; line-height:1.55; }
+.meo-work-approval .meo-work-form-actions button { border-color:rgb(var(--accent-primary)); }
+.meo-work-new-task {
+  display:inline-flex; margin:12px 0 0; min-height:35px;
+  align-items:center; border:1px solid rgb(var(--border-light)); border-radius:11px;
+  padding:7px 13px; background:rgb(var(--surface-secondary)); color:rgb(var(--text-primary)); font-size:12px;
+}
