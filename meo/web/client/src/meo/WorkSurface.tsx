@@ -1,6 +1,8 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useMeoSession } from './session';
+import AgentActivityPanel from './AgentActivityPanel';
+import type { AgentActivityEvent, AgentApproval } from './AgentActivityPanel';
 
 export type WorkHandoff = { id: number; text: string; conversationId: string; projectId?: string };
 
@@ -14,9 +16,7 @@ type Workspace = {
   capabilities: string[];
   last_seen_at?: string | null;
 };
-type WorkEvent = { seq: number; name: string; text: string };
 type SavedRun = { id: string; projectId: string; text: string; conversationId: string };
-type PendingApproval = { decisionId: string; toolName: string; description: string; options: Array<{ index: number; title: string }> };
 const terminalStatuses = new Set(['completed', 'failed', 'cancelled']);
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 
@@ -60,10 +60,10 @@ export default function WorkSurface({ handoff, onChat }: {
   const [handoffConversationId, setHandoffConversationId] = useState('');
   const [busy, setBusy] = useState(false);
   const [run, setRun] = useState<SavedRun | null>(() => recoverRun(user?.id ?? ''));
-  const [events, setEvents] = useState<WorkEvent[]>([]);
+  const [events, setEvents] = useState<AgentActivityEvent[]>([]);
   const [output, setOutput] = useState('');
   const [runStatus, setRunStatus] = useState('');
-  const [approval, setApproval] = useState<PendingApproval | null>(null);
+  const [approval, setApproval] = useState<AgentApproval | null>(null);
   const [runError, setRunError] = useState('');
   const [following, setFollowing] = useState(false);
   const lastSeqRef = useRef(-1);
@@ -350,45 +350,27 @@ export default function WorkSurface({ handoff, onChat }: {
         {agentConfigured && !canDelegate && <p>{t('meo.work.selectWorkspace')}</p>}
       </form>
       {run && (
-        <section className="meo-work-run" aria-label={t('meo.work.runActivity')}>
-          <div className="meo-work-run-head">
-            <strong>{t('meo.work.runActivity')}</strong>
-            <span>{runStatus || t('meo.work.reconnectNeeded')}</span>
-          </div>
-          {approval && (
-            <div className="meo-work-approval" role="group" aria-label={t('meo.work.approvalTitle')}>
-              <strong>{t('meo.work.approvalTitle')}</strong>
-              <p>{approval.toolName}</p>
-              {approval.description && <p>{approval.description}</p>}
-              <div className="meo-work-form-actions">
-                {approval.options.map((option) => (
-                  <button key={option.index} type="button" onClick={() => void decideRun(option.index)}
-                    disabled={busy}>{option.title}</button>
-                ))}
-              </div>
-            </div>
-          )}
-          {output && <pre className="meo-work-output">{output}</pre>}
-          <ol className="meo-work-events">
-            {events.map((event) => <li key={event.seq}>
-              <span>{event.name}</span>{event.text && <span>{event.text}</span>}
-            </li>)}
-          </ol>
-          <div className="meo-work-form-actions">
-            <button type="button" disabled={following} onClick={() => void followRun(run.id, lastSeqRef.current)}>
-              {following ? t('meo.work.following') : t('meo.work.reconnect')}
-            </button>
-            {!terminalStatuses.has(runStatus) && (
-              <button type="button" onClick={() => void cancelRun()} disabled={busy}>
-                {t('meo.work.requestCancel')}
-              </button>
-            )}
-          </div>
-          <button type="button" className="meo-work-new-task" onClick={startAnotherTask}>
-            {t('meo.work.newTask')}
-          </button>
-          <small>{t('meo.work.disconnectNote')}</small>
-        </section>
+        <AgentActivityPanel
+          task={{
+            id: run.id,
+            title: run.text,
+            relation: 'root',
+            execution: 'remote',
+            status: runStatus || 'disconnected',
+            // A saved Project binding is known; a device being online is not.
+            targetLabel: workspaces.find((space) => space.project_id === run.projectId)?.project_name,
+          }}
+          events={events}
+          output={output}
+          approval={approval}
+          busy={busy}
+          following={following}
+          canCancel={!terminalStatuses.has(runStatus)}
+          onDecision={(optionIndex) => void decideRun(optionIndex)}
+          onReconnect={() => void followRun(run.id, lastSeqRef.current)}
+          onCancel={() => void cancelRun()}
+          onNewTask={startAnotherTask}
+        />
       )}
       {runError && <p role="alert" className="meo-work-error">{runError}</p>}
     </section>
