@@ -112,6 +112,8 @@ export default function MeoChat({ historyTarget, newChatRequest, onBusyChange, o
   const [messages, setMessages] = useState<Message[]>([]);
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
+  const [streamingActive, setStreamingActive] = useState(false);
+  const [stopNotice, setStopNotice] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [historyLoading, setHistoryLoading] = useState(true);
@@ -303,6 +305,7 @@ export default function MeoChat({ historyTarget, newChatRequest, onBusyChange, o
     setActiveConversationId('');
     setMessages([]);
     setDraft('');
+    setStopNotice(false);
     localStorage.removeItem(selectedConversationKey);
   };
 
@@ -318,6 +321,7 @@ export default function MeoChat({ historyTarget, newChatRequest, onBusyChange, o
   const openConversation = (conversation: Conversation) => {
     if (busy) return;
     setError('');
+    setStopNotice(false);
     setActiveConversationId(conversation.id);
   };
 
@@ -349,6 +353,7 @@ export default function MeoChat({ historyTarget, newChatRequest, onBusyChange, o
     const prompt = draft.trim();
     if (!prompt || busy || !credentialId || !model.trim()) return;
     setError('');
+    setStopNotice(false);
     setBusy(true);
     const nextMessages: Message[] = [...messages, { role: 'user', content: prompt }];
     const contextConversationId = activeConversationId || null;
@@ -368,6 +373,7 @@ export default function MeoChat({ historyTarget, newChatRequest, onBusyChange, o
 
       const abortController = new AbortController();
       streamAbortRef.current = abortController;
+      setStreamingActive(true);
       const response = await fetch('/api/meo/chat/stream', {
         method: 'POST',
         credentials: 'same-origin',
@@ -463,9 +469,16 @@ export default function MeoChat({ historyTarget, newChatRequest, onBusyChange, o
       }
     } finally {
       streamAbortRef.current = null;
+      setStreamingActive(false);
       setBusy(false);
     }
   }
+
+  const stopReceiving = () => {
+    if (!streamAbortRef.current) return;
+    setStopNotice(true);
+    streamAbortRef.current.abort();
+  };
 
   return (
     <main className="meo-chat-root">
@@ -560,6 +573,7 @@ export default function MeoChat({ historyTarget, newChatRequest, onBusyChange, o
             )}
           </article>
         ))}
+        {stopNotice && <p role="status" className="meo-chat-stop-notice">{t('meo_web_stop_notice')}</p>}
         {error && (
           <p role="alert" className="text-status-error-strong text-sm">
             {error}
@@ -587,6 +601,11 @@ export default function MeoChat({ historyTarget, newChatRequest, onBusyChange, o
           aria-label={t('meo_web_message')}
           disabled={busy || !selected}
         />
+        {streamingActive ? (
+          <button className="meo-chat-send is-stop" type="button" onClick={stopReceiving} aria-label={t('meo_web_stop_receiving')} title={t('meo_web_stop_receiving')}>
+            <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true" fill="currentColor"><rect x="5" y="5" width="14" height="14" rx="2" /></svg>
+          </button>
+        ) : (
         <button
           className="meo-chat-send"
           type="submit"
@@ -596,6 +615,7 @@ export default function MeoChat({ historyTarget, newChatRequest, onBusyChange, o
         >
           <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 19V5M6 11l6-6 6 6" /></svg>
         </button>
+        )}
       </form>
     </main>
   );
