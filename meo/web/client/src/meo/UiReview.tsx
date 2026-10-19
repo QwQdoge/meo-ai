@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import AgentActivityPanel from './AgentActivityPanel';
 import type { AgentTaskNode } from './AgentActivityPanel';
+import './MeoDesktopApp.css';
 import './UiReview.css';
 
 /**
