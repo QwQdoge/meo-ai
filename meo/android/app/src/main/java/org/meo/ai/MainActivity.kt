@@ -73,6 +73,7 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
@@ -209,7 +210,7 @@ private fun SignInScreen(
                         Text("Continue with Meo Account")
                     }
                     TextButton(onClick = onOpenSettings) {
-                        Text("Local settings · no account required")
+                        Text(stringResource(R.string.meo_settings_guest_settings))
                     }
                     if (!configured) {
                         Text(
