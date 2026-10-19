@@ -56,3 +56,12 @@
   .meo-agent-task-status { padding: 5px 8px; }
   .meo-agent-task-children { padding-inline-start: 10px; }
 }
+
+
+.meo-agent-task-description { width: 100%; font-size: 12px; color: rgb(var(--text-secondary)); }
+.meo-agent-task-description summary { cursor: pointer; line-height: 1.5; }
+.meo-agent-task-description p {
+  max-height: 220px; overflow: auto; margin: 8px 0 0;
+  font-size: 12px; line-height: 1.6; color: rgb(var(--text-primary));
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
