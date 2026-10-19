@@ -150,5 +150,6 @@
   "meo_web_copied": "已复制",
   "meo_web_copy_code": "复制代码",
   "meo_web_copy_response": "复制回复",
-  "meo_web_scroll_latest": "跳到最新消息"
+  "meo_web_scroll_latest": "跳到最新消息",
+  "meo_web_copy_failed": "无法访问剪贴板，请选中文字手动复制。"
 }
