@@ -271,9 +271,6 @@ test('Remote AgentRun discovery never forwards invalid cursor, path or method', 
     '/work/agent-runs/not-a-uuid',
     '/work/agent-runs/00000000-0000-4000-8000-000000000091?unknown=1',
   ]) {
-    // For valid ID with unknown query string, the path guard alone cannot
-    // reject it; only send the routes whose *path* is invalid here.
-    if (route.includes('?unknown=')) continue;
     const response = await onRequest({ request: await request(route), env: config });
     assert.equal(response.status, 404, route);
   }
