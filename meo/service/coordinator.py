@@ -138,10 +138,21 @@ class LocalSubagentCoordinator:
         if total:
             done = completed + failed
             value = f"{done}/{total}"
+        children = [
+            {
+                "id": str(task["task_id"]),
+                "title": " ".join(str(task.get("title", "Analysis")).split())[:120],
+                "status": str(task.get("status", "queued")),
+                "execution": "local",
+            }
+            for task in tasks[:_MAX_SUBAGENTS]
+            if isinstance(task.get("task_id"), str)
+        ]
         return {
             "type": "presentation_card",
             "card": {
                 "card_id": f"agent-run:{run_id}",
+                "task_tree": children,
                 "kind": "status",
                 "title": title,
                 "subtitle": subtitle,
@@ -253,7 +264,10 @@ class LocalSubagentCoordinator:
             instruction = str(item.get("instruction", "")).strip()
             if not instruction:
                 continue
-            tasks.append({"title": title or "Analysis", "instruction": instruction, "status": "queued"})
+            tasks.append({
+                "task_id": f"local:{uuid4()}",
+                "title": title or "Analysis", "instruction": instruction, "status": "queued",
+            })
 
         if is_cancelled():
             return cancelled_outcome(tasks)

@@ -24,6 +24,42 @@ def _bounded_text(card: dict, field: str) -> str:
     return value
 
 
+def _task_tree(card: dict) -> list[dict]:
+    """Forward only bounded, typed child activity from trusted AgentService."""
+    raw = card.get("task_tree")
+    if raw is None:
+        return []
+    if not isinstance(raw, list) or len(raw) > 3:
+        raise ValueError("presentation card task tree must contain at most three children")
+    result: list[dict] = []
+    seen: set[str] = set()
+    for child in raw:
+        if not isinstance(child, dict):
+            raise ValueError("invalid child task")
+        task_id = child.get("id")
+        title = child.get("title")
+        status = child.get("status")
+        execution = child.get("execution")
+        if (not isinstance(task_id, str) or not task_id.startswith("local:")
+                or len(task_id) != 42 or task_id in seen):
+            raise ValueError("invalid child task ID")
+        from uuid import UUID
+        try:
+            UUID(task_id[6:])
+        except (ValueError, AttributeError) as exc:
+            raise ValueError("invalid child task ID") from exc
+        if not isinstance(title, str) or not 0 < len(title.strip()) <= 120:
+            raise ValueError("invalid child task title")
+        if status not in {"queued", "running", "completed", "failed", "cancelled"}:
+            raise ValueError("invalid child task status")
+        if execution not in {"local", "remote", "cloud"}:
+            raise ValueError("invalid child task execution")
+        seen.add(task_id)
+        result.append({"id": task_id, "title": title.strip(),
+                       "status": status, "execution": execution})
+    return result
+
+
 def normalize_presentation_card(event: dict) -> dict:
     """Normalize a backend card event into a bounded frontend-safe payload.
 
@@ -62,5 +98,6 @@ def normalize_presentation_card(event: dict) -> dict:
             "subtitle": _bounded_text(card, "subtitle"),
             "value": _bounded_text(card, "value"),
             "detail": _bounded_text(card, "detail"),
+            "task_tree": _task_tree(card),
         },
     }
