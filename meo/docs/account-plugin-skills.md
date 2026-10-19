@@ -1,6 +1,6 @@
 # Account-synced Plugins, MCP & Skills (Meo AI)
 
-Status: account-owned configuration, text-only selected Skill guidance, MCP Registry search, GitHub Skill import, operator-pinned MCP execution, and read-only agent tool proposals with standing grants are implemented **in code**. Production DB migrations, Worker/Web deployment, OAuth authorization, native device parity and live cross-device QA are **not completed**. A saved endpoint is not proof of a live or authorized connection.
+Status: account-owned configuration, text-only selected Skill guidance, MCP Registry search, GitHub Skill import, operator-pinned MCP execution, and read-only agent tool proposals with standing grants are implemented **in code**. Production DB migrations, Worker/Web deployment, OAuth authorization, full native MCP execution parity and live cross-device QA are **not completed**. Android native Connectors now reads and periodically refreshes account-owned plugin/grant metadata, but does not execute MCP tools. A saved endpoint is not proof of a live or authorized connection.
 
 ## Ownership
 
@@ -131,3 +131,30 @@ skills.sh currently documents a Vercel OIDC-authenticated API. As Meo API runs o
 - Tool text is untrusted data. Sending it to a third-party model is covered by the AI broker's normal separate inference consent. No approval grants are logged as raw tokens or arguments.
 
 **Release limitations:** Code and mocked tests do not demonstrate a production migration, live provider/tool invocation, multi-device session interoperability, Gemini parity or long-running Work execution. Those require their own verification.
+
+
+## Actual platform availability (2026-10-19 source audit)
+
+| Client | Meo Account sign-in | Account plugin and Skill metadata | Remote MCP tool execution | Notes |
+| --- | --- | --- | --- | --- |
+| Web | Implemented | API-backed editor and browser focus refresh | Limited operator-approved remote HTTPS MCP, model-proposed calls | Production migrations and cross-device QA outstanding |
+| Android native | OAuth with encrypted session store | **Read-only**, via `/v1/ai/plugins` and `/v1/ai/plugins/grants`, refreshed on Connectors entry and every 120 seconds while open | Not connected | Doesn't synchronize or execute local scripts, OAuth provider grants, or tool installations |
+| Linux Qt/QML | Meo Account D-Bus broker | Not connected to plugin API yet | Existing local Newelle MCP path only | Cloud personalization works through the Accounts broker; add separately authorized plugin actions to that broker, not raw secrets exposed to QML |
+| MeoUI | No account authority | Component system only | N/A | Shared visual system is not sync transport |
+
+Source-level support is not proof of a live service: apply database migrations, deploy clients, and verify a real account on two devices. Metadata sync and execution availability are separate concerns.
+
+## Desired account/device re-verification policy — not yet implemented
+
+The intended behavior is **long-lived convenience after a trusted login**:
+
+- A **previously enrolled, active trusted device** on a healthy Meo Account session can reuse an eligible long-lived tool grant without further per-tool prompts.
+- **New device or new untrusted login** must establish device trust through an account security check, preferably passkey/TOTP/OAuth reauthentication. Device trust is per device/session, distinct from merely sharing account credentials.
+- **High-confidence anomalous geographic login** (especially a newly enrolled device in a remote country, impossible travel, or corroborating suspicious signals) should trigger the same additional verification and may temporarily suspend *write* auto-execution on that session. Country/IP alone is noisy (cellular networks, VPNs, travel) and must not cause repeated challenges for a trusted device.
+- **Same trusted device changing Wi-Fi/IP or on a normal trip** does not automatically lose trust. Existing account session expiration and revocation still apply.
+- Session revocation, confirmed compromise, changed OAuth scopes, or a materially changed MCP server/tool policy must invalidate execution authority immediately; retaining grant records should not keep an untrusted session executable.
+- A compromised plugin must not inherit grants merely because its name is unchanged. Endpoint/tool schema binding is a useful drift signal, **not a remote code integrity guarantee**. Operator allowlist, least-privileged provider tokens, server-side policy and audit remain required.
+- Browsers, Android and Linux must use one Meo Account policy service and a separately verified device/session key; local cookie/device fingerprints alone are insufficient. Don't save third-party secrets in synchronized plugin metadata.
+- Risk decisions should be auditable and reversible (trusted devices, session/device revoke, pause all tools). A model/agent's confidence can suggest a decision but cannot bypass this server-side policy.
+
+**Implementation gate:** Today, the account has session revocation and recent reauthentication facilities, but the risk-based trusted-device-plus-geolocation MCP policy is NOT wired into login or execution. Do not advertise that behavior as shipped. Native OAuth tokens do not satisfy the current cookie-session-only tool execution gate.
