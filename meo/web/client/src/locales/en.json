@@ -287,5 +287,12 @@
   "meo.projects.noDescription": "No description",
   "meo.projects.contextNote": "Project name and metadata are stored in your account. Conversation linking and workspace files are not yet connected here.",
   "meo.projects.requestFailed": "Projects unavailable",
-  "meo.work.restoredTask": "Resumed remote task"
+  "meo.work.restoredTask": "Resumed remote task",
+  "meo.work.recentRuns": "Recent account tasks",
+  "meo.work.recentNote": "Choose an existing task to view progress. Switching tasks does not cancel or restart execution.",
+  "meo.work.recentUnavailable": "Task history unavailable",
+  "meo.work.runNumber": "Task · {{id}}",
+  "meo.work.resumeRun": "View task",
+  "meo.work.viewingRun": "Currently viewing",
+  "meo.work.noRecentRuns": "No account tasks found."
 }
