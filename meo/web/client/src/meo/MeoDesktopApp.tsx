@@ -183,7 +183,7 @@ export default function MeoDesktopApp() {
           }
           if (event.key === "Tab") {
             const controls = Array.from(
-              event.currentTarget.querySelectorAll<HTMLButtonElement>("button"),
+              event.currentTarget.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'),
             );
             const first = controls[0],
               last = controls[controls.length - 1];
@@ -224,7 +224,7 @@ export default function MeoDesktopApp() {
           }}
         >
           <Icon name="add" />
-          <span>New chat</span>
+          <span>{t("meo_web_new_chat")}</span>
         </button>
 
         <nav className="meo-desktop-nav-list" aria-label="Meo AI">
@@ -335,7 +335,7 @@ export default function MeoDesktopApp() {
           <button
             className={`meo-desktop-icon-button ${inspectorOpen ? "is-active" : ""}`}
             type="button"
-            aria-label="Response details and settings"
+            aria-label={t("meo_web_details")}
             onClick={() => setInspectorOpen((value) => !value)}
           >
             <Icon name="panel" />
@@ -365,36 +365,25 @@ export default function MeoDesktopApp() {
       {inspectorOpen && (
         <aside
           className="meo-desktop-inspector"
-          aria-label="Response details and settings"
+          aria-label={t("meo_web_details")}
         >
           <div className="meo-desktop-inspector-head">
             <div>
-              <strong>Details</strong>
-              <span>Response, tools, context and AI settings</span>
+              <strong>{t("meo_web_details")}</strong>
+              <span>{t("meo_web_details_subtitle")}</span>
             </div>
             <button
               type="button"
               onClick={() => setInspectorOpen(false)}
-              aria-label="Close details"
+              aria-label={t("meo_web_close_details")}
             >
               ×
             </button>
           </div>
-          <div className="meo-desktop-inspector-tabs">
-            <button className="is-active" type="button">
-              Response
-            </button>
-            <button type="button">Tools</button>
-            <button type="button">Context</button>
-            <button type="button">AI</button>
-          </div>
           <div className="meo-desktop-inspector-empty">
             <Icon name="panel" />
-            <strong>Response details</strong>
-            <span>
-              Select a response to inspect timing, token usage, context, tools
-              and reasoning.
-            </span>
+            <strong>{t("meo_web_details")}</strong>
+            <span>{t("meo_web_details_unavailable")}</span>
           </div>
         </aside>
       )}
