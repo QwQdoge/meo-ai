@@ -286,5 +286,6 @@
   "meo.projects.empty": "No account projects yet. Create one to get started.",
   "meo.projects.noDescription": "No description",
   "meo.projects.contextNote": "Project name and metadata are stored in your account. Conversation linking and workspace files are not yet connected here.",
-  "meo.projects.requestFailed": "Projects unavailable"
+  "meo.projects.requestFailed": "Projects unavailable",
+  "meo.work.restoredTask": "Resumed remote task"
 }
