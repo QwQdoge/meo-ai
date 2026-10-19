@@ -37,6 +37,15 @@ test('projectless AgentRun pointers can be resumed without inventing a project',
   assert.equal(readWorkRun(storage, account, now).projectId, '');
 });
 
+test('conversationless AgentRuns can be restored without inventing a chat', () => {
+  const storage = memoryStore();
+  assert.equal(saveWorkRun(storage, account, { ...pointer, conversationId: '' }, now), true);
+  assert.deepEqual(readWorkRun(storage, account, now), {
+    id: pointer.id, projectId: pointer.projectId, conversationId: '',
+  });
+  assert.equal(storage.getItem(workRunStorageKey(account)).includes('SECRET'), false);
+});
+
 test('account isolation and clear retain no previous-account marker', () => {
   const storage = memoryStore();
   saveWorkRun(storage, account, pointer, now);
@@ -50,6 +59,7 @@ test('account isolation and clear retain no previous-account marker', () => {
 test('missing or malicious/stale/corrupt markers fail closed', () => {
   const storage = memoryStore();
   assert.equal(saveWorkRun(storage, account, { ...pointer, id:'not-a-uuid' }, now), false);
+  assert.equal(saveWorkRun(storage, account, { ...pointer, conversationId: 'not-a-uuid' }, now), false);
   assert.equal(saveWorkRun(storage, 'invalid', pointer, now), false);
   assert.equal(readWorkRun(storage, account, now), null);
   storage.setItem(workRunStorageKey(account), '{');
