@@ -172,9 +172,9 @@ export default function MeoDesktopApp() {
     [user],
   );
 
-  const handoffToWork = (text: string, conversationId: string) => {
+  const handoffToWork = (text: string, conversationId: string, projectId?: string) => {
     if (chatBusy || !text.trim()) return;
-    setWorkHandoff((current) => ({ id: (current?.id ?? 0) + 1, text, conversationId }));
+    setWorkHandoff((current) => ({ id: (current?.id ?? 0) + 1, text, conversationId, projectId }));
     setMode("work");
     setMobileOpen(false);
     setInspectorOpen(false);
