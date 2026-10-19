@@ -52,6 +52,14 @@ function targetFor(request, env, relativePath) {
     return { url: `${apiUrl(env)}/v1${relativePath}`, method, body: null };
   }
 
+  // Catalog reads have fixed upstream origins in meo-api; never proxy
+  // arbitrary URLs or vendor OAuth credentials from the browser.
+  if (['/ai/catalog/mcp', '/ai/catalog/github-skill'].includes(relativePath) && method === 'GET') {
+    const target = new URL(apiUrl(env) + '/v1' + relativePath);
+    target.search = new URL(request.url).search;
+    return { url: target.toString(), method, body: null };
+  }
+
   // Plugins and bundled skills are account-scoped Meo API resources.
   // Forward CRUD without copying OAuth tokens or MCP secrets into browser storage.
   if ((relativePath === '/ai/plugins' ||
