@@ -37,7 +37,7 @@ export function ChatMarkdownImage({ src, alt, title }: ComponentProps<'img'>) {
 
   const caption = alt || title || t('meo_web_image');
   return (
-    <figure className="meo-chat-image-figure">
+    <span className="meo-chat-image-figure" role="group" aria-label={caption}>
       {!requested && (
         <button type="button" className="meo-chat-image-load"
           onClick={() => setRequested(true)}
@@ -53,12 +53,12 @@ export function ChatMarkdownImage({ src, alt, title }: ComponentProps<'img'>) {
         </button>
       )}
       {requested && (failed ? (
-        <div className="meo-chat-image-unavailable" role="status">
+        <span className="meo-chat-image-unavailable" role="status">
           {t('meo_web_image_failed')}
           <button type="button" onClick={() => { setFailed(false); setRequested(false); }}>
             {t('meo_web_retry_image')}
           </button>
-        </div>
+        </span>
       ) : (
         <a href={src} target="_blank" rel="noopener noreferrer"
           title={t('meo_web_open_image')}>
@@ -67,7 +67,7 @@ export function ChatMarkdownImage({ src, alt, title }: ComponentProps<'img'>) {
             onError={() => setFailed(true)} />
         </a>
       ))}
-      <figcaption>{caption}</figcaption>
-    </figure>
+      <span className="meo-chat-image-caption">{caption}</span>
+    </span>
   );
 }
