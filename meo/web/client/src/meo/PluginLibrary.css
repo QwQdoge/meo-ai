@@ -1,0 +1,98 @@
+.meo-plugin-library {
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  padding: 28px clamp(18px, 4vw, 46px) 50px;
+  color: rgb(var(--text-primary));
+}
+.meo-plugin-intro, .meo-plugin-subheading, .meo-plugin-actions {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+}
+.meo-plugin-intro { margin-bottom: 18px; }
+.meo-plugin-intro h2 { margin: 0 0 5px; font-size: 24px; font-weight: 650; }
+.meo-plugin-intro p, .meo-plugin-subheading p { margin: 0; font-size: 13px; color: rgb(var(--text-secondary)); }
+.meo-plugin-library button, .meo-plugin-library input, .meo-plugin-library textarea,
+.meo-plugin-library select { font: inherit; }
+.meo-plugin-library button { cursor: pointer; }
+.meo-plugin-library button:disabled { opacity: .5; cursor: not-allowed; }
+.meo-plugin-primary {
+  background: rgb(var(--accent-primary));
+  color: rgb(var(--surface-primary));
+  border: 0; border-radius: 14px; padding: 11px 16px; font-size: 13px !important;
+  font-weight: 600 !important;
+}
+.meo-plugin-catalogues {
+  display: flex; gap: 14px; flex-wrap: wrap; align-items: center;
+  color: rgb(var(--text-secondary)); font-size: 12px; margin-bottom: 15px;
+}
+.meo-plugin-catalogues a { text-decoration: underline; text-underline-offset: 3px; color: rgb(var(--text-primary)); }
+.meo-plugin-muted, .meo-plugin-info, .meo-plugin-endpoint, .meo-plugin-placeholder {
+  color: rgb(var(--text-secondary)); font-size: 12px; line-height: 1.65;
+}
+.meo-plugin-info {
+  background: rgb(var(--surface-secondary)); padding: 13px 16px;
+  border-radius: 14px; margin-bottom: 22px;
+}
+.meo-plugin-error, .meo-plugin-success {
+  font-size: 12px; padding: 11px; border: 1px solid rgb(var(--border-light));
+  border-radius: 12px; margin: 10px 0;
+}
+.meo-plugin-error { color: rgb(var(--text-primary)); }
+.meo-plugin-error button { margin-left: 10px; text-decoration: underline; }
+.meo-plugin-add {
+  background: rgb(var(--surface-secondary)); border-radius: 18px;
+  display: grid; gap: 14px; padding: 20px; margin-bottom: 20px;
+}
+.meo-plugin-add h3 { font-size: 16px; font-weight: 600; margin: 0; }
+.meo-plugin-add label, .meo-plugin-skill label {
+  font-size: 12px; display: grid; gap: 7px;
+}
+.meo-plugin-add input, .meo-plugin-add select, .meo-plugin-skill input:not([type=checkbox]), .meo-plugin-skill textarea {
+  border: 1px solid rgb(var(--border-light)); background: rgb(var(--surface-primary));
+  color: rgb(var(--text-primary)); border-radius: 12px; padding: 10px 12px;
+  min-width: 0; width: 100%; line-height: 1.5;
+}
+.meo-plugin-library input:focus-visible, .meo-plugin-library select:focus-visible,
+.meo-plugin-library textarea:focus-visible, .meo-plugin-library button:focus-visible {
+  outline: 2px solid rgb(var(--accent-primary)); outline-offset: 2px;
+}
+.meo-plugin-add button { justify-self: start; }
+.meo-plugin-layout { display: grid; grid-template-columns: minmax(200px, .82fr) minmax(0, 1.6fr); gap: 18px; }
+.meo-plugin-list, .meo-plugin-detail {
+  border: 1px solid rgb(var(--border-light)); border-radius: 20px;
+  padding: 16px; min-width: 0; align-self: start;
+}
+.meo-plugin-subheading { padding-bottom: 13px; }
+.meo-plugin-subheading strong { font-size: 13px; font-weight: 600; }
+.meo-plugin-subheading h3 { font-size: 16px; font-weight: 600; margin: 0 0 5px; }
+.meo-plugin-subheading button, .meo-plugin-skill button { border: 0; background: none; font-size: 12px; color: rgb(var(--text-primary)); text-decoration: underline; }
+.meo-plugin-item {
+  width: 100%; padding: 13px 12px; border: 0;
+  background: transparent; color: rgb(var(--text-primary));
+  border-radius: 13px; display: flex; align-items: center;
+  text-align: left; justify-content: space-between; gap: 12px;
+}
+.meo-plugin-item:hover, .meo-plugin-item.selected { background: rgb(var(--surface-secondary)); }
+.meo-plugin-item span:first-child { min-width: 0; }
+.meo-plugin-item strong { display: block; font-size: 13px; font-weight: 550; overflow-wrap: anywhere; }
+.meo-plugin-item small { display: block; margin-top: 4px; color: rgb(var(--text-secondary)); font-size: 11px; }
+.meo-plugin-state { font-size: 11px; color: rgb(var(--text-secondary)); flex-shrink: 0; }
+.meo-plugin-endpoint { overflow-wrap: anywhere; padding: 11px 0; }
+.meo-plugin-detail > .meo-plugin-subheading:not(:first-child) { border-top: 1px solid rgb(var(--border-light)); padding-top: 16px; }
+.meo-plugin-checkbox { display: flex !important; align-items: center; gap: 8px; white-space: nowrap; font-size: 12px; }
+.meo-plugin-checkbox input { accent-color: rgb(var(--accent-primary)); }
+.meo-plugin-skill { display: grid; gap: 12px; padding: 15px; border: 1px solid rgb(var(--border-light)); border-radius: 14px; margin: 10px 0; }
+.meo-plugin-skill legend { padding: 0 7px; font-size: 12px; font-weight: 600; }
+.meo-plugin-skill textarea { resize: vertical; min-height: 94px; }
+.meo-plugin-actions { justify-content: flex-start; margin-top: 17px; }
+.meo-plugin-danger {
+  border: 1px solid rgb(var(--border-light)); border-radius: 12px;
+  color: rgb(var(--text-primary)); background: transparent; padding: 11px 15px; font-size: 12px;
+}
+@media (max-width: 750px) {
+  .meo-plugin-layout { grid-template-columns: minmax(0, 1fr); }
+  .meo-plugin-intro { align-items: flex-start; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .meo-plugin-library * { transition: none !important; }
+}
