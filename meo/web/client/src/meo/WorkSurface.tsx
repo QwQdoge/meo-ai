@@ -16,6 +16,8 @@ type Workspace = {
 };
 type WorkEvent = { seq: number; name: string; text: string };
 type SavedRun = { id: string; projectId: string; text: string; conversationId: string };
+type PendingApproval = { decisionId: string; toolName: string; description: string; options: Array<{ index: number; title: string }> };
+const terminalStatuses = new Set(['completed', 'failed', 'cancelled']);
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -61,6 +63,7 @@ export default function WorkSurface({ handoff, onChat }: {
   const [events, setEvents] = useState<WorkEvent[]>([]);
   const [output, setOutput] = useState('');
   const [runStatus, setRunStatus] = useState('');
+  const [approval, setApproval] = useState<PendingApproval | null>(null);
   const [runError, setRunError] = useState('');
   const [following, setFollowing] = useState(false);
   const lastSeqRef = useRef(-1);
@@ -128,6 +131,7 @@ export default function WorkSurface({ handoff, onChat }: {
       while (true) {
         const { value, done } = await reader.read();
         buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
+        if (buffer.length > 1_000_000) throw new Error(t('meo.work.streamTooLarge'));
         let boundary = buffer.indexOf('\n\n');
         while (boundary >= 0) {
           const block = buffer.slice(0, boundary);
@@ -142,6 +146,34 @@ export default function WorkSurface({ handoff, onChat }: {
               if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) payload = parsed;
             } catch { /* Event content is untrusted data. */ }
             lastSeqRef.current = seq;
+            if (name === 'tool_event') {
+              const tool = payload.event;
+              if (tool && typeof tool === 'object' && !Array.isArray(tool)) {
+                const event = tool as Record<string, unknown>;
+                if (event.type === 'tool.requested' &&
+                    typeof event.decision_id === 'string' &&
+                    Array.isArray(event.options)) {
+                  const options = event.options.flatMap((option) => {
+                    if (!option || typeof option !== 'object' || Array.isArray(option)) return [];
+                    const choice = option as Record<string, unknown>;
+                    return Number.isSafeInteger(choice.index) && typeof choice.title === 'string'
+                      ? [{ index: choice.index as number, title: (choice.title as string).slice(0, 120) }] : [];
+                  }).slice(0, 10);
+                  if (options.length) {
+                    setApproval({
+                      decisionId: event.decision_id,
+                      toolName: typeof event.tool_name === 'string' ? event.tool_name.slice(0, 100) : '',
+                      description: typeof event.display_text === 'string' ? event.display_text.slice(0, 1000) : '',
+                      options,
+                    });
+                    setRunStatus('awaiting_approval');
+                  }
+                } else if (event.type === 'tool.completed') {
+                  setApproval(null);
+                  setRunStatus('running');
+                }
+              }
+            }
             if (name === 'text_delta' && typeof payload.text === 'string') {
               setOutput((previous) => (previous + payload.text).slice(-100000));
             } else {
@@ -150,6 +182,7 @@ export default function WorkSurface({ handoff, onChat }: {
               setEvents((current) => [...current.slice(-99), { seq, name, text: detail }]);
             }
             if (name === 'done') {
+              setApproval(null);
               finished = true;
               setRunStatus(typeof payload.status === 'string' ? payload.status : 'completed');
             }
@@ -172,7 +205,8 @@ export default function WorkSurface({ handoff, onChat }: {
   const startRun = async (event: FormEvent) => {
     event.preventDefault();
     const text = task.trim();
-    if (!user?.id || busy || !agentConfigured || !canDelegate || !text || text.length > 35000) return;
+    if (!user?.id || busy || (run && !terminalStatuses.has(runStatus)) || !agentConfigured ||
+        !canDelegate || !text || text.length > 35000) return;
     if (!window.confirm(t('meo.work.confirmRun'))) return;
     setBusy(true);
     setRunError('');
@@ -196,6 +230,7 @@ export default function WorkSurface({ handoff, onChat }: {
       if (!uuid.test(response.run_id)) throw new Error(t('meo.work.runFailed'));
       const created: SavedRun = { id: response.run_id, projectId, text, conversationId };
       setRun(created);
+      setApproval(null);
       setEvents([]);
       setOutput('');
       lastSeqRef.current = -1;
@@ -205,6 +240,34 @@ export default function WorkSurface({ handoff, onChat }: {
     } catch (cause) {
       setRunError(cause instanceof Error ? cause.message : t('meo.work.runFailed'));
     } finally { setBusy(false); }
+  };
+
+  const decideRun = async (optionIndex: number) => {
+    if (!run || !approval || busy) return;
+    setBusy(true);
+    setRunError('');
+    try {
+      await request(`/work/agent-runs/${encodeURIComponent(run.id)}/decisions/${encodeURIComponent(approval.decisionId)}`, {
+        method: 'POST', body: JSON.stringify({ option_index: optionIndex }),
+      });
+      setApproval(null);
+      setRunStatus('running');
+    } catch (cause) {
+      setRunError(cause instanceof Error ? cause.message : t('meo.work.runFailed'));
+    } finally { setBusy(false); }
+  };
+
+  const startAnotherTask = () => {
+    if (run && !terminalStatuses.has(runStatus) && !window.confirm(t('meo.work.newTaskWarning'))) return;
+    // This does not cancel an active remote run; it only stops showing it here.
+    streamAbortRef.current?.abort();
+    setRun(null);
+    setEvents([]);
+    setOutput('');
+    setApproval(null);
+    setRunStatus('');
+    lastSeqRef.current = -1;
+    if (user?.id) try { sessionStorage.removeItem(savedRunKey(user.id)); } catch { /* Optional restore. */ }
   };
 
   const cancelRun = async () => {
@@ -263,7 +326,8 @@ export default function WorkSurface({ handoff, onChat }: {
           placeholder={t('meo.work.taskPlaceholder')} onChange={(event) => setTask(event.target.value)}
           disabled={busy} />
         <div className="meo-work-form-actions">
-          <button type="submit" disabled={!canDelegate || !agentConfigured || !task.trim() || busy}>
+          <button type="submit" disabled={!canDelegate || !agentConfigured || !task.trim() || busy ||
+            Boolean(run && !terminalStatuses.has(runStatus))}>
             {busy ? t('meo.work.submitting') : t('meo.work.start')}
           </button>
           <button type="button" onClick={onChat}>{t('meo.work.backToChat')}</button>
@@ -277,6 +341,19 @@ export default function WorkSurface({ handoff, onChat }: {
             <strong>{t('meo.work.runActivity')}</strong>
             <span>{runStatus || t('meo.work.reconnectNeeded')}</span>
           </div>
+          {approval && (
+            <div className="meo-work-approval" role="group" aria-label={t('meo.work.approvalTitle')}>
+              <strong>{t('meo.work.approvalTitle')}</strong>
+              <p>{approval.toolName}</p>
+              {approval.description && <p>{approval.description}</p>}
+              <div className="meo-work-form-actions">
+                {approval.options.map((option) => (
+                  <button key={option.index} type="button" onClick={() => void decideRun(option.index)}
+                    disabled={busy}>{option.title}</button>
+                ))}
+              </div>
+            </div>
+          )}
           {output && <pre className="meo-work-output">{output}</pre>}
           <ol className="meo-work-events">
             {events.map((event) => <li key={event.seq}>
@@ -287,12 +364,15 @@ export default function WorkSurface({ handoff, onChat }: {
             <button type="button" disabled={following} onClick={() => void followRun(run.id, lastSeqRef.current)}>
               {following ? t('meo.work.following') : t('meo.work.reconnect')}
             </button>
-            {!['completed', 'failed', 'cancelled'].includes(runStatus) && (
+            {!terminalStatuses.has(runStatus) && (
               <button type="button" onClick={() => void cancelRun()} disabled={busy}>
                 {t('meo.work.requestCancel')}
               </button>
             )}
           </div>
+          <button type="button" className="meo-work-new-task" onClick={startAnotherTask}>
+            {t('meo.work.newTask')}
+          </button>
           <small>{t('meo.work.disconnectNote')}</small>
         </section>
       )}
