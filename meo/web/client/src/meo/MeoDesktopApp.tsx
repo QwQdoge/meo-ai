@@ -1,12 +1,13 @@
 import { useTranslation } from "react-i18next";
-import SettingsCenter from "./SettingsCenter";
-import PluginLibrary from "./PluginLibrary";
+
 import navigation from "../../../../ui-schema/navigation.json";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMeoSession } from "./session";
 import MeoChat from "./MeoChat";
-import WorkSurface from "./WorkSurface";
+const SettingsCenter = lazy(() => import("./SettingsCenter"));
+const PluginLibrary = lazy(() => import("./PluginLibrary"));
+const WorkSurface = lazy(() => import("./WorkSurface"));
 import type { WorkHandoff } from "./WorkSurface";
 import "./MeoDesktopApp.css";
 
@@ -392,15 +393,21 @@ export default function MeoDesktopApp() {
               onDelegateToWork={handoffToWork}
             />
           </div>
-          {mode === "settings" ? (
-            <SettingsCenter onDirty={setSettingsDirty} />
-          ) : mode === "work" ? (
-            <WorkSurface handoff={workHandoff} onChat={() => selectMode("chat")} />
-          ) : mode === "skills" ? (
-            <PluginLibrary />
-          ) : mode !== "chat" ? (
-            <ModeLanding mode={mode} />
-          ) : null}
+          <Suspense fallback={
+            <section className="meo-desktop-mode-landing" role="status">
+              {t("meo_web_loading")}
+            </section>
+          }>
+            {mode === "settings" ? (
+              <SettingsCenter onDirty={setSettingsDirty} />
+            ) : mode === "work" ? (
+              <WorkSurface handoff={workHandoff} onChat={() => selectMode("chat")} />
+            ) : mode === "skills" ? (
+              <PluginLibrary />
+            ) : mode !== "chat" ? (
+              <ModeLanding mode={mode} />
+            ) : null}
+          </Suspense>
         </div>
       </section>
 
