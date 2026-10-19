@@ -8,6 +8,7 @@ import MeoChat from "./MeoChat";
 const SettingsCenter = lazy(() => import("./SettingsCenter"));
 const PluginLibrary = lazy(() => import("./PluginLibrary"));
 const WorkSurface = lazy(() => import("./WorkSurface"));
+const ProjectSurface = lazy(() => import("./ProjectSurface"));
 import type { WorkHandoff } from "./WorkSurface";
 import "./MeoDesktopApp.css";
 
@@ -402,6 +403,8 @@ export default function MeoDesktopApp() {
               <SettingsCenter onDirty={setSettingsDirty} />
             ) : mode === "work" ? (
               <WorkSurface handoff={workHandoff} onChat={() => selectMode("chat")} />
+            ) : mode === "projects" ? (
+              <ProjectSurface />
             ) : mode === "skills" ? (
               <PluginLibrary />
             ) : mode !== "chat" ? (
