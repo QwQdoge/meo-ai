@@ -29,4 +29,8 @@
     <string name="meo_navigation_title">Navigation</string>
     <string name="meo_workspace_unavailable">This workspace is not connected to its shared API yet. No tasks or results have been loaded.</string>
     <string name="meo_return_chat">Return to Chat</string>
+    <string name="meo_settings_search">Search settings or options</string>
+    <string name="meo_settings_no_results">No matching settings</string>
+    <string name="meo_settings_account_optional">Meo Account is optional for local settings</string>
+    <string name="meo_settings_sign_in">Connect Meo Account</string>
 </resources>
