@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { settingsRequest } from './settingsClient';
+import PluginDiscovery from './PluginDiscovery';
 import './PluginLibrary.css';
 
 type Skill = { id?: string; name: string; description: string; content: string; enabled: boolean };
@@ -168,6 +169,16 @@ export default function PluginLibrary() {
         <button type="button" onClick={() => void reload()}>Reload</button>
       </p>}
       {message && <p role="status" className="meo-plugin-success">{message}</p>}
+
+      <PluginDiscovery
+        selectedPluginName={selected && skills.length < 32 ? selected.name : undefined}
+        onInstalled={async (id) => { await reload(); await showPlugin(id); }}
+        onImportSkill={(skill) => {
+          // Keep imported Skill text in the current draft. Only Save skills
+          // writes it to Meo Account, preventing unexpected draft overwrites.
+          if (selected && skills.length < 32) setSkills((existing) => [...existing, skill]);
+        }}
+      />
 
       {showAdd && (
         <form className="meo-plugin-add" onSubmit={(event) => { event.preventDefault(); void addPlugin(); }}>
