@@ -48,4 +48,23 @@
     <string name="meo_projects_empty">还没有云端项目。</string>
     <string name="meo_projects_no_description">暂无描述</string>
     <string name="meo_projects_context_note">这里尚未接通对话归属与工作区文件。</string>
+    <string name="meo_work_title">Work</string>
+    <string name="meo_work_refresh">刷新</string>
+    <string name="meo_work_cloud_notice">这里显示 Meo Account 的远程任务。退出此页面不会停止正在运行的任务。</string>
+    <string name="meo_work_not_configured">当前版本尚未配置可信的 Agent 云端服务地址。</string>
+    <string name="meo_work_unavailable">无法读取 Work 任务</string>
+    <string name="meo_work_retry">重试</string>
+    <string name="meo_work_empty">还没有远程任务。</string>
+    <string name="meo_work_task_id">任务 · %1$s</string>
+    <string name="meo_work_device">设备：%1$s</string>
+    <string name="meo_work_viewer_only">目前只能查看状态；Android 上的审批、启动任务和事件回放尚未接通。</string>
+    <string name="meo_work_state_queued">排队中</string>
+    <string name="meo_work_state_dispatching">正在连接设备</string>
+    <string name="meo_work_state_running">运行中</string>
+    <string name="meo_work_state_awaiting_approval">等待审批</string>
+    <string name="meo_work_state_cancel_requested">已请求取消</string>
+    <string name="meo_work_state_completed">已完成</string>
+    <string name="meo_work_state_cancelled">已取消</string>
+    <string name="meo_work_state_failed">失败</string>
+    <string name="meo_work_state_unknown">未知状态</string>
 </resources>
