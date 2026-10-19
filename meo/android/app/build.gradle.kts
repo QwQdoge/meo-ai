@@ -20,6 +20,22 @@ val escapedOAuthClientId = meoOAuthClientId
     .replace("\\", "\\\\")
     .replace("\"", "\\\"")
 
+// This is a trusted deployment origin, not a user-supplied URL or an OAuth secret.
+// An absent origin keeps remote Work visibly unavailable instead of falling back
+// to an arbitrary endpoint or pretending the device is enrolled.
+val configuredAgentCloud = providers.gradleProperty("MEO_AGENT_CLOUD_URL")
+    .orElse(providers.environmentVariable("MEO_AGENT_CLOUD_URL"))
+    .orElse("").get().trim().trimEnd('/')
+if (configuredAgentCloud.isNotEmpty()) {
+    val origin = java.net.URI(configuredAgentCloud)
+    require(origin.scheme == "https" && !origin.host.isNullOrBlank() &&
+        origin.userInfo == null && origin.rawPath.isNullOrEmpty() &&
+        origin.rawQuery == null && origin.rawFragment == null) {
+        "MEO_AGENT_CLOUD_URL must be an HTTPS origin without paths or credentials"
+    }
+}
+val escapedAgentCloud = configuredAgentCloud.replace("\\", "\\\\").replace("\"", "\\\"")
+
 android {
     namespace = "org.meo.ai"
     compileSdk = 37
@@ -32,6 +48,7 @@ android {
         versionCode = 1
         versionName = "0.1.0"
         buildConfigField("String", "MEO_OAUTH_CLIENT_ID", "\"$escapedOAuthClientId\"")
+        buildConfigField("String", "MEO_AGENT_CLOUD_URL", "\"$escapedAgentCloud\"")
     }
 
     buildFeatures {
