@@ -13,6 +13,7 @@ import { ChatMarkdownImage, ChatMarkdownTable } from './ChatRichContent';
 import { tokenizeCode } from './codeHighlight.mjs';
 import { MESSAGE_WINDOW_SIZE, transcriptWindow } from './transcriptWindow.mjs';
 import { chatDraftKey, readChatDraft, writeChatDraft } from './chatDrafts.mjs';
+import { readSelectedChat, writeSelectedChat } from './selectedChat.mjs';
 
 type Connection = {
   id: string;
@@ -475,7 +476,7 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
         const normalized = result.map(normalizeConversation);
         setHistory(normalized);
         setHistoryCursor(nextCursor);
-        const savedId = localStorage.getItem(selectedConversationKey) ?? '';
+        const savedId = readSelectedChat(selectedConversationKey, window);
         const initial = normalized.find((item) => item.id === savedId) ?? normalized[0];
         setActiveConversationId(initial?.id ?? '');
       })
@@ -530,7 +531,7 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
         active = false;
       };
     }
-    localStorage.setItem(selectedConversationKey, activeConversationId);
+    writeSelectedChat(selectedConversationKey, activeConversationId, window);
     if (skipHistoryLoadRef.current === activeConversationId) {
       skipHistoryLoadRef.current = '';
       return;
@@ -597,7 +598,7 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
     setMessages([]);
     setAgentProposal(null);
     setStopNotice(false);
-    localStorage.removeItem(selectedConversationKey);
+    writeSelectedChat(selectedConversationKey, '', window);
   };
 
   // The shell stays mounted while /new is selected, so navigation alone does not reset a chat.
