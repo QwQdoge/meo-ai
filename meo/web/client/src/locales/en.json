@@ -163,5 +163,11 @@
   "meo_web_suggestion_plan": "Make a plan",
   "meo_web_suggestion_plan_prompt": "Help me make a practical plan for: ",
   "meo_web_suggestion_code": "Help me code",
-  "meo_web_suggestion_code_prompt": "Help me write or debug code for: "
+  "meo_web_suggestion_code_prompt": "Help me write or debug code for: ",
+  "meo_web_stop_receiving": "Stop receiving response",
+  "meo_web_stop_notice": "Stopped receiving this response. Any partial output shown here may not be saved.",
+  "meo_web_details": "Chat details",
+  "meo_web_details_subtitle": "About this conversation",
+  "meo_web_close_details": "Close details",
+  "meo_web_details_unavailable": "Response details are not connected in this web preview yet. Chat and model selection remain available."
 }
