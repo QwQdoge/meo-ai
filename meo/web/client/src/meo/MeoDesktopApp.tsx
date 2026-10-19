@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next";
 import SettingsCenter from "./SettingsCenter";
+import PluginLibrary from "./PluginLibrary";
 import navigation from "../../../../ui-schema/navigation.json";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -370,6 +371,8 @@ export default function MeoDesktopApp() {
           </div>
           {mode === "settings" ? (
             <SettingsCenter onDirty={setSettingsDirty} />
+          ) : mode === "skills" ? (
+            <PluginLibrary />
           ) : mode !== "chat" ? (
             <ModeLanding mode={mode} />
           ) : null}
