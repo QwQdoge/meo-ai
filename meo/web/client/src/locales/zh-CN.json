@@ -213,5 +213,13 @@
   "meo.work.streamTooLarge": "Agent 事件流超过了浏览器允许的安全缓冲区大小。",
   "meo.work.newTask": "新任务",
   "meo.work.newTaskWarning": "当前 Agent 任务可能仍在运行。切换到新任务不会停止原任务。仍然继续吗？",
-  "meo.work.eventGap": "Agent 事件记录不完整。请重新连接同一个任务并确认状态。"
+  "meo.work.eventGap": "Agent 事件记录不完整。请重新连接同一个任务并确认状态。",
+  "meo.work.agentToolsLabel": "工作区 Agent 工具",
+  "meo.work.agentToolsHint": "允许模型提出在指定工作区执行的任务；未经你确认不会执行。",
+  "meo.work.agentToolsOff": "不使用 Agent 工具",
+  "meo.work.agentToolsForProject": "Agent：{{project}}",
+  "meo.work.proposalTitle": "模型提出了工作区任务",
+  "meo.work.proposalNotExecuted": "尚未执行任何操作。请到 Work 查看任务与权限并确认。",
+  "meo.work.reviewInWork": "去 Work 审核",
+  "meo.work.dismissProposal": "忽略"
 }
