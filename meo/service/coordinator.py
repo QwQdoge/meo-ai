@@ -382,19 +382,19 @@ class LocalSubagentCoordinator:
             title = " ".join(str(item.get("title", "Analysis")).split())[:120] or "Analysis"
             planned.append({"title": title, "instruction": instruction[:3500]})
 
-        async def analyze(snapshot, cancelled, report):
-            if cancelled.is_set():
-                return ""
-            report("analyzing")
-            instruction = next(task["instruction"] for task in planned
-                               if task["title"] == snapshot.title)
-            content = await asyncio.to_thread(
-                generate, model_id, self._subagent_prompt(request_text, instruction),
-                ["You are a read-only analysis subagent. Do not invoke tools or claim file changes."],
-            )
-            if cancelled.is_set():
-                return ""
-            return str(content)[:_MAX_SUBAGENT_OUTPUT_CHARS]
+        def make_runner(instruction: str):
+            async def analyze(snapshot, cancelled, report):
+                if cancelled.is_set():
+                    return ""
+                report("analyzing")
+                content = await asyncio.to_thread(
+                    generate, model_id, self._subagent_prompt(request_text, instruction),
+                    ["You are a read-only analysis subagent. Do not invoke tools or claim file changes."],
+                )
+                if cancelled.is_set():
+                    return ""
+                return str(content)[:_MAX_SUBAGENT_OUTPUT_CHARS]
+            return analyze
 
         for task in planned:
             scheduler.spawn_child(
@@ -403,7 +403,7 @@ class LocalSubagentCoordinator:
                 title=task["title"],
                 requested_capabilities={"analysis.read"},
                 destination_capabilities={"analysis.read"},
-                runner=analyze,
+                runner=make_runner(task["instruction"]),
             )
 
         watcher = None
