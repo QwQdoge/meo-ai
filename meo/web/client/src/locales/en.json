@@ -272,5 +272,19 @@
   "meo.agentActivity.fullTask": "View full task",
   "meo.agentActivity.timeline_one": "Activity · {{count}} event",
   "meo.agentActivity.timeline_other": "Activity · {{count}} events",
-  "meo.agentActivity.noEvents": "No activity events received yet."
+  "meo.agentActivity.noEvents": "No activity events received yet.",
+  "meo.projects.title": "Projects",
+  "meo.projects.cloudScope": "Projects saved to Meo Account. Local desktop projects are separate until an explicit sync is available.",
+  "meo.projects.new": "New project",
+  "meo.projects.name": "Project name",
+  "meo.projects.create": "Create",
+  "meo.projects.cancel": "Cancel",
+  "meo.projects.save": "Save",
+  "meo.projects.rename": "Rename",
+  "meo.projects.retry": "Retry",
+  "meo.projects.loading": "Loading projects…",
+  "meo.projects.empty": "No account projects yet. Create one to get started.",
+  "meo.projects.noDescription": "No description",
+  "meo.projects.contextNote": "Project name and metadata are stored in your account. Conversation linking and workspace files are not yet connected here.",
+  "meo.projects.requestFailed": "Projects unavailable"
 }
