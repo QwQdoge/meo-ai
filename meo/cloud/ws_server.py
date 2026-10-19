@@ -192,11 +192,16 @@ class RelayWebSocketServer:
             payload=payload,
         )
 
+        # A delayed frame may be a newly persisted older event after newer
+        # frames have already advanced the run. Retain it for replay, but do
+        # not use it to roll back the live status or request binding.
+        previous_seq = run.get("last_event_seq", -1)
+        out_of_order = isinstance(previous_seq, int) and seq <= previous_seq
         if inserted:
             values: dict[str, Any] = {"last_event_seq": seq}
             # Late events can still be persisted/replayed, but never revive a
             # terminal run after an ACK or another event completed it.
-            if terminal:
+            if terminal or out_of_order:
                 await self.store.update_agent_run(
                     user_id=session.account_user_id, run_id=run_id, values=values,
                 )
@@ -220,7 +225,7 @@ class RelayWebSocketServer:
                 elif isinstance(event, dict) and event.get("type") == "tool.completed":
                     values["status"] = "running"
 
-            if not terminal:
+            if not terminal and not out_of_order:
                 await self.store.update_agent_run(
                     user_id=session.account_user_id,
                     run_id=run_id,
