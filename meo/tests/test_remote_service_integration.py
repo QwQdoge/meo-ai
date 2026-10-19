@@ -59,7 +59,7 @@ class MemoryStore:
         self.devices = []
 
     async def create_agent_run(self, **values):
-        self.runs[values["run_id"]] = dict(values)
+        self.runs[values["run_id"]] = {"id": values["run_id"], **values}
 
     async def update_agent_run(self, *, user_id, run_id, values):
         assert self.runs[run_id]["user_id"] == user_id
