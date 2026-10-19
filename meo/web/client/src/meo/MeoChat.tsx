@@ -218,9 +218,10 @@ type MeoChatProps = {
   searchRequest: number;
   onBusyChange: (busy: boolean) => void;
   onSelectConversation: () => void;
+  active: boolean;
 };
 
-export default function MeoChat({ historyTarget, newChatRequest, searchRequest, onBusyChange, onSelectConversation }: MeoChatProps) {
+export default function MeoChat({ historyTarget, newChatRequest, searchRequest, onBusyChange, onSelectConversation, active }: MeoChatProps) {
   const preferences = useBrowserPreferences();
   const { t } = useTranslation();
   const { user } = useMeoSession();
@@ -366,14 +367,21 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
   );
 
   useEffect(() => {
-    let active = true;
+    if (!active) return;
+    let live = true;
     json<{ plugins: SkillPlugin[] }>('/api/meo/ai/plugins')
       .then(({ plugins }) => {
-        if (active) setSkillPlugins((plugins || []).filter((plugin) => plugin.enabled));
+        if (!live) return;
+        const enabled = (plugins || []).filter((plugin) => plugin.enabled);
+        setSkillPlugins(enabled);
+        setSelectedSkillId((previous) =>
+          previous && !enabled.some((plugin) => plugin.skills?.some((skill) => skill.id === previous))
+            ? '' : previous,
+        );
       })
-      .catch(() => { if (active) setSkillPlugins([]); });
-    return () => { active = false; };
-  }, []);
+      .catch(() => { if (live) setSkillPlugins([]); });
+    return () => { live = false; };
+  }, [active]);
 
   useEffect(() => {
     let active = true;
