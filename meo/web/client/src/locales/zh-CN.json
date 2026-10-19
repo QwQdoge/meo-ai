@@ -221,5 +221,6 @@
   "meo.work.proposalTitle": "模型提出了工作区任务",
   "meo.work.proposalNotExecuted": "尚未执行任何操作。请到 Work 查看任务与权限并确认。",
   "meo.work.reviewInWork": "去 Work 审核",
-  "meo.work.dismissProposal": "忽略"
+  "meo.work.dismissProposal": "忽略",
+  "meo.work.agentToolsGeminiUnavailable": "当前 Chat 暂不支持 Gemini 的工具调用。仍可在 Work 模式手动委托 Agent。"
 }
