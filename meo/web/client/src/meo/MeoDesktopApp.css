@@ -815,3 +815,69 @@
   align-items:center; border:1px solid rgb(var(--border-light)); border-radius:11px;
   padding:7px 13px; background:rgb(var(--surface-secondary)); color:rgb(var(--text-primary)); font-size:12px;
 }
+
+
+/* Optional model-native Agent proposals: the model does not execute tasks. */
+.meo-chat-agent-select {
+  max-width: min(220px, 27vw);
+  min-width: 135px;
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 1px solid rgb(var(--border-light));
+  border-radius: 12px;
+  color: rgb(var(--text-primary));
+  background: rgb(var(--surface-secondary));
+  font-size: 12px;
+  text-overflow: ellipsis;
+}
+.meo-chat-agent-proposal {
+  width: min(100%, 740px);
+  align-self: center;
+  box-sizing: border-box;
+  margin: 14px auto 18px;
+  padding: 18px;
+  border: 1px solid rgb(var(--border-light));
+  border-left: 3px solid rgb(var(--accent-primary));
+  border-radius: 15px;
+  color: rgb(var(--text-primary));
+  background: rgb(var(--surface-secondary));
+}
+.meo-chat-agent-proposal > div:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 14px;
+}
+.meo-chat-agent-proposal > div:first-child span {
+  color: rgb(var(--text-secondary));
+  font-size: 12px;
+  line-height: 1.55;
+}
+.meo-chat-agent-proposal p {
+  margin: 12px 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+  font-size: 14px;
+}
+.meo-chat-agent-proposal-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.meo-chat-agent-proposal-actions button {
+  border: 1px solid rgb(var(--border-light));
+  border-radius: 10px;
+  padding: 8px 13px;
+  background: rgb(var(--surface-primary));
+  color: rgb(var(--text-primary));
+  font-size: 12px;
+  min-height: 36px;
+}
+.meo-chat-agent-proposal-actions button:hover {
+  background: rgb(var(--surface-tertiary));
+}
+@media (max-width: 759px) {
+  .meo-chat-agent-select { max-width: min(100%, 180px); }
+  .meo-chat-agent-proposal { padding: 14px; }
+}
