@@ -17,7 +17,7 @@ bindings. It does not contain a renderer, agent engine or permission authority.
   authority for shared token values and controls; these are references, not a
   second set of hard-coded geometry or colors. Platform adapters map them to
   React theme roles and Compose equivalents, including system dynamic color.
-- `settings.json`: ordered settings sections, field bindings, labels and control kinds. Field bindings are checked against the Rust preference contract in Core tests; declarations do not assert backend availability.
+- `settings.json`: ordered settings sections, shared search keywords, field bindings, labels and control kinds. React, QML and Compose use this same search catalog. Field bindings are checked against the Rust preference contract in Core tests; declarations do not assert backend availability.
 - `generate.mjs`: dependency-free build-time validation and generation.
 
 ContentBlock is a separate **content protocol**, currently owned by
