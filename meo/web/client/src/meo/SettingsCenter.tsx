@@ -9,6 +9,7 @@ import {
 } from "./browserPreferences";
 import type { BrowserPreferences } from "./browserPreferences";
 import MemorySettings from "./MemorySettings";
+import PluginLibrary from "./PluginLibrary";
 import { settingsRequest } from "./settingsClient";
 import "./SettingsCenter.css";
 
@@ -338,7 +339,8 @@ export default function SettingsCenter({
               {accountLink}
             </div>
           )}
-          {["connectors", "devices", "usage"].includes(section) && (
+          {section === "connectors" && <PluginLibrary />}
+          {["devices", "usage"].includes(section) && (
             <div className="empty-state">
               <h3>{t("meo.settings.serviceUnavailable")}</h3>
               <p>{t(`meo.settings.${section}.unavailable`)}</p>
