@@ -92,6 +92,7 @@ export default function WorkSurface({ handoff, onChat }: {
   const [approval, setApproval] = useState<AgentApproval | null>(null);
   const [runError, setRunError] = useState('');
   const [recentRuns, setRecentRuns] = useState<RemoteRun[]>([]);
+  const [recentOwner, setRecentOwner] = useState('');
   const [recentBusy, setRecentBusy] = useState(false);
   const [recentError, setRecentError] = useState('');
   const [following, setFollowing] = useState(false);
@@ -140,7 +141,10 @@ export default function WorkSurface({ handoff, onChat }: {
         typeof item.status === 'string' &&
         (item.project_id === null || uuid.test(item.project_id)) &&
         typeof item.conversation_id === 'string' && uuid.test(item.conversation_id));
-      if (accountIdRef.current === accountId) setRecentRuns(known.slice(0, 30));
+      if (accountIdRef.current === accountId) {
+        setRecentRuns(known.slice(0, 30));
+        setRecentOwner(accountId);
+      }
     } catch (cause) {
       if (accountIdRef.current === accountId)
         setRecentError(cause instanceof Error ? cause.message : t('meo.work.recentUnavailable'));
@@ -152,7 +156,7 @@ export default function WorkSurface({ handoff, onChat }: {
   useEffect(() => { void refresh(); }, [refresh]);
   useEffect(() => {
     if (agentConfigured && user?.id) void loadRecentRuns();
-    else { setRecentRuns([]); setRecentError(''); }
+    else { setRecentRuns([]); setRecentOwner(''); setRecentError(''); }
   }, [agentConfigured, user?.id, loadRecentRuns]);
   useEffect(() => {
     if (!user?.id) { setRun(null); return; }
@@ -181,6 +185,8 @@ export default function WorkSurface({ handoff, onChat }: {
     void followRun(run.id, -1);
   }, [user?.id, run?.id]);
 
+  // Never render task metadata fetched under a different Meo Account.
+  const visibleRecentRuns = recentOwner === user?.id ? recentRuns : [];
   const selected = workspaces.filter((item) => item.project_id === projectId);
   const canDelegate = selected.some((item) => item.capabilities?.includes('agent.chat'));
 
@@ -471,9 +477,9 @@ export default function WorkSurface({ handoff, onChat }: {
           </div>
           <p>{t('meo.work.recentNote')}</p>
           {recentError && <p role="alert">{t('meo.work.recentUnavailable')}: {recentError}</p>}
-          {recentRuns.length > 0 && (
+          {visibleRecentRuns.length > 0 && (
             <div className="meo-work-recent-list">
-              {recentRuns.map((item) => (
+              {visibleRecentRuns.map((item) => (
                 <button type="button" key={item.id}
                   aria-pressed={run?.id === item.id}
                   onClick={() => resumeKnownRun(item)}>
@@ -486,7 +492,7 @@ export default function WorkSurface({ handoff, onChat }: {
               ))}
             </div>
           )}
-          {recentRuns.length === 0 && !recentBusy && !recentError &&
+          {visibleRecentRuns.length === 0 && !recentBusy && !recentError &&
             <p role="status">{t('meo.work.noRecentRuns')}</p>}
         </section>
       )}
