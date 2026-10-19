@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useMeoSession } from './session';
 import AgentActivityPanel from './AgentActivityPanel';
 import type { AgentActivityEvent, AgentApproval, AgentTaskNode } from './AgentActivityPanel';
+import { readWorkRun, saveWorkRun, clearWorkRun } from './resumableWorkRun.mjs';
 
 export type WorkHandoff = { id: number; text: string; conversationId: string; projectId?: string };
 
@@ -35,14 +36,28 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
-function savedRunKey(userId: string) { return `meo-ai-web:work-run:v1:${encodeURIComponent(userId)}`; }
+// Browser storage holds only account-scoped opaque identifiers. The Cloud store
+// remains authoritative for execution and event replay.
+function browserWorkStorage(): Storage | null {
+  try { return window.localStorage; } catch { return null; }
+}
+function legacyRunKey(userId: string) {
+  return `meo-ai-web:work-run:v1:${encodeURIComponent(userId)}`;
+}
 function recoverRun(userId: string): SavedRun | null {
   if (!userId) return null;
+  const stored = readWorkRun(browserWorkStorage(), userId);
+  if (stored) return { ...stored, text: '' };
+  // Migrate older tab-scoped pointers once, discarding sensitive prompt text.
   try {
-    const value = JSON.parse(sessionStorage.getItem(savedRunKey(userId)) ?? 'null');
-    return value && uuid.test(value.id) && uuid.test(value.projectId) &&
-      typeof value.text === 'string' && typeof value.conversationId === 'string' ? value as SavedRun : null;
-  } catch { return null; }
+    const legacy = JSON.parse(sessionStorage.getItem(legacyRunKey(userId)) ?? 'null');
+    if (legacy && saveWorkRun(browserWorkStorage(), userId, legacy)) {
+      sessionStorage.removeItem(legacyRunKey(userId));
+      return { id: legacy.id, projectId: legacy.projectId,
+        conversationId: legacy.conversationId, text: '' };
+    }
+  } catch { /* session storage is optional */ }
+  return null;
 }
 
 export default function WorkSurface({ handoff, onChat }: {
@@ -112,8 +127,8 @@ export default function WorkSurface({ handoff, onChat }: {
   // Disconnecting a browser event subscriber NEVER cancels remote AgentRun.
   useEffect(() => () => streamAbortRef.current?.abort(), []);
 
-  // A tab reload restores the same AgentRun from sessionStorage and replays its
-  // persisted Cloud events. Do not generate a replacement run on reconnect.
+  // A browser restart restores the same AgentRun using an opaque ID pointer,
+  // replaying Cloud events. Never dispatch another run on reconnect.
   useEffect(() => {
     if (!user?.id || !run?.id || resumedRunRef.current === run.id) return;
     resumedRunRef.current = run.id;
@@ -288,7 +303,7 @@ export default function WorkSurface({ handoff, onChat }: {
       setOutput('');
       lastSeqRef.current = -1;
       setRunStatus(response.status || 'dispatching');
-      try { sessionStorage.setItem(savedRunKey(user.id), JSON.stringify(created)); } catch { /* Optional restore. */ }
+      saveWorkRun(browserWorkStorage(), user.id, created);
       void followRun(created.id, -1);
     } catch (cause) {
       setRunError(cause instanceof Error ? cause.message : t('meo.work.runFailed'));
@@ -322,7 +337,10 @@ export default function WorkSurface({ handoff, onChat }: {
     setApproval(null);
     setRunStatus('');
     lastSeqRef.current = -1;
-    if (user?.id) try { sessionStorage.removeItem(savedRunKey(user.id)); } catch { /* Optional restore. */ }
+    if (user?.id) {
+      clearWorkRun(browserWorkStorage(), user.id);
+      try { sessionStorage.removeItem(legacyRunKey(user.id)); } catch { /* optional */ }
+    }
   };
 
   const cancelRun = async () => {
@@ -398,8 +416,9 @@ export default function WorkSurface({ handoff, onChat }: {
         <AgentActivityPanel
           task={{
             id: run.id,
-            title: run.text.length > 140 ? `${run.text.slice(0, 139)}…` : run.text,
-            description: run.text,
+            title: run.text ? (run.text.length > 140 ? `${run.text.slice(0, 139)}…` : run.text)
+              : t('meo.work.restoredTask'),
+            description: run.text || undefined,
             relation: 'root',
             children: subagents,
             execution: 'remote',
