@@ -454,3 +454,18 @@
   color: rgb(var(--text-primary));
   background: rgb(var(--surface-secondary));
 }
+
+
+.meo-chat-model-description {
+  margin: -5px 28px 4px;
+  max-width: calc(100% - 56px);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: rgb(var(--text-secondary));
+  font-size: 12px;
+  line-height: 1.5;
+}
+@media (max-width: 759px) {
+  .meo-chat-model-description { margin-inline: 15px; max-width: calc(100% - 30px); }
+}
