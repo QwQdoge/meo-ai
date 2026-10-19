@@ -10,6 +10,7 @@ import type { MeoConsent } from './MeoConsentDialog';
 import MeoConsentDialog from './MeoConsentDialog';
 import { useMeoSession } from './session';
 import { ChatMarkdownImage, ChatMarkdownTable } from './ChatRichContent';
+import { chatDraftKey, readChatDraft, writeChatDraft } from './chatDrafts.mjs';
 
 type Connection = {
   id: string;
@@ -68,6 +69,10 @@ function requestError(value: unknown, status: number): string {
     }
   }
   return `Request failed (${status})`;
+}
+
+function draftStorage(): Storage | null {
+  try { return window.sessionStorage; } catch { return null; }
 }
 
 async function json<T>(url: string, init?: RequestInit): Promise<T> {
@@ -129,7 +134,7 @@ function MarkdownCodeBlock({ children }: { children?: ReactNode }) {
   );
 }
 
-function CopyMessageButton({ content }: { content: string }) {
+function CopyMessageButton({ content, role = 'assistant' }: { content: string; role?: 'assistant' | 'user' }) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
@@ -150,7 +155,8 @@ function CopyMessageButton({ content }: { content: string }) {
   return (
     <div className="meo-chat-message-actions">
       <button className="meo-chat-copy-message" type="button" onClick={copyMessage}
-        aria-label={t('meo_web_copy_response')} title={t('meo_web_copy_response')}>
+        aria-label={t(role === 'user' ? 'meo_web_copy_user_message' : 'meo_web_copy_response')}
+        title={t(role === 'user' ? 'meo_web_copy_user_message' : 'meo_web_copy_response')}>
         {copied ? t('meo_web_copied') : t('meo_web_copy')}
       </button>
       {copyFailed && <span role="alert" className="meo-chat-copy-error">{t('meo_web_copy_failed')}</span>}
@@ -181,12 +187,24 @@ export default function MeoChat({ historyTarget, newChatRequest, onBusyChange, o
   const selectedConversationKey = `meo-ai-web:selected:${user?.id ?? 'anonymous'}`;
   const [history, setHistory] = useState<Conversation[]>([]);
   const [historyQuery, setHistoryQuery] = useState('');
+  const [activeConversationId, setActiveConversationId] = useState('');
+  const draftKey = chatDraftKey(user?.id, activeConversationId);
+  const [draftState, setDraftState] = useState(() => ({
+    key: draftKey,
+    text: readChatDraft(draftStorage(), user?.id, activeConversationId),
+  }));
+  const draft = draftState.key === draftKey
+    ? draftState.text
+    : readChatDraft(draftStorage(), user?.id, activeConversationId);
+  const setDraft = (text: string) => {
+    setDraftState({ key: draftKey, text });
+    writeChatDraft(draftStorage(), user?.id, activeConversationId, text);
+  };
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const streamRef = useRef<HTMLElement>(null);
   const followOutputRef = useRef(true);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const lastNewChatRequestRef = useRef(newChatRequest);
-  const [activeConversationId, setActiveConversationId] = useState('');
   const [connections, setConnections] = useState<Connection[]>([]);
   const [credentialId, setCredentialId] = useState(requestedConnection);
   const [model, setModel] = useState(requestedModel);
@@ -195,7 +213,6 @@ export default function MeoChat({ historyTarget, newChatRequest, onBusyChange, o
   const [models, setModels] = useState<Model[]>([]);
   const [modelDiscovery, setModelDiscovery] = useState<'idle' | 'unsupported' | 'ready'>('idle');
   const [messages, setMessages] = useState<Message[]>([]);
-  const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
   const [streamingActive, setStreamingActive] = useState(false);
   const [stopNotice, setStopNotice] = useState(false);
@@ -212,6 +229,16 @@ export default function MeoChat({ historyTarget, newChatRequest, onBusyChange, o
   const filteredHistory = useMemo(() => history.filter((item) => item.title.toLocaleLowerCase().includes(historyQuery.trim().toLocaleLowerCase())), [history, historyQuery]);
 
   useEffect(() => onBusyChange(busy), [busy, onBusyChange]);
+
+  // Expand as the user types (including IME/paste) without growing beyond the viewport.
+  useEffect(() => {
+    const field = textareaRef.current;
+    if (!field) return;
+    field.style.height = 'auto';
+    const idealHeight = field.scrollHeight;
+    field.style.height = `${Math.min(Math.max(idealHeight, 43), 180)}px`;
+    field.style.overflowY = idealHeight > 180 ? 'auto' : 'hidden';
+  }, [draft]);
 
   // Stream follow only while the user is near the latest message.
   // Reading earlier content must not be interrupted by incoming tokens.
@@ -411,9 +438,11 @@ export default function MeoChat({ historyTarget, newChatRequest, onBusyChange, o
     if (busy) return;
     followOutputRef.current = true;
     setShowScrollToBottom(false);
+    // A new conversation starts empty, without clearing drafts of other chats.
+    writeChatDraft(draftStorage(), user?.id, '', '');
+    setDraftState({ key: chatDraftKey(user?.id, ''), text: '' });
     setActiveConversationId('');
     setMessages([]);
-    setDraft('');
     setStopNotice(false);
     localStorage.removeItem(selectedConversationKey);
   };
@@ -729,7 +758,10 @@ export default function MeoChat({ historyTarget, newChatRequest, onBusyChange, o
                 <CopyMessageButton content={message.content} />
               </> : (busy ? <span className="meo-chat-streaming-indicator" role="status">{t('meo_web_thinking')}</span> : null)
             ) : (
-              <p className="whitespace-pre-wrap">{message.content}</p>
+              <>
+                <p className="whitespace-pre-wrap">{message.content}</p>
+                <CopyMessageButton content={message.content} role="user" />
+              </>
             )}
           </article>
         ))}
@@ -761,7 +793,7 @@ export default function MeoChat({ historyTarget, newChatRequest, onBusyChange, o
           className="meo-chat-textarea"
           value={draft}
           onKeyDown={(event) => {
-            if(event.nativeEvent.isComposing || event.key !== 'Enter' || event.shiftKey) return;
+            if(event.nativeEvent.isComposing || event.keyCode === 229 || event.key !== 'Enter' || event.shiftKey || event.repeat) return;
             const send = preferences.general.enter_to_send ? !event.ctrlKey && !event.metaKey : event.ctrlKey || event.metaKey;
             if(send) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); }
           }}
@@ -769,6 +801,7 @@ export default function MeoChat({ historyTarget, newChatRequest, onBusyChange, o
           onChange={(event) => setDraft(event.target.value)}
           placeholder={t('meo_web_message_placeholder')}
           aria-label={t('meo_web_message')}
+          aria-describedby="meo-chat-input-hint"
           disabled={busy || !selected}
         />
         {streamingActive ? (
@@ -787,6 +820,9 @@ export default function MeoChat({ historyTarget, newChatRequest, onBusyChange, o
         </button>
         )}
       </form>
+      <p className="meo-chat-composer-hint" id="meo-chat-input-hint">
+        {t(preferences.general.enter_to_send ? 'meo_web_enter_to_send_hint' : 'meo_web_ctrl_enter_to_send_hint')}
+      </p>
     </main>
   );
 }
