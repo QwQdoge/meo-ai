@@ -242,7 +242,7 @@ const bindingIds = new Set();
 for (const section of settings.sections) {
   exactKeys(
     section,
-    ["id", "label", "labelKey", "owner", "items"],
+    ["id", "label", "labelKey", "owner", "items", "keywords"],
     "settings section",
   );
   requireValue(
@@ -251,6 +251,11 @@ for (const section of settings.sections) {
   );
   sectionIds.add(section.id);
   text(section.label, "settings label");
+  requireValue(
+    Array.isArray(section.keywords) && section.keywords.length <= 8 &&
+      section.keywords.every((keyword) => typeof keyword === "string" && keyword.length > 0 && keyword.length <= 64 && !/[\x00-\x1f]/.test(keyword)),
+    "settings: invalid search keywords",
+  );
   requireValue(
     /^meo\.settings\.[a-zA-Z]+$/.test(section.labelKey),
     "settings: invalid labelKey",

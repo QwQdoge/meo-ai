@@ -20,7 +20,11 @@
           "labelKey": "meo.settings.theme",
           "kind": "select",
           "binding": "appearance.theme",
-          "options": ["system", "light", "dark"]
+          "options": [
+            "system",
+            "light",
+            "dark"
+          ]
         },
         {
           "id": "reduce_motion",
@@ -29,6 +33,12 @@
           "kind": "toggle",
           "binding": "appearance.reduce_motion"
         }
+      ],
+      "keywords": [
+        "keyboard",
+        "appearance",
+        "输入",
+        "外观"
       ]
     },
     {
@@ -70,6 +80,12 @@
           "kind": "toggle",
           "binding": "memory.enabled"
         }
+      ],
+      "keywords": [
+        "memory",
+        "instructions",
+        "记忆",
+        "指令"
       ]
     },
     {
@@ -77,42 +93,81 @@
       "label": "Models & connections",
       "labelKey": "meo.settings.models",
       "owner": "account",
-      "items": []
+      "items": [],
+      "keywords": [
+        "provider",
+        "api key",
+        "byok",
+        "模型",
+        "密钥"
+      ]
     },
     {
       "id": "connectors",
       "label": "Apps & connectors",
       "labelKey": "meo.settings.connectors",
       "owner": "core",
-      "items": []
+      "items": [],
+      "keywords": [
+        "mcp",
+        "plugins",
+        "skills",
+        "插件",
+        "连接器"
+      ]
     },
     {
       "id": "devices",
       "label": "Devices & Work",
       "labelKey": "meo.settings.devices",
       "owner": "api",
-      "items": []
+      "items": [],
+      "keywords": [
+        "remote",
+        "device",
+        "远程",
+        "设备"
+      ]
     },
     {
       "id": "privacy",
       "label": "Data & privacy",
       "labelKey": "meo.settings.privacy",
       "owner": "account",
-      "items": []
+      "items": [],
+      "keywords": [
+        "export",
+        "delete",
+        "隐私",
+        "删除"
+      ]
     },
     {
       "id": "usage",
       "label": "Usage",
       "labelKey": "meo.settings.usage",
       "owner": "api",
-      "items": []
+      "items": [],
+      "keywords": [
+        "activity",
+        "diagnostics",
+        "诊断",
+        "用量"
+      ]
     },
     {
       "id": "account",
       "label": "Account & security",
       "labelKey": "meo.settings.account",
       "owner": "account",
-      "items": []
+      "items": [],
+      "keywords": [
+        "sign in",
+        "sign out",
+        "sync",
+        "登录",
+        "同步"
+      ]
     }
   ]
 }

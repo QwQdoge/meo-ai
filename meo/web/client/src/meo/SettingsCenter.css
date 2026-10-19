@@ -16,6 +16,28 @@
     margin: 0 14px 22px;
     letter-spacing: -0.5px;
   }
+  .settings-search-label {
+    display: block;
+    font-size: 11px;
+    color: rgb(var(--text-secondary));
+    margin: 0 14px 6px;
+  }
+  .settings-search-input {
+    width: 100%;
+    min-width: 0;
+    background: rgb(var(--surface-secondary));
+    color: rgb(var(--text-primary));
+    border: 1px solid rgb(var(--border-light));
+    border-radius: 12px;
+    padding: 10px 12px;
+    margin-bottom: 14px;
+    font-size: 13px;
+  }
+  .settings-no-results {
+    color: rgb(var(--text-secondary));
+    font-size: 12px;
+    padding: 0 14px;
+  }
   .settings-nav button {
     display: block;
     border: 0;
@@ -410,3 +432,11 @@
 }
 
 @media(prefers-reduced-motion:reduce){.meo-desktop-workspace *{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+
+/* Keep search accessible above the compact category chips. */
+@media (max-width: 760px) {
+  .meo-settings .settings-nav { flex-wrap: wrap; }
+  .meo-settings .settings-search-label { width: 100%; margin: 0 2px; }
+  .meo-settings .settings-search-input { flex: 1 0 100%; margin: 0 0 6px; }
+  .meo-settings .settings-no-results { width: 100%; }
+}

@@ -11,6 +11,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
@@ -26,10 +27,11 @@ import org.meo.ai.MeoController
 import org.meo.ai.R
 import org.meo.ai.schema.MeoUiSchema
 
-private data class SettingsGroup(val id: String, val label: String, val fields: List<String>)
+private data class SettingsGroup(val id: String, val label: String, val fields: List<String>, val keywords: List<String>)
 private val groups: List<SettingsGroup> by lazy {
     val rows = JSONObject(MeoUiSchema.json).getJSONObject("settings").getJSONArray("sections")
-    List(rows.length()) { index -> rows.getJSONObject(index).let { SettingsGroup(it.getString("id"), it.getString("label"), it.getJSONArray("items").let { fields -> List(fields.length()) { index -> fields.getJSONObject(index).getString("id") } }) } }
+    List(rows.length()) { index -> rows.getJSONObject(index).let { SettingsGroup(it.getString("id"), it.getString("label"), it.getJSONArray("items").let { fields -> List(fields.length()) { index -> fields.getJSONObject(index).getString("id") } },
+        it.getJSONArray("keywords").let { keywords -> List(keywords.length()) { index -> keywords.getString(index) } }) } }
 }
 private fun labelResource(id: String): Int = when(id) {
     "general" -> R.string.meo_settings_general
@@ -47,7 +49,8 @@ private fun labelResource(id: String): Int = when(id) {
 @Composable
 fun SettingsScreen(controller: MeoController, onClose: () -> Unit) {
     val context = LocalContext.current
-    var section by remember { mutableStateOf(groups.first().id) }
+    var section by rememberSaveable { mutableStateOf(groups.first().id) }
+    var searchQuery by rememberSaveable { mutableStateOf("") }
     val preferences = controller.devicePreferences.values
     val state = controller.state
     // Recheck shared metadata while Connectors remains visible. No secrets or
@@ -70,10 +73,36 @@ fun SettingsScreen(controller: MeoController, onClose: () -> Unit) {
         })
     }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                placeholder = { Text(stringResource(R.string.meo_settings_search)) },
+                singleLine = true,
+            )
+            val filteredGroups = groups.filter { group ->
+                val query = searchQuery.trim()
+                query.isBlank() ||
+                    stringResource(labelResource(group.id)).contains(query, ignoreCase = true) ||
+                    group.id.contains(query, ignoreCase = true) ||
+                    group.keywords.any { it.contains(query, ignoreCase = true) } ||
+                    group.fields.any { field ->
+                        field.replace('_', ' ').contains(query, ignoreCase = true) ||
+                            (when (field) {
+                                "enter_to_send" -> stringResource(R.string.meo_settings_enter)
+                                "theme" -> stringResource(R.string.meo_settings_theme)
+                                "reduce_motion" -> stringResource(R.string.meo_settings_motion)
+                                else -> ""
+                            }).contains(query, ignoreCase = true)
+                    }
+            }
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                groups.forEach { group ->
+                filteredGroups.forEach { group ->
                     FilterChip(selected = section == group.id, onClick = { section = group.id }, label = { Text(stringResource(labelResource(group.id))) })
                 }
+            }
+            if (filteredGroups.isEmpty()) {
+                Text(stringResource(R.string.meo_settings_no_results), modifier = Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             HorizontalDivider()
             LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(24.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
@@ -155,9 +184,13 @@ fun SettingsScreen(controller: MeoController, onClose: () -> Unit) {
                         }
                     }
                     "account" -> {
-                        item { Text(state.email, style = MaterialTheme.typography.titleMedium) }
-                        item { TextButton(onClick = { openAccount() }) { Text(stringResource(R.string.meo_settings_open_account)) } }
-                        item { OutlinedButton(onClick = { controller.signOut(); onClose() }, enabled = !state.streaming) { Text(stringResource(R.string.meo_settings_sign_out)) } }
+                        item { Text(if (state.signedIn) state.email else stringResource(R.string.meo_settings_account_optional), style = MaterialTheme.typography.titleMedium) }
+                        if (state.signedIn) {
+                            item { TextButton(onClick = { openAccount() }) { Text(stringResource(R.string.meo_settings_open_account)) } }
+                            item { OutlinedButton(onClick = { controller.signOut(); onClose() }, enabled = !state.streaming) { Text(stringResource(R.string.meo_settings_sign_out)) } }
+                        } else {
+                            item { Button(onClick = { controller.signIn() }) { Text(stringResource(R.string.meo_settings_sign_in)) } }
+                        }
                     }
                     "privacy" -> {
                         item { Text(stringResource(R.string.meo_settings_privacy_hint)); TextButton(onClick = { openAccount() }) { Text(stringResource(R.string.meo_settings_open_account)) } }

@@ -73,6 +73,7 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
@@ -125,12 +126,19 @@ private fun MeoApp(controller: MeoController) {
         controller.clearError()
     }
 
+    var guestSettings by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(state.signedIn) { if (state.signedIn) guestSettings = false }
     if (!state.signedIn) {
+        if (guestSettings) {
+            org.meo.ai.ui.SettingsScreen(controller, onClose = { guestSettings = false })
+            return
+        }
         SignInScreen(
             loading = state.loading,
             configured = BuildConfig.MEO_OAUTH_CLIENT_ID.isNotBlank(),
             snackbar = snackbar,
             onSignIn = controller::signIn,
+            onOpenSettings = { guestSettings = true },
         )
         return
     }
@@ -144,6 +152,7 @@ private fun SignInScreen(
     configured: Boolean,
     snackbar: SnackbarHostState,
     onSignIn: () -> Unit,
+    onOpenSettings: () -> Unit,
 ) {
     Scaffold(
         contentWindowInsets = WindowInsets.safeDrawing,
@@ -199,6 +208,9 @@ private fun SignInScreen(
                         }
                         Spacer(Modifier.size(8.dp))
                         Text("Continue with Meo Account")
+                    }
+                    TextButton(onClick = onOpenSettings) {
+                        Text(stringResource(R.string.meo_settings_guest_settings))
                     }
                     if (!configured) {
                         Text(

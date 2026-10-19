@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import catalogue from "../../../../ui-schema/settings.json";
+import { matchSettingsSections } from "./settingsSearch.mjs";
 import {
   applyAppearance,
   readBrowserPreferences,
@@ -39,6 +40,7 @@ export default function SettingsCenter({
   const savedBrowser = useBrowserPreferences();
   const [browserDraft, setBrowserDraft] = useState(savedBrowser);
   const [section, setSection] = useState("general");
+  const [searchQuery, setSearchQuery] = useState("");
   const [saved, setSaved] = useState<CoreDocument | null>(null);
   const [personalDraft, setPersonalDraft] = useState<Personalization | null>(
     null,
@@ -48,6 +50,10 @@ export default function SettingsCenter({
   const [busy, setBusy] = useState(false);
   const [connections, setConnections] = useState<Connection[] | null>(null);
   const current = catalogue.sections.find((item) => item.id === section)!;
+  const matchingSections = useMemo(() => matchSettingsSections(
+    catalogue.sections, searchQuery, (key: string, fallback: string) =>
+      t(key, { defaultValue: fallback }),
+  ), [searchQuery, t]);
   const dirty =
     section === "general"
       ? JSON.stringify(savedBrowser) !== JSON.stringify(browserDraft)
@@ -185,7 +191,20 @@ export default function SettingsCenter({
       <div className="settings-layout">
         <nav className="settings-nav" aria-label={t("meo.settings.categories")}>
           <h1>{t("meo.settings.title")}</h1>
-          {catalogue.sections.map((item) => (
+          <label className="settings-search-label" htmlFor="meo-settings-search">{t("meo.settings.searchLabel")}</label>
+          <input
+            id="meo-settings-search"
+            className="settings-search-input"
+            type="search"
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            placeholder={t("meo.settings.searchPlaceholder")}
+            autoComplete="off"
+          />
+          {matchingSections.length === 0 && (
+            <p className="settings-no-results" role="status">{t("meo.settings.noResults")}</p>
+          )}
+          {matchingSections.map((item) => (
             <button
               key={item.id}
               type="button"
@@ -196,6 +215,7 @@ export default function SettingsCenter({
                   return;
                 discard();
                 setSection(item.id);
+                setSearchQuery("");
               }}
             >
               {t(item.labelKey, { defaultValue: item.label })}
