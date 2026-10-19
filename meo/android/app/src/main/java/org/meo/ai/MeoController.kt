@@ -438,6 +438,34 @@ class MeoController(private val activity: MainActivity) {
         }
     }
 
+    fun cancelRemoteAgentRun(runId: String) {
+        val existing = state.remoteAgentRuns.firstOrNull { it.id == runId } ?: return
+        if (!state.signedIn || state.remoteAgentRunsBusy ||
+            existing.status in setOf("completed", "cancelled", "failed", "cancel_requested")) return
+        val actor = state.email
+        state = state.copy(remoteAgentRunsBusy = true, remoteAgentRunsError = null)
+        executor.execute {
+            try {
+                val status = client.requestRemoteAgentRunCancellation(
+                    ensureFreshSession().accessToken, runId)
+                post {
+                    if (state.signedIn && state.email == actor)
+                        state = state.copy(
+                            remoteAgentRuns = state.remoteAgentRuns.map {
+                                if (it.id == runId) it.copy(status = status) else it
+                            },
+                            remoteAgentRunsBusy = false, remoteAgentRunsError = null)
+                }
+            } catch (cause: Throwable) {
+                post {
+                    if (state.signedIn && state.email == actor)
+                        state = state.copy(remoteAgentRunsBusy = false,
+                            remoteAgentRunsError = readableError(cause))
+                }
+            }
+        }
+    }
+
     private val projectIdPattern = Regex("^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[1-8][a-fA-F0-9]{3}-[89abAB][a-fA-F0-9]{3}-[a-fA-F0-9]{12}$")
 
     private fun cloudProject(row: org.json.JSONObject): CloudProject? {
