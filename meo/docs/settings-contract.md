@@ -90,3 +90,26 @@ in-flight stream state. This is presentation continuity, not durable background
 AgentRun execution. Android drafts use saved Compose state while changing pages;
 real process death, stream reconnect and cross-device continuation require their
 separate acceptance tests.
+
+## 2026-10-19 settings discovery and optional Account entry
+
+- The settings search index is declared in one place: `ui-schema/settings.json`
+  (section labels, field labels, and localized/synonym `keywords`). The build
+  generator validates it. React, Qt/QML and Kotlin/Compose use the same section
+  identities and keywords, while each renders a platform-native searchable view.
+- Adding **discovery metadata** or moving existing categories is a one-schema
+  change followed by rebuilding clients. Implementing a new actual preference or
+  privileged operation still requires the owning Core/Meo API contract, a
+  platform adapter and tests: UI Schema cannot generate native business logic.
+- Desktop Meo AI can request `AccountAiBackend.signIn()` directly from its
+  Settings Account panel. Authentication and refresh remain owned by the Meo
+  Account D-Bus broker; its current `connect_system` flow may complete in a
+  system browser. This is *not* embedded-password login or an in-app OAuth
+  authorization surface. Do not copy credentials or session tokens into QML.
+- Local desktop AI/settings remain available without Meo Account when the local
+  runtime exists. Android now permits guest access to **local settings** from
+  its signed-out screen; remote Chat/Work/provider connections still need an
+  authorized online session. Web remains an account-authenticated cloud client.
+- These changes improve **settings discovery and entry points**, not universal
+  backend parity, account-wide settings sync, browserless OAuth, or live device
+  execution. Unavailable services must remain visible and truthful.
