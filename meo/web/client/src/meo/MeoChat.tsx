@@ -22,6 +22,7 @@ type Connection = {
   secretHint: string;
 };
 type Model = { id: string; name: string; description?: string };
+type SkillPlugin = { id: string; name: string; enabled: boolean; skills: Array<{ id: string; name: string; description: string }> };
 type Message = { role: 'user' | 'assistant'; content: string };
 type Conversation = { id: string; title: string; createdAt: string; updatedAt: string };
 type ApiConversation = {
@@ -255,6 +256,8 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
   modelRef.current = model;
   const [models, setModels] = useState<Model[]>([]);
   const [modelDiscovery, setModelDiscovery] = useState<'idle' | 'unsupported' | 'ready'>('idle');
+  const [skillPlugins, setSkillPlugins] = useState<SkillPlugin[]>([]);
+  const [selectedSkillId, setSelectedSkillId] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [windowState, setWindowState] = useState({ conversationId: '', count: MESSAGE_WINDOW_SIZE });
   const visibleCount = windowState.conversationId === activeConversationId ? windowState.count : MESSAGE_WINDOW_SIZE;
@@ -361,6 +364,16 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
     },
     [setSearchParams],
   );
+
+  useEffect(() => {
+    let active = true;
+    json<{ plugins: SkillPlugin[] }>('/api/meo/ai/plugins')
+      .then(({ plugins }) => {
+        if (active) setSkillPlugins((plugins || []).filter((plugin) => plugin.enabled));
+      })
+      .catch(() => { if (active) setSkillPlugins([]); });
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -585,6 +598,7 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
           model: model.trim(),
           conversationId: contextConversationId,
           prompt,
+          ...(selectedSkillId ? { skillId: selectedSkillId } : {}),
         }),
       });
       const consent = prepared.consent;
@@ -605,6 +619,7 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
           model: model.trim(),
           conversationId: contextConversationId,
           prompt,
+          ...(selectedSkillId ? { skillId: selectedSkillId } : {}),
           consent,
         }),
         signal: abortController.signal,
@@ -754,6 +769,16 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
               value={model} onChange={(event) => changeModel(event.target.value)} disabled={busy}
               placeholder={t('meo_web_model_id')} />
           )}
+          <select aria-label="Skill" title="Use a saved skill in this chat"
+            className="meo-chat-model-select" value={selectedSkillId} disabled={busy}
+            onChange={(event) => setSelectedSkillId(event.target.value)}>
+            <option value="">No skill</option>
+            {skillPlugins.filter((plugin) => plugin.skills?.length).map((plugin) => (
+              <optgroup key={plugin.id} label={plugin.name}>
+                {plugin.skills.map((skill) => <option key={skill.id} value={skill.id}>{skill.name}</option>)}
+              </optgroup>
+            ))}
+          </select>
           <button type="button" className="meo-chat-export"
             onClick={exportVisibleChat} disabled={busy || messages.length === 0}
             title={t('meo_web_export_visible')}>
