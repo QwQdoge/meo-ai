@@ -158,6 +158,7 @@ export default function PluginLibrary() {
         <span>Discover:</span>
         <a href="https://registry.modelcontextprotocol.io/" target="_blank" rel="noreferrer">Official MCP Registry ↗</a>
         <a href="https://skills.sh/" target="_blank" rel="noreferrer">skills.sh ↗</a>
+        <a href="https://smithery.ai/servers" target="_blank" rel="noreferrer">Smithery ↗</a>
         <span className="meo-plugin-muted">Review a publisher before connecting it.</span>
       </div>
       <p className="meo-plugin-info">Configurations and skill text are stored in your account. Remote MCP execution,
