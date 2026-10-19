@@ -29,4 +29,8 @@
     <string name="meo_navigation_title">主导航</string>
     <string name="meo_workspace_unavailable">此工作区尚未接通共享 API，未读取任务与结果。</string>
     <string name="meo_return_chat">返回聊天</string>
+    <string name="meo_settings_search">搜索设置分类或选项</string>
+    <string name="meo_settings_no_results">没有找到匹配的设置</string>
+    <string name="meo_settings_account_optional">本地设置无需登录 Meo Account</string>
+    <string name="meo_settings_sign_in">连接 Meo Account</string>
 </resources>
