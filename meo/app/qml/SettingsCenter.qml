@@ -194,6 +194,7 @@ Popup {
                             if (!needle) return true
                             if (qsTranslate("MeoSettings", modelData.label).toLowerCase().indexOf(needle) >= 0) return true
                             if (modelData.id.toLowerCase().indexOf(needle) >= 0) return true
+                            if ((modelData.keywords || []).some(function(term) { return term.toLowerCase().indexOf(needle) >= 0 })) return true
                             const fields = modelData.items || []
                             return fields.some(function(item) {
                                 return qsTranslate("MeoSettings", item.label).toLowerCase().indexOf(needle) >= 0
