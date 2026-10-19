@@ -168,5 +168,8 @@
   "meo_web_export_visible": "将当前显示的对话导出为 Markdown 文件",
   "meo_web_role_user": "你",
   "meo_web_role_assistant": "Meo AI",
-  "meo_web_export_failed": "浏览器无法导出当前对话。"
+  "meo_web_export_failed": "浏览器无法导出当前对话。",
+  "meo_web_copy_user_message": "复制你的消息",
+  "meo_web_enter_to_send_hint": "Enter 发送 · Shift+Enter 换行 · 草稿仅保留在当前标签页",
+  "meo_web_ctrl_enter_to_send_hint": "Ctrl/⌘+Enter 发送 · Enter 换行 · 草稿仅保留在当前标签页"
 }
