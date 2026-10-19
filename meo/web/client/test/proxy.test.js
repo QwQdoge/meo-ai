@@ -195,3 +195,45 @@ test("Work proxy refuses arbitrary remote paths and foreign-origin task starts",
   }), env: agentEnv });
   assert.equal(foreign.status, 403);
 });
+
+const fixtureProjectId = '00000000-0000-4000-8000-000000000091';
+for (const [path, method] of [
+  ['/projects', 'GET'], ['/projects', 'POST'],
+  [`/projects/${fixtureProjectId}`, 'GET'],
+  [`/projects/${fixtureProjectId}`, 'PATCH'],
+  [`/projects/${fixtureProjectId}/memories`, 'GET'],
+  [`/projects/${fixtureProjectId}/memories`, 'POST'],
+]) {
+  test(`Projects ${method} ${path} forwards only to the fixed account-owned API`, async (t) => {
+    const previous = globalThis.fetch;
+    t.after(() => { globalThis.fetch = previous; });
+    globalThis.fetch = async (url, init) => {
+      assert.equal(String(url), 'https://api.meoarch.org/v1' + path);
+      assert.equal(init.method, method);
+      assert.equal(init.headers.get('Authorization'), 'Bearer test-access');
+      return Response.json({ projects: [] });
+    };
+    const req = await request(path, { method, ...(['POST', 'PATCH'].includes(method) ? { body: '{"name":"Test"}' } : {}) });
+    const res = await onRequest({request: req, env});
+    assert.equal(res.status, 200);
+  });
+}
+
+test('Projects proxy refuses arbitrary IDs, deletion and foreign-origin changes', async (t) => {
+  const previous = globalThis.fetch;
+  t.after(() => { globalThis.fetch = previous; });
+  globalThis.fetch = async () => assert.fail('invalid project route must not reach API');
+  for (const [path, method] of [
+    ['/projects/../../../account', 'GET'],
+    ['/projects/random', 'PATCH'],
+    [`/projects/${fixtureProjectId}`, 'DELETE'],
+    [`/projects/${fixtureProjectId}/files`, 'GET'],
+  ]) {
+    const res = await onRequest({request:await request(path, {method, ...(method === 'PATCH' ? {body:'{}'} : {})}),env});
+    assert.equal(res.status, 404, `${method} ${path}`);
+  }
+  const foreign = await onRequest({request:await request('/projects', {
+    method:'POST', body:'{"name":"Test"}', headers:{Origin:'https://foreign.invalid'},
+  }),env});
+  assert.equal(foreign.status,403);
+});
