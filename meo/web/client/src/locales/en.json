@@ -196,5 +196,11 @@
   "meo_web_export_failed": "The conversation could not be exported by this browser.",
   "meo_web_copy_user_message": "Copy your message",
   "meo_web_enter_to_send_hint": "Enter to send · Shift+Enter for a new line · Draft stays in this tab",
-  "meo_web_ctrl_enter_to_send_hint": "Ctrl/⌘+Enter to send · Enter for a new line · Draft stays in this tab"
+  "meo_web_ctrl_enter_to_send_hint": "Ctrl/⌘+Enter to send · Enter for a new line · Draft stays in this tab",
+  "meo_web_search_shortcut": "Search chats (Ctrl/⌘+K)",
+  "meo_web_phase_preparing": "Preparing your request…",
+  "meo_web_phase_approval": "Waiting for your permission…",
+  "meo_web_phase_connecting": "Connecting to the model…",
+  "meo_web_phase_streaming": "Receiving a response…",
+  "meo_web_phase_saving": "Saving the completed response…"
 }
