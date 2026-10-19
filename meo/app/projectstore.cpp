@@ -59,6 +59,25 @@ QString ProjectStore::createProject(const QString &name)
     return projectId;
 }
 
+bool ProjectStore::renameProject(const QString &projectId, const QString &name)
+{
+    const int index = indexOf(projectId);
+    const QString normalized = name.simplified().left(80);
+    if (index < 0 || normalized.isEmpty())
+        return false;
+
+    QVariantMap project = m_projects.at(index).toMap();
+    if (project.value(QStringLiteral("name")).toString() == normalized)
+        return true;
+    project.insert(QStringLiteral("name"), normalized);
+    m_projects[index] = project;
+    save();
+    emit projectsChanged();
+    if (m_activeProjectId == projectId)
+        emit activeProjectChanged();
+    return true;
+}
+
 bool ProjectStore::openProject(const QString &projectId)
 {
     const int index = indexOf(projectId);
