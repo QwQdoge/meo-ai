@@ -186,7 +186,16 @@ export default function WorkSurface({ handoff, onChat }: {
               finished = true;
               setRunStatus(typeof payload.status === 'string' ? payload.status : 'completed');
             }
-            if (name === 'error') setRunStatus('failed');
+            if (name === 'error') {
+              if (payload.status === 'failed') {
+                setRunStatus('failed');
+              } else {
+                // An event cursor gap is a delivery failure, not a claim
+                // that the remote Agent task itself has failed.
+                setRunError(t('meo.work.eventGap'));
+                finished = true;
+              }
+            }
           }
           boundary = buffer.indexOf('\n\n');
         }
@@ -274,8 +283,12 @@ export default function WorkSurface({ handoff, onChat }: {
     if (!run || busy) return;
     setBusy(true);
     try {
-      await request(`/work/agent-runs/${encodeURIComponent(run.id)}/cancel`, { method: 'POST' });
-      setRunStatus('cancel_requested');
+      const result = await request<{ status?: string }>(
+        `/work/agent-runs/${encodeURIComponent(run.id)}/cancel`, { method: 'POST' },
+      );
+      // Cancellation is requested, never treated as confirmed until
+      // the service reports a terminal cancellation or completion.
+      setRunStatus(typeof result.status === 'string' ? result.status : 'cancel_requested');
     } catch (cause) {
       setRunError(cause instanceof Error ? cause.message : t('meo.work.runFailed'));
     } finally { setBusy(false); }
