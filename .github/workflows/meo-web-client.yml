@@ -26,7 +26,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: QwQdoge/MeoUI
-          ref: 6f9c137c0d2bb1300ba79636d09f70cf94b0596b
+          ref: 8c1fe6a20a567e06acf6d4a7e8a4b143d801a33b
           path: dependencies/MeoUI
           persist-credentials: false
       - uses: actions/setup-node@v4
