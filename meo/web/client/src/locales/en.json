@@ -202,5 +202,6 @@
   "meo_web_phase_approval": "Waiting for your permission…",
   "meo_web_phase_connecting": "Connecting to the model…",
   "meo_web_phase_streaming": "Receiving a response…",
-  "meo_web_phase_saving": "Saving the completed response…"
+  "meo_web_phase_saving": "Saving the completed response…",
+  "meo_web_show_earlier_messages": "Show {{count}} earlier messages ({{remaining}} older)"
 }
