@@ -88,8 +88,10 @@ function MarkdownCodeBlock({ children }: { children?: ReactNode }) {
   const { t } = useTranslation();
   const preRef = useRef<HTMLPreElement>(null);
   const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
+  useEffect(() => { setCopied(false); setCopyFailed(false); }, [children]);
   const childClass = isValidElement<{ className?: string }>(children) ? children.props.className : '';
-  const language = childClass?.match(/(?:^|\\s)language-([\\w+#.-]+)/)?.[1];
+  const language = childClass?.match(/(?:^|\s)language-([\w+#.-]+)/)?.[1];
 
   const copyCode = async () => {
     const code = preRef.current?.textContent;
@@ -98,8 +100,10 @@ function MarkdownCodeBlock({ children }: { children?: ReactNode }) {
       if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
       await navigator.clipboard.writeText(code);
       setCopied(true);
+      setCopyFailed(false);
     } catch {
       setCopied(false);
+      setCopyFailed(true);
     }
   };
 
@@ -111,6 +115,7 @@ function MarkdownCodeBlock({ children }: { children?: ReactNode }) {
           {copied ? t('meo_web_copied') : t('meo_web_copy')}
         </button>
       </div>
+      {copyFailed && <span role="alert" className="meo-chat-copy-error">{t('meo_web_copy_failed')}</span>}
       <pre ref={preRef}>{children}</pre>
     </div>
   );
@@ -119,23 +124,29 @@ function MarkdownCodeBlock({ children }: { children?: ReactNode }) {
 function CopyMessageButton({ content }: { content: string }) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
-  useEffect(() => setCopied(false), [content]);
+  const [copyFailed, setCopyFailed] = useState(false);
+  useEffect(() => { setCopied(false); setCopyFailed(false); }, [content]);
 
   const copyMessage = async () => {
     try {
       if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
       await navigator.clipboard.writeText(content);
       setCopied(true);
+      setCopyFailed(false);
     } catch {
       setCopied(false);
+      setCopyFailed(true);
     }
   };
 
   return (
-    <button className="meo-chat-copy-message" type="button" onClick={copyMessage}
-      aria-label={t('meo_web_copy_response')} title={t('meo_web_copy_response')}>
-      {copied ? t('meo_web_copied') : t('meo_web_copy')}
-    </button>
+    <div className="meo-chat-message-actions">
+      <button className="meo-chat-copy-message" type="button" onClick={copyMessage}
+        aria-label={t('meo_web_copy_response')} title={t('meo_web_copy_response')}>
+        {copied ? t('meo_web_copied') : t('meo_web_copy')}
+      </button>
+      {copyFailed && <span role="alert" className="meo-chat-copy-error">{t('meo_web_copy_failed')}</span>}
+    </div>
   );
 }
 
