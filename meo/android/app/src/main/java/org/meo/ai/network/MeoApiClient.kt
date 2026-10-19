@@ -2,6 +2,7 @@ package org.meo.ai.network
 
 import org.json.JSONArray
 import org.json.JSONObject
+import org.meo.ai.BuildConfig
 import org.meo.ai.model.AiModel
 import org.meo.ai.model.ConsentPreview
 import org.meo.ai.model.Conversation
@@ -134,6 +135,18 @@ class MeoApiClient {
     fun renameProject(accessToken: String, projectId: String, name: String): JSONObject =
         requestJson("PATCH", "$API_BASE/v1/projects/${encodePath(projectId)}", accessToken,
             JSONObject().put("name", name)).getJSONObject("project")
+
+    /** Read-only Account Work history from a deployment-pinned HTTPS origin.
+     * Never forwards browser cookies or sends prompts/workspace paths.
+     */
+    fun remoteAgentCloudConfigured(): Boolean = BuildConfig.MEO_AGENT_CLOUD_URL.isNotBlank()
+
+    fun listRecentAgentRuns(accessToken: String): JSONArray {
+        if (!remoteAgentCloudConfigured())
+            throw ApiException(503, "agent_cloud_not_configured", "Remote Work is not configured for this build")
+        return requestJson("GET", "${BuildConfig.MEO_AGENT_CLOUD_URL}/v1/agent-runs?limit=30", accessToken)
+            .optJSONArray("runs") ?: JSONArray()
+    }
 
     fun listConversations(accessToken: String): List<Conversation> {
         val data = requestJson("GET", "$API_BASE/v1/conversations", accessToken)

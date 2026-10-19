@@ -48,4 +48,23 @@
     <string name="meo_projects_empty">No account projects yet.</string>
     <string name="meo_projects_no_description">No description</string>
     <string name="meo_projects_context_note">Project conversations and workspace files are not yet linked here.</string>
+    <string name="meo_work_title">Work</string>
+    <string name="meo_work_refresh">Refresh</string>
+    <string name="meo_work_cloud_notice">Recent tasks from your Meo Account. Closing this screen does not stop a running task.</string>
+    <string name="meo_work_not_configured">Remote Work needs a trusted Agent cloud endpoint configured for this build.</string>
+    <string name="meo_work_unavailable">Work history unavailable</string>
+    <string name="meo_work_retry">Retry</string>
+    <string name="meo_work_empty">No remote tasks found.</string>
+    <string name="meo_work_task_id">Task · %1$s</string>
+    <string name="meo_work_device">Device: %1$s</string>
+    <string name="meo_work_viewer_only">Status view only. Approvals, starting tasks and event playback are not yet connected on Android.</string>
+    <string name="meo_work_state_queued">Queued</string>
+    <string name="meo_work_state_dispatching">Connecting to device</string>
+    <string name="meo_work_state_running">Running</string>
+    <string name="meo_work_state_awaiting_approval">Awaiting approval</string>
+    <string name="meo_work_state_cancel_requested">Cancellation requested</string>
+    <string name="meo_work_state_completed">Completed</string>
+    <string name="meo_work_state_cancelled">Cancelled</string>
+    <string name="meo_work_state_failed">Failed</string>
+    <string name="meo_work_state_unknown">Unknown</string>
 </resources>

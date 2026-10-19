@@ -29,3 +29,22 @@ This is not a promise of process-level durability. If the cloud server or device
 ## Safety boundary
 
 The Meo AI UI never gains authority because a model says it is safe. A model can propose or assess tool risk, but only the Account/API/device policy owner can authorize execution. Standing approvals are revocable and scoped; repo writes and PR merges must comply with the owner’s policy. These are engineering capability checks, not new popups for every read-only operation.
+
+## Android Work adoption: metadata/status phase
+
+The Android navigation's Work destination now reads the shared owner-scoped
+`GET /v1/agent-runs?limit=30` contract through an Android native Compose
+viewer. The endpoint is configured at build time with
+`MEO_AGENT_CLOUD_URL=https://<trusted-agent-cloud-origin>` (HTTPS **origin**
+only, no path/query/credentials). If not configured, Android explicitly shows
+that remote Work is unavailable. The app uses its existing Meo Account OAuth
+access token, never a device-relay token, GitHub token or browser cookie.
+
+This phase supports reading the account's recent remote task IDs, device names
+and statuses and manually refreshing. The Activity does not submit a task,
+cancel one, approve an action or persist prompts. The Web Work controller
+already has execution and event subscription; Android approval and streamed
+replay still need separate implementation and tests before describing them as
+complete. Qt continues to execute and display locally; remote Account run
+discovery needs a brokered Qt adapter. No production cloud URL or OAuth
+configuration is implied by a successful APK build.

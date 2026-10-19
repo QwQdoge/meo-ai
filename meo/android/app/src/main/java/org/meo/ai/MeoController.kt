@@ -38,6 +38,13 @@ data class CloudMemory(
     val enabled: Boolean,
 )
 
+data class RemoteAgentRun(
+    val id: String,
+    val deviceId: String,
+    val status: String,
+    val projectId: String?,
+)
+
 data class CloudProject(
     val id: String,
     val name: String,
@@ -72,6 +79,9 @@ data class MeoUiState(
     val cloudSettings: CloudSettings? = null,
     val cloudMemories: List<CloudMemory> = emptyList(),
     val archivedMemories: Boolean = false,
+    val remoteAgentRuns: List<RemoteAgentRun> = emptyList(),
+    val remoteAgentRunsBusy: Boolean = false,
+    val remoteAgentRunsError: String? = null,
     val projects: List<CloudProject> = emptyList(),
     val projectsBusy: Boolean = false,
     val projectsError: String? = null,
@@ -353,6 +363,43 @@ class MeoController(private val activity: MainActivity) {
                 post {
                     state = state.copy(streaming = false, loading = false, error = readableError(cause))
                 }
+            }
+        }
+    }
+
+    fun hasRemoteAgentCloud(): Boolean = client.remoteAgentCloudConfigured()
+
+    /** A cloud run remains owned by the server; this method never dispatches an
+     * AgentRun, opens a shell or retries a previous side effect.
+     */
+    fun loadRemoteAgentRuns() {
+        if (!state.signedIn || state.remoteAgentRunsBusy) return
+        val actor = state.email
+        state = state.copy(remoteAgentRunsBusy = true, remoteAgentRunsError = null)
+        executor.execute {
+            try {
+                val rows = client.listRecentAgentRuns(ensureFreshSession().accessToken)
+                val idPattern = Regex("^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[1-8][a-fA-F0-9]{3}-[89abAB][a-fA-F0-9]{3}-[a-fA-F0-9]{12}$")
+                val validStatuses = setOf("queued", "dispatching", "running",
+                    "awaiting_approval", "cancel_requested", "cancelled", "completed", "failed")
+                val runs = buildList {
+                    for (index in 0 until rows.length()) {
+                        val row = rows.optJSONObject(index) ?: continue
+                        val id = row.optString("id")
+                        val deviceId = row.optString("device_id")
+                        val status = row.optString("status")
+                        if (!idPattern.matches(id) || deviceId.isBlank() || status !in validStatuses) continue
+                        val projectId = row.optString("project_id").takeIf { idPattern.matches(it) }
+                        add(RemoteAgentRun(id, deviceId.take(120), status, projectId))
+                    }
+                }
+                post { if (state.signedIn && state.email == actor)
+                    state = state.copy(remoteAgentRuns = runs, remoteAgentRunsBusy = false,
+                        remoteAgentRunsError = null) }
+            } catch (cause: Throwable) {
+                post { if (state.signedIn && state.email == actor)
+                    state = state.copy(remoteAgentRunsBusy = false,
+                        remoteAgentRunsError = readableError(cause)) }
             }
         }
     }
