@@ -1,5 +1,6 @@
 import { useBrowserPreferences } from './browserPreferences';
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import remarkGfm from 'remark-gfm';
 import ReactMarkdown from 'react-markdown';
 import { useTranslation } from 'react-i18next';
@@ -81,7 +82,14 @@ async function json<T>(url: string, init?: RequestInit): Promise<T> {
   return value as T;
 }
 
-export default function MeoChat() {
+type MeoChatProps = {
+  historyTarget: HTMLDivElement | null;
+  newChatRequest: number;
+  onBusyChange: (busy: boolean) => void;
+  onSelectConversation: () => void;
+};
+
+export default function MeoChat({ historyTarget, newChatRequest, onBusyChange, onSelectConversation }: MeoChatProps) {
   const preferences = useBrowserPreferences();
   const { t } = useTranslation();
   const { user } = useMeoSession();
@@ -90,6 +98,9 @@ export default function MeoChat() {
   const requestedModel = searchParams.get('model') ?? '';
   const selectedConversationKey = `meo-ai-web:selected:${user?.id ?? 'anonymous'}`;
   const [history, setHistory] = useState<Conversation[]>([]);
+  const [historyQuery, setHistoryQuery] = useState('');
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const lastNewChatRequestRef = useRef(newChatRequest);
   const [activeConversationId, setActiveConversationId] = useState('');
   const [connections, setConnections] = useState<Connection[]>([]);
   const [credentialId, setCredentialId] = useState(requestedConnection);
@@ -111,6 +122,9 @@ export default function MeoChat() {
   const historyGenerationRef = useRef(0);
   const skipHistoryLoadRef = useRef('');
   const consentDecisionRef = useRef<((approved: boolean) => void) | null>(null);
+  const filteredHistory = useMemo(() => history.filter((item) => item.title.toLocaleLowerCase().includes(historyQuery.trim().toLocaleLowerCase())), [history, historyQuery]);
+
+  useEffect(() => onBusyChange(busy), [busy, onBusyChange]);
 
   useEffect(
     () => () => {
@@ -292,6 +306,15 @@ export default function MeoChat() {
     localStorage.removeItem(selectedConversationKey);
   };
 
+  // The shell stays mounted while /new is selected, so navigation alone does not reset a chat.
+  useEffect(() => {
+    if (lastNewChatRequestRef.current === newChatRequest) return;
+    lastNewChatRequestRef.current = newChatRequest;
+    if (busy) return;
+    startNewChat();
+    textareaRef.current?.focus();
+  }, [newChatRequest]);
+
   const openConversation = (conversation: Conversation) => {
     if (busy) return;
     setError('');
@@ -445,111 +468,93 @@ export default function MeoChat() {
   }
 
   return (
-    <main className="!text-text-primary mx-auto flex h-full w-full max-w-5xl flex-col gap-4 px-4 py-5 md:px-8">
-      <header className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold">{t('meo_web_title')}</h1>
-          <p className="text-text-secondary text-sm">{t('meo_web_account_control')}</p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <button
-            className="rounded-lg border px-3 py-2"
-            type="button"
-            onClick={startNewChat}
-            disabled={busy}
-          >
-            {t('meo_web_new_chat')}
-          </button>
-          <select
-            aria-label={t('meo_web_connection')}
-            className="bg-surface-primary min-w-44 rounded-lg border px-3 py-2"
-            value={credentialId}
-            onChange={(event) => changeConnection(event.target.value)}
-            disabled={loading || busy}
-          >
+    <main className="meo-chat-root">
+      <header className="meo-chat-toolbar">
+        <div className="meo-chat-toolbar-label">{t('meo_web_connection')}</div>
+        <div className="meo-chat-connection-controls">
+          <select aria-label={t('meo_web_connection')} className="meo-chat-connection-select"
+            value={credentialId} onChange={(event) => changeConnection(event.target.value)}
+            disabled={loading || busy}>
             <option value="">{t('meo_web_choose_connection')}</option>
             {connections.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.displayName} · {item.provider}
-              </option>
+              <option key={item.id} value={item.id}>{item.displayName} · {item.provider}</option>
             ))}
           </select>
           {models.length > 0 && modelDiscovery === 'ready' ? (
-            <select
-              aria-label={t('meo_web_model')}
-              className="bg-surface-primary min-w-40 rounded-lg border px-3 py-2"
-              value={model}
-              onChange={(event) => changeModel(event.target.value)}
-              disabled={busy}
-            >
-              {models.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.name}
-                </option>
-              ))}
+            <select aria-label={t('meo_web_model')} className="meo-chat-model-select"
+              value={model} onChange={(event) => changeModel(event.target.value)} disabled={busy}>
+              {models.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
             </select>
           ) : (
-            <input
-              aria-label={t('meo_web_model_id')}
-              className="bg-surface-primary min-w-40 rounded-lg border px-3 py-2"
-              value={model}
-              onChange={(event) => changeModel(event.target.value)}
-              disabled={busy}
-              placeholder={t('meo_web_model_id')}
-            />
+            <input aria-label={t('meo_web_model_id')} className="meo-chat-model-select"
+              value={model} onChange={(event) => changeModel(event.target.value)} disabled={busy}
+              placeholder={t('meo_web_model_id')} />
           )}
         </div>
       </header>
       {modelDiscovery === 'unsupported' && (
         <p className="text-text-secondary text-sm">{t('meo_web_model_manual_fallback')}</p>
       )}
-      {selected && (
-        <p className="text-text-secondary text-xs">
-          {t('meo_web_key_hint', { hint: selected.secretHint })}
-        </p>
-      )}
-      {(history.length > 0 || historyCursor) && (
-        <nav aria-label={t('meo_web_history')} className="flex gap-2 overflow-x-auto pb-1">
-          {history.map((conversation) => (
-            <button
-              key={conversation.id}
-              type="button"
-              className={`max-w-56 truncate rounded-full border px-3 py-1.5 text-sm ${conversation.id === activeConversationId ? 'bg-surface-secondary' : ''}`}
-              onClick={() => openConversation(conversation)}
-              disabled={busy}
-            >
-              {conversation.title || t('meo_web_untitled_chat')}
-            </button>
-          ))}
-          {historyCursor && (
-            <button
-              type="button"
-              className="shrink-0 rounded-full border px-3 py-1.5 text-sm"
-              onClick={loadMoreHistory}
-              disabled={busy || loadingMore}
-            >
+      {historyTarget && createPortal(
+        <div className="meo-chat-history-panel">
+          <label className="meo-chat-history-search">
+            <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m15.5 15.5 5 5" /></svg>
+            <input type="search" value={historyQuery} onChange={(event) => setHistoryQuery(event.target.value)}
+              placeholder={t('meo_web_search_history')} aria-label={t('meo_web_search_history')} />
+          </label>
+          <span className="meo-desktop-section-label">{t('meo_web_recent')}</span>
+          <nav aria-label={t('meo_web_history')} className="meo-chat-history-items">
+            {historyLoading && <p role="status" className="meo-chat-history-muted">{t('meo_web_loading_more')}</p>}
+            {!historyLoading && history.length === 0 && <p className="meo-chat-history-muted">{t('meo_web_no_history')}</p>}
+            {!historyLoading && history.length > 0 && filteredHistory.length === 0 && <p className="meo-chat-history-muted">{t('meo_web_no_history_matches')}</p>}
+            {filteredHistory.map((conversation) => (
+              <button key={conversation.id} type="button"
+                className={`meo-chat-history-item ${conversation.id === activeConversationId ? 'is-active' : ''}`}
+                aria-current={conversation.id === activeConversationId ? 'page' : undefined}
+                title={conversation.title || t('meo_web_untitled_chat')}
+                onClick={() => { openConversation(conversation); if (!busy) onSelectConversation(); }}
+                disabled={busy}>
+                {conversation.title || t('meo_web_untitled_chat')}
+              </button>
+            ))}
+            {historyCursor && <button type="button" className="meo-chat-history-more"
+              onClick={loadMoreHistory} disabled={busy || loadingMore}>
               {loadingMore ? t('meo_web_loading_more') : t('meo_web_load_more')}
-            </button>
-          )}
-        </nav>
+            </button>}
+          </nav>
+        </div>,
+        historyTarget,
       )}
       <section
         aria-label={t('meo_web_conversation')}
-        className="bg-surface-primary min-h-0 flex-1 space-y-5 overflow-y-auto rounded-xl border p-4 md:p-6"
+        className={`meo-chat-stream ${messages.length === 0 ? 'is-empty' : ''}`}
       >
         {(loading || historyLoading) && <p>{t('meo_web_loading')}</p>}
-        {!loading && connections.length === 0 && <p>{t('meo_web_no_connections')}</p>}
+        {!loading && connections.length === 0 && <p className="meo-chat-connection-warning">{t('meo_web_no_connections')}</p>}
+        {!loading && !historyLoading && !busy && messages.length === 0 && (
+          <div className="meo-chat-welcome">
+            <h1>{t('meo_web_welcome_title')}</h1>
+            <p>{t('meo_web_welcome_subtitle')}</p>
+            <div className="meo-chat-suggestions">
+              {(['explain', 'plan', 'code'] as const).map((suggestion) => (
+                <button key={suggestion} type="button" disabled={!selected}
+                  onClick={() => {
+                    setDraft(t(`meo_web_suggestion_${suggestion}_prompt`));
+                    textareaRef.current?.focus();
+                  }}>
+                  {t(`meo_web_suggestion_${suggestion}`)}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         {messages.map((message, index) => (
           <article
             key={`${index}-${message.role}`}
-            className={
-              message.role === 'user'
-                ? 'bg-surface-secondary ml-auto max-w-[85%] rounded-2xl p-4'
-                : 'prose prose-sm max-w-none'
-            }
+            className={`meo-chat-message ${message.role === 'user' ? 'meo-chat-message-user' : 'meo-chat-message-assistant'}`}
           >
             {message.role === 'assistant' ? (
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+              message.content ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown> : (busy ? <span className="meo-chat-streaming-indicator" role="status">{t('meo_web_thinking')}</span> : null)
             ) : (
               <p className="whitespace-pre-wrap">{message.content}</p>
             )}
@@ -564,10 +569,12 @@ export default function MeoChat() {
       {pendingConsent && <MeoConsentDialog consent={pendingConsent} onResolve={resolveConsent} />}
       <form
         onSubmit={submit}
-        className="bg-surface-primary flex items-end gap-3 rounded-xl border p-3"
+        className="meo-chat-composer"
       >
         <textarea
-          className="max-h-48 min-h-14 flex-1 resize-y bg-transparent p-2 outline-none"
+          ref={textareaRef}
+          rows={1}
+          className="meo-chat-textarea"
           value={draft}
           onKeyDown={(event) => {
             if(event.nativeEvent.isComposing || event.key !== 'Enter' || event.shiftKey) return;
@@ -581,11 +588,13 @@ export default function MeoChat() {
           disabled={busy || !selected}
         />
         <button
-          className="bg-surface-primary rounded-lg px-4 py-2 font-medium shadow"
+          className="meo-chat-send"
           type="submit"
+          aria-label={busy ? t('meo_web_thinking') : t('meo_web_send')}
+          title={busy ? t('meo_web_thinking') : t('meo_web_send')}
           disabled={busy || !draft.trim() || !selected || !model.trim()}
         >
-          {busy ? t('meo_web_thinking') : t('meo_web_send')}
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 19V5M6 11l6-6 6 6" /></svg>
         </button>
       </form>
     </main>
