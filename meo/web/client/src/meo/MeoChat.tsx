@@ -173,11 +173,12 @@ const chatMarkdownComponents = {
 type MeoChatProps = {
   historyTarget: HTMLDivElement | null;
   newChatRequest: number;
+  searchRequest: number;
   onBusyChange: (busy: boolean) => void;
   onSelectConversation: () => void;
 };
 
-export default function MeoChat({ historyTarget, newChatRequest, onBusyChange, onSelectConversation }: MeoChatProps) {
+export default function MeoChat({ historyTarget, newChatRequest, searchRequest, onBusyChange, onSelectConversation }: MeoChatProps) {
   const preferences = useBrowserPreferences();
   const { t } = useTranslation();
   const { user } = useMeoSession();
@@ -201,6 +202,7 @@ export default function MeoChat({ historyTarget, newChatRequest, onBusyChange, o
     writeChatDraft(draftStorage(), user?.id, activeConversationId, text);
   };
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const historySearchRef = useRef<HTMLInputElement>(null);
   const streamRef = useRef<HTMLElement>(null);
   const followOutputRef = useRef(true);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
@@ -214,6 +216,7 @@ export default function MeoChat({ historyTarget, newChatRequest, onBusyChange, o
   const [modelDiscovery, setModelDiscovery] = useState<'idle' | 'unsupported' | 'ready'>('idle');
   const [messages, setMessages] = useState<Message[]>([]);
   const [busy, setBusy] = useState(false);
+  const [requestPhase, setRequestPhase] = useState<'idle' | 'preparing' | 'approval' | 'connecting' | 'streaming' | 'saving'>('idle');
   const [streamingActive, setStreamingActive] = useState(false);
   const [stopNotice, setStopNotice] = useState(false);
   const [error, setError] = useState('');
@@ -229,6 +232,13 @@ export default function MeoChat({ historyTarget, newChatRequest, onBusyChange, o
   const filteredHistory = useMemo(() => history.filter((item) => item.title.toLocaleLowerCase().includes(historyQuery.trim().toLocaleLowerCase())), [history, historyQuery]);
 
   useEffect(() => onBusyChange(busy), [busy, onBusyChange]);
+
+  useEffect(() => {
+    if (!historyTarget || searchRequest === 0) return;
+    // The sidebar and React portal may be created by the same navigation action.
+    const frame = window.requestAnimationFrame(() => historySearchRef.current?.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, [historyTarget, searchRequest]);
 
   // Expand as the user types (including IME/paste) without growing beyond the viewport.
   useEffect(() => {
@@ -497,6 +507,7 @@ export default function MeoChat({ historyTarget, newChatRequest, onBusyChange, o
     followOutputRef.current = true;
     setShowScrollToBottom(false);
     setBusy(true);
+    setRequestPhase('preparing');
     const nextMessages: Message[] = [...messages, { role: 'user', content: prompt }];
     const contextConversationId = activeConversationId || null;
     try {
@@ -510,8 +521,10 @@ export default function MeoChat({ historyTarget, newChatRequest, onBusyChange, o
         }),
       });
       const consent = prepared.consent;
+      setRequestPhase('approval');
       const approved = await requestConsent(consent);
       if (!approved) return;
+      setRequestPhase('connecting');
 
       const abortController = new AbortController();
       streamAbortRef.current = abortController;
@@ -554,6 +567,7 @@ export default function MeoChat({ historyTarget, newChatRequest, onBusyChange, o
       setMessages(nextMessages);
       setDraft('');
       setMessages((current) => [...current, { role: 'assistant', content: '' }]);
+      setRequestPhase('streaming');
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -590,6 +604,9 @@ export default function MeoChat({ historyTarget, newChatRequest, onBusyChange, o
         if (done) break;
       }
       if (!completed) throw new Error(t('meo_web_stream_incomplete'));
+      // The stream is finished; the Stop control must not claim to cancel persistence.
+      setStreamingActive(false);
+      setRequestPhase('saving');
       if (assistantText) {
         await json(`/api/meo/conversations/${encodeURIComponent(conversationId)}/messages`, {
           method: 'POST',
@@ -612,6 +629,7 @@ export default function MeoChat({ historyTarget, newChatRequest, onBusyChange, o
     } finally {
       streamAbortRef.current = null;
       setStreamingActive(false);
+      setRequestPhase('idle');
       setBusy(false);
     }
   }
@@ -690,8 +708,11 @@ export default function MeoChat({ historyTarget, newChatRequest, onBusyChange, o
         <div className="meo-chat-history-panel">
           <label className="meo-chat-history-search">
             <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m15.5 15.5 5 5" /></svg>
-            <input type="search" value={historyQuery} onChange={(event) => setHistoryQuery(event.target.value)}
-              placeholder={t('meo_web_search_history')} aria-label={t('meo_web_search_history')} />
+            <input ref={historySearchRef} type="search" value={historyQuery}
+              onChange={(event) => setHistoryQuery(event.target.value)}
+              placeholder={t('meo_web_search_history')} aria-label={t('meo_web_search_history')}
+              aria-keyshortcuts="Control+K Meta+K"
+              title={t('meo_web_search_shortcut')} />
           </label>
           <span className="meo-desktop-section-label">{t('meo_web_recent')}</span>
           <nav aria-label={t('meo_web_history')} className="meo-chat-history-items">
@@ -783,6 +804,14 @@ export default function MeoChat({ historyTarget, newChatRequest, onBusyChange, o
       )}
       </div>
       {pendingConsent && <MeoConsentDialog consent={pendingConsent} onResolve={resolveConsent} />}
+      <div className="meo-chat-run-status" role="status" aria-live="polite" aria-atomic="true">
+        {requestPhase !== 'idle' && (
+          <>
+            <span className="meo-chat-run-status-dot" aria-hidden="true" />
+            {t(`meo_web_phase_${requestPhase}`)}
+          </>
+        )}
+      </div>
       <form
         onSubmit={submit}
         className="meo-chat-composer"

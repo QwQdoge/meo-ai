@@ -171,5 +171,11 @@
   "meo_web_export_failed": "浏览器无法导出当前对话。",
   "meo_web_copy_user_message": "复制你的消息",
   "meo_web_enter_to_send_hint": "Enter 发送 · Shift+Enter 换行 · 草稿仅保留在当前标签页",
-  "meo_web_ctrl_enter_to_send_hint": "Ctrl/⌘+Enter 发送 · Enter 换行 · 草稿仅保留在当前标签页"
+  "meo_web_ctrl_enter_to_send_hint": "Ctrl/⌘+Enter 发送 · Enter 换行 · 草稿仅保留在当前标签页",
+  "meo_web_search_shortcut": "搜索聊天（Ctrl/⌘+K）",
+  "meo_web_phase_preparing": "正在准备请求…",
+  "meo_web_phase_approval": "等待你确认权限…",
+  "meo_web_phase_connecting": "正在连接模型…",
+  "meo_web_phase_streaming": "正在接收回复…",
+  "meo_web_phase_saving": "正在保存完整回复…"
 }
