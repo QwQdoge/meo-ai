@@ -1,4 +1,6 @@
 #include "liverecoverybackend.h"
+#include <QFileInfo>
+#include <QVariantMap>
 
 #include <QProcessEnvironment>
 #include <QSet>
@@ -27,7 +29,7 @@ void englishNmcli(QProcess *process) {
 }
 }
 
-LiveRecoveryBackend::LiveRecoveryBackend(bool active, QObject *parent) : QObject(parent) {
+LiveRecoveryBackend::LiveRecoveryBackend(bool active, QObject *parent) : QObject(parent), m_active(active) {
     if (active) updateStatus();
 }
 
@@ -49,7 +51,7 @@ void LiveRecoveryBackend::updateStatus() {
 }
 
 void LiveRecoveryBackend::refreshNetworks() {
-    if (busy()) return;
+    if (!m_active || busy()) return;
     m_error.clear();
     m_scan = new QProcess(this);
     englishNmcli(m_scan);
@@ -89,7 +91,7 @@ void LiveRecoveryBackend::refreshNetworks() {
 }
 
 void LiveRecoveryBackend::connectWifi(const QString &ssid, const QString &password) {
-    if (busy() || ssid.isEmpty() || ssid.size() > 128 || ssid.contains(QChar::Null)) return;
+    if (!m_active || busy() || ssid.isEmpty() || ssid.size() > 128 || ssid.contains(QChar::Null)) return;
     m_error.clear();
     m_status = QStringLiteral("Connecting…");
     m_pendingPassword = password;
@@ -126,6 +128,17 @@ void LiveRecoveryBackend::connectWifi(const QString &ssid, const QString &passwo
 }
 
 void LiveRecoveryBackend::openNetworkSettings() {
+    if (!m_active) return;
     QProcess::startDetached(QStringLiteral("/usr/bin/systemsettings"),
                             {QStringLiteral("kcm_networkmanagement")});
+}
+
+void LiveRecoveryBackend::openInstaller() {
+    if (m_active && QFileInfo::exists(QStringLiteral("/run/archiso")))
+        QProcess::startDetached(QStringLiteral("/usr/local/bin/meoarch-ai-open-installer"), {});
+}
+
+void LiveRecoveryBackend::openQuickRepair() {
+    if (m_active && QFileInfo::exists(QStringLiteral("/run/archiso")))
+        QProcess::startDetached(QStringLiteral("/usr/bin/meoarch-repair"), {QStringLiteral("--live")});
 }
