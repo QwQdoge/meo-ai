@@ -219,6 +219,8 @@ if(BUILD_TESTING)
 
     add_test(NAME meo-ai.qml-smoke COMMAND meo-ai --smoke)
     set_tests_properties(meo-ai.qml-smoke PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QSG_RHI_BACKEND=software")
+    add_test(NAME meo-ai.live-recovery-smoke COMMAND meo-ai --ui-demo --live-recovery --smoke)
+    set_tests_properties(meo-ai.live-recovery-smoke PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QSG_RHI_BACKEND=software")
 endif()
 include(GNUInstallDirs)
 install(TARGETS meo-ai RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
