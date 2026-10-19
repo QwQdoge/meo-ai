@@ -34,6 +34,7 @@ fun WorkRunsScreen(controller: MeoController, openNavigation: () -> Unit) {
     val state = controller.state
     val configured = controller.hasRemoteAgentCloud()
     var pendingCancelId by remember { mutableStateOf<String?>(null) }
+    var pendingCancelId by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(configured) { if (configured) controller.loadRemoteAgentRuns() }
 
     if (pendingCancelId != null) {
@@ -50,6 +51,25 @@ fun WorkRunsScreen(controller: MeoController, openNavigation: () -> Unit) {
             dismissButton = {
                 TextButton(onClick = { pendingCancelId = null }) {
                     Text(stringResource(R.string.meo_work_keep_running))
+                }
+            },
+        )
+    }
+
+    if (pendingCancelId != null) {
+        AlertDialog(
+            onDismissRequest = { pendingCancelId = null },
+            title = { Text(stringResource(R.string.meo_work_cancel_title)) },
+            text = { Text(stringResource(R.string.meo_work_cancel_warning)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingCancelId?.let(controller::cancelRemoteAgentRun)
+                    pendingCancelId = null
+                }) { Text(stringResource(R.string.meo_work_request_cancel)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingCancelId = null }) {
+                    Text(stringResource(R.string.meo_projects_cancel))
                 }
             },
         )
@@ -128,6 +148,12 @@ fun WorkRunsScreen(controller: MeoController, openNavigation: () -> Unit) {
                             }
                             if (state.remoteAgentRunCancelId == run.id) {
                                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                            }
+                            if (run.status in setOf("queued", "dispatching", "running", "awaiting_approval")) {
+                                OutlinedButton(onClick = { pendingCancelId = run.id },
+                                    enabled = !state.remoteAgentRunsBusy) {
+                                    Text(stringResource(R.string.meo_work_request_cancel))
+                                }
                             }
                         }
                     }
