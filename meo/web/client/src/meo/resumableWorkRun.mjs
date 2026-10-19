@@ -8,6 +8,7 @@ export const workRunStorageKey = (accountId) =>
 
 const validId = (id) => typeof id === 'string' && runIdPattern.test(id);
 const validOptionalProjectId = (id) => id === '' || validId(id);
+const validOptionalConversationId = (id) => id === '' || validId(id);
 const validUser = (id) => typeof id === 'string' && validId(id);
 
 export function readWorkRun(storage, accountId, now = Date.now()) {
@@ -17,7 +18,7 @@ export function readWorkRun(storage, accountId, now = Date.now()) {
     if (!raw || raw.length > 1024) return null;
     const item = JSON.parse(raw);
     if (!item || item.version !== 1 || !validId(item.id) ||
-        !validOptionalProjectId(item.projectId) || !validId(item.conversationId) ||
+        !validOptionalProjectId(item.projectId) || !validOptionalConversationId(item.conversationId) ||
         !Number.isSafeInteger(item.savedAt) ||
         item.savedAt > now + 60_000 || now - item.savedAt > runTtlMs) return null;
     return { id: item.id, projectId: item.projectId, conversationId: item.conversationId };
@@ -27,7 +28,7 @@ export function readWorkRun(storage, accountId, now = Date.now()) {
 export function saveWorkRun(storage, accountId, run, now = Date.now()) {
   if (!storage || !validUser(accountId) || !run ||
       !validId(run.id) || !validOptionalProjectId(run.projectId) ||
-      !validId(run.conversationId)) return false;
+      !validOptionalConversationId(run.conversationId)) return false;
   try {
     storage.setItem(workRunStorageKey(accountId), JSON.stringify({
       version: 1, id: run.id, projectId: run.projectId,
