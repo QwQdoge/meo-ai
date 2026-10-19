@@ -27,10 +27,11 @@ import org.meo.ai.MeoController
 import org.meo.ai.R
 import org.meo.ai.schema.MeoUiSchema
 
-private data class SettingsGroup(val id: String, val label: String, val fields: List<String>)
+private data class SettingsGroup(val id: String, val label: String, val fields: List<String>, val keywords: List<String>)
 private val groups: List<SettingsGroup> by lazy {
     val rows = JSONObject(MeoUiSchema.json).getJSONObject("settings").getJSONArray("sections")
-    List(rows.length()) { index -> rows.getJSONObject(index).let { SettingsGroup(it.getString("id"), it.getString("label"), it.getJSONArray("items").let { fields -> List(fields.length()) { index -> fields.getJSONObject(index).getString("id") } }) } }
+    List(rows.length()) { index -> rows.getJSONObject(index).let { SettingsGroup(it.getString("id"), it.getString("label"), it.getJSONArray("items").let { fields -> List(fields.length()) { index -> fields.getJSONObject(index).getString("id") } },
+        it.getJSONArray("keywords").let { keywords -> List(keywords.length()) { index -> keywords.getString(index) } }) } }
 }
 private fun labelResource(id: String): Int = when(id) {
     "general" -> R.string.meo_settings_general
@@ -84,6 +85,7 @@ fun SettingsScreen(controller: MeoController, onClose: () -> Unit) {
                 query.isBlank() ||
                     stringResource(labelResource(group.id)).contains(query, ignoreCase = true) ||
                     group.id.contains(query, ignoreCase = true) ||
+                    group.keywords.any { it.contains(query, ignoreCase = true) } ||
                     group.fields.any { field ->
                         field.replace('_', ' ').contains(query, ignoreCase = true) ||
                             (when (field) {
