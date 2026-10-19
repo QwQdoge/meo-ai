@@ -65,6 +65,10 @@ class MemoryStore:
         assert self.runs[run_id]["user_id"] == user_id
         self.runs[run_id].update(values)
 
+    async def list_agent_runs(self, *, user_id, limit=30):
+        return tuple(run for run in reversed(list(self.runs.values()))
+                     if run["user_id"] == user_id)[:limit]
+
     async def get_agent_run(self, *, user_id, run_id):
         run = self.runs.get(run_id)
         return run if run and run["user_id"] == user_id else None
