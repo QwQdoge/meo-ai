@@ -237,3 +237,45 @@ test('Projects proxy refuses arbitrary IDs, deletion and foreign-origin changes'
   }),env});
   assert.equal(foreign.status,403);
 });
+
+test('Remote AgentRun listing and status reads remain owner authenticated and cookie-free', async (t) => {
+  const old = globalThis.fetch;
+  t.after(() => { globalThis.fetch = old; });
+  const config = { ...env, MEO_AGENT_CLOUD_URL: 'https://agents.meoarch.org' };
+  const id = '00000000-0000-4000-8000-000000000091';
+  for (const [route, expected] of [
+    ['/work/agent-runs?limit=30', 'https://agents.meoarch.org/v1/agent-runs?limit=30'],
+    [`/work/agent-runs/${id}`, `https://agents.meoarch.org/v1/agent-runs/${id}`],
+  ]) {
+    globalThis.fetch = async (url, init) => {
+      assert.equal(String(url), expected);
+      assert.equal(init.method, 'GET');
+      assert.equal(init.headers.get('Cookie'), null, 'remote cloud receives only bearer credentials');
+      assert.equal(init.headers.get('Authorization'), 'Bearer test-access');
+      return Response.json({ runs: [], run: { id } });
+    };
+    const response = await onRequest({ request: await request(route), env: config });
+    assert.equal(response.status, 200);
+  }
+});
+
+test('Remote AgentRun discovery never forwards invalid cursor, path or method', async (t) => {
+  const old = globalThis.fetch;
+  t.after(() => { globalThis.fetch = old; });
+  globalThis.fetch = async () => assert.fail('invalid route must not reach remote cloud');
+  const config = { ...env, MEO_AGENT_CLOUD_URL: 'https://agents.meoarch.org' };
+  for (const route of [
+    '/work/agent-runs?limit=51',
+    '/work/agent-runs?limit=0',
+    '/work/agent-runs?cursor=untrusted',
+    '/work/agent-runs/not-a-uuid',
+    '/work/agent-runs/00000000-0000-4000-8000-000000000091?unknown=1',
+  ]) {
+    const response = await onRequest({ request: await request(route), env: config });
+    assert.equal(response.status, 404, route);
+  }
+  const denied = await onRequest({
+    request: await request('/work/agent-runs', { method:'DELETE' }), env: config,
+  });
+  assert.equal(denied.status, 404);
+});

@@ -43,6 +43,22 @@ function targetFor(request, env, relativePath) {
     return { url: `${apiUrl(env)}/v1/ai/workspaces`, method, body: null };
   }
   const cloud = workCloudUrl(env);
+  if (cloud && relativePath === '/work/agent-runs' && method === 'GET') {
+    const incoming = new URL(request.url);
+    const params = incoming.searchParams;
+    if (Array.from(params.keys()).some((key) => key !== 'limit')) return null;
+    const limit = params.get('limit');
+    if (limit !== null && (!/^[1-9][0-9]?$/.test(limit) || Number(limit) > 50)) return null;
+    return {
+      url: `${cloud}/v1/agent-runs${limit ? '?limit=' + limit : ''}`,
+      method, body: null, agent: true,
+    };
+  }
+  const getRun = relativePath.match(/^\/work\/agent-runs\/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i);
+  if (cloud && getRun && method === 'GET') {
+    if (new URL(request.url).search) return null;
+    return { url: `${cloud}/v1/agent-runs/${getRun[1]}`, method, body: null, agent: true };
+  }
   if (cloud && relativePath === '/work/agent-runs' && method === 'POST') {
     return { url: `${cloud}/v1/agent-runs`, method, body: null, agent: true };
   }

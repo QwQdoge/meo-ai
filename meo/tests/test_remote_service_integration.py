@@ -59,11 +59,15 @@ class MemoryStore:
         self.devices = []
 
     async def create_agent_run(self, **values):
-        self.runs[values["run_id"]] = dict(values)
+        self.runs[values["run_id"]] = {"id": values["run_id"], **values}
 
     async def update_agent_run(self, *, user_id, run_id, values):
         assert self.runs[run_id]["user_id"] == user_id
         self.runs[run_id].update(values)
+
+    async def list_agent_runs(self, *, user_id, limit=30):
+        return tuple(run for run in reversed(list(self.runs.values()))
+                     if run["user_id"] == user_id)[:limit]
 
     async def get_agent_run(self, *, user_id, run_id):
         run = self.runs.get(run_id)

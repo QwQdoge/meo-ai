@@ -460,6 +460,42 @@ def build_application(config: CloudServerConfig):
             {"state": "approved", "device_id": preview.device_id, "display_name": preview.display_name}
         )
 
+    def public_agent_run(record: dict[str, Any]) -> dict[str, Any]:
+        # Intentionally exclude workspace_ref, local_request_id, prompt text,
+        # user id, credentials and execution data from discovery responses.
+        public = {}
+        for field in (
+            "id", "device_id", "conversation_id", "project_id", "status",
+            "permission_mode", "last_event_seq", "created_at", "updated_at", "finished_at",
+        ):
+            value = record.get(field)
+            if isinstance(value, datetime):
+                value = value.isoformat()
+            public[field] = value
+        return public
+
+    async def list_agent_runs(request):
+        account = await identity(request)
+        try:
+            limit = int(request.query.get("limit", "30"))
+        except (TypeError, ValueError) as exc:
+            raise ApiError("invalid_limit", "AgentRun limit is invalid.") from exc
+        if not 1 <= limit <= 50:
+            raise ApiError("invalid_limit", "AgentRun limit must be between 1 and 50.")
+        rows = await store.list_agent_runs(user_id=account.user_id, limit=limit)
+        return web.json_response({"runs": [public_agent_run(row) for row in rows]})
+
+    async def get_agent_run(request):
+        account = await identity(request)
+        try:
+            run_id = str(UUID(request.match_info["run_id"]))
+        except (TypeError, ValueError, KeyError) as exc:
+            raise ApiError("invalid_run_id", "AgentRun ID is invalid.") from exc
+        row = await store.get_agent_run(user_id=account.user_id, run_id=run_id)
+        if row is None:
+            raise ApiError("run_not_found", "Agent task not found.", status=404)
+        return web.json_response({"run": public_agent_run(row)})
+
     async def create_agent_run(request):
         account = await identity(request)
         payload = await json_body(request)
@@ -590,7 +626,9 @@ def build_application(config: CloudServerConfig):
             web.post("/v1/device-enrollments/poll", poll_device_pairing),
             web.get("/v1/device-enrollments/{user_code}", preview_device_pairing),
             web.post("/v1/device-enrollments/{user_code}/approve", approve_device_pairing),
+            web.get("/v1/agent-runs", list_agent_runs),
             web.post("/v1/agent-runs", create_agent_run),
+            web.get("/v1/agent-runs/{run_id}", get_agent_run),
             web.get("/v1/agent-runs/events", agent_run_events),
             web.post("/v1/agent-runs/{run_id}/cancel", cancel_agent_run),
             web.post(

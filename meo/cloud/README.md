@@ -56,6 +56,8 @@ POST /v1/device-enrollments/start
 POST /v1/device-enrollments/poll
 GET  /v1/device-enrollments/{user_code}
 POST /v1/device-enrollments/{user_code}/approve
+GET  /v1/agent-runs?limit=30   # account-owned bounded metadata list
+GET  /v1/agent-runs/{run_id} # account-owned single-run metadata
 POST /v1/agent-runs
 POST /v1/agent-runs/{run_id}/cancel
 POST /v1/agent-runs/{run_id}/decisions/{decision_id}
@@ -141,3 +143,17 @@ DB credential or a replica grant table in this compatibility service.
 
 OAuth tokens use the Better Auth `sid` claim. Legacy credentials and provider
 keys are not copied automatically; authorize devices and connections again.
+
+## Cross-device AgentRun discovery (2026-10-19, code only)
+
+`GET /v1/agent-runs?limit=30` (limit 1–50) returns recent account-owned runs as
+`{ "runs": [{ "id", "conversation_id", "project_id", "device_id",
+"status", "permission_mode", "last_event_seq", "created_at", "updated_at",
+"finished_at" }] }`. `GET /v1/agent-runs/{uuid}` returns `{ "run": ... }` or a
+404 for unknown/foreign runs. Both authenticate with the established Account
+verifier and filter in the database by the authenticated user ID. No prompts,
+local workspace references, local request IDs, tokens or raw tool events are
+returned. Reconnect to existing SSE via `/v1/agent-runs/events?run_id=...&after=...`;
+**never create another AgentRun just to resume**. This patch does not start any
+server-side scheduler or make installed Android/desktop apps auto-sync until
+those native clients adopt the list API and the service is deployed and tested.

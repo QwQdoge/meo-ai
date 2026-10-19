@@ -173,10 +173,24 @@ class NeonPostgresStore:
         )
         return self._rows(rows)
 
+    async def list_agent_runs(self, *, user_id: str, limit: int = 30) -> tuple[dict, ...]:
+        if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 50:
+            raise ValueError("AgentRun list limit must be between 1 and 50")
+        pool = await self._get_pool()
+        rows = await pool.fetch(
+            """select id::text,device_id,conversation_id::text,project_id::text,
+                      status,permission_mode,last_event_seq,created_at,updated_at,finished_at
+               from ai_agent_runs where user_id=$1::uuid
+               order by created_at desc,id desc limit $2""",
+            user_id, limit,
+        )
+        return self._rows(rows)
+
     async def get_agent_run(self, *, user_id: str, run_id: str) -> dict | None:
         pool = await self._get_pool()
         row = await pool.fetchrow(
-            """select id::text,device_id,status,conversation_id::text,permission_mode,last_event_seq
+            """select id::text,device_id,status,conversation_id::text,project_id::text,
+                      permission_mode,last_event_seq,created_at,updated_at,finished_at
                from ai_agent_runs where id=$1::uuid and user_id=$2::uuid""", run_id,user_id,
         )
         return dict(row) if row else None

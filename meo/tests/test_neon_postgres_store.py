@@ -63,6 +63,21 @@ class NeonPostgresStoreTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual([call[0] for call in pool.calls], ["fetchval"])
 
+    async def test_agent_run_discovery_is_owner_scoped_and_bounded(self):
+        pool = FakePool()
+        store = NeonPostgresStore("postgresql://local/test", pool=pool)
+        self.assertEqual(await store.list_agent_runs(user_id="owner-a", limit=20), ())
+        _, sql, args = pool.calls[0]
+        self.assertIn("where user_id=$1::uuid", sql)
+        self.assertIn("order by created_at desc,id desc limit $2", sql)
+        self.assertNotIn("workspace_ref", sql)
+        self.assertNotIn("local_request_id", sql)
+        self.assertEqual(args, ("owner-a", 20))
+        for invalid in (0, 51, -1, True, 2.5):
+            with self.subTest(limit=invalid):
+                with self.assertRaises(ValueError):
+                    await store.list_agent_runs(user_id="owner-a", limit=invalid)
+
     async def test_agent_event_insert_is_account_scoped_and_idempotent(self):
         pool = FakePool()
         store = NeonPostgresStore("postgresql://local/test", pool=pool)
