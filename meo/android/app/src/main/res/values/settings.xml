@@ -33,4 +33,5 @@
     <string name="meo_settings_no_results">No matching settings</string>
     <string name="meo_settings_account_optional">Meo Account is optional for local settings</string>
     <string name="meo_settings_sign_in">Connect Meo Account</string>
+    <string name="meo_settings_guest_settings">Local settings · no account needed</string>
 </resources>
