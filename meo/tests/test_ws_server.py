@@ -258,6 +258,21 @@ class RelayWebSocketServerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(store.updates[0]["values"], {"last_event_seq": 7})
         self.assertEqual(websocket.sent[-1]["type"], "event_ack")
 
+    async def test_older_event_cannot_regress_status_or_request_binding(self) -> None:
+        store = FakeStore()
+        store.runs["run-1"].update({"status": "running", "last_event_seq": 8})
+        server = RelayWebSocketServer(RelayRegistry(), FakeVerifier(self.claims), store)
+        websocket = FakeWebSocket([
+            self.hello(),
+            {"protocol_version": 1, "type": "event", "run_id": "run-1",
+             "seq": 6, "event_type": "tool_event",
+             "payload": {"event": {"type": "tool.requested"}}},
+        ])
+        with self.assertRaises(RuntimeError):
+            await server.handle(websocket)
+        self.assertEqual(store.updates[0]["values"], {"last_event_seq": 6})
+        self.assertEqual(websocket.sent[-1]["type"], "event_ack")
+
     async def test_credential_device_must_match_hello(self) -> None:
         server = RelayWebSocketServer(RelayRegistry(), FakeVerifier(self.claims))
         websocket = FakeWebSocket([self.hello("other-device")])
