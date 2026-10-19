@@ -14,12 +14,16 @@ function json(body, status = 200, extraHeaders = {}) {
 }
 
 function fail(reason, code = 'unauthenticated') {
+  // Never redirect a valid user to login merely because token refresh hit
+  // a transient Account 503. The browser must not receive any user data here.
+  const transient = reason === 'refresh_temporarily_unavailable';
   console.warn('meo_session_failed', { reason });
   return json(
-    { error: { code } },
-    401,
+    { error: { code: transient ? 'session_temporarily_unavailable' : code } },
+    transient ? 503 : 401,
     {
       'X-Meo-Session-Failure': reason,
+      ...(transient ? { 'Retry-After': '2' } : {}),
     },
   );
 }
