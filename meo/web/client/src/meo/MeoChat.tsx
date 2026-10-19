@@ -891,6 +891,12 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
         if (done) break;
       }
       if (!completed) throw new Error(t('meo_web_stream_incomplete'));
+      // A model can produce only a tool proposal with no text. Avoid leaving
+      // an empty assistant message above the final tool-assisted answer.
+      if (mcpProposal && !assistantText) {
+        setMessages((current) => current.length && current[current.length-1].role==='assistant' &&
+          !current[current.length-1].content ? current.slice(0,-1) : current);
+      }
       if (proposal) setAgentProposal({ task: proposal.task, projectId: proposal.project_id, conversationId });
       // The stream is finished; the Stop control must not claim to cancel persistence.
       setStreamingActive(false);
