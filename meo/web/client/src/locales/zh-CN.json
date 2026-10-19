@@ -138,5 +138,11 @@
   "meo_web_suggestion_plan": "制定计划",
   "meo_web_suggestion_plan_prompt": "帮我为这件事制定一个具体计划：",
   "meo_web_suggestion_code": "编程帮助",
-  "meo_web_suggestion_code_prompt": "帮我编写或调试以下代码："
+  "meo_web_suggestion_code_prompt": "帮我编写或调试以下代码：",
+  "meo_web_stop_receiving": "停止接收回复",
+  "meo_web_stop_notice": "已停止接收本次回复。当前显示的部分内容可能不会保存。",
+  "meo_web_details": "聊天详情",
+  "meo_web_details_subtitle": "关于当前对话",
+  "meo_web_close_details": "关闭详情",
+  "meo_web_details_unavailable": "当前网页版尚未接通回复详情功能。聊天与模型选择仍可使用。"
 }
