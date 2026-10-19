@@ -47,6 +47,11 @@ fun SettingsScreen(controller: MeoController, onClose: () -> Unit) {
     var section by remember { mutableStateOf(groups.first().id) }
     val preferences = controller.devicePreferences.values
     val state = controller.state
+    // Refresh the shared account inventory whenever Connectors is opened.
+    // This does not exchange MCP credentials or launch native executables.
+    LaunchedEffect(section, state.signedIn) {
+        if (section == "connectors" && state.signedIn) controller.loadAccountPlugins()
+    }
     fun openAccount(services: Boolean = false) {
         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://account.meoarch.org" + if(services) "/settings/services" else "")))
     }
@@ -92,6 +97,54 @@ fun SettingsScreen(controller: MeoController, onClose: () -> Unit) {
                             Column { Text(connection.displayName.ifBlank { connection.provider }, style = MaterialTheme.typography.titleMedium); Text(connection.defaultModel, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                         } }
                         item { Text(stringResource(R.string.meo_settings_connections_hint)); TextButton(onClick = { openAccount(true) }) { Text(stringResource(R.string.meo_settings_open_account)) } }
+                    }
+                    "connectors" -> {
+                        item {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text("Account plugins & Skills", style = MaterialTheme.typography.titleMedium)
+                                Text(
+                                    "The list comes from your Meo Account. Changes saved on the web appear after a refresh. " +
+                                        "Android MCP execution is not connected yet.",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                                OutlinedButton(onClick = { controller.loadAccountPlugins() },
+                                    enabled = state.signedIn && !state.pluginsBusy) {
+                                    Text(if (state.pluginsBusy) "Synchronizing…" else "Refresh account plugins")
+                                }
+                                state.pluginsError?.let {
+                                    Text("Account sync unavailable: $it",
+                                        color = MaterialTheme.colorScheme.error,
+                                        style = MaterialTheme.typography.bodySmall)
+                                }
+                            }
+                        }
+                        if (state.plugins.isEmpty() && !state.pluginsBusy) {
+                            item { Text("No plugins loaded from this account.",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                        }
+                        state.plugins.forEach { plugin ->
+                            item(key = "account-plugin-" + plugin.id) {
+                                Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                                    Text(plugin.name, style = MaterialTheme.typography.titleMedium)
+                                    Text(
+                                        plugin.kind.uppercase() + " · " + plugin.skillCount +
+                                            " Skills · " + (if (plugin.enabled) "Enabled" else "Disabled"),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                    if (plugin.description.isNotBlank()) {
+                                        Text(plugin.description, style = MaterialTheme.typography.bodySmall)
+                                    }
+                                    if (plugin.grantedReadTools.isNotEmpty()) {
+                                        Text("Account read permissions: " +
+                                            plugin.grantedReadTools.joinToString(", "),
+                                            style = MaterialTheme.typography.bodySmall)
+                                    }
+                                    HorizontalDivider()
+                                }
+                            }
+                        }
                     }
                     "account" -> {
                         item { Text(state.email, style = MaterialTheme.typography.titleMedium) }
