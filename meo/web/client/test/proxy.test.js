@@ -114,3 +114,83 @@ test("unsupported memory deletion cannot bypass the API method contract", async(
   const response = await onRequest({request:await request("/ai/memory/00000000-0000-4000-8000-000000000002",{method:"DELETE"}),env});
   assert.equal(response.status,404);
 });
+
+
+test("Work workspace discovery is account-authenticated and only proxies its fixed API route", async (t) => {
+  const original = globalThis.fetch;
+  t.after(() => { globalThis.fetch = original; });
+  globalThis.fetch = async (url, init) => {
+    assert.equal(String(url), "https://api.meoarch.org/v1/ai/workspaces");
+    assert.equal(init.method, "GET");
+    assert.equal(init.headers.get("Authorization"), "Bearer test-access");
+    return Response.json({ workspaces: [] });
+  };
+  const response = await onRequest({ request: await request("/workspaces"), env });
+  assert.equal(response.status, 200);
+  assert.deepEqual((await response.json()).workspaces, []);
+});
+
+test("Work dispatch fails closed unless the separate Agent cloud is configured", async (t) => {
+  const original = globalThis.fetch;
+  t.after(() => { globalThis.fetch = original; });
+  globalThis.fetch = async () => assert.fail("must not call the Agent service");
+  const status = await onRequest({ request: await request("/work/status"), env });
+  assert.equal(status.status, 200);
+  assert.equal((await status.json()).agent_available, false);
+  const post = await onRequest({
+    request: await request("/work/agent-runs", { method: "POST", body: "{}" }), env,
+  });
+  assert.equal(post.status, 404);
+});
+
+test("Work submits only to the explicitly configured HTTPS Agent origin", async (t) => {
+  const original = globalThis.fetch;
+  t.after(() => { globalThis.fetch = original; });
+  const agentEnv = { ...env, MEO_AGENT_CLOUD_URL: "https://agents.meoarch.org" };
+  const body = JSON.stringify({
+    conversation_id: "00000000-0000-4000-8000-000000000002",
+    project_id: "00000000-0000-4000-8000-000000000003",
+    text: "Review the repository",
+    permission_mode: "ask",
+  });
+  globalThis.fetch = async (url, init) => {
+    assert.equal(String(url), "https://agents.meoarch.org/v1/agent-runs");
+    assert.equal(init.method, "POST");
+    assert.equal(new TextDecoder().decode(init.body), body);
+    assert.equal(init.headers.get("Authorization"), "Bearer test-access");
+    return Response.json({ run_id: "00000000-0000-4000-8000-000000000004", status: "dispatching" });
+  };
+  const response = await onRequest({
+    request: await request("/work/agent-runs", { method: "POST", body }),
+    env: agentEnv,
+  });
+  assert.equal(response.status, 200);
+});
+
+test("Work never uses insecure or malformed Agent cloud origins", async () => {
+  for (const configured of [
+    "http://agents.meoarch.org",
+    "https://agents.meoarch.org/evil",
+    "https://user:secret@agents.meoarch.org",
+    "https://agents.meoarch.org?path=evil",
+  ]) {
+    const response = await onRequest({
+      request: await request("/work/status"),
+      env: { ...env, MEO_AGENT_CLOUD_URL: configured },
+    });
+    assert.equal((await response.json()).agent_available, false);
+  }
+});
+
+test("Work proxy refuses arbitrary remote paths and foreign-origin task starts", async (t) => {
+  const original = globalThis.fetch;
+  t.after(() => { globalThis.fetch = original; });
+  globalThis.fetch = async () => assert.fail("must not proxy unrelated paths");
+  const agentEnv = { ...env, MEO_AGENT_CLOUD_URL: "https://agents.meoarch.org" };
+  const arbitrary = await onRequest({ request: await request("/work/files/delete", { method: "POST", body: "{}" }), env: agentEnv });
+  assert.equal(arbitrary.status, 404);
+  const foreign = await onRequest({ request: await request("/work/agent-runs", {
+    method: "POST", body: "{}", headers: { Origin: "https://attacker.example" },
+  }), env: agentEnv });
+  assert.equal(foreign.status, 403);
+});
