@@ -253,7 +253,7 @@ for (const section of settings.sections) {
   text(section.label, "settings label");
   requireValue(
     Array.isArray(section.keywords) && section.keywords.length <= 8 &&
-      section.keywords.every((keyword) => typeof keyword === "string" && keyword.length > 0 && keyword.length <= 64 && !/[\\x00-\\x1f]/.test(keyword)),
+      section.keywords.every((keyword) => typeof keyword === "string" && keyword.length > 0 && keyword.length <= 64 && !/[\x00-\x1f]/.test(keyword)),
     "settings: invalid search keywords",
   );
   requireValue(
