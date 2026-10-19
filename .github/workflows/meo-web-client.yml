@@ -1,0 +1,51 @@
+name: Meo Web client
+
+on:
+  pull_request:
+    paths:
+      - 'meo/web/client/**'
+      - 'meo/ui-schema/**'
+      - '.github/workflows/meo-web-client.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'meo/web/client/**'
+      - 'meo/ui-schema/**'
+      - '.github/workflows/meo-web-client.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  client:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: QwQdoge/MeoUI
+          ref: 6f9c137c0d2bb1300ba79636d09f70cf94b0596b
+          path: dependencies/MeoUI
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: meo/web/client/package-lock.json
+      - name: Install reproducible dependencies
+        working-directory: meo/web/client
+        run: npm ci
+      - name: TypeScript
+        working-directory: meo/web/client
+        run: npm run typecheck
+      - name: Browser edge regression tests
+        working-directory: meo/web/client
+        run: npm test
+      - name: Build React client with shared MeoUI tokens
+        working-directory: meo/web/client
+        env:
+          MEO_OUTPUT_ROOT: ${{ runner.temp }}
+          MEO_UI_ROOT: ${{ github.workspace }}/dependencies/MeoUI
+        run: npm run build
