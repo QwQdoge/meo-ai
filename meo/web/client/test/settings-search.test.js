@@ -12,6 +12,8 @@ test("search discovers categories and nested settings without backend guesses", 
   assert.deepEqual(matchSettingsSections(catalogue, "enter to send").map((s) => s.id), ["general"]);
   assert.deepEqual(matchSettingsSections(catalogue, "memory").map((s) => s.id), ["personalization"]);
   assert.deepEqual(matchSettingsSections(catalogue, "ACCOUNT").map((s) => s.id), ["account"]);
+  assert.deepEqual(matchSettingsSections(catalogue, "mcp").map((s) => s.id), ["connectors"]);
+  assert.deepEqual(matchSettingsSections(catalogue, "登录").map((s) => s.id), ["account"]);
   assert.deepEqual(matchSettingsSections(catalogue, "nothing-like-this").map((s) => s.id), []);
 });
 test("localized catalog labels are searchable", () => {
