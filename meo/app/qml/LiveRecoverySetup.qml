@@ -169,5 +169,5 @@ Rectangle {
             Item { Layout.preferredHeight: 20 }
         }
     }
-    Component.onCompleted: liveRecoveryBackend.refreshNetworks()
+    Component.onCompleted: { if (liveRecovery) liveRecoveryBackend.refreshNetworks() }
 }
