@@ -11,6 +11,7 @@ import MeoConsentDialog from './MeoConsentDialog';
 import { useMeoSession } from './session';
 import { ChatMarkdownImage, ChatMarkdownTable } from './ChatRichContent';
 import { tokenizeCode } from './codeHighlight.mjs';
+import { takeSseFrames } from './sseFrames.mjs';
 import { MESSAGE_WINDOW_SIZE, transcriptWindow } from './transcriptWindow.mjs';
 import { chatDraftKey, readChatDraft, writeChatDraft } from './chatDrafts.mjs';
 
@@ -695,12 +696,9 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
       while(true) {
         const part=await reader.read();
         buffer+=decoder.decode(part.value??new Uint8Array(),{stream:!part.done});
-        let boundary=buffer.indexOf('\n\n');
-        while(boundary>=0) {
-          const frame=buffer.slice(0,boundary);
-          buffer=buffer.slice(boundary+2);
-          const eventName=frame.match(/^event:\s*(.+)$/m)?.[1]?.trim();
-          const data=frame.match(/^data:\s*(.+)$/m)?.[1];
+        const parsed = takeSseFrames(buffer, part.done);
+        buffer = parsed.remainder;
+        for (const {event: eventName, data} of parsed.frames) {
           if(eventName==='delta'&&data) {
             const chunk=JSON.parse(data).text as string;
             finalAnswer+=chunk;
@@ -708,7 +706,6 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
               ? {...m,content:m.content+chunk}:m));
           }else if(eventName==='done')done=true;
           else if(eventName==='error')throw Error('The provider could not complete the tool follow-up.');
-          boundary=buffer.indexOf('\n\n');
         }
         if(part.done)break;
       }
@@ -856,12 +853,9 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
       while (true) {
         const { value, done } = await reader.read();
         buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
-        let boundary = buffer.indexOf('\n\n');
-        while (boundary >= 0) {
-          const block = buffer.slice(0, boundary);
-          buffer = buffer.slice(boundary + 2);
-          const eventName = block.match(/^event:\s*(.+)$/m)?.[1]?.trim();
-          const data = block.match(/^data:\s*(.+)$/m)?.[1];
+        const parsed = takeSseFrames(buffer, done);
+        buffer = parsed.remainder;
+        for (const { event: eventName, data } of parsed.frames) {
           if (eventName === 'delta' && data) {
             const chunk = JSON.parse(data).text as string;
             assistantText += chunk;
@@ -886,7 +880,6 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
           } else if (eventName === 'done') {
             completed = true;
           }
-          boundary = buffer.indexOf('\n\n');
         }
         if (done) break;
       }
