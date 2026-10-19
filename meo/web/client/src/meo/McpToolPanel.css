@@ -1,0 +1,23 @@
+.meo-mcp-tools { border-top: 1px solid rgb(var(--border-light)); padding: 20px 0 8px; }
+.meo-mcp-tools-heading { display: flex; gap: 16px; align-items: start; justify-content: space-between; }
+.meo-mcp-tools-heading h4 { font-size: 14px; font-weight: 600; margin: 0 0 6px; }
+.meo-mcp-tools-heading p, .meo-mcp-tool-form p, .meo-mcp-tools-notice {
+  font-size: 12px; line-height: 1.55; color: rgb(var(--text-secondary));
+}
+.meo-mcp-tools button { cursor: pointer; border-radius: 12px; padding: 9px 13px;
+  background: rgb(var(--surface-secondary)); border: 1px solid rgb(var(--border-light)); font-size: 12px; color: inherit; }
+.meo-mcp-tools button:disabled { opacity: .5; cursor: not-allowed; }
+.meo-mcp-tool-form { display: grid; gap: 13px; padding-top: 14px; }
+.meo-mcp-tool-form label { display: grid; gap: 7px; font-size: 12px; }
+.meo-mcp-tool-form select, .meo-mcp-tool-form textarea {
+  min-width: 0; width: 100%; padding: 10px 12px; border-radius: 11px;
+  border: 1px solid rgb(var(--border-light)); color: inherit;
+  background: rgb(var(--surface-primary)); font-size: 12px;
+}
+.meo-mcp-tool-form textarea { font-family: ui-monospace, monospace; resize: vertical; }
+.meo-mcp-tool-form>button { justify-self: start; }
+.meo-mcp-tool-form details summary { cursor: pointer; font-size: 12px; }
+.meo-mcp-tool-form pre, .meo-mcp-tools-output pre { border: 1px solid rgb(var(--border-light));
+  border-radius: 12px; padding: 12px; overflow: auto; white-space: pre-wrap;
+  overflow-wrap: anywhere; font-size: 11px; line-height: 1.6; max-height: 270px; }
+.meo-mcp-tools-output strong { font-size: 12px; }
