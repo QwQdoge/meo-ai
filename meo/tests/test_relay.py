@@ -75,6 +75,8 @@ class RelayRegistryTests(unittest.IsolatedAsyncioTestCase):
         session = RelaySession("user-1", "legion", ("agent.chat",))
         registry.register(session, first)
         registry.register(session, second)
+        self.assertFalse(registry.is_current_connection(session, first))
+        self.assertTrue(registry.is_current_connection(session, second))
 
         registry.unregister("legion", first)
         self.assertTrue(registry.is_online("user-1", "legion"))

@@ -116,6 +116,8 @@ class RemoteServiceIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
         class CloudToDevice:
             async def send_json(self, message):
+                if message["type"] == "event_ack" and getattr(test, "drop_event_acks", False):
+                    return
                 if message["type"] == "dispatch":
                     test.dispatch = dict(message)
                 await test.runtime.agentd.handle_message(test.device_to_cloud, message)
@@ -186,15 +188,17 @@ class RemoteServiceIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
         class LoseAck:
             async def send_json(self, message):
-                await test.server._handle_device_message(test.session, "Test", IgnoreAck(), message)
+                await test.server._handle_device_message(
+                    test.session, "Test", test.cloud_to_device, message,
+                )
 
-        class IgnoreAck:
-            async def send_json(self, message):
-                pass
-
+        # The registered relay remains the sender; only its return ACK is
+        # dropped, simulating a lost network frame instead of a forged socket.
+        self.drop_event_acks = True
         task = asyncio.create_task(self.runtime.events.send_loop(LoseAck()))
         await asyncio.sleep(0)
         task.cancel()
+        self.drop_event_acks = False
         with self.assertRaises(asyncio.CancelledError):
             await task
         self.assertEqual(self.runtime.events.pending_count, 1)

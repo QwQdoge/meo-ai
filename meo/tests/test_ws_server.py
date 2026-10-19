@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 import unittest
 
 from meo.cloud.enrollment import DeviceCredentialClaims
-from meo.cloud.relay import RelayRegistry
+from meo.cloud.relay import RelayRegistry, RelaySession
 from meo.cloud.ws_server import RelayWebSocketServer
 
 
@@ -26,6 +26,12 @@ class FakeStore:
         self.devices: list[dict] = []
         self.events: list[dict] = []
         self.updates: list[dict] = []
+        self.runs = {"run-1": {"device_id": "legion", "status": "dispatching"}}
+
+    async def get_agent_run(self, *, user_id: str, run_id: str):
+        if user_id != "user-1":
+            return None
+        return self.runs.get(run_id)
 
     async def touch_device(self, **values) -> None:
         self.devices.append(values)
@@ -151,6 +157,121 @@ class RelayWebSocketServerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(store.updates, [])
         self.assertEqual(websocket.sent[-1]["type"], "event_ack")
         self.assertEqual(websocket.sent[-1]["seq"], 4)
+
+    async def test_other_device_cannot_publish_events_for_this_accounts_run(self) -> None:
+        store = FakeStore()
+        store.runs["run-other"] = {"device_id": "other-laptop", "status": "running"}
+        server = RelayWebSocketServer(RelayRegistry(), FakeVerifier(self.claims), store)
+        websocket = FakeWebSocket([
+            self.hello(),
+            {"protocol_version": 1, "type": "event", "run_id": "run-other",
+             "seq": 0, "event_type": "done", "payload": {"status": "completed"}},
+        ])
+        with self.assertRaisesRegex(PermissionError, "not assigned"):
+            await server.handle(websocket)
+        self.assertEqual(store.events, [])
+        self.assertEqual(store.updates, [])
+        self.assertFalse(any(item["type"] == "event_ack" for item in websocket.sent))
+
+    async def test_other_device_cannot_ack_or_cancel_an_assigned_run(self) -> None:
+        for message_type in ("dispatch_ack", "cancel_ack", "decision_ack"):
+            with self.subTest(message_type=message_type):
+                store = FakeStore()
+                store.runs["run-other"] = {"device_id": "other-laptop", "status": "running"}
+                server = RelayWebSocketServer(RelayRegistry(), FakeVerifier(self.claims), store)
+                frame = {"protocol_version": 1, "type": message_type,
+                         "run_id": "run-other", "status": "completed",
+                         "decision_id": "decision-1"}
+                websocket = FakeWebSocket([self.hello(), frame])
+                with self.assertRaisesRegex(PermissionError, "not assigned"):
+                    await server.handle(websocket)
+                self.assertEqual(store.updates, [])
+
+    async def test_unknown_run_event_cannot_be_acknowledged_as_persisted(self) -> None:
+        store = FakeStore()
+        server = RelayWebSocketServer(RelayRegistry(), FakeVerifier(self.claims), store)
+        websocket = FakeWebSocket([
+            self.hello(),
+            {"protocol_version": 1, "type": "event", "run_id": "unknown",
+             "seq": 4, "event_type": "text_delta", "payload": {"text": "unsafe"}},
+        ])
+        with self.assertRaises(PermissionError):
+            await server.handle(websocket)
+        self.assertEqual(store.events, [])
+        self.assertFalse(any(item["type"] == "event_ack" for item in websocket.sent))
+
+    async def test_superseded_socket_cannot_write_a_heartbeat(self) -> None:
+        class Connection:
+            async def send_json(self, _payload: dict) -> None:
+                pass
+
+        registry = RelayRegistry()
+        store = FakeStore()
+        server = RelayWebSocketServer(registry, FakeVerifier(self.claims), store)
+        session = RelaySession("user-1", "legion", ("agent.chat",))
+        old, current = Connection(), Connection()
+        registry.register(session, old)
+        registry.register(session, current)
+        with self.assertRaisesRegex(PermissionError, "replaced"):
+            await server._handle_device_message(
+                session, "Legion Y9000X", old, {"type": "heartbeat"},
+            )
+        self.assertEqual(store.devices, [])
+        self.assertTrue(registry.is_current_connection(session, current))
+
+    async def test_failing_hello_persistence_unwinds_registration(self) -> None:
+        class FailingStore(FakeStore):
+            async def touch_device(self, **_values) -> None:
+                raise RuntimeError("database unavailable")
+
+        registry = RelayRegistry()
+        server = RelayWebSocketServer(registry, FakeVerifier(self.claims), FailingStore())
+        with self.assertRaisesRegex(RuntimeError, "database unavailable"):
+            await server.handle(FakeWebSocket([self.hello()]))
+        self.assertFalse(registry.is_online("user-1", "legion"))
+
+    async def test_terminal_run_ignores_late_dispatch_ack(self) -> None:
+        store = FakeStore()
+        store.runs["run-1"]["status"] = "completed"
+        server = RelayWebSocketServer(RelayRegistry(), FakeVerifier(self.claims), store)
+        websocket = FakeWebSocket([
+            self.hello(),
+            {"protocol_version": 1, "type": "dispatch_ack",
+             "run_id": "run-1", "status": "running"},
+        ])
+        with self.assertRaises(RuntimeError):
+            await server.handle(websocket)
+        self.assertEqual(store.updates, [])
+
+    async def test_terminal_run_can_ack_late_event_without_reviving(self) -> None:
+        store = FakeStore()
+        store.runs["run-1"]["status"] = "completed"
+        server = RelayWebSocketServer(RelayRegistry(), FakeVerifier(self.claims), store)
+        websocket = FakeWebSocket([
+            self.hello(),
+            {"protocol_version": 1, "type": "event", "run_id": "run-1",
+             "seq": 7, "event_type": "request_started",
+             "payload": {"request_id": "older-local-request"}},
+        ])
+        with self.assertRaises(RuntimeError):
+            await server.handle(websocket)
+        self.assertEqual(store.updates[0]["values"], {"last_event_seq": 7})
+        self.assertEqual(websocket.sent[-1]["type"], "event_ack")
+
+    async def test_older_event_cannot_regress_status_or_request_binding(self) -> None:
+        store = FakeStore()
+        store.runs["run-1"].update({"status": "running", "last_event_seq": 8})
+        server = RelayWebSocketServer(RelayRegistry(), FakeVerifier(self.claims), store)
+        websocket = FakeWebSocket([
+            self.hello(),
+            {"protocol_version": 1, "type": "event", "run_id": "run-1",
+             "seq": 6, "event_type": "tool_event",
+             "payload": {"event": {"type": "tool.requested"}}},
+        ])
+        with self.assertRaises(RuntimeError):
+            await server.handle(websocket)
+        self.assertEqual(store.updates[0]["values"], {"last_event_seq": 6})
+        self.assertEqual(websocket.sent[-1]["type"], "event_ack")
 
     async def test_credential_device_must_match_hello(self) -> None:
         server = RelayWebSocketServer(RelayRegistry(), FakeVerifier(self.claims))

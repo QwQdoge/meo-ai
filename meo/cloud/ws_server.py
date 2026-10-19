@@ -75,14 +75,14 @@ class RelayWebSocketServer:
             capabilities=normalized,
         )
         self.registry.register(session, connection)
-        if self.store is not None:
-            await self.store.touch_device(
-                user_id=session.account_user_id,
-                device_id=session.device_id,
-                display_name=display_name,
-                capabilities=session.capabilities,
-            )
         try:
+            if self.store is not None:
+                await self.store.touch_device(
+                    user_id=session.account_user_id,
+                    device_id=session.device_id,
+                    display_name=display_name,
+                    capabilities=session.capabilities,
+                )
             await connection.send_json(
                 {
                     "protocol_version": PROTOCOL_VERSION,
@@ -109,6 +109,10 @@ class RelayWebSocketServer:
         connection: "_WebSocketConnection",
         message: dict,
     ) -> None:
+        # A reconnect can replace the device's active socket before its old
+        # reader exits. Superseded sockets must not mutate run or device state.
+        if not self.registry.is_current_connection(session, connection):
+            raise PermissionError("relay connection has been replaced")
         message_type = message.get("type")
         if message_type == "pong":
             return
@@ -137,33 +141,44 @@ class RelayWebSocketServer:
             )
             return
 
+        # The Account subject alone is not enough: multiple devices may be
+        # paired with one user. Bind every run-related frame to the immutable
+        # device selected by the server-side AgentRun orchestrator.
+        run_id = self._required_text(message, "run_id")
+        run = await self.store.get_agent_run(
+            user_id=session.account_user_id, run_id=run_id,
+        )
+        if run is None or run.get("device_id") != session.device_id:
+            raise PermissionError("AgentRun is not assigned to this device")
+        terminal = run.get("status") in {"completed", "cancelled", "failed"}
+
         if message_type == "dispatch_ack":
-            run_id = self._required_text(message, "run_id")
             status = self._run_status(message.get("status"))
             # Only persisted events advance the cloud cursor. A dispatch ack
             # can carry -1 before any event is delivered, including on replay.
             values: dict[str, Any] = {"status": status}
-            await self.store.update_agent_run(
-                user_id=session.account_user_id,
-                run_id=run_id,
-                values=values,
-            )
+            if not terminal:
+                await self.store.update_agent_run(
+                    user_id=session.account_user_id,
+                    run_id=run_id,
+                    values=values,
+                )
             return
 
         if message_type == "cancel_ack":
-            await self.store.update_agent_run(
-                user_id=session.account_user_id,
-                run_id=self._required_text(message, "run_id"),
-                values={"status": self._run_status(message.get("status"))},
-            )
+            status = self._run_status(message.get("status"))
+            if not terminal:
+                await self.store.update_agent_run(
+                    user_id=session.account_user_id,
+                    run_id=run_id,
+                    values={"status": status},
+                )
             return
 
         if message_type == "decision_ack":
-            self._required_text(message, "run_id")
             self._required_text(message, "decision_id")
             return
 
-        run_id = self._required_text(message, "run_id")
         seq = self._event_seq_or_default(message.get("seq"), None)
         event_type = self._required_text(message, "event_type")
         payload = message.get("payload", {})
@@ -177,9 +192,20 @@ class RelayWebSocketServer:
             payload=payload,
         )
 
+        # A delayed frame may be a newly persisted older event after newer
+        # frames have already advanced the run. Retain it for replay, but do
+        # not use it to roll back the live status or request binding.
+        previous_seq = run.get("last_event_seq", -1)
+        out_of_order = isinstance(previous_seq, int) and seq <= previous_seq
         if inserted:
             values: dict[str, Any] = {"last_event_seq": seq}
-            if event_type == "request_started":
+            # Late events can still be persisted/replayed, but never revive a
+            # terminal run after an ACK or another event completed it.
+            if terminal or out_of_order:
+                await self.store.update_agent_run(
+                    user_id=session.account_user_id, run_id=run_id, values=values,
+                )
+            elif event_type == "request_started":
                 request_id = payload.get("request_id")
                 if isinstance(request_id, str) and request_id.strip():
                     values["local_request_id"] = request_id.strip()
@@ -199,11 +225,12 @@ class RelayWebSocketServer:
                 elif isinstance(event, dict) and event.get("type") == "tool.completed":
                     values["status"] = "running"
 
-            await self.store.update_agent_run(
-                user_id=session.account_user_id,
-                run_id=run_id,
-                values=values,
-            )
+            if not terminal and not out_of_order:
+                await self.store.update_agent_run(
+                    user_id=session.account_user_id,
+                    run_id=run_id,
+                    values=values,
+                )
 
         # A duplicate event is also acknowledged. Its unique (run_id, seq) row
         # proves it was persisted by this or an earlier connection attempt.

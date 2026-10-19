@@ -93,6 +93,43 @@ class NeonPostgresStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("on conflict(run_id,seq) do nothing", query)
         self.assertEqual(args[:4], ("account-a", "run-id", 3, "message"))
 
+    async def test_agent_run_cursor_updates_never_decrease_existing_value(self):
+        pool = FakePool()
+        store = NeonPostgresStore("postgresql://local/test", pool=pool)
+        await store.update_agent_run(
+            user_id="account-a", run_id="run-id",
+            values={"status": "running", "last_event_seq": 3},
+        )
+        _, query, args = pool.calls[0]
+        self.assertIn("last_event_seq=greatest(coalesce(last_event_seq,-1),$2)", query)
+        self.assertIn("where id=$4::uuid and user_id=$5::uuid", query)
+        self.assertEqual(args[:2], ("running", 3))
+
+    async def test_status_update_cannot_resurrect_terminal_run(self):
+        pool = FakePool()
+        store = NeonPostgresStore("postgresql://local/test", pool=pool)
+        await store.update_agent_run(
+            user_id="account-a", run_id="run-id",
+            values={"status": "running"},
+        )
+        _, sql, args = pool.calls[0]
+        self.assertIn("status=case when status in ('completed','cancelled','failed')", sql)
+        self.assertIn("then status else $1 end", sql)
+        self.assertEqual(args[0], "running")
+
+    async def test_out_of_order_status_cannot_override_newer_cursor(self):
+        pool = FakePool()
+        store = NeonPostgresStore("postgresql://local/test", pool=pool)
+        await store.update_agent_run(
+            user_id="account-a", run_id="run-id",
+            values={"last_event_seq": 3, "status": "awaiting_approval"},
+        )
+        _, sql, args = pool.calls[0]
+        self.assertIn("coalesce(last_event_seq,-1) > $1", sql)
+        self.assertIn("then status else $2 end", sql)
+        self.assertIn("last_event_seq=greatest(coalesce(last_event_seq,-1),$1)", sql)
+        self.assertEqual(args[:2], (3, "awaiting_approval"))
+
     async def test_account_grants_are_never_read_from_the_ai_database(self):
         pool = FakePool(value=True)
         store = NeonPostgresStore("postgresql://local/test", pool=pool)
