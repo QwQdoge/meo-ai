@@ -246,5 +246,6 @@
   "meo.work.proposalTitle": "Model proposed a Work task",
   "meo.work.proposalNotExecuted": "Nothing has been executed. Review the task and permissions in Work.",
   "meo.work.reviewInWork": "Review in Work",
-  "meo.work.dismissProposal": "Dismiss"
+  "meo.work.dismissProposal": "Dismiss",
+  "meo.work.agentToolsGeminiUnavailable": "Gemini tool-calling is not available in this Chat integration yet. Use the Work mode to delegate manually."
 }
