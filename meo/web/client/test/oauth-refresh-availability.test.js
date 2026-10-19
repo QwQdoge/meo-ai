@@ -85,3 +85,30 @@ test('recovered Account grants refresh tokens normally and rotate session cookie
     assert.ok(result.cookie?.includes('Max-Age='));
   });
 });
+
+test('UserInfo 503 preserves a freshly rotated session cookie', async () => {
+  let calls = 0;
+  await withMockFetch(async (url) => {
+    calls++;
+    if (String(url).includes('/oauth2/token'))
+      return Response.json({access_token:'fresh-access',refresh_token:'fresh-refresh',expires_in:900});
+    return new Response('', {status:503});
+  }, async () => {
+    const response = await getSession({request:await makeRequest('/api/meo/session'),env});
+    assert.equal(response.status,503);
+    assert.equal((await response.json()).error.code,'session_temporarily_unavailable');
+    assert.ok(response.headers.get('Set-Cookie')?.includes('__Host-meo-session='));
+    assert.ok(calls >= 2);
+  });
+});
+
+test('UserInfo 401 remains a rejected identity rather than transient', async () => {
+  await withMockFetch(async (url) => {
+    if (String(url).includes('/oauth2/token'))
+      return Response.json({access_token:'fresh-access',refresh_token:'fresh-refresh',expires_in:900});
+    return Response.json({error:'invalid_token'},{status:401});
+  }, async () => {
+    const response = await getSession({request:await makeRequest('/api/meo/session'),env});
+    assert.equal(response.status,401);
+  });
+});
