@@ -18,6 +18,16 @@ type Workspace = {
   last_seen_at?: string | null;
 };
 type SavedRun = { id: string; projectId: string; text: string; conversationId: string };
+type RemoteRun = {
+  id: string;
+  project_id: string | null;
+  conversation_id: string | null;
+  device_id: string;
+  status: string;
+  created_at?: string | null;
+};
+const remoteStatuses = new Set(['queued', 'dispatching', 'running', 'awaiting_approval',
+  'cancel_requested', 'cancelled', 'completed', 'failed']);
 const terminalStatuses = new Set(['completed', 'failed', 'cancelled']);
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 
@@ -81,10 +91,16 @@ export default function WorkSurface({ handoff, onChat }: {
   const [runStatus, setRunStatus] = useState('');
   const [approval, setApproval] = useState<AgentApproval | null>(null);
   const [runError, setRunError] = useState('');
+  const [recentRuns, setRecentRuns] = useState<RemoteRun[]>([]);
+  const [recentOwner, setRecentOwner] = useState('');
+  const [recentBusy, setRecentBusy] = useState(false);
+  const [recentError, setRecentError] = useState('');
   const [following, setFollowing] = useState(false);
   const lastSeqRef = useRef(-1);
   const streamAbortRef = useRef<AbortController | null>(null);
   const resumedRunRef = useRef('');
+  const accountIdRef = useRef(user?.id);
+  accountIdRef.current = user?.id;
 
   const projects = useMemo(() => {
     const seen = new Set<string>();
@@ -112,7 +128,36 @@ export default function WorkSurface({ handoff, onChat }: {
     } finally { setLoading(false); }
   }, [t]);
 
+  const loadRecentRuns = useCallback(async () => {
+    const accountId = user?.id;
+    if (!accountId) return;
+    setRecentBusy(true);
+    setRecentError('');
+    try {
+      const result = await request<{ runs: RemoteRun[] }>('/work/agent-runs?limit=30');
+      if (!Array.isArray(result.runs)) throw new Error(t('meo.work.recentUnavailable'));
+      const known = result.runs.filter((item) =>
+        item && uuid.test(item.id) && typeof item.device_id === 'string' &&
+        typeof item.status === 'string' &&
+        (item.project_id === null || uuid.test(item.project_id)) &&
+        typeof item.conversation_id === 'string' && uuid.test(item.conversation_id));
+      if (accountIdRef.current === accountId) {
+        setRecentRuns(known.slice(0, 30));
+        setRecentOwner(accountId);
+      }
+    } catch (cause) {
+      if (accountIdRef.current === accountId)
+        setRecentError(cause instanceof Error ? cause.message : t('meo.work.recentUnavailable'));
+    } finally {
+      if (accountIdRef.current === accountId) setRecentBusy(false);
+    }
+  }, [user?.id, t]);
+
   useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => {
+    if (agentConfigured && user?.id) void loadRecentRuns();
+    else { setRecentRuns([]); setRecentOwner(''); setRecentError(''); }
+  }, [agentConfigured, user?.id, loadRecentRuns]);
   useEffect(() => {
     if (!user?.id) { setRun(null); return; }
     setRun(recoverRun(user.id));
@@ -140,6 +185,8 @@ export default function WorkSurface({ handoff, onChat }: {
     void followRun(run.id, -1);
   }, [user?.id, run?.id]);
 
+  // Never render task metadata fetched under a different Meo Account.
+  const visibleRecentRuns = recentOwner === user?.id ? recentRuns : [];
   const selected = workspaces.filter((item) => item.project_id === projectId);
   const canDelegate = selected.some((item) => item.capabilities?.includes('agent.chat'));
 
@@ -263,10 +310,32 @@ export default function WorkSurface({ handoff, onChat }: {
       if (!controller.signal.aborted)
         setRunError(cause instanceof Error ? cause.message : t('meo.work.runFailed'));
     } finally {
-      if (streamAbortRef.current === controller) streamAbortRef.current = null;
-      setFollowing(false);
+      if (streamAbortRef.current === controller) {
+        streamAbortRef.current = null;
+        setFollowing(false);
+      }
     }
   };
+
+  function resumeKnownRun(item: RemoteRun) {
+    // Read-only switch to one known account-owned run. Never re-dispatch.
+    if (!user?.id || !uuid.test(item.id) || !item.conversation_id ||
+        !uuid.test(item.conversation_id)) return;
+    if (run?.id === item.id) {
+      if (!following) void followRun(item.id, lastSeqRef.current);
+      return;
+    }
+    const restored: SavedRun = {
+      id: item.id, projectId: item.project_id ?? '',
+      conversationId: item.conversation_id, text: '',
+    };
+    streamAbortRef.current?.abort();
+    resumedRunRef.current = '';
+    setRunStatus(remoteStatuses.has(item.status) ? item.status : 'disconnected');
+    setRun(restored);
+    saveWorkRun(browserWorkStorage(), user.id, restored);
+    // The run-ID effect replays Cloud events from the beginning.
+  }
 
   const startRun = async (event: FormEvent) => {
     event.preventDefault();
@@ -304,6 +373,7 @@ export default function WorkSurface({ handoff, onChat }: {
       lastSeqRef.current = -1;
       setRunStatus(response.status || 'dispatching');
       saveWorkRun(browserWorkStorage(), user.id, created);
+      void loadRecentRuns();
       void followRun(created.id, -1);
     } catch (cause) {
       setRunError(cause instanceof Error ? cause.message : t('meo.work.runFailed'));
@@ -397,6 +467,35 @@ export default function WorkSurface({ handoff, onChat }: {
         </div>
       )}
       <p className="meo-work-note">{t('meo.work.availabilityNote')}</p>
+      {agentConfigured && (
+        <section className="meo-work-recent" aria-label={t('meo.work.recentRuns')}>
+          <div className="meo-work-recent-heading">
+            <h2>{t('meo.work.recentRuns')}</h2>
+            <button type="button" disabled={recentBusy} onClick={() => void loadRecentRuns()}>
+              {recentBusy ? t('meo_web_loading') : t('meo.work.refresh')}
+            </button>
+          </div>
+          <p>{t('meo.work.recentNote')}</p>
+          {recentError && <p role="alert">{t('meo.work.recentUnavailable')}: {recentError}</p>}
+          {visibleRecentRuns.length > 0 && (
+            <div className="meo-work-recent-list">
+              {visibleRecentRuns.map((item) => (
+                <button type="button" key={item.id}
+                  aria-pressed={run?.id === item.id}
+                  onClick={() => resumeKnownRun(item)}>
+                  <strong>{t('meo.work.runNumber', { id: item.id.slice(-8) })}</strong>
+                  <span>{remoteStatuses.has(item.status)
+                    ? t(`meo.agentActivity.status.${item.status}`) : item.status}</span>
+                  <small>{item.device_id}</small>
+                  <small>{run?.id === item.id ? t('meo.work.viewingRun') : t('meo.work.resumeRun')}</small>
+                </button>
+              ))}
+            </div>
+          )}
+          {visibleRecentRuns.length === 0 && !recentBusy && !recentError &&
+            <p role="status">{t('meo.work.noRecentRuns')}</p>}
+        </section>
+      )}
       <form className="meo-work-form" onSubmit={startRun}>
         <label htmlFor="meo-work-task">{t('meo.work.task')}</label>
         <textarea id="meo-work-task" value={task} maxLength={35000} rows={5}

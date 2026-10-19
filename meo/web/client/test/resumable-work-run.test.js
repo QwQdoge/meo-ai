@@ -31,6 +31,12 @@ test('stores only metadata, never task text, keys or file content', () => {
   });
 });
 
+test('projectless AgentRun pointers can be resumed without inventing a project', () => {
+  const storage = memoryStore();
+  assert.equal(saveWorkRun(storage, account, { ...pointer, projectId: '' }, now), true);
+  assert.equal(readWorkRun(storage, account, now).projectId, '');
+});
+
 test('account isolation and clear retain no previous-account marker', () => {
   const storage = memoryStore();
   saveWorkRun(storage, account, pointer, now);

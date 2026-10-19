@@ -262,5 +262,12 @@
   "meo.projects.noDescription": "暂无描述",
   "meo.projects.contextNote": "项目名称等信息保存在账号中。对话归属与工作区文件尚未在这里接通。",
   "meo.projects.requestFailed": "项目服务不可用",
-  "meo.work.restoredTask": "已恢复的远程任务"
+  "meo.work.restoredTask": "已恢复的远程任务",
+  "meo.work.recentRuns": "账号中的最近任务",
+  "meo.work.recentNote": "选择已有任务查看进度；切换任务不会取消或重新执行。",
+  "meo.work.recentUnavailable": "暂时无法读取任务列表",
+  "meo.work.runNumber": "任务 · {{id}}",
+  "meo.work.resumeRun": "查看任务",
+  "meo.work.viewingRun": "正在查看",
+  "meo.work.noRecentRuns": "账号中还没有任务。"
 }
