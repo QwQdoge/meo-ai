@@ -21,3 +21,16 @@
   border-radius: 12px; padding: 12px; overflow: auto; white-space: pre-wrap;
   overflow-wrap: anywhere; font-size: 11px; line-height: 1.6; max-height: 270px; }
 .meo-mcp-tools-output strong { font-size: 12px; }
+
+.meo-mcp-tools-review {
+  margin: 16px 0; padding: 18px; border: 1px solid rgb(var(--border-light));
+  border-radius: 16px; background: rgb(var(--surface-secondary));
+}
+.meo-mcp-tools-review > strong { display: block; font-size: 14px; font-weight: 650; }
+.meo-mcp-tools-review p { font-size: 12px; line-height: 1.65; color: rgb(var(--text-secondary)); }
+.meo-mcp-tools-review code { overflow-wrap: anywhere; }
+.meo-mcp-tools-review pre { margin: 8px 0; padding: 12px; border-radius: 12px;
+  border: 1px solid rgb(var(--border-light)); background: rgb(var(--surface-primary));
+  overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 250px; font-size: 12px; }
+.meo-mcp-tools-review-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.meo-mcp-tools-review-actions button:last-child { border-color: rgb(var(--accent-primary)); }
