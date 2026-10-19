@@ -144,5 +144,11 @@
   "meo_web_details": "聊天详情",
   "meo_web_details_subtitle": "关于当前对话",
   "meo_web_close_details": "关闭详情",
-  "meo_web_details_unavailable": "当前网页版尚未接通回复详情功能。聊天与模型选择仍可使用。"
+  "meo_web_details_unavailable": "当前网页版尚未接通回复详情功能。聊天与模型选择仍可使用。",
+  "meo_web_code": "代码",
+  "meo_web_copy": "复制",
+  "meo_web_copied": "已复制",
+  "meo_web_copy_code": "复制代码",
+  "meo_web_copy_response": "复制回复",
+  "meo_web_scroll_latest": "跳到最新消息"
 }
