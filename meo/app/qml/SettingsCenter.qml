@@ -171,6 +171,17 @@ Popup {
                     }
                 }
 
+                MeoTextField {
+                    id: settingsSearch
+                    objectName: "meoAiSettingsSearch"
+                    Layout.fillWidth: true
+                    placeholder: qsTr("Search settings")
+                    leadingIcon: "search"
+                    size: "s"
+                    showClearButton: true
+                    Accessible.name: qsTr("Search settings")
+                }
+
                 Repeater {
                     model: root.sections
                     delegate: NavigationButton {
@@ -178,6 +189,17 @@ Popup {
                         required property int index
                         objectName: "meoAiSettingsNav-" + index
                         Layout.fillWidth: true
+                        visible: {
+                            const needle = settingsSearch.text.trim().toLowerCase()
+                            if (!needle) return true
+                            if (qsTranslate("MeoSettings", modelData.label).toLowerCase().indexOf(needle) >= 0) return true
+                            if (modelData.id.toLowerCase().indexOf(needle) >= 0) return true
+                            const fields = modelData.items || []
+                            return fields.some(function(item) {
+                                return qsTranslate("MeoSettings", item.label).toLowerCase().indexOf(needle) >= 0
+                                    || item.id.replace(/_/g, " ").toLowerCase().indexOf(needle) >= 0
+                            })
+                        }
                         text: qsTranslate("MeoSettings", modelData.label)
                         icon.name: ({general:"tune",personalization:"neurology",models:"deployed_code",connectors:"extension",devices:"devices",privacy:"shield",usage:"monitor_heart",account:"account_circle"})[modelData.id]
                         type: root.currentSection === index ? "tonal" : "text"
@@ -870,9 +892,18 @@ Popup {
                                 ColumnLayout {
                                     Layout.fillWidth: true; spacing: 2 * root.uiScale
                                     MeoText { text: root.accountBackend && root.accountBackend.signedIn ? qsTr("Meo Account connected") : qsTr("Meo Account not connected"); typeRole: "title"; typeSize: "small"; color: MeoTheme.contentOnSurface }
-                                    MeoText { Layout.fillWidth: true; text: qsTr("Provider keys remain local to the Account broker. Activity sync uses the manifest-scoped AI usage capability."); typeRole: "body"; typeSize: "small"; color: MeoTheme.contentOnSurfaceVariant; wrapMode: Text.Wrap }
+                                    MeoText { Layout.fillWidth: true; text: qsTr("Meo Account is optional for local AI and device settings. Sign in when you need cloud sync or account connections; credentials remain in the Account broker."); typeRole: "body"; typeSize: "small"; color: MeoTheme.contentOnSurfaceVariant; wrapMode: Text.Wrap }
                                 }
-                                MeoButton { text: qsTr("Account settings"); type: "tonal"; size: "xs"; enabled: root.accountBackend && root.accountBackend.serviceAvailable; onClicked: root.accountBackend.openProviderSettings() }
+                                MeoButton {
+                                    visible: root.accountBackend && !root.accountBackend.signedIn
+                                    text: qsTr("Sign in")
+                                    type: "filled"
+                                    size: "xs"
+                                    enabled: root.accountBackend && root.accountBackend.serviceAvailable && !root.accountBackend.busy
+                                    loading: root.accountBackend && root.accountBackend.busy
+                                    onClicked: root.accountBackend.signIn()
+                                }
+                                MeoButton { text: qsTr("Account settings"); type: "tonal"; size: "xs"; enabled: root.accountBackend && root.accountBackend.signedIn && !root.accountBackend.busy; onClicked: root.accountBackend.openProviderSettings() }
                             }
                         }
 
