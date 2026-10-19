@@ -120,6 +120,21 @@ class MeoApiClient {
         requestJson("DELETE", "$API_BASE/v1/ai/memories/${encodePath(id)}", accessToken)
     }
 
+    /** Account-owned Projects share IDs between Android and Web. Local desktop
+     * projects remain device-only until a separate migration/sync is approved.
+     */
+    fun listProjects(accessToken: String): JSONArray =
+        requestJson("GET", "$API_BASE/v1/projects", accessToken)
+            .optJSONArray("projects") ?: JSONArray()
+
+    fun createProject(accessToken: String, name: String): JSONObject =
+        requestJson("POST", "$API_BASE/v1/projects", accessToken,
+            JSONObject().put("name", name)).getJSONObject("project")
+
+    fun renameProject(accessToken: String, projectId: String, name: String): JSONObject =
+        requestJson("PATCH", "$API_BASE/v1/projects/${encodePath(projectId)}", accessToken,
+            JSONObject().put("name", name)).getJSONObject("project")
+
     fun listConversations(accessToken: String): List<Conversation> {
         val data = requestJson("GET", "$API_BASE/v1/conversations", accessToken)
         val rows = data.optJSONArray("conversations") ?: JSONArray()
