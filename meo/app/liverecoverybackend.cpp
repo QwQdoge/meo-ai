@@ -55,7 +55,16 @@ void LiveRecoveryBackend::refreshNetworks() {
     m_error.clear();
     m_scan = new QProcess(this);
     englishNmcli(m_scan);
-    connect(m_scan, &QProcess::finished, this, [this](int code, QProcess::ExitStatus exitStatus) {
+    QProcess *scan = m_scan;
+    connect(scan, &QProcess::errorOccurred, this, [this, scan](QProcess::ProcessError error) {
+        if (error != QProcess::FailedToStart || m_scan != scan) return;
+        m_error = QStringLiteral("Wi-Fi scan could not start. Open Network Settings.");
+        m_scan = nullptr;
+        scan->deleteLater();
+        updateStatus();
+    });
+    connect(scan, &QProcess::finished, this, [this, scan](int code, QProcess::ExitStatus exitStatus) {
+        if (m_scan != scan) return;
         const QString output = QString::fromUtf8(m_scan->readAllStandardOutput());
         const QString error = QString::fromUtf8(m_scan->readAllStandardError()).trimmed();
         m_scan->deleteLater();
@@ -100,7 +109,17 @@ void LiveRecoveryBackend::connectWifi(const QString &ssid, const QString &passwo
     englishNmcli(m_connect);
     // --ask receives credentials over stdin. The secret is never a command-line
     // argument, shell fragment, persisted QSettings value or diagnostic log.
-    connect(m_connect, &QProcess::readyReadStandardOutput, this, [this] {
+    QProcess *connection = m_connect;
+    connect(connection, &QProcess::errorOccurred, this, [this, connection](QProcess::ProcessError error) {
+        if (error != QProcess::FailedToStart || m_connect != connection) return;
+        m_pendingPassword.fill(QChar::Null);
+        m_pendingPassword.clear();
+        m_error = QStringLiteral("Wi-Fi connection could not start. Open Network Settings.");
+        m_connect = nullptr;
+        connection->deleteLater();
+        updateStatus();
+    });
+    connect(connection, &QProcess::readyReadStandardOutput, this, [this] {
         if (!m_connect) return;
         const QString prompt = QString::fromUtf8(m_connect->readAllStandardOutput());
         if (!m_passwordSupplied && prompt.contains(QStringLiteral("Password"), Qt::CaseInsensitive)) {
@@ -110,7 +129,8 @@ void LiveRecoveryBackend::connectWifi(const QString &ssid, const QString &passwo
             m_passwordSupplied = true;
         }
     });
-    connect(m_connect, &QProcess::finished, this, [this](int code, QProcess::ExitStatus status) {
+    connect(connection, &QProcess::finished, this, [this, connection](int code, QProcess::ExitStatus status) {
+        if (m_connect != connection) return;
         // Do not display arbitrary nmcli stderr: it can echo sensitive input.
         m_pendingPassword.fill(QChar::Null);
         m_pendingPassword.clear();
