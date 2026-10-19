@@ -238,5 +238,14 @@
   "meo.work.streamTooLarge": "The Agent event stream exceeded the safe browser buffer limit.",
   "meo.work.newTask": "New task",
   "meo.work.newTaskWarning": "This Agent run may still be active. Leaving its view will not stop it. Start another task anyway?",
-  "meo.work.eventGap": "Agent event history is incomplete. Reconnect to the same task to verify its status."
+  "meo.work.eventGap": "Agent event history is incomplete. Reconnect to the same task to verify its status.",
+  "meo.work.agentToolsLabel": "Workspace Agent tools",
+  "meo.work.agentToolsHint": "Allow this model to propose tasks for a selected workspace Agent. No action is executed without your approval.",
+  "meo.work.agentToolsOff": "Agent tools off",
+  "meo.work.agentToolsForProject": "Agent: {{project}}",
+  "meo.work.proposalTitle": "Model proposed a Work task",
+  "meo.work.proposalNotExecuted": "Nothing has been executed. Review the task and permissions in Work.",
+  "meo.work.reviewInWork": "Review in Work",
+  "meo.work.dismissProposal": "Dismiss",
+  "meo.work.agentToolsGeminiUnavailable": "Gemini tool-calling is not available in this Chat integration yet. Use the Work mode to delegate manually."
 }

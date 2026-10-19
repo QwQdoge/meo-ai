@@ -2,7 +2,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 're
 import { useTranslation } from 'react-i18next';
 import { useMeoSession } from './session';
 
-export type WorkHandoff = { id: number; text: string; conversationId: string };
+export type WorkHandoff = { id: number; text: string; conversationId: string; projectId?: string };
 
 type Workspace = {
   project_id: string;
@@ -104,6 +104,7 @@ export default function WorkSurface({ handoff, onChat }: {
     if (!handoff) return;
     setTask(handoff.text.slice(0, 35000));
     setHandoffConversationId(handoff.conversationId);
+    if (handoff.projectId) setProjectId(handoff.projectId);
   }, [handoff?.id]);
 
   // Disconnecting a browser event subscriber NEVER cancels remote AgentRun.
