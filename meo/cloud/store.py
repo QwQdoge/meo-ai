@@ -21,6 +21,10 @@ class CloudStore(Protocol):
         self, *, user_id: str, conversation_id: str, role: str, content: str,
     ) -> dict: ...
 
+    async def list_agent_runs(
+        self, *, user_id: str, limit: int = 30,
+    ) -> tuple[dict, ...]: ...
+
     async def list_agent_events(
         self, *, user_id: str, run_id: str, after: int, limit: int = 100,
     ) -> tuple[dict, ...]: ...
