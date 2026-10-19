@@ -125,12 +125,19 @@ private fun MeoApp(controller: MeoController) {
         controller.clearError()
     }
 
+    var guestSettings by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(state.signedIn) { if (state.signedIn) guestSettings = false }
     if (!state.signedIn) {
+        if (guestSettings) {
+            org.meo.ai.ui.SettingsScreen(controller, onClose = { guestSettings = false })
+            return
+        }
         SignInScreen(
             loading = state.loading,
             configured = BuildConfig.MEO_OAUTH_CLIENT_ID.isNotBlank(),
             snackbar = snackbar,
             onSignIn = controller::signIn,
+            onOpenSettings = { guestSettings = true },
         )
         return
     }
@@ -144,6 +151,7 @@ private fun SignInScreen(
     configured: Boolean,
     snackbar: SnackbarHostState,
     onSignIn: () -> Unit,
+    onOpenSettings: () -> Unit,
 ) {
     Scaffold(
         contentWindowInsets = WindowInsets.safeDrawing,
@@ -199,6 +207,9 @@ private fun SignInScreen(
                         }
                         Spacer(Modifier.size(8.dp))
                         Text("Continue with Meo Account")
+                    }
+                    TextButton(onClick = onOpenSettings) {
+                        Text("Local settings · no account required")
                     }
                     if (!configured) {
                         Text(
