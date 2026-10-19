@@ -111,6 +111,15 @@ function targetFor(request, env, relativePath) {
     return { url: target.toString(), method, body: null };
   }
 
+  // Account-owned Project API. Use a strict route/method allowlist; never proxy
+  // arbitrary upstream paths, project deletion or user-selected origins.
+  const projectRoot = relativePath === '/projects' && ['GET', 'POST'].includes(method);
+  const projectItem = /^\/projects\/[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(relativePath) && ['GET', 'PATCH'].includes(method);
+  const projectMemories = /^\/projects\/[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\/memories$/i.test(relativePath) && ['GET', 'POST'].includes(method);
+  if (projectRoot || projectItem || projectMemories) {
+    return { url: `${apiUrl(env)}/v1${relativePath}`, method, body: null };
+  }
+
   if (['/chat/prepare', '/chat/stream'].includes(relativePath) && method === 'POST') {
     return { url: `${apiUrl(env)}/v1${relativePath}`, method, body: null };
   }
