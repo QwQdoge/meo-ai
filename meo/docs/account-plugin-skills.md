@@ -28,7 +28,8 @@ Routes exposed through `meo-api`:
 | GET | `/v1/ai/catalog/mcp?q=search` | Server-side, bounded official MCP Registry search |
 | GET | `/v1/ai/catalog/github-skill?owner=...&repo=...&ref=...&path=.../SKILL.md` | Safe single-file public Skill preview |
 | GET | `/v1/ai/plugins/:id/tools` | Discover tools only from operator-pinned HTTPS MCP endpoints |
-| POST | `/v1/ai/plugins/:id/tools/call` | Explicit one-off MCP tool call with account authorization and confirmation |
+| POST | `/v1/ai/plugins/:id/tools/prepare` | Validate selected tool, generate short-lived server-side request bound to account and session |
+| POST | `/v1/ai/plugins/:id/tools/call` | Atomically consume matching one-time approval before calling remote MCP |
 
 Web BFF: `meo-ai/meo/web/client/functions/api/meo/[[path]].js`; public web clients must use account-authenticated API, never direct database credentials. The AI database stores `user_id` as the account UUID without cloning account PII.
 
@@ -51,12 +52,21 @@ The Meo API includes a small Streamable HTTP JSON-RPC client with:
 - MCP `initialize` handshake, `notifications/initialized`, session headers, `tools/list`, and `tools/call`.
 - Bounded responses, short timeouts, manual redirects disabled, JSON and SSE response parsing.
 - Account ownership and enablement checks for every operation.
-- Every tool call is explicitly chosen and confirmed in the UI; model-driven autonomous tool calling is NOT implemented.
+- Every tool call is explicitly selected and reviewed in the UI; model-driven autonomous tool calling is NOT implemented.
+- Requests have a **server-owned** 3-minute approval with user UUID, session UUID, plugin ID, tool name, arguments SHA-256 and endpoint SHA-256. No plaintext arguments are stored in the approval table.
+- `call` atomically claims that matching request, checks plugin enablement and endpoint integrity, and marks outcome. Approval cannot be reused, even after timeout (remote side effects may have occurred).
+- Prepared requests are bound to browser sessions during this beta; native/bearer calls need a separate designed approval UI and security review.
+- Web plugin libraries refresh on tab return/focus, while keeping unsaved local Skill drafts intact.
 - No OAuth, third-party headers/credentials, local stdio/CLI tools, legacy SSE fallback, prompts/resources, binary results, or long-running/resumable MCP sessions.
 - Protocol preview targets `2025-06-18`; servers negotiating other versions may not work. For broader protocol support the maintained MCP SDK is preferred in a future integration.
 - Tool results are untrusted output and never become privileged instructions.
 
-**Default-deny:** server execution requires the optional Cloudflare Worker env variable `MEO_MCP_TRUSTED_ENDPOINTS`, containing a comma-separated list of exact HTTPS endpoint URLs (including paths). Without this server-operator setting, tool discovery/calls fail with `mcp_endpoint_not_trusted` while saving/syncing the plugin still works. Do not expose this variable as an API parameter or let ordinary users modify it.
+**Default-deny (two layers):**
+
+1. `MEO_MCP_TRUSTED_ENDPOINTS`: optional server/operator Cloudflare variable with comma-separated exact HTTPS MCP endpoints (including paths).
+2. `MEO_MCP_ALLOWED_TOOLS`: optional server/operator JSON object mapping exact endpoint URLs to arrays of explicitly permitted tool names. Example (illustrative only): `{"https://trusted.example/mcp":["search","get_issue"]}`.
+
+Both settings must permit a tool. Unlisted tool names return `mcp_tool_not_authorized`; missing tool policy returns `mcp_tool_policy_missing`. Listings only show approved tool names. Normal account users cannot add server pins or modify this policy via API. Do not put third-party secrets into either setting.
 
 This strict pin list is a temporary beta guard, not a scalable OAuth/SSRF isolation architecture. A production-general plugin runner must use a dedicated, auditable egress authority capable of DNS resolution/private-range controls, origin constraints, redirect review, connection isolation, per-tool permission grants, usage limits and server-backed user approvals. Until that exists, arbitrary user-entered MCP endpoints remain **storage-only**.
 
@@ -76,7 +86,8 @@ Meo AI Chat / Work (explicit selected tool)
 - Local `stdio` MCP servers require a signed-in target device with a sandbox; Web cannot execute local commands.
 - Capability scopes, consent and revocation must be enforced by trusted server/runtime code, not prompts or `SKILL.md`.
 - An offline remote device must be shown as unavailable. Work uses authenticated resumable AgentRuns, not a second agent engine.
-- The beta `confirmation: run_once` API field is a UI intent signal, **not** proof of human approval against a malicious authenticated client. Do not rely on it for powerful privileges without server-issued, single-use approvals.
+- The previous `confirmation: run_once` shortcut was removed. The new server-side approval is a single-use replay/parameter guard, **not cryptographic proof that a human clicked the UI**: an attacker with a valid browser session can still issue a prepare and a call. High-impact privileges require a separate authenticated reauthentication/approval authority and tighter scoped grants before release.
+- Approval migration: `meo-api/migrations/ai/0013_mcp_tool_approvals.sql`. Its state must be present in `/v1/ready` before declaring the deployment healthy.
 
 ## Discovery sources
 
@@ -98,5 +109,5 @@ skills.sh currently documents a Vercel OIDC-authenticated API. As Meo API runs o
 6. Test disabled Skills, disabled plugins, invalid input, duplicate Skill names, URL restrictions, size limits and conflict responses (HTTP 409).
 7. Test Chat explicit Skill invocation with prepare/stream consent, switch Skill mid-session, and delete while selected. Verify no user-controlled Skill can acquire system permissions.
 8. Validate fixed-origin catalog and SKILL.md import against GitHub Actions mock tests; separately test the remote MCP preview with an operator-pinned, controlled test endpoint.
-9. Confirm untrusted custom MCP URLs and all endpoints without server pins fail closed; test tool-by-tool confirmation, session transport, JSON/SSE parsing, redirects, sizes and external auth rejection.
-10. Verify the production Worker actually has required schema and explicit `MEO_MCP_TRUSTED_ENDPOINTS` before marking any MCP tool reachable. No automatic model tool execution is implied.
+9. Confirm untrusted custom MCP URLs, endpoints without server pins, and tools without explicit policy all fail closed. Test one-time grants against account/session replay, changed args, expiry, disabled plugins, session transport, JSON/SSE parsing, redirects, sizes and external auth rejection.
+10. Verify production schema includes migrations 0012 and 0013 and the operator explicitly configured both `MEO_MCP_TRUSTED_ENDPOINTS` and `MEO_MCP_ALLOWED_TOOLS` before marking any tool reachable. No automatic model tool execution is implied.
