@@ -54,6 +54,16 @@ class MeoApiClient {
         return data.optString("sub") to data.optString("email")
     }
 
+    // Account-owned plugin records are shared with Meo Web. Native retrieval
+    // deliberately does not claim that local MCP stdio/OAuth execution is ready.
+    fun listAccountPlugins(accessToken: String): JSONArray =
+        requestJson("GET", "$API_BASE/v1/ai/plugins", accessToken)
+            .optJSONArray("plugins") ?: JSONArray()
+
+    fun listAccountPluginGrants(accessToken: String): JSONArray =
+        requestJson("GET", "$API_BASE/v1/ai/plugins/grants", accessToken)
+            .optJSONArray("grants") ?: JSONArray()
+
     // Shared cloud personalization API. This is the transport adapter only;
     // Compose owns the platform-specific UI and local preference storage.
     fun getAiSettings(accessToken: String): JSONObject =
