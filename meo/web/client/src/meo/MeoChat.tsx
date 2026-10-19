@@ -638,7 +638,7 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
     setRequestPhase('preparing');
     const nextMessages: Message[] = [...messages, { role: 'user', content: prompt }];
     const contextConversationId = activeConversationId || null;
-    const requestedWorkProject = workAgentProjectId || null;
+    const requestedWorkProject = selected?.provider === 'gemini' ? null : workAgentProjectId || null;
     try {
       const prepared = await json<{ consent: MeoConsent }>('/api/meo/chat/prepare', {
         method: 'POST',
@@ -840,7 +840,8 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
           </select>
           <select className="meo-chat-agent-select" aria-label={t('meo.work.agentToolsLabel')}
             title={t('meo.work.agentToolsHint')} value={workAgentProjectId}
-            onChange={(event) => { setWorkAgentProjectId(event.target.value); setAgentProposal(null); }} disabled={busy}>
+            onChange={(event) => { setWorkAgentProjectId(event.target.value); setAgentProposal(null); }}
+            disabled={busy || selected?.provider === 'gemini'}>
             <option value="">{t('meo.work.agentToolsOff')}</option>
             {agentWorkspaces.map((item) => (
               <option key={item.project_id} value={item.project_id}>
@@ -861,6 +862,9 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
       {selectedModelInfo?.description && modelDiscovery === 'ready' && (
         <p id="meo-chat-model-description" className="meo-chat-model-description"
           title={selectedModelInfo.description}>{selectedModelInfo.description}</p>
+      )}
+      {selected?.provider === 'gemini' && agentWorkspaces.length > 0 && (
+        <p className="meo-chat-model-description">{t('meo.work.agentToolsGeminiUnavailable')}</p>
       )}
       {modelDiscovery === 'unsupported' && (
         <p className="text-text-secondary text-sm">{t('meo_web_model_manual_fallback')}</p>
