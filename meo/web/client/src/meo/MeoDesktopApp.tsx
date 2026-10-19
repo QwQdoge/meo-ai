@@ -105,6 +105,9 @@ export default function MeoDesktopApp() {
   const [settingsDirty, setSettingsDirty] = useState(false);
   const [sidebarHidden, setSidebarHidden] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(false);
+  const [historyTarget, setHistoryTarget] = useState<HTMLDivElement | null>(null);
+  const [newChatRequest, setNewChatRequest] = useState(0);
+  const [chatBusy, setChatBusy] = useState(false);
   const [compact, setCompact] = useState(
     () => window.matchMedia("(max-width: 759px)").matches,
   );
@@ -130,6 +133,7 @@ export default function MeoDesktopApp() {
     const onKeyDown = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "n") {
         event.preventDefault();
+        if (chatBusy) return;
         if (
           mode === "settings" &&
           settingsDirty &&
@@ -138,12 +142,13 @@ export default function MeoDesktopApp() {
           return;
         setMode("chat");
         setMobileOpen(false);
+        setNewChatRequest((current) => current + 1);
         navigate("/new");
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [navigate, mode, settingsDirty, t]);
+  }, [navigate, mode, settingsDirty, t, chatBusy]);
 
   const accountLabel = useMemo(
     () => user?.name || user?.email || "Meo Account",
@@ -203,6 +208,7 @@ export default function MeoDesktopApp() {
         <button
           className="meo-desktop-nav meo-desktop-nav-primary"
           type="button"
+          disabled={chatBusy}
           onClick={() => {
             if (
               mode === "settings" &&
@@ -210,8 +216,10 @@ export default function MeoDesktopApp() {
               !window.confirm(t("meo.settings.discardConfirm"))
             )
               return;
+            if (chatBusy) return;
             setMode("chat");
             setMobileOpen(false);
+            setNewChatRequest((current) => current + 1);
             navigate("/new");
           }}
         >
@@ -244,19 +252,7 @@ export default function MeoDesktopApp() {
             ))}
         </nav>
 
-        {mode === "chat" && (
-          <div className="meo-desktop-current-chat">
-            <span className="meo-desktop-section-label">This conversation</span>
-            <button
-              className="meo-desktop-nav is-active"
-              type="button"
-              onClick={() => selectMode("chat")}
-            >
-              <Icon name="chat" />
-              <span>Current chat</span>
-            </button>
-          </div>
-        )}
+        {mode === "chat" && <div className="meo-desktop-history-slot" ref={setHistoryTarget} />}
 
         <div className="meo-desktop-sidebar-spacer" />
 
@@ -321,14 +317,14 @@ export default function MeoDesktopApp() {
               {mode === "settings"
                 ? t("meo.settings.title")
                 : mode === "chat"
-                  ? "Your space to think"
+                  ? "Meo AI"
                   : modeCopy[mode].title}
             </strong>
             <span>
               {mode === "settings"
                 ? t("meo.settings.general.description")
                 : mode === "chat"
-                  ? "Ready"
+                  ? t("meo.nav.chat")
                   : mode === "work"
                     ? "Choose where Meo AI can act"
                     : mode === "projects"
@@ -351,7 +347,12 @@ export default function MeoDesktopApp() {
             className="meo-desktop-chat-host"
             style={mode === "chat" ? undefined : { display: "none" }}
           >
-            <MeoChat />
+            <MeoChat
+              historyTarget={historyTarget}
+              newChatRequest={newChatRequest}
+              onBusyChange={setChatBusy}
+              onSelectConversation={() => setMobileOpen(false)}
+            />
           </div>
           {mode === "settings" ? (
             <SettingsCenter onDirty={setSettingsDirty} />
