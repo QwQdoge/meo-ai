@@ -544,6 +544,18 @@ ApplicationWindow {
                         HoverHandler { id: subtitleHover }
                     }
                 }
+                MeoButton {
+                    visible: window.liveRecoveryMode && !window.compact
+                    text: qsTr("Installer")
+                    type: "tonal"; size: "xs"
+                    onClicked: liveRecoveryBackend.openInstaller()
+                }
+                MeoButton {
+                    visible: window.liveRecoveryMode && !window.compact
+                    text: qsTr("Quick Repair")
+                    type: "outlined"; size: "xs"
+                    onClicked: liveRecoveryBackend.openQuickRepair()
+                }
                 MeoIconButton {
                     visible: window.compact
                     icon.name: "add"; type: "standard"; size: "xs"
