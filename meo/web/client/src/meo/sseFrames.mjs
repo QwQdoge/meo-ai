@@ -2,7 +2,7 @@
 // A bounded remainder prevents a malformed upstream response from accumulating
 // unbounded data in the browser. No model-supplied text is executed.
 export const MAX_STREAM_BUFFER_CHARS = 1_000_000;
-const boundaryPattern = /(?:\r\n|\n|\r){2}/g;
+const boundaryPattern = /\r\n\r\n|\r\n\n|\n\r\n|\n\n|\r\r/g;
 
 function parseFrame(raw) {
   let event = 'message';
