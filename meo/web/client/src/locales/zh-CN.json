@@ -261,5 +261,6 @@
   "meo.projects.empty": "还没有云端项目，可以先创建一个。",
   "meo.projects.noDescription": "暂无描述",
   "meo.projects.contextNote": "项目名称等信息保存在账号中。对话归属与工作区文件尚未在这里接通。",
-  "meo.projects.requestFailed": "项目服务不可用"
+  "meo.projects.requestFailed": "项目服务不可用",
+  "meo.work.restoredTask": "已恢复的远程任务"
 }
