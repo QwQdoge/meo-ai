@@ -9,6 +9,7 @@ import { useSearchParams } from 'react-router-dom';
 import type { MeoConsent } from './MeoConsentDialog';
 import MeoConsentDialog from './MeoConsentDialog';
 import { useMeoSession } from './session';
+import { ChatMarkdownImage, ChatMarkdownTable } from './ChatRichContent';
 
 type Connection = {
   id: string;
@@ -89,6 +90,7 @@ function MarkdownCodeBlock({ children }: { children?: ReactNode }) {
   const preRef = useRef<HTMLPreElement>(null);
   const [copied, setCopied] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
+  const [wrapLines, setWrapLines] = useState(false);
   useEffect(() => { setCopied(false); setCopyFailed(false); }, [children]);
   const childClass = isValidElement<{ className?: string }>(children) ? children.props.className : '';
   const language = childClass?.match(/(?:^|\s)language-([\w+#.-]+)/)?.[1];
@@ -111,12 +113,18 @@ function MarkdownCodeBlock({ children }: { children?: ReactNode }) {
     <div className="meo-chat-code-block">
       <div className="meo-chat-code-toolbar">
         <span>{language ?? t('meo_web_code')}</span>
-        <button type="button" onClick={copyCode} aria-label={t('meo_web_copy_code')}>
-          {copied ? t('meo_web_copied') : t('meo_web_copy')}
-        </button>
+        <div className="meo-chat-code-actions">
+          <button type="button" onClick={() => setWrapLines((current) => !current)}
+            aria-pressed={wrapLines} aria-label={t('meo_web_toggle_code_wrap')}>
+            {wrapLines ? t('meo_web_code_no_wrap') : t('meo_web_code_wrap')}
+          </button>
+          <button type="button" onClick={copyCode} aria-label={t('meo_web_copy_code')}>
+            {copied ? t('meo_web_copied') : t('meo_web_copy')}
+          </button>
+        </div>
       </div>
       {copyFailed && <span role="alert" className="meo-chat-copy-error">{t('meo_web_copy_failed')}</span>}
-      <pre ref={preRef}>{children}</pre>
+      <pre ref={preRef} className={wrapLines ? 'is-wrapped' : undefined}>{children}</pre>
     </div>
   );
 }
@@ -149,6 +157,12 @@ function CopyMessageButton({ content }: { content: string }) {
     </div>
   );
 }
+
+const chatMarkdownComponents = {
+  pre: MarkdownCodeBlock,
+  table: ChatMarkdownTable,
+  img: ChatMarkdownImage,
+};
 
 type MeoChatProps = {
   historyTarget: HTMLDivElement | null;
@@ -579,6 +593,28 @@ export default function MeoChat({ historyTarget, newChatRequest, onBusyChange, o
     streamAbortRef.current.abort();
   };
 
+  // Export what the user can see. This is a browser-only download, not an
+  // attempt to mutate server history or to include hidden tool payloads.
+  const exportVisibleChat = () => {
+    if (busy || messages.length === 0) return;
+    try {
+      const entries = messages.map((message) =>
+        `## ${message.role === 'user' ? t('meo_web_role_user') : t('meo_web_role_assistant')}\n\n${message.content}`,
+      ).join('\n\n---\n\n');
+      const blob = new Blob([`# Meo AI\n\n${entries}\n`], { type: 'text/markdown;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'meo-ai-conversation.md';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch {
+      setError(t('meo_web_export_failed'));
+    }
+  };
+
   return (
     <main className="meo-chat-root">
       <header className="meo-chat-toolbar">
@@ -604,6 +640,14 @@ export default function MeoChat({ historyTarget, newChatRequest, onBusyChange, o
               value={model} onChange={(event) => changeModel(event.target.value)} disabled={busy}
               placeholder={t('meo_web_model_id')} />
           )}
+          <button type="button" className="meo-chat-export"
+            onClick={exportVisibleChat} disabled={busy || messages.length === 0}
+            title={t('meo_web_export_visible')}>
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+              <path d="M12 3v12m-4-4 4 4 4-4" /><path d="M4 17v3h16v-3" />
+            </svg>
+            <span>{t('meo_web_export')}</span>
+          </button>
         </div>
       </header>
       {selectedModelInfo?.description && modelDiscovery === 'ready' && (
@@ -681,7 +725,7 @@ export default function MeoChat({ historyTarget, newChatRequest, onBusyChange, o
           >
             {message.role === 'assistant' ? (
               message.content ? <>
-                <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ pre: MarkdownCodeBlock }}>{message.content}</ReactMarkdown>
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>{message.content}</ReactMarkdown>
                 <CopyMessageButton content={message.content} />
               </> : (busy ? <span className="meo-chat-streaming-indicator" role="status">{t('meo_web_thinking')}</span> : null)
             ) : (
