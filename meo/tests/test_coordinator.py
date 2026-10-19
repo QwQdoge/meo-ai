@@ -62,6 +62,15 @@ class LocalSubagentCoordinatorTests(unittest.TestCase):
         self.assertEqual(last["value"], "2/2")
         self.assertIn("✓ Architecture", last["detail"])
         self.assertIn("✓ Tests", last["detail"])
+        active_cards = [event["card"] for event in events if event["card"]["task_tree"]]
+        self.assertTrue(active_cards)
+        ids = [node["id"] for node in last["task_tree"]]
+        self.assertEqual(len(set(ids)), 2)
+        self.assertTrue(all(node["id"].startswith("local:") for node in last["task_tree"]))
+        self.assertEqual([node["status"] for node in last["task_tree"]], ["completed", "completed"])
+        self.assertTrue(all(node["execution"] == "local" for node in last["task_tree"]))
+        self.assertTrue(all([node["id"] for node in card["task_tree"]] == ids for card in active_cards))
+        self.assertNotIn("instruction", repr(last["task_tree"]))
 
     def test_planner_cannot_create_more_than_three_subagents(self) -> None:
         backend = FakeAuxiliaryBackend([
