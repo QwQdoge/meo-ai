@@ -120,6 +120,15 @@ export async function exchangeCode(env, code, verifier, redirectUri) {
   });
 }
 
+// Do not turn a temporary Account outage into an invalid browser session.
+// Invalid grants remain terminal; server/network failures can be retried later
+// with the original, still-secret refresh token.
+function isTransientTokenError(error) {
+  if (!(error instanceof OAuthTokenExchangeError)) return false;
+  return error.reason === 'token_network_error' ||
+    /^token_(?:http_)?(?:429|5\\d\\d)(?:_|$)/.test(error.reason);
+}
+
 export async function refreshTokens(env, refreshToken) {
   try {
     return await tokenRequest(env, {
@@ -128,7 +137,8 @@ export async function refreshTokens(env, refreshToken) {
       client_id: env.MEO_OAUTH_CLIENT_ID,
       resource: 'https://api.meoarch.org',
     });
-  } catch {
+  } catch (error) {
+    if (isTransientTokenError(error)) throw error;
     return null;
   }
 }
@@ -165,7 +175,20 @@ export async function loadSession(request, env) {
     };
   }
 
-  const refreshed = await refreshTokens(env, existing.refreshToken);
+  let refreshed;
+  try {
+    refreshed = await refreshTokens(env, existing.refreshToken);
+  } catch (error) {
+    // 503 is not evidence of a revoked session. Return a temporary failure,
+    // preserve the encrypted cookie, and deny access until refresh succeeds.
+    return {
+      session: null,
+      cookie: null,
+      reason: isTransientTokenError(error)
+        ? 'refresh_temporarily_unavailable'
+        : 'refresh_failed',
+    };
+  }
   if (!refreshed?.access_token || !refreshed?.refresh_token) {
     return { session: null, cookie: null, reason: 'refresh_failed' };
   }
