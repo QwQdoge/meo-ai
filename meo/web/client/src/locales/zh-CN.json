@@ -247,5 +247,19 @@
   "meo.agentActivity.fullTask": "查看完整任务",
   "meo.agentActivity.timeline_one": "活动记录 · {{count}} 条",
   "meo.agentActivity.timeline_other": "活动记录 · {{count}} 条",
-  "meo.agentActivity.noEvents": "暂时没有收到活动事件。"
+  "meo.agentActivity.noEvents": "暂时没有收到活动事件。",
+  "meo.projects.title": "项目",
+  "meo.projects.cloudScope": "这里显示 Meo Account 云端项目。桌面端的本地项目暂不自动合并或同步。",
+  "meo.projects.new": "新建项目",
+  "meo.projects.name": "项目名称",
+  "meo.projects.create": "创建",
+  "meo.projects.cancel": "取消",
+  "meo.projects.save": "保存",
+  "meo.projects.rename": "重命名",
+  "meo.projects.retry": "重试",
+  "meo.projects.loading": "正在加载项目…",
+  "meo.projects.empty": "还没有云端项目，可以先创建一个。",
+  "meo.projects.noDescription": "暂无描述",
+  "meo.projects.contextNote": "项目名称等信息保存在账号中。对话归属与工作区文件尚未在这里接通。",
+  "meo.projects.requestFailed": "项目服务不可用"
 }
