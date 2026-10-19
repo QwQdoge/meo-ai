@@ -169,5 +169,11 @@
   "meo_web_details": "Chat details",
   "meo_web_details_subtitle": "About this conversation",
   "meo_web_close_details": "Close details",
-  "meo_web_details_unavailable": "Response details are not connected in this web preview yet. Chat and model selection remain available."
+  "meo_web_details_unavailable": "Response details are not connected in this web preview yet. Chat and model selection remain available.",
+  "meo_web_code": "Code",
+  "meo_web_copy": "Copy",
+  "meo_web_copied": "Copied",
+  "meo_web_copy_code": "Copy code",
+  "meo_web_copy_response": "Copy response",
+  "meo_web_scroll_latest": "Scroll to latest message"
 }
