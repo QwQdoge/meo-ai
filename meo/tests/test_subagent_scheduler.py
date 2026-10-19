@@ -183,7 +183,8 @@ class SubagentTaskSchedulerTests(unittest.IsolatedAsyncioTestCase):
         await self.scheduler.finish_root(owner_id="owner-a", root_run_id=self.root.task_id)
 
     async def test_bounded_events_and_gap_detection(self) -> None:
-        scheduler = SubagentTaskScheduler(max_events=3)
+        emitted = []
+        scheduler = SubagentTaskScheduler(max_events=3, on_event=emitted.append)
         root = scheduler.create_root(owner_id="owner-a", title="Root", capabilities=set())
         async def noisy(snapshot, cancellation, progress):
             for i in range(5):
@@ -196,7 +197,10 @@ class SubagentTaskSchedulerTests(unittest.IsolatedAsyncioTestCase):
         await scheduler.finish_root(owner_id="owner-a", root_run_id=root.task_id)
         with self.assertRaises(EventHistoryGap):
             scheduler.events(owner_id="owner-a", root_run_id=root.task_id, after=0)
-        retained = scheduler.events(owner_id="owner-a", root_run_id=root.task_id, after=5)
+        retained = scheduler.events(
+            owner_id="owner-a", root_run_id=root.task_id,
+            after=emitted[-3]["seq"] - 1,
+        )
         self.assertEqual([event["seq"] for event in retained], sorted(e["seq"] for e in retained))
         self.assertTrue(all(event["root_run_id"] == root.task_id for event in retained))
 
