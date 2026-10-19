@@ -6,6 +6,7 @@ import org.gradle.api.tasks.TaskAction
 import org.gradle.api.tasks.Exec
 import org.gradle.process.ExecOperations
 import javax.inject.Inject
+import java.net.URI
 
 plugins {
     id("com.android.application")
@@ -27,7 +28,7 @@ val configuredAgentCloud = providers.gradleProperty("MEO_AGENT_CLOUD_URL")
     .orElse(providers.environmentVariable("MEO_AGENT_CLOUD_URL"))
     .orElse("").get().trim().trimEnd('/')
 if (configuredAgentCloud.isNotEmpty()) {
-    val origin = java.net.URI(configuredAgentCloud)
+    val origin = URI(configuredAgentCloud)
     require(origin.scheme == "https" && !origin.host.isNullOrBlank() &&
         origin.userInfo == null && origin.rawPath.isNullOrEmpty() &&
         origin.rawQuery == null && origin.rawFragment == null) {
