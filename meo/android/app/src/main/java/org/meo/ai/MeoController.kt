@@ -38,6 +38,17 @@ data class CloudMemory(
     val enabled: Boolean,
 )
 
+/** Account-owned plugin metadata; this is not an executable native MCP connection. */
+data class AccountPlugin(
+    val id: String,
+    val name: String,
+    val description: String,
+    val kind: String,
+    val enabled: Boolean,
+    val skillCount: Int,
+    val grantedReadTools: List<String>,
+)
+
 data class MeoUiState(
     val signedIn: Boolean = false,
     val loading: Boolean = false,
@@ -55,6 +66,9 @@ data class MeoUiState(
     val cloudSettings: CloudSettings? = null,
     val cloudMemories: List<CloudMemory> = emptyList(),
     val archivedMemories: Boolean = false,
+    val plugins: List<AccountPlugin> = emptyList(),
+    val pluginsBusy: Boolean = false,
+    val pluginsError: String? = null,
     val personalizationBusy: Boolean = false,
     val personalizationError: String? = null,
     val memoryCreatedSerial: Int = 0,
@@ -329,6 +343,50 @@ class MeoController(private val activity: MainActivity) {
                 post {
                     state = state.copy(streaming = false, loading = false, error = readableError(cause))
                 }
+            }
+        }
+    }
+
+    /** Fetch the same account-scoped plugin inventory used on the web.
+     * Only metadata, enabled Skill counts and safe grant names are displayed.
+     * Tool execution/credentials remain owned by Meo API or the local broker.
+     */
+    fun loadAccountPlugins() {
+        if (!state.signedIn || state.pluginsBusy) return
+        state = state.copy(pluginsBusy = true, pluginsError = null)
+        executor.execute {
+            try {
+                val token = ensureFreshSession().accessToken
+                val rows = client.listAccountPlugins(token)
+                val grants = client.listAccountPluginGrants(token)
+                val grantNames = mutableMapOf<String, MutableList<String>>()
+                for (index in 0 until grants.length()) {
+                    val item = grants.optJSONObject(index) ?: continue
+                    val pluginId = item.optString("pluginId")
+                    val name = item.optString("toolName")
+                    if (pluginId.isNotBlank() && name.isNotBlank())
+                        grantNames.getOrPut(pluginId) { mutableListOf() }.add(name)
+                }
+                val plugins = buildList {
+                    for (index in 0 until rows.length()) {
+                        val row = rows.optJSONObject(index) ?: continue
+                        val id = row.optString("id")
+                        if (id.isBlank()) continue
+                        add(AccountPlugin(
+                            id = id,
+                            name = row.optString("name"),
+                            description = row.optString("description"),
+                            kind = row.optString("kind"),
+                            enabled = row.optBoolean("enabled", false),
+                            skillCount = row.optInt("skillCount", 0),
+                            grantedReadTools = grantNames[id].orEmpty(),
+                        ))
+                    }
+                }
+                post { state = state.copy(plugins = plugins, pluginsBusy = false, pluginsError = null) }
+            } catch (cause: Throwable) {
+                // Keep the last known list for display, but never mark it live.
+                post { state = state.copy(pluginsBusy = false, pluginsError = readableError(cause)) }
             }
         }
     }
