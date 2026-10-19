@@ -160,7 +160,13 @@ class NeonPostgresStore:
             raise ValueError("unsupported AgentRun fields")
         values = dict(values)
         values.setdefault("updated_at", datetime.now(timezone.utc))
-        assignments = ",".join(f"{key}=${index}" for index,key in enumerate(values,1))
+        # Event frames can arrive late after a reconnect. Cursor updates
+        # must be monotonic even when another relay handler raced ahead.
+        assignments = ",".join(
+            f"{key}=greatest(coalesce(last_event_seq,-1),${index})"
+            if key == "last_event_seq" else f"{key}=${index}"
+            for index,key in enumerate(values,1)
+        )
         params = list(values.values()) + [run_id,user_id]
         pool = await self._get_pool()
         await pool.execute(f"update ai_agent_runs set {assignments} where id=${len(values)+1}::uuid and user_id=${len(values)+2}::uuid",*params)
