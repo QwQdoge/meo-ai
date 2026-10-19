@@ -63,7 +63,7 @@ function targetFor(request, env, relativePath) {
   // Plugins and bundled skills are account-scoped Meo API resources.
   // Forward CRUD without copying OAuth tokens or MCP secrets into browser storage.
   if ((relativePath === '/ai/plugins' ||
-      /^\/ai\/plugins\/[0-9a-f-]{36}(?:\/skills)?$/i.test(relativePath)) &&
+      /^\/ai\/plugins\/[0-9a-f-]{36}(?:\/(?:skills|tools(?:\/call)?))?$/i.test(relativePath)) &&
       ['GET', 'POST', 'PATCH', 'PUT', 'DELETE'].includes(method)) {
     const target = new URL(apiUrl(env) + '/v1' + relativePath);
     target.search = new URL(request.url).search;
