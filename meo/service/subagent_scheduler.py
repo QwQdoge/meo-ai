@@ -189,10 +189,10 @@ class SubagentTaskScheduler:
         permission_mode: str | None = None,
     ) -> TaskSnapshot:
         parent = self._owned(owner_id, parent_task_id)
-        if parent.status != "running" or parent.cancelled.is_set():
-            raise RuntimeError("parent is not accepting children")
         if parent.depth >= MAX_DEPTH:
             raise ValueError("maximum subagent depth exceeded")
+        if parent.status != "running" or parent.cancelled.is_set():
+            raise RuntimeError("parent is not accepting children")
         if len(parent.children) >= MAX_CHILDREN:
             raise ValueError("maximum children per parent exceeded")
         if sum(x.root_run_id == parent.root_run_id for x in self._tasks.values()) >= MAX_TOTAL_TASKS:
