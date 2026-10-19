@@ -193,5 +193,8 @@
   "meo_web_export_visible": "Export the currently displayed conversation as Markdown",
   "meo_web_role_user": "You",
   "meo_web_role_assistant": "Meo AI",
-  "meo_web_export_failed": "The conversation could not be exported by this browser."
+  "meo_web_export_failed": "The conversation could not be exported by this browser.",
+  "meo_web_copy_user_message": "Copy your message",
+  "meo_web_enter_to_send_hint": "Enter to send · Shift+Enter for a new line · Draft stays in this tab",
+  "meo_web_ctrl_enter_to_send_hint": "Ctrl/⌘+Enter to send · Enter for a new line · Draft stays in this tab"
 }

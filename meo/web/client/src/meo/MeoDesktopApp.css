@@ -601,3 +601,46 @@
   .meo-chat-export span { display:none; }
   .meo-chat-table-scroll table { font-size: 12px; }
 }
+
+
+/* Quiet message actions and a keyboard/IME-friendly expanding composer. */
+.meo-chat-message-user .meo-chat-message-actions {
+  justify-content: flex-end;
+  margin-top: 3px;
+}
+.meo-chat-message-user .meo-chat-copy-message {
+  min-height: 26px;
+  padding: 2px 6px;
+  font-size: 11px;
+}
+.meo-chat-message-user .meo-chat-copy-message:hover,
+.meo-chat-message-user .meo-chat-copy-message:focus-visible {
+  background: rgb(var(--surface-tertiary));
+}
+.meo-chat-composer {
+  margin-bottom: 3px;
+}
+.meo-chat-textarea {
+  box-sizing: border-box;
+  resize: none;
+  min-height: 43px;
+  max-height: 180px;
+}
+.meo-chat-composer-hint {
+  flex-shrink: 0;
+  min-height: 18px;
+  margin: 0 auto max(12px, env(safe-area-inset-bottom));
+  width: min(850px, calc(100% - 36px));
+  color: rgb(var(--text-secondary));
+  text-align: center;
+  font-size: 11px;
+  line-height: 1.5;
+}
+@media (max-width: 759px) {
+  .meo-chat-composer { margin-bottom: 3px; }
+  .meo-chat-composer-hint {
+    width: calc(100% - 24px);
+    margin-bottom: max(8px, env(safe-area-inset-bottom));
+    font-size: 10px;
+  }
+}
