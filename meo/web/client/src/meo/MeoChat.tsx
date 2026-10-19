@@ -1,5 +1,5 @@
 import { useBrowserPreferences } from './browserPreferences';
-import { FormEvent, isValidElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { FormEvent, isValidElement, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import remarkGfm from 'remark-gfm';
@@ -10,6 +10,8 @@ import type { MeoConsent } from './MeoConsentDialog';
 import MeoConsentDialog from './MeoConsentDialog';
 import { useMeoSession } from './session';
 import { ChatMarkdownImage, ChatMarkdownTable } from './ChatRichContent';
+import { tokenizeCode } from './codeHighlight.mjs';
+import { MESSAGE_WINDOW_SIZE, transcriptWindow } from './transcriptWindow.mjs';
 import { chatDraftKey, readChatDraft, writeChatDraft } from './chatDrafts.mjs';
 
 type Connection = {
@@ -97,8 +99,14 @@ function MarkdownCodeBlock({ children }: { children?: ReactNode }) {
   const [copyFailed, setCopyFailed] = useState(false);
   const [wrapLines, setWrapLines] = useState(false);
   useEffect(() => { setCopied(false); setCopyFailed(false); }, [children]);
-  const childClass = isValidElement<{ className?: string }>(children) ? children.props.className : '';
-  const language = childClass?.match(/(?:^|\s)language-([\w+#.-]+)/)?.[1];
+  const codeElement = isValidElement<{ className?: string; children?: ReactNode }>(children) ? children : null;
+  const childClass = codeElement?.props.className ?? '';
+  const language = childClass.match(/(?:^|\s)language-([\w+#.-]+)/)?.[1];
+  const rawCode = codeElement?.props.children;
+  const highlightedCode = useMemo(
+    () => typeof rawCode === 'string' ? tokenizeCode(rawCode, language) : null,
+    [rawCode, language],
+  );
 
   const copyCode = async () => {
     const code = preRef.current?.textContent;
@@ -129,7 +137,17 @@ function MarkdownCodeBlock({ children }: { children?: ReactNode }) {
         </div>
       </div>
       {copyFailed && <span role="alert" className="meo-chat-copy-error">{t('meo_web_copy_failed')}</span>}
-      <pre ref={preRef} className={wrapLines ? 'is-wrapped' : undefined}>{children}</pre>
+      <pre ref={preRef} className={wrapLines ? 'is-wrapped' : undefined}>
+        {highlightedCode ? (
+          <code className={childClass}>
+            {highlightedCode.map((token, index) =>
+              token.kind === 'plain'
+                ? token.text
+                : <span className={`meo-code-token-${token.kind}`} key={index}>{token.text}</span>,
+            )}
+          </code>
+        ) : children}
+      </pre>
     </div>
   );
 }
@@ -162,6 +180,29 @@ function CopyMessageButton({ content, role = 'assistant' }: { content: string; r
       {copyFailed && <span role="alert" className="meo-chat-copy-error">{t('meo_web_copy_failed')}</span>}
     </div>
   );
+}
+
+const ChatMessage = memo(function ChatMessage({ message, waiting }: { message: Message; waiting: boolean }) {
+  return (
+    <article className={`meo-chat-message ${message.role === 'user' ? 'meo-chat-message-user' : 'meo-chat-message-assistant'}`}>
+      {message.role === 'assistant' ? (
+        message.content ? <>
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>{message.content}</ReactMarkdown>
+          <CopyMessageButton content={message.content} />
+        </> : (waiting ? <ChatMessageWaiting /> : null)
+      ) : (
+        <>
+          <p className="whitespace-pre-wrap">{message.content}</p>
+          <CopyMessageButton content={message.content} role="user" />
+        </>
+      )}
+    </article>
+  );
+});
+
+function ChatMessageWaiting() {
+  const { t } = useTranslation();
+  return <span className="meo-chat-streaming-indicator" role="status">{t('meo_web_thinking')}</span>;
 }
 
 const chatMarkdownComponents = {
@@ -215,6 +256,10 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
   const [models, setModels] = useState<Model[]>([]);
   const [modelDiscovery, setModelDiscovery] = useState<'idle' | 'unsupported' | 'ready'>('idle');
   const [messages, setMessages] = useState<Message[]>([]);
+  const [windowState, setWindowState] = useState({ conversationId: '', count: MESSAGE_WINDOW_SIZE });
+  const visibleCount = windowState.conversationId === activeConversationId ? windowState.count : MESSAGE_WINDOW_SIZE;
+  const visibleRange = transcriptWindow(messages.length, visibleCount);
+  const pendingOlderScrollRef = useRef<{ height: number; top: number } | null>(null);
   const [busy, setBusy] = useState(false);
   const [requestPhase, setRequestPhase] = useState<'idle' | 'preparing' | 'approval' | 'connecting' | 'streaming' | 'saving'>('idle');
   const [streamingActive, setStreamingActive] = useState(false);
@@ -260,6 +305,24 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
       setShowScrollToBottom(false);
     }
   }, [messages]);
+
+  useLayoutEffect(() => {
+    const anchor = pendingOlderScrollRef.current;
+    const container = streamRef.current;
+    if (!anchor || !container) return;
+    pendingOlderScrollRef.current = null;
+    container.scrollTop = anchor.top + container.scrollHeight - anchor.height;
+  }, [visibleCount, activeConversationId]);
+
+  const showEarlierMessages = () => {
+    const container = streamRef.current;
+    if (container) pendingOlderScrollRef.current = { height: container.scrollHeight, top: container.scrollTop };
+    followOutputRef.current = false;
+    setWindowState({
+      conversationId: activeConversationId,
+      count: visibleCount + MESSAGE_WINDOW_SIZE,
+    });
+  };
 
   const goToLatest = () => {
     followOutputRef.current = true;
@@ -451,6 +514,8 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
     // A new conversation starts empty, without clearing drafts of other chats.
     writeChatDraft(draftStorage(), user?.id, '', '');
     setDraftState({ key: chatDraftKey(user?.id, ''), text: '' });
+    setWindowState({ conversationId: '', count: MESSAGE_WINDOW_SIZE });
+    pendingOlderScrollRef.current = null;
     setActiveConversationId('');
     setMessages([]);
     setStopNotice(false);
@@ -472,6 +537,8 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
     setStopNotice(false);
     followOutputRef.current = true;
     setShowScrollToBottom(false);
+    setWindowState({ conversationId: conversation.id, count: MESSAGE_WINDOW_SIZE });
+    pendingOlderScrollRef.current = null;
     setActiveConversationId(conversation.id);
   };
 
@@ -768,23 +835,18 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
             </div>
           </div>
         )}
-        {messages.map((message, index) => (
-          <article
-            key={`${index}-${message.role}`}
-            className={`meo-chat-message ${message.role === 'user' ? 'meo-chat-message-user' : 'meo-chat-message-assistant'}`}
-          >
-            {message.role === 'assistant' ? (
-              message.content ? <>
-                <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>{message.content}</ReactMarkdown>
-                <CopyMessageButton content={message.content} />
-              </> : (busy ? <span className="meo-chat-streaming-indicator" role="status">{t('meo_web_thinking')}</span> : null)
-            ) : (
-              <>
-                <p className="whitespace-pre-wrap">{message.content}</p>
-                <CopyMessageButton content={message.content} role="user" />
-              </>
-            )}
-          </article>
+        {visibleRange.remaining > 0 && (
+          <button className="meo-chat-show-earlier" type="button" onClick={showEarlierMessages}>
+            {t('meo_web_show_earlier_messages', {
+              count: Math.min(MESSAGE_WINDOW_SIZE, visibleRange.remaining),
+              remaining: visibleRange.remaining,
+            })}
+          </button>
+        )}
+        {messages.slice(visibleRange.start).map((message, index) => (
+          <ChatMessage key={`${visibleRange.start + index}-${message.role}`}
+            message={message}
+            waiting={busy && visibleRange.start + index === messages.length - 1 && message.role === 'assistant'} />
         ))}
         {stopNotice && <p role="status" className="meo-chat-stop-notice">{t('meo_web_stop_notice')}</p>}
         {error && (
