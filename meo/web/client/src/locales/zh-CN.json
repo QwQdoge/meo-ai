@@ -208,5 +208,9 @@
   "meo.work.requestCancel": "请求取消",
   "meo.work.disconnectNote": "关闭网页只会断开进度更新，不会取消后台 Agent。应重新连接同一个任务，而不是重复提交。",
   "meo.work.delegateMessage": "交给 Work Agent",
-  "meo.work.delegateDraft": "将当前草稿交给 Work"
+  "meo.work.delegateDraft": "将当前草稿交给 Work",
+  "meo.work.approvalTitle": "Agent 正在等待你的批准",
+  "meo.work.streamTooLarge": "Agent 事件流超过了浏览器允许的安全缓冲区大小。",
+  "meo.work.newTask": "新任务",
+  "meo.work.newTaskWarning": "当前 Agent 任务可能仍在运行。切换到新任务不会停止原任务。仍然继续吗？"
 }
