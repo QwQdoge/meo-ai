@@ -11,6 +11,7 @@ import './AgentActivityPanel.css';
 export type AgentTaskNode = {
   id: string;
   title: string;
+  description?: string;
   relation: 'root' | 'subagent';
   execution: 'local' | 'remote' | 'cloud';
   status: string;
@@ -52,7 +53,7 @@ const knownStatuses = new Set([
 
 function TaskNode({ task, depth = 0 }: { task: AgentTaskNode; depth?: number }) {
   const { t } = useTranslation();
-  const status = knownStatuses.has(task.status) ? task.status : 'disconnected';
+  const status = knownStatuses.has(task.status) ? task.status : 'unknown';
   return (
     <div className="meo-agent-task-node" data-execution={task.execution}>
       <div className="meo-agent-task-node-main">
@@ -66,6 +67,12 @@ function TaskNode({ task, depth = 0 }: { task: AgentTaskNode; depth?: number }) 
           </>}
         </div>
         <strong className="meo-agent-task-title">{task.title}</strong>
+        {task.description && task.description !== task.title && (
+          <details className="meo-agent-task-description">
+            <summary>{t('meo.agentActivity.fullTask')}</summary>
+            <p>{task.description}</p>
+          </details>
+        )}
       </div>
       <span className="meo-agent-task-status" aria-label={t('meo.agentActivity.taskStatus', {
         status: t(`meo.agentActivity.status.${status}`),
