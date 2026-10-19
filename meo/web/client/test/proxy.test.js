@@ -158,6 +158,7 @@ test("Work submits only to the explicitly configured HTTPS Agent origin", async 
     assert.equal(init.method, "POST");
     assert.equal(new TextDecoder().decode(init.body), body);
     assert.equal(init.headers.get("Authorization"), "Bearer test-access");
+    assert.equal(init.headers.get("Cookie"), null, "Agent origin must not receive Meo Account cookies");
     return Response.json({ run_id: "00000000-0000-4000-8000-000000000004", status: "dispatching" });
   };
   const response = await onRequest({
