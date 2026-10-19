@@ -1,5 +1,6 @@
 import { useBrowserPreferences } from './browserPreferences';
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { FormEvent, isValidElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import remarkGfm from 'remark-gfm';
 import ReactMarkdown from 'react-markdown';
@@ -82,6 +83,62 @@ async function json<T>(url: string, init?: RequestInit): Promise<T> {
   return value as T;
 }
 
+/** ReactMarkdown owns parsing and URL safety. Keep copied output plain text. */
+function MarkdownCodeBlock({ children }: { children?: ReactNode }) {
+  const { t } = useTranslation();
+  const preRef = useRef<HTMLPreElement>(null);
+  const [copied, setCopied] = useState(false);
+  const childClass = isValidElement<{ className?: string }>(children) ? children.props.className : '';
+  const language = childClass?.match(/(?:^|\\s)language-([\\w+#.-]+)/)?.[1];
+
+  const copyCode = async () => {
+    const code = preRef.current?.textContent;
+    if (!code) return;
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
+      await navigator.clipboard.writeText(code);
+      setCopied(true);
+    } catch {
+      setCopied(false);
+    }
+  };
+
+  return (
+    <div className="meo-chat-code-block">
+      <div className="meo-chat-code-toolbar">
+        <span>{language ?? t('meo_web_code')}</span>
+        <button type="button" onClick={copyCode} aria-label={t('meo_web_copy_code')}>
+          {copied ? t('meo_web_copied') : t('meo_web_copy')}
+        </button>
+      </div>
+      <pre ref={preRef}>{children}</pre>
+    </div>
+  );
+}
+
+function CopyMessageButton({ content }: { content: string }) {
+  const { t } = useTranslation();
+  const [copied, setCopied] = useState(false);
+  useEffect(() => setCopied(false), [content]);
+
+  const copyMessage = async () => {
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
+      await navigator.clipboard.writeText(content);
+      setCopied(true);
+    } catch {
+      setCopied(false);
+    }
+  };
+
+  return (
+    <button className="meo-chat-copy-message" type="button" onClick={copyMessage}
+      aria-label={t('meo_web_copy_response')} title={t('meo_web_copy_response')}>
+      {copied ? t('meo_web_copied') : t('meo_web_copy')}
+    </button>
+  );
+}
+
 type MeoChatProps = {
   historyTarget: HTMLDivElement | null;
   newChatRequest: number;
@@ -100,6 +157,9 @@ export default function MeoChat({ historyTarget, newChatRequest, onBusyChange, o
   const [history, setHistory] = useState<Conversation[]>([]);
   const [historyQuery, setHistoryQuery] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const streamRef = useRef<HTMLElement>(null);
+  const followOutputRef = useRef(true);
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const lastNewChatRequestRef = useRef(newChatRequest);
   const [activeConversationId, setActiveConversationId] = useState('');
   const [connections, setConnections] = useState<Connection[]>([]);
@@ -127,6 +187,24 @@ export default function MeoChat({ historyTarget, newChatRequest, onBusyChange, o
   const filteredHistory = useMemo(() => history.filter((item) => item.title.toLocaleLowerCase().includes(historyQuery.trim().toLocaleLowerCase())), [history, historyQuery]);
 
   useEffect(() => onBusyChange(busy), [busy, onBusyChange]);
+
+  // Stream follow only while the user is near the latest message.
+  // Reading earlier content must not be interrupted by incoming tokens.
+  useEffect(() => {
+    if (!followOutputRef.current) return;
+    const container = streamRef.current;
+    if (container) {
+      container.scrollTop = container.scrollHeight;
+      setShowScrollToBottom(false);
+    }
+  }, [messages]);
+
+  const goToLatest = () => {
+    followOutputRef.current = true;
+    const container = streamRef.current;
+    if (container) container.scrollTop = container.scrollHeight;
+    setShowScrollToBottom(false);
+  };
 
   useEffect(
     () => () => {
@@ -302,6 +380,8 @@ export default function MeoChat({ historyTarget, newChatRequest, onBusyChange, o
 
   const startNewChat = () => {
     if (busy) return;
+    followOutputRef.current = true;
+    setShowScrollToBottom(false);
     setActiveConversationId('');
     setMessages([]);
     setDraft('');
@@ -322,6 +402,8 @@ export default function MeoChat({ historyTarget, newChatRequest, onBusyChange, o
     if (busy) return;
     setError('');
     setStopNotice(false);
+    followOutputRef.current = true;
+    setShowScrollToBottom(false);
     setActiveConversationId(conversation.id);
   };
 
@@ -354,6 +436,8 @@ export default function MeoChat({ historyTarget, newChatRequest, onBusyChange, o
     if (!prompt || busy || !credentialId || !model.trim()) return;
     setError('');
     setStopNotice(false);
+    followOutputRef.current = true;
+    setShowScrollToBottom(false);
     setBusy(true);
     const nextMessages: Message[] = [...messages, { role: 'user', content: prompt }];
     const contextConversationId = activeConversationId || null;
@@ -538,9 +622,17 @@ export default function MeoChat({ historyTarget, newChatRequest, onBusyChange, o
         </div>,
         historyTarget,
       )}
+      <div className="meo-chat-stream-shell">
       <section
+        ref={streamRef}
         aria-label={t('meo_web_conversation')}
         className={`meo-chat-stream ${messages.length === 0 ? 'is-empty' : ''}`}
+        onScroll={(event) => {
+          const element = event.currentTarget;
+          const away = element.scrollHeight - element.scrollTop - element.clientHeight > 120;
+          followOutputRef.current = !away;
+          setShowScrollToBottom(away);
+        }}
       >
         {(loading || historyLoading) && <p>{t('meo_web_loading')}</p>}
         {!loading && connections.length === 0 && <p className="meo-chat-connection-warning">{t('meo_web_no_connections')}</p>}
@@ -567,7 +659,10 @@ export default function MeoChat({ historyTarget, newChatRequest, onBusyChange, o
             className={`meo-chat-message ${message.role === 'user' ? 'meo-chat-message-user' : 'meo-chat-message-assistant'}`}
           >
             {message.role === 'assistant' ? (
-              message.content ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown> : (busy ? <span className="meo-chat-streaming-indicator" role="status">{t('meo_web_thinking')}</span> : null)
+              message.content ? <>
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ pre: MarkdownCodeBlock }}>{message.content}</ReactMarkdown>
+                <CopyMessageButton content={message.content} />
+              </> : (busy ? <span className="meo-chat-streaming-indicator" role="status">{t('meo_web_thinking')}</span> : null)
             ) : (
               <p className="whitespace-pre-wrap">{message.content}</p>
             )}
@@ -580,6 +675,16 @@ export default function MeoChat({ historyTarget, newChatRequest, onBusyChange, o
           </p>
         )}
       </section>
+      {showScrollToBottom && (
+        <button type="button" className="meo-chat-scroll-latest"
+          aria-label={t('meo_web_scroll_latest')} title={t('meo_web_scroll_latest')}
+          onClick={goToLatest}>
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 4v15m-6-6 6 6 6-6" />
+          </svg>
+        </button>
+      )}
+      </div>
       {pendingConsent && <MeoConsentDialog consent={pendingConsent} onResolve={resolveConsent} />}
       <form
         onSubmit={submit}
