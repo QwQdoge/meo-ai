@@ -379,3 +379,78 @@
 .meo-chat-stop-notice { width: 100%; max-width: 800px; margin: 0; color: rgb(var(--text-secondary)); font-size: 13px; line-height: 1.5; }
 .meo-chat-history-panel .meo-desktop-section-label { margin-top: 0; }
 .meo-desktop-inspector-empty { height: calc(100% - 80px); }
+
+
+/* Conversation content actions — preserve reader position during streaming. */
+.meo-chat-stream-shell { position: relative; display: flex; flex: 1; min-height: 0; }
+.meo-chat-scroll-latest {
+  position: absolute;
+  z-index: 2;
+  bottom: 13px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: grid;
+  place-items: center;
+  width: 39px;
+  height: 39px;
+  border-radius: 50%;
+  border: 1px solid rgb(var(--border-light));
+  color: rgb(var(--text-primary));
+  background: rgb(var(--surface-primary));
+  box-shadow: 0 4px 16px rgb(0 0 0 / .10);
+  cursor: pointer;
+}
+.meo-chat-scroll-latest:hover { background: rgb(var(--surface-secondary)); }
+.meo-chat-code-block {
+  overflow: hidden;
+  max-width: 100%;
+  margin: 16px 0;
+  border: 1px solid rgb(var(--border-light));
+  border-radius: 14px;
+  background: rgb(var(--surface-secondary));
+}
+.meo-chat-code-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 37px;
+  padding: 5px 12px;
+  border-bottom: 1px solid rgb(var(--border-light));
+  color: rgb(var(--text-secondary));
+  font-size: 12px;
+}
+.meo-chat-code-toolbar button {
+  border: 0;
+  border-radius: 8px;
+  min-height: 27px;
+  padding: 4px 8px;
+  background: transparent;
+  color: rgb(var(--text-primary));
+  font-size: 12px;
+}
+.meo-chat-code-toolbar button:hover { background: rgb(var(--surface-tertiary)); }
+.meo-chat-message-assistant .meo-chat-code-block pre {
+  margin: 0;
+  border-radius: 0;
+  background: transparent;
+  font-family: ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.meo-chat-copy-message {
+  min-height: 30px;
+  margin-top: 6px;
+  padding: 4px 10px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: rgb(var(--text-secondary));
+  font-size: 12px;
+}
+.meo-chat-copy-message:hover,
+.meo-chat-copy-message:focus-visible {
+  border-color: rgb(var(--border-light));
+  color: rgb(var(--text-primary));
+  background: rgb(var(--surface-secondary));
+}
