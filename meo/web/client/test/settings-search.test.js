@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { matchSettingsSections } from "../src/meo/settingsSearch.mjs";
 
-const catalogue = JSON.parse(readFileSync(new URL("../../../../ui-schema/settings.json", import.meta.url), "utf8")).sections;
+const catalogue = JSON.parse(readFileSync(new URL("../../../ui-schema/settings.json", import.meta.url), "utf8")).sections;
 
 test("empty search preserves schema order", () => {
   assert.deepEqual(matchSettingsSections(catalogue, "  ").map((s) => s.id), catalogue.map((s) => s.id));
