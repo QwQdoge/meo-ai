@@ -84,14 +84,18 @@ function Dialog({ dialog, act }: { dialog: Spec; act: Act }) {
       <div className="core-dialog" role="dialog" aria-modal="true" aria-label={dialog.title}>
         <h2>{dialog.title}</h2>
         {dialog.text && <p className="core-muted">{dialog.text}</p>}
-        {dialog.input && (
-          <input
-            autoFocus
-            value={value}
-            placeholder={dialog.input.placeholder}
-            onChange={(e) => setValue(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && confirm && run(confirm)}
-          />
+        {dialog.input && dialog.input.multiline ? (
+          <textarea autoFocus rows={5} value={value} placeholder={dialog.input.placeholder} onChange={(e) => setValue(e.target.value)} />
+        ) : (
+          dialog.input && (
+            <input
+              autoFocus
+              value={value}
+              placeholder={dialog.input.placeholder}
+              onChange={(e) => setValue(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && confirm && run(confirm)}
+            />
+          )
         )}
         <div className="core-dialog-actions">
           {cancel && <button className="core-button secondary" onClick={() => run(cancel)}>{cancel.label}</button>}
@@ -233,6 +237,22 @@ function Control({ item, act }: { item: Spec; act: Act }) {
   }
 }
 
+function CopyButton({ text }: { text: string }) {
+  const [done, setDone] = useState(false);
+  return (
+    <button
+      onClick={() => {
+        void navigator.clipboard?.writeText(text).then(() => {
+          setDone(true);
+          setTimeout(() => setDone(false), 1200);
+        });
+      }}
+    >
+      {done ? "Copied" : "Copy"}
+    </button>
+  );
+}
+
 /** Debounced search field; the text is sent as `text` on the search action. */
 function SearchBox({ search, act }: { search: Spec; act: Act }) {
   const [text, setText] = useState<string>(search.value ?? "");
@@ -328,15 +348,25 @@ function Conversation({ page, prefs, act }: { page: Spec; prefs: Spec; act: Act 
               <p className="core-muted">{page.empty.text}</p>
             </div>
           )}
-          {messages.map((m, i) =>
-            m.role === "user" ? (
-              <div key={i} className="core-bubble user">{m.text}</div>
-            ) : (
-              <div key={i} className="core-bubble assistant">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.text + (m.streaming ? " ▍" : "")}</ReactMarkdown>
-              </div>
-            ),
-          )}
+          {messages.map((m, i) => (
+            <div key={i} className={`core-message ${m.role === "user" ? "user" : "assistant"}`}>
+              {m.role === "user" ? (
+                <div className="core-bubble user">{m.text}</div>
+              ) : (
+                <div className="core-bubble assistant">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.text + (m.streaming ? " ▍" : "")}</ReactMarkdown>
+                </div>
+              )}
+              {!m.streaming && m.text && (
+                <div className="core-message-actions">
+                  <CopyButton text={m.text} />
+                  {(m.actions ?? []).map((a: Spec, j: number) => (
+                    <button key={j} onClick={() => act(a.action)}>{a.label}</button>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
           <div ref={end} />
         </div>
         {page.consent && (

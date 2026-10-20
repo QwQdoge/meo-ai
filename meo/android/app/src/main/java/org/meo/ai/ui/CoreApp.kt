@@ -78,6 +78,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isShiftPressed
@@ -214,7 +216,8 @@ private fun CoreDialog(dialog: JSONObject, act: Act) {
                     OutlinedTextField(
                         value = value,
                         onValueChange = { value = it },
-                        singleLine = true,
+                        singleLine = !input.optBoolean("multiline"),
+                        minLines = if (input.optBoolean("multiline")) 4 else 1,
                         placeholder = { Text(input.str("placeholder")) },
                         modifier = Modifier.fillMaxWidth(),
                     )
@@ -585,7 +588,7 @@ private fun ChatPane(page: JSONObject, prefs: JSONObject?, onMenu: (() -> Unit)?
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                items(messages) { MessageBubble(it) }
+                items(messages) { MessageBubble(it, act) }
             }
         }
         if (consent != null) {
@@ -604,12 +607,13 @@ private fun ChatPane(page: JSONObject, prefs: JSONObject?, onMenu: (() -> Unit)?
 }
 
 @Composable
-private fun MessageBubble(message: JSONObject) {
+private fun MessageBubble(message: JSONObject, act: Act) {
     val mine = message.str("role") == "user"
     val streaming = message.optBoolean("streaming")
     val text = message.str("text") + if (streaming) " ▍" else ""
-    if (mine) {
-        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
+    val clipboard = LocalClipboardManager.current
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = if (mine) Alignment.End else Alignment.Start) {
+        if (mine) {
             Surface(
                 shape = RoundedCornerShape(18.dp),
                 color = MaterialTheme.colorScheme.secondaryContainer,
@@ -619,10 +623,18 @@ private fun MessageBubble(message: JSONObject) {
                     Text(text, Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
                 }
             }
+        } else {
+            SelectionContainer {
+                RichBlockRenderer(blocksJson = markdownBlocks(text), modifier = Modifier.fillMaxWidth())
+            }
         }
-    } else {
-        SelectionContainer {
-            RichBlockRenderer(blocksJson = markdownBlocks(text), modifier = Modifier.fillMaxWidth())
+        if (!streaming && message.str("text").isNotEmpty()) {
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                TextButton(onClick = { clipboard.setText(AnnotatedString(message.str("text"))) }) { Text("Copy") }
+                message.list("actions").forEach { entry ->
+                    TextButton(onClick = { act.send(entry.obj("action")) }) { Text(entry.str("label")) }
+                }
+            }
         }
     }
 }

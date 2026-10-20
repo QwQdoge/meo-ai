@@ -44,6 +44,9 @@ pub struct ConversationSummary {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ChatMessage {
+    /// Server message id; empty for a message not yet synced (older caches too).
+    #[serde(default)]
+    pub id: String,
     pub role: String,
     pub text: String,
 }
@@ -217,6 +220,7 @@ impl MeoApi {
                 }
                 let text = content_text(&row["content"]);
                 (!text.trim().is_empty()).then(|| ChatMessage {
+                    id: row["id"].as_str().unwrap_or_default().to_owned(),
                     role: role.to_owned(),
                     text,
                 })
@@ -240,6 +244,19 @@ impl MeoApi {
         )
         .await
         .map(|_| ())
+    }
+
+    /// Deletes message `from` and every later one (regenerate, edit and resend).
+    pub async fn truncate_messages(
+        &self,
+        token: &str,
+        conversation_id: &str,
+        from: &str,
+    ) -> Result<(), ApiError> {
+        let path = format!("/v1/conversations/{conversation_id}/messages/truncate");
+        self.request(token, Method::POST, &path, Some(json!({ "from": from })))
+            .await
+            .map(|_| ())
     }
 
     async fn broker(&self, token: &str, body: Value) -> Result<Value, ApiError> {

@@ -84,6 +84,17 @@ pub enum Action {
         id: String,
     },
     CloseDialog,
+    /// Generates a new answer to the last user message (deletes the old answer).
+    Regenerate,
+    /// Asks again after a failed answer, without saving the prompt twice.
+    Retry,
+    BeginEdit {
+        id: String,
+    },
+    EditMessage {
+        id: String,
+        text: String,
+    },
     /// Long-running: keeps this device in sync with the user's other devices.
     /// Hosts dispatch it once after `Start` as its own task; extra calls return at once.
     Realtime,
@@ -107,6 +118,8 @@ enum AuthState {
 
 #[derive(Clone)]
 struct PendingSend {
+    /// Save the prompt as a user message before streaming (false when it is already saved).
+    save_prompt: bool,
     conversation_id: String,
     prompt: String,
     request: Value,
@@ -117,6 +130,7 @@ struct PendingSend {
 #[derive(Clone)]
 struct Dialog {
     kind: &'static str,
+    multiline: bool,
     title: String,
     text: String,
     value: String,
@@ -291,6 +305,10 @@ impl AppCore {
             Action::BeginDelete { id } => self.begin_delete(id),
             Action::DeleteConversation { id } => self.delete_conversation(id).await,
             Action::CloseDialog => self.update(|s| s.dialog = None),
+            Action::Regenerate => self.regenerate().await,
+            Action::Retry => self.retry().await,
+            Action::BeginEdit { id } => self.begin_edit(id),
+            Action::EditMessage { id, text } => self.edit_message(id, text).await,
         }
     }
 
@@ -593,6 +611,7 @@ impl AppCore {
         self.update(|s| {
             s.dialog = Some(Dialog {
                 kind: "prompt",
+                multiline: false,
                 title: "Rename chat".into(),
                 text: String::new(),
                 value: title,
@@ -612,6 +631,7 @@ impl AppCore {
         self.update(|s| {
             s.dialog = Some(Dialog {
                 kind: "confirm",
+                multiline: false,
                 title: "Delete this chat?".into(),
                 text: "The chat and its messages are removed from every device. This cannot be undone.".into(),
                 value: String::new(),
@@ -770,6 +790,12 @@ impl AppCore {
     // ---- chat ----------------------------------------------------------
 
     async fn send(&self, text: String) {
+        self.turn(text, true, true).await;
+    }
+
+    /// One question/answer round. `push_local`: show the prompt as a new message;
+    /// `save_prompt`: store it on the server before streaming.
+    async fn turn(&self, text: String, push_local: bool, save_prompt: bool) {
         let text = text.trim().to_owned();
         let (selected, active, busy) = {
             let s = self.state.lock().unwrap();
@@ -808,7 +834,9 @@ impl AppCore {
                 }
             }
         };
-        self.push_message(&conversation_id, "user", &text);
+        if push_local {
+            self.push_message(&conversation_id, "user", &text);
+        }
         let request = json!({ "credentialId": credential, "model": model, "prompt": text, "conversationId": conversation_id });
         let consent = match self
             .call(|api, t| {
@@ -821,6 +849,7 @@ impl AppCore {
             Err(e) => return self.notice("error", e.to_string()),
         };
         let pending = PendingSend {
+            save_prompt,
             conversation_id,
             prompt: text,
             request,
@@ -841,12 +870,124 @@ impl AppCore {
         }
     }
 
+    fn active_messages(&self) -> Option<(String, Vec<ChatMessage>, bool)> {
+        let s = self.state.lock().unwrap();
+        let id = s.active.clone()?;
+        let list = s.messages.get(&id).cloned().unwrap_or_default();
+        Some((id, list, s.streaming.is_some()))
+    }
+
+    /// Removes messages from `index` on, on the server and in the local cache.
+    async fn truncate_from(&self, conversation_id: &str, index: usize, message_id: &str) -> bool {
+        let result = self
+            .call(|api, t| {
+                let (cid, mid) = (conversation_id.to_owned(), message_id.to_owned());
+                async move { api.truncate_messages(&t, &cid, &mid).await }
+            })
+            .await;
+        if let Err(e) = result {
+            self.notice("error", e.to_string());
+            return false;
+        }
+        let snapshot = {
+            let mut s = self.state.lock().unwrap();
+            let list = s.messages.entry(conversation_id.to_owned()).or_default();
+            list.truncate(index);
+            list.clone()
+        };
+        self.save_json(&format!("messages-{conversation_id}"), &snapshot);
+        self.hooks.changed();
+        true
+    }
+
+    async fn regenerate(&self) {
+        let Some((cid, mut list, busy)) = self.active_messages() else {
+            return;
+        };
+        if busy {
+            return;
+        }
+        if list.last().is_some_and(|m| m.id.is_empty()) {
+            self.refresh_messages(&cid).await;
+            list = self
+                .active_messages()
+                .map(|(_, l, _)| l)
+                .unwrap_or_default();
+        }
+        let n = list.len();
+        let (Some(last), Some(prompt)) = (list.last(), n.checked_sub(2).and_then(|i| list.get(i)))
+        else {
+            return;
+        };
+        if last.role != "assistant" || last.id.is_empty() || prompt.role != "user" {
+            return;
+        }
+        let (text, last_id) = (prompt.text.clone(), last.id.clone());
+        if self.truncate_from(&cid, n - 1, &last_id).await {
+            self.turn(text, false, false).await;
+        }
+    }
+
+    async fn retry(&self) {
+        let Some((_, list, busy)) = self.active_messages() else {
+            return;
+        };
+        if let Some(last) = list.last().filter(|m| m.role == "user" && !busy) {
+            self.turn(last.text.clone(), false, false).await;
+        }
+    }
+
+    fn begin_edit(&self, id: String) {
+        let Some((_, list, _)) = self.active_messages() else {
+            return;
+        };
+        let Some(message) = list.iter().find(|m| m.id == id && m.role == "user") else {
+            return;
+        };
+        let value = message.text.clone();
+        self.update(|s| {
+            s.dialog = Some(Dialog {
+                kind: "prompt",
+                multiline: true,
+                title: "Edit message".into(),
+                text: "Everything after this message is replaced by a new answer.".into(),
+                value,
+                actions: vec![
+                    input_button(
+                        "Send",
+                        "primary",
+                        json!({ "type": "edit_message", "id": id }),
+                    ),
+                    button("Cancel", "secondary", json!({ "type": "close_dialog" })),
+                ],
+            })
+        });
+    }
+
+    async fn edit_message(&self, id: String, text: String) {
+        self.update(|s| s.dialog = None);
+        let text = text.trim().to_owned();
+        let Some((cid, list, busy)) = self.active_messages() else {
+            return;
+        };
+        let Some(index) = list.iter().position(|m| m.id == id && m.role == "user") else {
+            return;
+        };
+        if busy || text.is_empty() {
+            return;
+        }
+        if self.truncate_from(&cid, index, &id).await {
+            self.turn(text, true, true).await;
+        }
+    }
+
     fn push_message(&self, conversation_id: &str, role: &str, text: &str) {
         let key = format!("messages-{conversation_id}");
         let snapshot = {
             let mut s = self.state.lock().unwrap();
             let list = s.messages.entry(conversation_id.to_owned()).or_default();
             list.push(ChatMessage {
+                id: String::new(),
                 role: role.to_owned(),
                 text: text.to_owned(),
             });
@@ -866,14 +1007,16 @@ impl AppCore {
         let id = pending.conversation_id.clone();
         // Save the prompt first so the user's other devices see it while the answer streams.
         let user = pending.prompt.clone();
-        let saved = self
-            .call(|api, t| {
-                let (id, user) = (id.clone(), user.clone());
-                async move { api.append_message(&t, &id, "user", &user).await }
-            })
-            .await;
-        if let Err(e) = saved {
-            return self.notice("error", e.to_string());
+        if pending.save_prompt {
+            let saved = self
+                .call(|api, t| {
+                    let (id, user) = (id.clone(), user.clone());
+                    async move { api.append_message(&t, &id, "user", &user).await }
+                })
+                .await;
+            if let Err(e) = saved {
+                return self.notice("error", e.to_string());
+            }
         }
         self.cancel.store(false, Ordering::SeqCst);
         self.update(|s| s.streaming = Some((id.clone(), String::new())));
@@ -922,6 +1065,8 @@ impl AppCore {
                     async move { api.append_message(&t, &id, "assistant", &reply).await }
                 })
                 .await;
+            // Pick up server ids so the new messages can be edited or regenerated.
+            self.refresh_messages(&id).await;
         }
         match failure {
             Some(e) => self.notice("error", e),
@@ -1053,7 +1198,7 @@ impl AppCore {
                 "kind": d.kind,
                 "title": d.title,
                 "text": d.text,
-                "input": (d.kind == "prompt").then(|| json!({ "value": d.value, "placeholder": "Title" })),
+                "input": (d.kind == "prompt").then(|| json!({ "value": d.value, "placeholder": if d.multiline { "Message" } else { "Title" }, "multiline": d.multiline })),
                 "actions": d.actions,
             })),
             "notice": s.notice.as_ref().map(|(kind, text)| json!({
@@ -1205,8 +1350,23 @@ fn conversation_page(s: &State) -> Value {
         .as_ref()
         .and_then(|id| s.messages.get(id))
         .map(|list| {
+            let last = list.len().saturating_sub(1);
             list.iter()
-                .map(|m| json!({ "role": m.role, "text": m.text, "streaming": false }))
+                .enumerate()
+                .map(|(i, m)| {
+                    let mut actions = Vec::new();
+                    if !m.id.is_empty() && s.streaming.is_none() {
+                        if m.role == "user" {
+                            actions.push(button("Edit", "secondary", json!({ "type": "begin_edit", "id": m.id })));
+                            if i == last {
+                                actions.push(button("Retry", "secondary", json!({ "type": "retry" })));
+                            }
+                        } else if i == last {
+                            actions.push(button("Regenerate", "secondary", json!({ "type": "regenerate" })));
+                        }
+                    }
+                    json!({ "id": m.id, "role": m.role, "text": m.text, "streaming": false, "actions": actions })
+                })
                 .collect()
         })
         .unwrap_or_default();
@@ -1497,6 +1657,80 @@ mod tests {
         assert!(s.active.is_none() && s.remote_run.is_none() && !s.messages.contains_key("c1"));
     }
 
+    fn message(id: &str, role: &str, text: &str) -> ChatMessage {
+        ChatMessage {
+            id: id.into(),
+            role: role.into(),
+            text: text.into(),
+        }
+    }
+
+    #[test]
+    fn messages_offer_edit_regenerate_and_retry() {
+        let c = signed_in_core();
+        c.update(|s| {
+            s.messages.insert(
+                "c1".into(),
+                vec![
+                    message("m1", "user", "q1"),
+                    message("m2", "assistant", "a1"),
+                    message("m3", "user", "q2"),
+                    message("m4", "assistant", "a2"),
+                ],
+            );
+        });
+        let view = c.view();
+        let msgs = view["page"]["messages"].as_array().unwrap();
+        assert_eq!(
+            msgs[0]["actions"][0]["action"],
+            json!({ "type": "begin_edit", "id": "m1" })
+        );
+        assert_eq!(
+            msgs[1]["actions"],
+            json!([]),
+            "only the last answer can be regenerated"
+        );
+        assert_eq!(msgs[3]["actions"][0]["action"]["type"], "regenerate");
+
+        c.update(|s| {
+            s.messages
+                .insert("c1".into(), vec![message("m1", "user", "q1")]);
+        });
+        let msgs = c.view()["page"]["messages"].clone();
+        assert_eq!(
+            msgs[0]["actions"][1]["action"]["type"], "retry",
+            "a user message without an answer can be retried"
+        );
+
+        c.update(|s| {
+            s.messages
+                .insert("c1".into(), vec![message("", "assistant", "unsynced")]);
+        });
+        assert_eq!(
+            c.view()["page"]["messages"][0]["actions"],
+            json!([]),
+            "unsynced messages have no actions"
+        );
+    }
+
+    #[test]
+    fn editing_opens_a_multiline_prompt_with_the_original_text() {
+        let c = signed_in_core();
+        c.update(|s| {
+            s.messages
+                .insert("c1".into(), vec![message("m1", "user", "original text")]);
+        });
+        c.begin_edit("m1".into());
+        let dialog = c.view()["dialog"].clone();
+        assert_eq!(dialog["input"]["value"], "original text");
+        assert_eq!(dialog["input"]["multiline"], true);
+        assert_eq!(
+            dialog["actions"][0]["action"],
+            json!({ "type": "edit_message", "id": "m1" })
+        );
+        assert_eq!(dialog["actions"][0]["withInput"], true);
+    }
+
     #[test]
     fn new_actions_round_trip_as_tagged_json() {
         for action in [
@@ -1506,6 +1740,10 @@ mod tests {
             json!({ "type": "archive_conversation", "id": "c", "archived": true }),
             json!({ "type": "delete_conversation", "id": "c" }),
             json!({ "type": "close_dialog" }),
+            json!({ "type": "regenerate" }),
+            json!({ "type": "retry" }),
+            json!({ "type": "begin_edit", "id": "m" }),
+            json!({ "type": "edit_message", "id": "m", "text": "t" }),
         ] {
             assert!(
                 serde_json::from_value::<Action>(action.clone()).is_ok(),
