@@ -109,6 +109,10 @@ pub enum Action {
         name: String,
         text: String,
     },
+    /// Desktop: a file path (or `file://` URL) picked in the file dialog; the core reads the text.
+    AttachPath {
+        path: String,
+    },
     RemoveFile {
         id: String,
     },
@@ -373,6 +377,7 @@ impl AppCore {
             Action::Regenerate => self.regenerate().await,
             Action::Retry => self.retry().await,
             Action::AttachText { name, text } => self.attach_text(name, text).await,
+            Action::AttachPath { path } => self.attach_path(path).await,
             Action::RemoveFile { id } => self.remove_file(id).await,
             Action::OpenProject { id } => self.open_project(id).await,
             Action::BeginNewProject => self.prompt(
@@ -787,6 +792,41 @@ impl AppCore {
             ),
             Err(e) => self.notice("error", e.to_string()),
         }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    async fn attach_path(&self, path: String) {
+        let local = path.strip_prefix("file://").unwrap_or(&path);
+        let local = url::Url::parse(&path)
+            .ok()
+            .and_then(|u| u.to_file_path().ok())
+            .unwrap_or_else(|| std::path::PathBuf::from(local));
+        let name = local
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        match std::fs::metadata(&local) {
+            Ok(m) if m.len() > 2 * 1024 * 1024 => {
+                return self.notice(
+                    "error",
+                    "That file is larger than 2 MB; attach a smaller text file.",
+                );
+            }
+            Err(e) => return self.notice("error", format!("Could not read the file: {e}")),
+            Ok(_) => {}
+        }
+        match std::fs::read(&local) {
+            Ok(bytes) => match String::from_utf8(bytes) {
+                Ok(text) => self.attach_text(name, text).await,
+                Err(_) => self.notice("error", "Only text files can be attached."),
+            },
+            Err(e) => self.notice("error", format!("Could not read the file: {e}")),
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    async fn attach_path(&self, _path: String) {
+        self.notice("error", "Attach a file with the file picker.");
     }
 
     async fn remove_file(&self, id: String) {

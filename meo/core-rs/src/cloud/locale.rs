@@ -131,8 +131,16 @@ pub fn localize(view: &mut Value, locale: &str) {
                     empty["text"] = Value::String(format!("使用 {text}"));
                 }
             }
+            for file in each(page, "files") {
+                if let Some(remove) = file.get_mut("remove") {
+                    field(c, remove, "label");
+                }
+            }
             if let Some(composer) = page.get_mut("composer") {
                 field(c, composer, "placeholder");
+                if let Some(attach) = composer.get_mut("attach") {
+                    field(c, attach, "label");
+                }
                 for item in each(composer, "toolbar") {
                     control(c, item);
                 }

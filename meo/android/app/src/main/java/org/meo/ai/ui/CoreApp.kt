@@ -1,6 +1,9 @@
 package org.meo.ai.ui
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -27,6 +30,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.AttachFile
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.ChatBubble
 import androidx.compose.material.icons.rounded.Extension
@@ -41,6 +45,7 @@ import androidx.compose.material.icons.rounded.Work
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.InputChip
 import androidx.compose.material3.Card
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.CircularProgressIndicator
@@ -79,6 +84,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -619,7 +625,7 @@ private fun ChatPane(page: JSONObject, prefs: JSONObject?, strings: JSONObject, 
                 }
             }
         }
-        Composer(composer, prefs, strings, act)
+        Composer(composer, page.list("files"), prefs, strings, act)
     }
 }
 
@@ -657,7 +663,7 @@ private fun MessageBubble(message: JSONObject, strings: JSONObject, act: Act) {
 }
 
 @Composable
-private fun Composer(composer: JSONObject, prefs: JSONObject?, strings: JSONObject, act: Act) {
+private fun Composer(composer: JSONObject, files: List<JSONObject>, prefs: JSONObject?, strings: JSONObject, act: Act) {
     var input by remember { mutableStateOf("") }
     val busy = composer.optBoolean("busy")
     val enterSends = prefs?.optBoolean("general.enter_to_send", true) ?: true
@@ -669,9 +675,47 @@ private fun Composer(composer: JSONObject, prefs: JSONObject?, strings: JSONObje
             input = ""
         }
     }
+    val context = LocalContext.current
+    val attach = composer.obj("attach")
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null && attach != null) {
+            val resolver = context.contentResolver
+            val name = resolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
+                ?.use { if (it.moveToFirst()) it.getString(0) else null } ?: "file.txt"
+            val text = runCatching {
+                resolver.openInputStream(uri)?.use { it.readBytes() }?.takeIf { it.size <= 2 * 1024 * 1024 }?.let {
+                    Charsets.UTF_8.newDecoder()
+                        .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+                        .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
+                        .decode(java.nio.ByteBuffer.wrap(it)).toString()
+                }
+            }.getOrNull()
+            if (text == null) {
+                android.widget.Toast.makeText(context, "Only text files up to 2 MB can be attached.", android.widget.Toast.LENGTH_SHORT).show()
+            } else {
+                act(JSONObject().put("type", attach.str("action")).put("name", name).put("text", text))
+            }
+        }
+    }
     Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (files.isNotEmpty()) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                files.forEach { file ->
+                    InputChip(
+                        selected = false,
+                        onClick = { act.send(file.obj("remove")?.obj("action")) },
+                        label = { Text("${file.str("name")} · ${file.str("subtitle")}  ✕", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    )
+                }
+            }
+        }
         composer.list("toolbar").forEach { SettingControl(it, act) }
         Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (attach != null) {
+                IconButton(onClick = { picker.launch(arrayOf("text/*", "application/json", "application/xml", "application/x-sh", "application/octet-stream")) }) {
+                    Icon(Icons.Rounded.AttachFile, contentDescription = attach.str("label"))
+                }
+            }
             OutlinedTextField(
                 value = input,
                 onValueChange = { input = it },
