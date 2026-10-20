@@ -467,12 +467,28 @@ ApplicationWindow {
                         onContentHeightChanged: if (atYEnd || window.page.composer.busy) positionViewAtEnd()
                         delegate: Item {
                             width: ListView.view.width
-                            implicitHeight: bubble.implicitHeight + (messageActions.visible ? messageActions.implicitHeight + 4 : 0)
+                            implicitHeight: bubble.implicitHeight + pictures.height + (messageActions.visible ? messageActions.implicitHeight + 4 : 0)
                             readonly property bool mine: modelData.role === "user"
+                            // Images created by the model (urls or data urls).
+                            Column {
+                                id: pictures
+                                y: bubble.implicitHeight + 4
+                                spacing: 8
+                                Repeater {
+                                    model: modelData.images || []
+                                    Image {
+                                        required property var modelData
+                                        source: modelData.url
+                                        width: Math.min(512, messages.width - 32)
+                                        fillMode: Image.PreserveAspectFit
+                                        asynchronous: true
+                                    }
+                                }
+                            }
                             Row {
                                 id: messageActions
                                 visible: !modelData.streaming && !!modelData.text
-                                y: bubble.implicitHeight + 4
+                                y: bubble.implicitHeight + pictures.height + 4
                                 anchors.right: parent.mine ? parent.right : undefined
                                 spacing: 4
                                 MeoButton {

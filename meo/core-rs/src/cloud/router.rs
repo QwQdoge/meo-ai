@@ -325,7 +325,7 @@ fn pick(
     image_in: bool,
 ) -> Option<Choice> {
     let fits = |m: &Model| {
-        m.task == task
+        (m.task == task || m.tasks.iter().any(|t| t == task))
             && !has(&m.id, exclude)
             && (!image_in || m.input.iter().any(|i| i == "image"))
     };
@@ -484,15 +484,16 @@ pub fn suggest(models: &[(String, Model)]) -> HashMap<String, Choice> {
             models,
             "image_generation",
             &[
+                "doubao-seedream-4-5",
                 "gpt-image-1.5",
                 "gpt-image-1",
+                "doubao-seedream-5",
                 "gpt-image",
-                "flux-1.1-pro",
-                "seedream-5",
-                "seedream-4",
+                "seedream",
                 "qwen-image-max",
                 "imagen",
                 "dall-e-3",
+                "flux-1.1-pro",
             ],
             &[],
             false,
@@ -612,6 +613,41 @@ mod tests {
         assert_eq!(s["speech"].1, "gpt-4o-mini-tts");
         assert_eq!(s["transcription"].1, "whisper-1");
         assert_eq!(s["agent"], s["thinking"]);
+    }
+
+    #[test]
+    fn image_models_that_also_edit_can_create_images_and_working_ones_come_first() {
+        let both = |id: &str| Model {
+            id: id.into(),
+            name: id.into(),
+            task: "image_edit".into(),
+            tasks: vec!["image_edit".into(), "image_generation".into()],
+            input: vec!["text".into(), "image".into()],
+            output: vec!["image".into()],
+        };
+        let only_edit = vec![("c".to_owned(), both("gpt-image-1.5"))];
+        assert_eq!(
+            suggest(&only_edit)["image"].1,
+            "gpt-image-1.5",
+            "an edit model also creates images"
+        );
+        let mut all = vec![
+            (
+                "c".to_owned(),
+                model("flux-1.1-pro", "image_generation", false),
+            ),
+            ("c".to_owned(), both("gpt-image-1.5")),
+        ];
+        assert_eq!(
+            suggest(&all)["image"].1,
+            "gpt-image-1.5",
+            "flux is only the last resort"
+        );
+        all.push((
+            "c".to_owned(),
+            model("doubao-seedream-4-5-251128", "image_generation", false),
+        ));
+        assert_eq!(suggest(&all)["image"].1, "doubao-seedream-4-5-251128");
     }
 
     #[test]
