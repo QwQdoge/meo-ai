@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-labelledby="title desc">
+  <title id="title">Meo AI</title>
+  <desc id="desc">Meo AI mascot: a friendly purple assistant with a simple face and two rounded arms.</desc>
+  <defs>
+    <linearGradient id="halo" x1="155" y1="110" x2="380" y2="305" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#A89BFF"/>
+      <stop offset="0.55" stop-color="#8373F8"/>
+      <stop offset="1" stop-color="#694AF1"/>
+    </linearGradient>
+    <linearGradient id="left" x1="84" y1="288" x2="295" y2="452" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#5B34F6"/>
+      <stop offset="0.55" stop-color="#5A32F2"/>
+      <stop offset="1" stop-color="#4328D8"/>
+    </linearGradient>
+    <linearGradient id="right" x1="270" y1="360" x2="438" y2="272" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7061F3"/>
+      <stop offset="1" stop-color="#B1A7FF"/>
+    </linearGradient>
+    <linearGradient id="bubble" x1="372" y1="74" x2="431" y2="134" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#8C73FB"/>
+      <stop offset="1" stop-color="#6343ED"/>
+    </linearGradient>
+  </defs>
+  <circle cx="270" cy="220" r="132" fill="url(#halo)"/>
+  <ellipse cx="274" cy="270" rx="118" ry="105" fill="#F7F6FF"/>
+  <circle cx="408" cy="110" r="35" fill="url(#bubble)"/>
+  <rect x="61" y="304" width="236" height="126" rx="63" fill="url(#left)" transform="rotate(27 179 367)"/>
+  <rect x="285" y="309" width="185" height="108" rx="54" fill="url(#right)" transform="rotate(-35 378 363)"/>
+  <rect x="211" y="244" width="25" height="54" rx="13" fill="#3923D6" transform="rotate(9 223.5 271)"/>
+  <rect x="320" y="246" width="25" height="54" rx="13" fill="#3923D6" transform="rotate(9 332.5 273)"/>
+  <path d="M260 291 C267 305 282 305 290 291" fill="none" stroke="#3923D6" stroke-width="13" stroke-linecap="round"/>
+</svg>
