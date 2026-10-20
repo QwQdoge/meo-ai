@@ -22,7 +22,12 @@ impl ApiError {
     }
 
     pub fn is_offline(&self) -> bool {
-        matches!(self, ApiError::Http(e) if e.is_connect() || e.is_timeout())
+        #[cfg(not(target_arch = "wasm32"))]
+        let offline = matches!(self, ApiError::Http(e) if e.is_connect() || e.is_timeout());
+        // fetch reports a failed network request as a plain request error.
+        #[cfg(target_arch = "wasm32")]
+        let offline = matches!(self, ApiError::Http(e) if e.is_request() || e.is_timeout());
+        offline
     }
 }
 
@@ -395,8 +400,12 @@ pub fn content_text(content: &Value) -> String {
     }
 }
 
+// The browser's fetch stream is not `Send`; wasm runs on one thread.
+#[cfg(not(target_arch = "wasm32"))]
 type ByteStream =
     std::pin::Pin<Box<dyn Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Send>>;
+#[cfg(target_arch = "wasm32")]
+type ByteStream = std::pin::Pin<Box<dyn Stream<Item = Result<bytes::Bytes, reqwest::Error>>>>;
 
 struct SseState {
     bytes: ByteStream,

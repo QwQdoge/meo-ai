@@ -4,12 +4,14 @@ on:
   pull_request:
     paths:
       - 'meo/web/client/**'
+      - 'meo/core-rs/**'
       - 'meo/ui-schema/**'
       - '.github/workflows/meo-web-client.yml'
   push:
     branches: [main]
     paths:
       - 'meo/web/client/**'
+      - 'meo/core-rs/**'
       - 'meo/ui-schema/**'
       - '.github/workflows/meo-web-client.yml'
 
@@ -43,7 +45,12 @@ jobs:
       - name: Browser edge regression tests
         working-directory: meo/web/client
         run: npm test
-      - name: Build React client with shared MeoUI tokens
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Install wasm-bindgen CLI (matches the locked wasm-bindgen crate)
+        run: cargo install wasm-bindgen-cli --version 0.2.129 --locked
+      - name: Build React client with the shared Rust core (WASM) and MeoUI tokens
         working-directory: meo/web/client
         env:
           MEO_OUTPUT_ROOT: ${{ runner.temp }}

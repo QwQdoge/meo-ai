@@ -22,11 +22,14 @@ function fail(reason) {
   });
 }
 
-export async function onRequest({ request, env }) {
+export async function onRequest({ request, env, next }) {
   const url = new URL(request.url);
   const code = url.searchParams.get('code') ?? '';
   const state = url.searchParams.get('state') ?? '';
   const flow = await unseal(stateCookieValue(request), env);
+  // No server-side flow cookie: this is the in-page (PKCE) sign-in of the shared
+  // Meo AI core, which completes the exchange in the browser. Serve the app.
+  if (!flow && typeof next === 'function') return next();
   if (!code) return fail('missing_code');
   if (!state) return fail('missing_state');
   if (!flow) return fail('state_cookie_missing_or_invalid');
