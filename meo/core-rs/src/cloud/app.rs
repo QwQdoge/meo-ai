@@ -1070,7 +1070,77 @@ impl AppCore {
         }
         match failure {
             Some(e) => self.notice("error", e),
-            None => self.hooks.changed(),
+            None => {
+                self.hooks.changed();
+                let first_round = self
+                    .state
+                    .lock()
+                    .unwrap()
+                    .messages
+                    .get(&id)
+                    .is_some_and(|m| m.len() == 2);
+                if first_round && !reply.is_empty() {
+                    self.auto_title(&id, &pending.prompt, &reply).await;
+                }
+            }
+        }
+    }
+
+    /// Replaces the placeholder title (the first words typed) with a short model-written one.
+    async fn auto_title(&self, id: &str, user: &str, reply: &str) {
+        let (selected, enabled) = {
+            let s = self.state.lock().unwrap();
+            (
+                s.selected.clone(),
+                s.prefs
+                    .get("chat.auto_title")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true),
+            )
+        };
+        let Some((credential, model)) = selected.filter(|(_, m)| !m.is_empty()).filter(|_| enabled)
+        else {
+            return;
+        };
+        let clip = |text: &str, max: usize| text.chars().take(max).collect::<String>();
+        let prompt = format!(
+            "Write a short title (3 to 6 words, no quotes, no trailing punctuation) for this conversation. \
+             Reply with the title only, in the language the user wrote in.\n\nUser: {}\n\nAssistant: {}",
+            clip(user, 500),
+            clip(reply, 800)
+        );
+        let request = json!({ "credentialId": credential, "model": model, "prompt": prompt });
+        let Ok(consent) = self
+            .call(|api, t| {
+                let request = request.clone();
+                async move { api.chat_prepare(&t, &request).await }
+            })
+            .await
+        else {
+            return;
+        };
+        let mut body = request;
+        body["consent"] = json!({
+            "requestId": consent["requestId"],
+            "payloadSha256": consent["payloadSha256"],
+            "confirmationVersion": 1,
+        });
+        let Ok(mut events) = self
+            .call(|api, t| {
+                let body = body.clone();
+                async move { api.chat_stream(&t, &body).await.map(Box::pin) }
+            })
+            .await
+        else {
+            return;
+        };
+        let mut text = String::new();
+        while let Some(Ok(ChatEvent::Delta(piece))) = events.next().await {
+            text.push_str(&piece);
+        }
+        if let Some(title) = clean_title(&text) {
+            self.change_conversation(id, json!({ "title": title }))
+                .await;
         }
     }
 
@@ -1244,6 +1314,11 @@ impl AppCore {
                     "models" => {
                         items.extend(model_controls(s));
                         items.push(json!({
+                            "id": "auto_title", "label": "Write chat titles with the model",
+                            "kind": "toggle", "binding": "chat.auto_title",
+                            "value": s.prefs.get("chat.auto_title").cloned().unwrap_or(json!(true)),
+                        }));
+                        items.push(json!({
                             "id": "auto_consent", "label": "Send to the provider without asking each time",
                             "kind": "toggle", "binding": "chat.auto_consent",
                             "value": s.prefs.get("chat.auto_consent").cloned().unwrap_or(json!(true)),
@@ -1264,6 +1339,17 @@ impl AppCore {
             .collect();
         json!({ "kind": "settings", "title": "Settings", "sections": sections })
     }
+}
+
+/// First line of a model-written title without quotes or trailing punctuation; `None` if unusable.
+fn clean_title(raw: &str) -> Option<String> {
+    let line = raw.lines().map(str::trim).find(|l| !l.is_empty())?;
+    let title = line
+        .trim_matches(['"', '\'', '`', '*', '#', '“', '”', '「', '」'])
+        .trim_end_matches(['.', '。', '!', '！', ':', '：'])
+        .trim();
+    let title: String = title.chars().take(60).collect();
+    (!title.is_empty()).then_some(title)
 }
 
 fn button(label: &str, style: &str, action: Value) -> Value {
@@ -1729,6 +1815,21 @@ mod tests {
             json!({ "type": "edit_message", "id": "m1" })
         );
         assert_eq!(dialog["actions"][0]["withInput"], true);
+    }
+
+    #[test]
+    fn model_titles_are_cleaned() {
+        assert_eq!(
+            clean_title("\"Planning a trip to Kyoto.\"\n"),
+            Some("Planning a trip to Kyoto".into())
+        );
+        assert_eq!(
+            clean_title("\n\n**Rust async basics**\nextra"),
+            Some("Rust async basics".into())
+        );
+        assert_eq!(clean_title("「关于猫的对话」"), Some("关于猫的对话".into()));
+        assert_eq!(clean_title("  \n "), None);
+        assert_eq!(clean_title(&"x".repeat(200)).unwrap().chars().count(), 60);
     }
 
     #[test]
