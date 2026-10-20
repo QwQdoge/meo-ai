@@ -1186,6 +1186,21 @@ impl AppCore {
         let own = data["origin"].as_str() == Some(self.client_id.as_str());
         let conversation = data["conversationId"].as_str().map(str::to_owned);
         match event.name.as_str() {
+            "memory.changed" if !own => self.refresh_memories().await,
+            "settings.changed" if !own => {
+                if let Ok(settings) = self
+                    .call(|api, t| async move { api.get_settings(&t).await })
+                    .await
+                {
+                    self.update(|s| s.cloud_settings = Some(settings));
+                }
+            }
+            "projects.changed" if !own => {
+                self.refresh_projects().await;
+                self.refresh_open_project().await;
+                self.refresh_conversations().await;
+            }
+            "files.changed" if !own => self.refresh_files().await,
             "presence" => {
                 let devices = data["devices"].as_u64().unwrap_or(0) as usize;
                 self.update(|s| s.sync_devices = devices);
@@ -2615,6 +2630,22 @@ mod tests {
             json!({ "type": "remove_file", "id": "f1" })
         );
         assert_eq!(page["composer"]["attach"]["action"], "attach_text");
+    }
+
+    #[test]
+    fn resource_events_from_this_device_are_ignored() {
+        // No network in tests: an event from another device would try to refetch and
+        // simply fail; one from this device must not even try (the call is skipped).
+        let c = signed_in_core();
+        let own = c.client_id.clone();
+        futures_executor::block_on(
+            c.on_remote_event(remote("memory.changed", json!({ "origin": own }))),
+        );
+        futures_executor::block_on(
+            c.on_remote_event(remote("projects.changed", json!({ "origin": own }))),
+        );
+        assert!(c.state.lock().unwrap().memories.is_none());
+        assert!(c.state.lock().unwrap().projects.is_none());
     }
 
     #[test]
