@@ -27,6 +27,7 @@ use super::{
     auth::{self, OAuthConfig, PendingAuthorization, Session},
     locale,
     manifest::Manifest,
+    router::{self, Choice, Router},
     storage::Storage,
 };
 
@@ -35,6 +36,12 @@ pub const VIEW_SCHEMA: u32 = 1;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Action {
+    /// Assign a model to every route from what the connected providers offer.
+    AutoConfigureRouter,
+    AddCustomRoute,
+    DeleteCustomRoute {
+        id: String,
+    },
     Start,
     SignIn,
     SignOut,
@@ -227,7 +234,11 @@ struct State {
     dialog: Option<Dialog>,
     consent: Option<PendingSend>,
     credentials: Vec<Credential>,
-    models: Vec<Model>,
+    /// Models of every connected provider, by connection id.
+    catalogue: HashMap<String, Vec<Model>>,
+    router: Router,
+    /// The first-run automatic setup was already tried this session.
+    router_bootstrapped: bool,
     selected: Option<(String, String)>,
     projects: Option<Result<Vec<Value>, String>>,
     plugins: Option<Result<Vec<Value>, String>>,
@@ -376,6 +387,40 @@ impl AppCore {
             Action::CloseDialog => self.update(|s| s.dialog = None),
             Action::Regenerate => self.regenerate().await,
             Action::Retry => self.retry().await,
+            Action::AutoConfigureRouter => {
+                let models = all_models(&self.state.lock().unwrap());
+                let suggestion = router::suggest(&models);
+                if suggestion.is_empty() {
+                    return self
+                        .notice("info", "Connect an AI provider to your Meo Account first.");
+                }
+                self.update(|s| {
+                    s.router.slots = suggestion;
+                    s.router.auto = true;
+                });
+                self.persist_router().await;
+                self.notice("info", "Routes set up from your connected models.");
+            }
+            Action::AddCustomRoute => {
+                let id = self.state.lock().unwrap().router.next_custom_id();
+                match id {
+                    Some(id) => {
+                        self.update(|s| {
+                            s.router.custom.push(router::CustomRoute {
+                                id,
+                                label: "Custom route".into(),
+                                choice: None,
+                            })
+                        });
+                        self.persist_router().await;
+                    }
+                    None => self.notice("info", "You can have up to 5 custom routes."),
+                }
+            }
+            Action::DeleteCustomRoute { id } => {
+                self.update(|s| s.router.custom.retain(|c| c.id != id));
+                self.persist_router().await;
+            }
             Action::AttachText { name, text } => self.attach_text(name, text).await,
             Action::AttachPath { path } => self.attach_path(path).await,
             Action::RemoveFile { id } => self.remove_file(id).await,
@@ -441,7 +486,7 @@ impl AppCore {
         let conversations: Vec<ConversationSummary> =
             self.load_json(KEY_CONVERSATIONS).unwrap_or_default();
         let credentials: Vec<Credential> = self.load_json(KEY_CREDENTIALS).unwrap_or_default();
-        let models: Vec<Model> = self.load_json(KEY_MODELS).unwrap_or_default();
+        let catalogue: HashMap<String, Vec<Model>> = self.load_json(KEY_MODELS).unwrap_or_default();
         let selected = prefs
             .get("model.selected")
             .and_then(Value::as_str)
@@ -458,7 +503,7 @@ impl AppCore {
             s.prefs = prefs;
             s.conversations = conversations;
             s.credentials = credentials;
-            s.models = models;
+            s.catalogue = catalogue;
             s.selected = selected;
         });
         if signed_in {
@@ -617,39 +662,130 @@ impl AppCore {
                 s.credentials = credentials;
                 s.selected = selected.clone();
             });
-            if let Some((credential, _)) = selected {
-                self.load_models(credential).await;
-            }
+            self.load_catalogue().await;
         }
         if let Ok(settings) = self
             .call(|api, t| async move { api.get_settings(&t).await })
             .await
         {
-            self.update(|s| s.cloud_settings = Some(settings));
+            self.set_cloud_settings(settings);
         }
+        self.bootstrap_router().await;
         let route = self.state.lock().unwrap().route.clone();
         self.load_route(&route).await;
     }
 
-    async fn load_models(&self, credential: String) {
-        let models = self
-            .call(|api, t| {
-                let credential = credential.clone();
-                async move { api.list_models(&t, &credential).await }
-            })
-            .await
-            .unwrap_or_default();
-        self.save_json(KEY_MODELS, &models);
+    /// Loads the models of every connected provider (a failing provider keeps its cached list).
+    async fn load_catalogue(&self) {
+        let ids: Vec<String> = self
+            .state
+            .lock()
+            .unwrap()
+            .credentials
+            .iter()
+            .map(|c| c.id.clone())
+            .collect();
+        for credential in ids {
+            let listed = self
+                .call(|api, t| {
+                    let credential = credential.clone();
+                    async move { api.list_models(&t, &credential).await }
+                })
+                .await;
+            if let Ok(models) = listed {
+                self.update(|s| {
+                    s.catalogue.insert(credential.clone(), models);
+                });
+            }
+        }
+        let known: Vec<String> = self
+            .state
+            .lock()
+            .unwrap()
+            .credentials
+            .iter()
+            .map(|c| c.id.clone())
+            .collect();
+        let catalogue = {
+            let mut s = self.state.lock().unwrap();
+            s.catalogue.retain(|id, _| known.contains(id));
+            s.catalogue.clone()
+        };
+        self.save_json(KEY_MODELS, &catalogue);
+    }
+
+    /// Stores the account settings and the model routes inside them.
+    fn set_cloud_settings(&self, settings: Value) {
         self.update(|s| {
-            if let Some((_, model)) = s.selected.as_mut() {
-                if model.is_empty() {
-                    if let Some(first) = models.first() {
-                        *model = first.id.clone();
+            s.router = Router::from_prefs(&settings["uiPreferences"]["models"]);
+            s.cloud_settings = Some(settings);
+        });
+    }
+
+    /// First run: assign a model to every route from what the connected providers offer.
+    async fn bootstrap_router(&self) {
+        let models = {
+            let mut s = self.state.lock().unwrap();
+            if s.router_bootstrapped
+                || !s.router.slots.is_empty()
+                || s.catalogue.is_empty()
+                || s.cloud_settings.is_none()
+            {
+                return;
+            }
+            s.router_bootstrapped = true;
+            all_models(&s)
+        };
+        let suggestion = router::suggest(&models);
+        if suggestion.is_empty() {
+            return;
+        }
+        self.update(|s| {
+            s.router.auto = true;
+            s.router.slots = suggestion;
+        });
+        self.persist_router().await;
+    }
+
+    /// Saves the routes in the account's settings so every device shares them.
+    async fn persist_router(&self) {
+        for attempt in 0..2 {
+            let (router, settings) = {
+                let s = self.state.lock().unwrap();
+                (
+                    s.router.clone(),
+                    s.cloud_settings.clone().unwrap_or(Value::Null),
+                )
+            };
+            let mut ui = settings["uiPreferences"]
+                .as_object()
+                .cloned()
+                .unwrap_or_default();
+            ui.insert("models".into(), Value::Object(router.to_prefs()));
+            let patch = json!({ "expectedVersion": settings["version"].as_i64().unwrap_or(0), "uiPreferences": ui });
+            match self
+                .call(|api, t| {
+                    let patch = patch.clone();
+                    async move { api.patch_settings(&t, patch).await }
+                })
+                .await
+            {
+                Ok(saved) => {
+                    // Keep what the user just chose; only take the new version number.
+                    self.update(|s| s.cloud_settings = Some(saved));
+                    return;
+                }
+                Err(ApiError::Status { status: 409, .. }) if attempt == 0 => {
+                    if let Ok(fresh) = self
+                        .call(|api, t| async move { api.get_settings(&t).await })
+                        .await
+                    {
+                        self.update(|s| s.cloud_settings = Some(fresh));
                     }
                 }
+                Err(e) => return self.notice("error", e.to_string()),
             }
-            s.models = models;
-        });
+        }
     }
 
     async fn load_route(&self, route: &str) {
@@ -1192,7 +1328,7 @@ impl AppCore {
                     .call(|api, t| async move { api.get_settings(&t).await })
                     .await
                 {
-                    self.update(|s| s.cloud_settings = Some(settings));
+                    self.set_cloud_settings(settings);
                 }
             }
             "projects.changed" if !own => {
@@ -1280,14 +1416,42 @@ impl AppCore {
     /// `save_prompt`: store it on the server before streaming.
     async fn turn(&self, text: String, push_local: bool, save_prompt: bool) {
         let text = text.trim().to_owned();
-        let (selected, active, busy) = {
+        let (legacy, active, busy, router, mode) = {
             let s = self.state.lock().unwrap();
-            (s.selected.clone(), s.active.clone(), s.streaming.is_some())
+            (
+                s.selected.clone(),
+                s.active.clone(),
+                s.streaming.is_some(),
+                s.router.clone(),
+                s.prefs
+                    .get("chat.mode")
+                    .and_then(Value::as_str)
+                    .unwrap_or("auto")
+                    .to_owned(),
+            )
         };
         if text.is_empty() || busy {
             return;
         }
-        let Some((credential, model)) = selected.filter(|(_, m)| !m.is_empty()) else {
+        // The route decides the model: automatically from the message, or the one forced in the composer.
+        let mut route = router::route_for(&router, &mode, &text, false);
+        let task = router::slot(&route).map_or("chat", |slot| slot.task);
+        if task != "chat" {
+            if mode != "auto" {
+                return self.notice(
+                    "info",
+                    format!(
+                        "{} is not available in Meo AI yet.",
+                        router::slot(&route).map_or("That route", |s| s.label)
+                    ),
+                );
+            }
+            route = "default".into();
+        }
+        let Some((credential, model)) = router::resolve(&router, &route, legacy.as_ref())
+            .cloned()
+            .filter(|(_, m)| !m.is_empty())
+        else {
             self.notice(
                 "error",
                 "Connect an AI provider to your Meo Account, then choose a model in Settings.",
@@ -1576,17 +1740,18 @@ impl AppCore {
 
     /// Replaces the placeholder title (the first words typed) with a short model-written one.
     async fn auto_title(&self, id: &str, user: &str, reply: &str) {
-        let (selected, enabled) = {
+        let (choice, enabled) = {
             let s = self.state.lock().unwrap();
+            // Titles are a small job: use the lightweight route when there is one.
             (
-                s.selected.clone(),
+                router::resolve(&s.router, "fast", s.selected.as_ref()).cloned(),
                 s.prefs
                     .get("chat.auto_title")
                     .and_then(Value::as_bool)
                     .unwrap_or(true),
             )
         };
-        let Some((credential, model)) = selected.filter(|(_, m)| !m.is_empty()).filter(|_| enabled)
+        let Some((credential, model)) = choice.filter(|(_, m)| !m.is_empty()).filter(|_| enabled)
         else {
             return;
         };
@@ -1638,48 +1803,43 @@ impl AppCore {
         if binding.starts_with("project:") {
             return self.edit_project_field(&binding, value).await;
         }
-        if binding == "model.selected" {
-            if let Some((c, m)) = value.as_str().and_then(|v| v.split_once('|')) {
-                let (c, m) = (c.to_owned(), m.to_owned());
-                let credential_changed =
-                    self.state.lock().unwrap().selected.as_ref().map(|s| &s.0) != Some(&c);
-                self.update(|s| {
-                    s.selected = Some((c.clone(), m));
-                    s.prefs.insert(binding.clone(), value.clone());
-                });
-                self.save_json(KEY_PREFS, &self.state.lock().unwrap().prefs.clone());
-                if credential_changed {
-                    self.load_models(c).await;
-                }
-            }
-            return;
+        if binding == "models.auto" {
+            let on = value.as_bool().unwrap_or(true);
+            self.update(|s| s.router.auto = on);
+            return self.persist_router().await;
         }
-        if binding == "model.custom" {
-            let model = value.as_str().unwrap_or_default().trim().to_owned();
-            let credential = self
-                .state
-                .lock()
-                .unwrap()
-                .selected
-                .as_ref()
-                .map(|(c, _)| c.clone())
-                .or_else(|| {
-                    self.state
-                        .lock()
-                        .unwrap()
-                        .credentials
-                        .first()
-                        .map(|c| c.id.clone())
-                });
-            if let Some(credential) = credential {
-                let joined = json!(format!("{credential}|{model}"));
-                self.update(|s| {
-                    s.selected = Some((credential.clone(), model.clone()));
-                    s.prefs.insert("model.selected".into(), joined);
-                });
-                self.save_json(KEY_PREFS, &self.state.lock().unwrap().prefs.clone());
+        if let Some(route) = binding.strip_prefix("route:") {
+            let choice: Option<Choice> = value
+                .as_str()
+                .and_then(|v| v.split_once('|'))
+                .filter(|(c, m)| !c.is_empty() && !m.is_empty())
+                .map(|(c, m)| (c.to_owned(), m.to_owned()));
+            let route = route.to_owned();
+            // Everyday chat can be changed but never emptied: it is every other route's fallback.
+            if route == "default" && choice.is_none() {
+                return;
             }
-            return;
+            self.update(|s| s.router.set(&route, choice));
+            return self.persist_router().await;
+        }
+        if let Some(route) = binding.strip_prefix("route_label:") {
+            let label: String = value
+                .as_str()
+                .unwrap_or_default()
+                .trim()
+                .chars()
+                .take(60)
+                .collect();
+            let route = route.to_owned();
+            if label.is_empty() {
+                return;
+            }
+            self.update(|s| {
+                if let Some(c) = s.router.custom.iter_mut().find(|c| c.id == route) {
+                    c.label = label;
+                }
+            });
+            return self.persist_router().await;
         }
         let cloud_field = match binding.as_str() {
             "personalization.custom_instructions" => Some("personalInstructions"),
@@ -1703,7 +1863,7 @@ impl AppCore {
                 })
                 .await
             {
-                Ok(settings) => self.update(|s| s.cloud_settings = Some(settings)),
+                Ok(settings) => self.set_cloud_settings(settings),
                 Err(e) => self.notice("error", e.to_string()),
             }
             return;
@@ -1857,7 +2017,7 @@ impl AppCore {
                         }
                     }
                     "models" => {
-                        items.extend(model_controls(s));
+                        items.extend(router_controls(s));
                         items.push(json!({
                             "id": "auto_title", "label": "Write chat titles with the model",
                             "kind": "toggle", "binding": "chat.auto_title",
@@ -1931,58 +2091,158 @@ fn input_button(label: &str, style: &str, action: Value) -> Value {
     json!({ "label": label, "style": style, "action": action, "withInput": true })
 }
 
-/// Model controls: a picker, plus a free-text model ID when the selected
-/// connection cannot list its models and has no default.
-fn model_controls(s: &State) -> Vec<Value> {
-    let select = model_select(s);
-    let empty = select["options"].as_array().is_none_or(|o| o.is_empty());
-    let mut controls = vec![];
-    if !empty {
-        controls.push(select);
-    }
-    if let Some((credential, model)) = &s.selected {
-        let listed = s.models.iter().any(|m| &m.id == model);
-        if empty || !listed {
-            controls.push(json!({
-                "id": "model_id", "label": "Model ID", "kind": "text", "single_line": true,
-                "binding": "model.custom", "value": model,
-                "placeholder": "e.g. gpt-4o-mini",
-                "credential": credential,
-            }));
-        }
-    }
-    controls
+/// Name of a provider connection.
+fn connection_name(s: &State, credential: &str) -> String {
+    s.credentials
+        .iter()
+        .find(|c| c.id == credential)
+        .map(|c| c.display_name.clone())
+        .unwrap_or_default()
 }
 
-fn model_select(s: &State) -> Value {
+fn model_name(s: &State, choice: &Choice) -> String {
+    s.catalogue
+        .get(&choice.0)
+        .and_then(|list| list.iter().find(|m| m.id == choice.1))
+        .map_or_else(|| choice.1.clone(), |m| m.name.clone())
+}
+
+/// The composer's routing control: Auto, or force one route for the next messages.
+fn mode_control(s: &State) -> Option<Value> {
     let mut options: Vec<Value> = Vec::new();
-    for credential in &s.credentials {
-        let selected_here = s
-            .selected
-            .as_ref()
-            .is_some_and(|(c, _)| c == &credential.id);
-        let models: Vec<(String, String)> = if selected_here && !s.models.is_empty() {
-            s.models
-                .iter()
-                .map(|m| (m.id.clone(), m.name.clone()))
-                .collect()
-        } else if !credential.default_model.is_empty() {
-            vec![(
-                credential.default_model.clone(),
-                credential.default_model.clone(),
-            )]
-        } else {
-            Vec::new()
-        };
-        for (id, name) in models {
-            options.push(json!({ "value": format!("{}|{}", credential.id, id), "label": format!("{} · {}", credential.display_name, name) }));
+    if s.router.auto {
+        options.push(json!({ "value": "auto", "label": "Auto" }));
+    }
+    for id in ["default", "fast", "thinking"] {
+        if let (Some(choice), Some(slot)) = (s.router.choice(id), router::slot(id)) {
+            options.push(json!({ "value": id, "label": format!("{} · {}", slot.label, model_name(s, choice)) }));
         }
     }
-    json!({
-        "id": "model", "label": "Model", "kind": "select", "binding": "model.selected",
-        "value": s.selected.as_ref().map(|(c, m)| format!("{c}|{m}")).unwrap_or_default(),
-        "options": options,
-    })
+    for custom in &s.router.custom {
+        if let Some(choice) = &custom.choice {
+            options.push(json!({ "value": custom.id, "label": format!("{} · {}", custom.label, model_name(s, choice)) }));
+        }
+    }
+    if options.len() < 2 {
+        return None;
+    }
+    let saved = s
+        .prefs
+        .get("chat.mode")
+        .and_then(Value::as_str)
+        .unwrap_or("auto");
+    let value = if options.iter().any(|o| o["value"] == saved) {
+        saved
+    } else {
+        options[0]["value"].as_str().unwrap_or("auto")
+    };
+    Some(
+        json!({ "id": "mode", "label": "Model", "kind": "select", "binding": "chat.mode", "value": value, "options": options }),
+    )
+}
+
+/// What the empty chat says it will use.
+fn using_label(s: &State) -> String {
+    let mode = s
+        .prefs
+        .get("chat.mode")
+        .and_then(Value::as_str)
+        .unwrap_or("auto");
+    let route = if mode == "auto"
+        || router::slot(mode).is_none() && s.router.custom.iter().all(|c| c.id != mode)
+    {
+        "default"
+    } else {
+        mode
+    };
+    match router::resolve(&s.router, route, s.selected.as_ref()) {
+        Some(choice) if !choice.1.is_empty() => {
+            let name = model_name(s, choice);
+            if s.router.auto && mode == "auto" {
+                format!("Auto · {name}")
+            } else {
+                name
+            }
+        }
+        _ => "no model yet — connect a provider in Meo Account".to_owned(),
+    }
+}
+
+/// Settings > Models: automatic choice, one model per route, custom routes.
+fn router_controls(s: &State) -> Vec<Value> {
+    let models = all_models(s);
+    let options_for = |task: &str, needs_image: bool| -> Vec<Value> {
+        let mut rows: Vec<(String, String, String)> = models
+            .iter()
+            .filter(|(_, m)| {
+                m.task == task && (!needs_image || m.input.iter().any(|i| i == "image"))
+            })
+            .map(|(c, m)| {
+                (
+                    format!("{} · {}", connection_name(s, c), m.name),
+                    c.clone(),
+                    m.id.clone(),
+                )
+            })
+            .collect();
+        rows.sort_by_key(|(label, _, _)| label.to_lowercase());
+        rows.into_iter()
+            .map(|(label, c, m)| json!({ "value": format!("{c}|{m}"), "label": label }))
+            .collect()
+    };
+    let select = |id: String,
+                  label: &str,
+                  binding: String,
+                  current: Option<&Choice>,
+                  mut options: Vec<Value>,
+                  optional: bool| {
+        if optional {
+            options.insert(0, json!({ "value": "", "label": "Not set" }));
+        }
+        let value = current.map(|(c, m)| format!("{c}|{m}")).unwrap_or_default();
+        // A saved model the provider no longer lists stays selectable.
+        if !value.is_empty() && !options.iter().any(|o| o["value"] == value.as_str()) {
+            options.push(json!({ "value": value, "label": current.map(|(_, m)| m.clone()).unwrap_or_default() }));
+        }
+        json!({ "id": id, "label": label, "kind": "select", "binding": binding, "value": value, "options": options })
+    };
+    let mut items = vec![
+        json!({ "id": "router_auto", "label": "Choose the model automatically", "kind": "toggle", "binding": "models.auto", "value": s.router.auto }),
+        json!({ "id": "router_setup", "label": "Set up automatically", "kind": "button", "style": "secondary", "action": { "type": "auto_configure_router" } }),
+    ];
+    for slot in &router::SLOTS {
+        let needs_image = slot.id == "vision";
+        items.push(select(
+            format!("route_{}", slot.id),
+            slot.label,
+            format!("route:{}", slot.id),
+            s.router.choice(slot.id),
+            options_for(slot.task, needs_image),
+            slot.id != "default",
+        ));
+    }
+    for custom in &s.router.custom {
+        items.push(json!({
+            "id": format!("{}_name", custom.id), "label": "Custom route name", "kind": "text", "single_line": true,
+            "binding": format!("route_label:{}", custom.id), "value": custom.label,
+        }));
+        items.push(select(
+            format!("route_{}", custom.id),
+            "Custom route model",
+            format!("route:{}", custom.id),
+            custom.choice.as_ref(),
+            options_for("chat", false),
+            true,
+        ));
+        items.push(json!({
+            "id": format!("{}_delete", custom.id), "label": "Delete custom route", "kind": "button", "style": "danger",
+            "action": { "type": "delete_custom_route", "id": custom.id },
+        }));
+    }
+    if s.router.custom.len() < router::MAX_CUSTOM {
+        items.push(json!({ "id": "router_add", "label": "Add custom route", "kind": "button", "style": "secondary", "action": { "type": "add_custom_route" } }));
+    }
+    items
 }
 
 fn sign_in_page(s: &State) -> Value {
@@ -2044,19 +2304,7 @@ fn conversation_page(s: &State) -> Value {
         }
     }
     let busy = s.streaming.is_some();
-    let model = model_select(s);
-    let model_label = model["options"]
-        .as_array()
-        .and_then(|o| o.iter().find(|x| x["value"] == model["value"]))
-        .and_then(|x| x["label"].as_str())
-        .map(str::to_owned)
-        .or_else(|| {
-            s.selected
-                .as_ref()
-                .map(|(_, m)| m.clone())
-                .filter(|m| !m.is_empty())
-        })
-        .unwrap_or_else(|| "no model yet — enter a model ID below".to_owned());
+    let using = using_label(s);
     json!({
         "kind": "conversation",
         "title": active.as_ref().and_then(|id| s.conversations.iter().find(|c| &c.id == id)).map(|c| c.title.clone()).unwrap_or_else(|| "New chat".into()),
@@ -2083,7 +2331,7 @@ fn conversation_page(s: &State) -> Value {
             })).collect::<Vec<_>>(),
         },
         "messages": messages,
-        "empty": messages.is_empty().then(|| json!({ "title": "How can Meo help?", "text": format!("Using {model_label}") })),
+        "empty": messages.is_empty().then(|| json!({ "title": "How can Meo help?", "text": format!("Using {using}") })),
         "files": s.files.iter().map(|f| json!({
             "id": f["id"],
             "name": f["name"],
@@ -2096,7 +2344,7 @@ fn conversation_page(s: &State) -> Value {
             "busy": busy,
             "sendAction": { "type": "send" },
             "stopAction": { "type": "stop" },
-            "toolbar": model_controls(s),
+            "toolbar": mode_control(s).into_iter().collect::<Vec<_>>(),
         },
         "consent": s.consent.as_ref().map(|p| json!({
             "title": "Send to AI provider?",
@@ -2107,6 +2355,20 @@ fn conversation_page(s: &State) -> Value {
             ],
         })),
     })
+}
+
+/// Every model of every connected provider, in connection order.
+fn all_models(s: &State) -> Vec<(String, Model)> {
+    s.credentials
+        .iter()
+        .flat_map(|c| {
+            s.catalogue
+                .get(&c.id)
+                .into_iter()
+                .flatten()
+                .map(|m| (c.id.clone(), m.clone()))
+        })
+        .collect()
 }
 
 /// A row with a title, a smaller second line and buttons (the `item` control).
@@ -2646,6 +2908,206 @@ mod tests {
         );
         assert!(c.state.lock().unwrap().memories.is_none());
         assert!(c.state.lock().unwrap().projects.is_none());
+    }
+
+    fn seed_models(c: &AppCore) {
+        let m = |id: &str, task: &str, image: bool| Model {
+            id: id.into(),
+            name: id.into(),
+            task: task.into(),
+            tasks: vec![task.into()],
+            input: if image {
+                vec!["text".into(), "image".into()]
+            } else {
+                vec!["text".into()]
+            },
+            output: vec![],
+        };
+        c.update(|s| {
+            s.credentials = vec![
+                Credential {
+                    id: "c1".into(),
+                    provider: "openai_compatible".into(),
+                    display_name: "Gateway".into(),
+                    default_model: String::new(),
+                },
+                Credential {
+                    id: "c2".into(),
+                    provider: "gemini".into(),
+                    display_name: "Gemini".into(),
+                    default_model: String::new(),
+                },
+            ];
+            s.catalogue.insert(
+                "c1".into(),
+                vec![
+                    m("gpt-5.1", "chat", true),
+                    m("gpt-5-mini", "chat", true),
+                    m("llama-3-70b", "chat", false),
+                    m("flux-1.1-pro", "image_generation", false),
+                    m("whisper-1", "transcription", false),
+                ],
+            );
+            s.catalogue
+                .insert("c2".into(), vec![m("gemini-3.5-flash", "chat", true)]);
+        });
+    }
+
+    #[test]
+    fn the_composer_offers_auto_and_the_configured_routes() {
+        let c = signed_in_core();
+        seed_models(&c);
+        assert!(
+            c.view()["page"]["composer"]["toolbar"]
+                .as_array()
+                .unwrap()
+                .is_empty(),
+            "nothing to choose before routes exist"
+        );
+        c.update(|s| {
+            s.router.auto = true;
+            s.router
+                .set("default", Some(("c1".into(), "gpt-5.1".into())));
+            s.router
+                .set("fast", Some(("c2".into(), "gemini-3.5-flash".into())));
+        });
+        let toolbar = c.view()["page"]["composer"]["toolbar"].clone();
+        let select = &toolbar[0];
+        assert_eq!(
+            (select["binding"].as_str(), select["value"].as_str()),
+            (Some("chat.mode"), Some("auto"))
+        );
+        let labels: Vec<&str> = select["options"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|o| o["label"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            labels,
+            [
+                "Auto",
+                "Everyday chat · gpt-5.1",
+                "Lightweight · gemini-3.5-flash"
+            ]
+        );
+        assert_eq!(c.view()["page"]["empty"]["text"], "Using Auto · gpt-5.1");
+    }
+
+    #[test]
+    fn settings_list_every_route_with_models_of_the_right_kind() {
+        let c = signed_in_core();
+        seed_models(&c);
+        c.update(|s| {
+            s.route = "settings".into();
+            s.router.auto = true;
+            s.router
+                .set("default", Some(("c1".into(), "gpt-5.1".into())));
+        });
+        let view = c.view();
+        let section = view["page"]["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["id"] == "models")
+            .unwrap();
+        let items = section["items"].as_array().unwrap();
+        let control = |id: &str| {
+            items
+                .iter()
+                .find(|i| i["id"] == id)
+                .unwrap_or_else(|| panic!("{id}"))
+        };
+        let values = |id: &str| -> Vec<String> {
+            control(id)["options"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|o| o["value"].as_str().unwrap().to_owned())
+                .collect()
+        };
+        assert_eq!(control("router_auto")["value"], true);
+        assert_eq!(control("route_default")["value"], "c1|gpt-5.1");
+        assert!(
+            !values("route_default").contains(&String::new()),
+            "everyday chat cannot be left unset"
+        );
+        assert_eq!(values("route_fast")[0], "", "other routes can be unset");
+        assert!(values("route_fast").contains(&"c2|gemini-3.5-flash".to_owned()));
+        assert!(
+            values("route_vision").contains(&"c1|gpt-5.1".to_owned())
+                && !values("route_vision").contains(&"c1|llama-3-70b".to_owned())
+        );
+        assert_eq!(values("route_image"), ["", "c1|flux-1.1-pro"]);
+        assert_eq!(values("route_transcription"), ["", "c1|whisper-1"]);
+        assert_eq!(control("route_default")["binding"], "route:default");
+    }
+
+    #[test]
+    fn routes_are_chosen_with_set_setting_and_custom_routes_can_be_added() {
+        let c = signed_in_core();
+        seed_models(&c);
+        let set = |binding: &str, value: Value| {
+            futures_executor::block_on(c.set_setting(binding.into(), value))
+        };
+        set("route:default", json!("c1|gpt-5.1"));
+        set("route:fast", json!("c2|gemini-3.5-flash"));
+        assert_eq!(
+            c.state.lock().unwrap().router.choice("fast"),
+            Some(&("c2".to_owned(), "gemini-3.5-flash".to_owned()))
+        );
+        set("route:default", json!(""));
+        assert!(
+            c.state.lock().unwrap().router.choice("default").is_some(),
+            "everyday chat is never emptied"
+        );
+        set("route:fast", json!(""));
+        assert!(c.state.lock().unwrap().router.choice("fast").is_none());
+        set("models.auto", json!(false));
+        assert!(!c.state.lock().unwrap().router.auto);
+
+        futures_executor::block_on(c.dispatch(Action::AddCustomRoute));
+        assert_eq!(c.state.lock().unwrap().router.custom[0].id, "custom1");
+        set("route_label:custom1", json!("Translator"));
+        set("route:custom1", json!("c2|gemini-3.5-flash"));
+        let r = c.state.lock().unwrap().router.clone();
+        assert_eq!(
+            (
+                r.custom[0].label.as_str(),
+                r.choice("custom1").map(|x| x.1.as_str())
+            ),
+            ("Translator", Some("gemini-3.5-flash"))
+        );
+        futures_executor::block_on(c.dispatch(Action::DeleteCustomRoute {
+            id: "custom1".into(),
+        }));
+        assert!(c.state.lock().unwrap().router.custom.is_empty());
+    }
+
+    #[test]
+    fn first_run_assigns_models_to_routes_once() {
+        let c = signed_in_core();
+        seed_models(&c);
+        c.update(|s| s.cloud_settings = Some(json!({ "version": 0, "uiPreferences": {} })));
+        futures_executor::block_on(c.bootstrap_router());
+        let r = c.state.lock().unwrap().router.clone();
+        assert!(r.auto);
+        assert_eq!(r.choice("default").map(|x| x.1.as_str()), Some("gpt-5.1"));
+        assert_eq!(r.choice("fast").map(|x| x.1.as_str()), Some("gpt-5-mini"));
+        assert_eq!(
+            r.choice("image").map(|x| x.1.as_str()),
+            Some("flux-1.1-pro")
+        );
+        assert_eq!(
+            r.choice("transcription").map(|x| x.1.as_str()),
+            Some("whisper-1")
+        );
+        c.update(|s| s.router.set("fast", None));
+        futures_executor::block_on(c.bootstrap_router());
+        assert!(
+            c.state.lock().unwrap().router.choice("fast").is_none(),
+            "a route the user clears is not refilled"
+        );
     }
 
     #[test]

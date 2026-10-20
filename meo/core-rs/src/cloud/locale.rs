@@ -69,6 +69,14 @@ fn control(c: &HashMap<String, String>, item: &mut Value) {
     field(c, item, "placeholder");
     for option in each(item, "options") {
         field(c, option, "label");
+        // "Lightweight · gpt-5-mini": translate the route name, keep the model name.
+        if let Some(label) = option["label"].as_str() {
+            if let Some((head, tail)) = label.split_once(" · ") {
+                if let Some(translated) = c.get(head) {
+                    option["label"] = Value::String(format!("{translated} · {tail}"));
+                }
+            }
+        }
     }
     // `info` values such as "Connected" are product copy too.
     if item["kind"] == "info" {

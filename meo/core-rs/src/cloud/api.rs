@@ -63,6 +63,21 @@ pub struct Credential {
 pub struct Model {
     pub id: String,
     pub name: String,
+    /// What the model is for: `chat`, `image_generation`, `image_edit`, `video_generation`,
+    /// `speech`, `transcription`, `embedding`, `rerank`, `moderation` or `other`.
+    #[serde(default = "chat_task")]
+    pub task: String,
+    #[serde(default)]
+    pub tasks: Vec<String>,
+    /// Input modalities, e.g. `["text", "image"]` for a model that can see.
+    #[serde(default)]
+    pub input: Vec<String>,
+    #[serde(default)]
+    pub output: Vec<String>,
+}
+
+fn chat_task() -> String {
+    "chat".to_owned()
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -305,19 +320,41 @@ impl MeoApi {
             return Ok(Vec::new());
         }
         let rows = body["models"].as_array().cloned().unwrap_or_default();
+        let list = |v: &Value| -> Vec<String> {
+            v.as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str().map(str::to_owned))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
         Ok(rows
             .iter()
             .filter_map(|row| {
                 let id = row["id"].as_str().filter(|s| !s.is_empty())?.to_owned();
-                if !is_chat_model(&id) {
-                    return None;
-                }
                 let name = row["name"]
                     .as_str()
                     .filter(|s| !s.is_empty())
                     .unwrap_or(&id)
                     .to_owned();
-                Some(Model { id, name })
+                let task = row["task"].as_str().unwrap_or("chat").to_owned();
+                let tasks = match list(&row["tasks"]) {
+                    t if t.is_empty() => vec![task.clone()],
+                    t => t,
+                };
+                let input = match list(&row["inputModalities"]) {
+                    i if i.is_empty() => vec!["text".to_owned()],
+                    i => i,
+                };
+                Some(Model {
+                    id,
+                    name,
+                    task,
+                    tasks,
+                    input,
+                    output: list(&row["outputModalities"]),
+                })
             })
             .collect())
     }
@@ -597,41 +634,6 @@ impl MeoApi {
     }
 }
 
-/// Providers list every model they host. Chat can only use text models, so
-/// drop the ones that are plainly image, video, speech, embedding or ranking.
-fn is_chat_model(id: &str) -> bool {
-    const NOT_CHAT: [&str; 26] = [
-        "image",
-        "video",
-        "dall-e",
-        "sora",
-        "tts",
-        "speech",
-        "whisper",
-        "transcribe",
-        "embed",
-        "rerank",
-        "moderation",
-        "stable-diffusion",
-        "flux",
-        "midjourney",
-        "vidu",
-        "pixverse",
-        "veo",
-        "kling",
-        "seedance",
-        "seedream",
-        "wan2",
-        "i2v",
-        "t2v",
-        "i2i",
-        "suno",
-        "music",
-    ];
-    let id = id.to_ascii_lowercase();
-    !NOT_CHAT.iter().any(|word| id.contains(word))
-}
-
 fn error_code(body: &Value) -> String {
     body["error"]["code"]
         .as_str()
@@ -768,37 +770,6 @@ mod tests {
         assert_eq!(delta.name, "run.delta");
         assert_eq!(delta.data["text"], "hi");
         assert!(s.next_event().is_none());
-    }
-
-    #[test]
-    fn model_list_keeps_chat_models_only() {
-        for id in [
-            "gpt-5-mini",
-            "claude-opus-4-7",
-            "qwen3.8-27b",
-            "glm-5.1",
-            "kimi-k2.7-code",
-            "o4-mini",
-            "llama-3-8b",
-        ] {
-            assert!(is_chat_model(id), "{id} should be offered");
-        }
-        for id in [
-            "qwen-image-2.0-2026-03-03",
-            "grok-1.5-video",
-            "gpt-image-1.5",
-            "Qwen/Qwen3-Reranker-0.6B",
-            "viduq3-turbo",
-            "wan2.6-i2v",
-            "pixverse-swap",
-            "veo_3_1-components",
-            "gpt-4o-mini-transcribe",
-            "speech-2.8-hd",
-            "tts-1-hd",
-            "text-embedding-3-small",
-        ] {
-            assert!(!is_chat_model(id), "{id} should be hidden");
-        }
     }
 
     #[test]
