@@ -72,6 +72,15 @@ pub enum ChatEvent {
 pub struct MeoApi {
     http: reqwest::Client,
     origin: String,
+    /// Identifies this device to the realtime hub so it can ignore its own events.
+    client: String,
+}
+
+/// One server-sent event from `GET /v1/realtime`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RemoteEvent {
+    pub name: String,
+    pub data: Value,
 }
 
 impl MeoApi {
@@ -79,6 +88,20 @@ impl MeoApi {
         Self {
             http,
             origin: origin.into(),
+            client: String::new(),
+        }
+    }
+
+    pub fn with_client(mut self, client: impl Into<String>) -> Self {
+        self.client = client.into();
+        self
+    }
+
+    fn url(&self, path: &str, write: bool) -> String {
+        if write && !self.client.is_empty() {
+            format!("{}{path}?client={}", self.origin, self.client)
+        } else {
+            format!("{}{path}", self.origin)
         }
     }
 
@@ -89,9 +112,10 @@ impl MeoApi {
         path: &str,
         body: Option<Value>,
     ) -> Result<Value, ApiError> {
+        let write = method != Method::GET;
         let mut request = self
             .http
-            .request(method, format!("{}{}", self.origin, path))
+            .request(method, self.url(path, write))
             .bearer_auth(token)
             .header("Accept", "application/json");
         if let Some(body) = body {
@@ -259,7 +283,7 @@ impl MeoApi {
     ) -> Result<impl Stream<Item = Result<ChatEvent, ApiError>>, ApiError> {
         let response = self
             .http
-            .post(format!("{}/v1/chat/stream", self.origin))
+            .post(self.url("/v1/chat/stream", true))
             .bearer_auth(token)
             .header("Accept", "text/event-stream")
             .json(input)
@@ -303,6 +327,52 @@ impl MeoApi {
                             state.finished = true;
                             return Some((Ok(ChatEvent::Done), state));
                         }
+                    }
+                }
+            },
+        ))
+    }
+
+    /// Opens the user's realtime event stream (conversation changes and runs on other devices).
+    pub async fn open_events(
+        &self,
+        token: &str,
+    ) -> Result<impl Stream<Item = Result<RemoteEvent, ApiError>>, ApiError> {
+        let response = self
+            .http
+            .get(format!(
+                "{}/v1/realtime?client={}",
+                self.origin, self.client
+            ))
+            .bearer_auth(token)
+            .header("Accept", "text/event-stream")
+            .send()
+            .await?;
+        let status = response.status().as_u16();
+        if !(200..300).contains(&status) {
+            let body: Value = response.json().await.unwrap_or(Value::Null);
+            return Err(ApiError::Status {
+                status,
+                code: error_code(&body),
+            });
+        }
+        let state = EventState {
+            bytes: Box::pin(response.bytes_stream()),
+            buffer: String::new(),
+            event: String::new(),
+            data: String::new(),
+        };
+        Ok(futures_util::stream::unfold(
+            state,
+            |mut state| async move {
+                loop {
+                    if let Some(event) = state.next_event() {
+                        return Some((Ok(event), state));
+                    }
+                    match state.bytes.next().await {
+                        Some(Ok(chunk)) => state.buffer.push_str(&String::from_utf8_lossy(&chunk)),
+                        Some(Err(e)) => return Some((Err(ApiError::Http(e)), state)),
+                        None => return None,
                     }
                 }
             },
@@ -452,6 +522,36 @@ impl SseState {
     }
 }
 
+struct EventState {
+    bytes: ByteStream,
+    buffer: String,
+    event: String,
+    data: String,
+}
+
+impl EventState {
+    /// Parses complete lines already buffered; comments (`: ping`) are skipped.
+    fn next_event(&mut self) -> Option<RemoteEvent> {
+        while let Some(newline) = self.buffer.find('\n') {
+            let line = self.buffer[..newline].trim_end_matches('\r').to_owned();
+            self.buffer.drain(..=newline);
+            if let Some(rest) = line.strip_prefix("event:") {
+                self.event = rest.trim().to_owned();
+            } else if let Some(rest) = line.strip_prefix("data:") {
+                self.data.push_str(rest.trim());
+            } else if line.is_empty() {
+                let name = std::mem::take(&mut self.event);
+                let raw = std::mem::take(&mut self.data);
+                if !name.is_empty() {
+                    let data = serde_json::from_str(&raw).unwrap_or(Value::Null);
+                    return Some(RemoteEvent { name, data });
+                }
+            }
+        }
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -464,6 +564,21 @@ mod tests {
             data: String::new(),
             finished: false,
         }
+    }
+
+    #[test]
+    fn event_stream_parses_events_and_skips_heartbeats() {
+        let mut s = EventState {
+            bytes: Box::pin(futures_util::stream::empty()),
+            buffer: ": ping\n\nretry: 3000\nevent: hello\ndata: {\"devices\":1}\n\nid: 4\nevent: run.delta\ndata: {\"text\":\"hi\",\"origin\":\"a\"}\n\n".into(),
+            event: String::new(),
+            data: String::new(),
+        };
+        assert_eq!(s.next_event().unwrap().name, "hello");
+        let delta = s.next_event().unwrap();
+        assert_eq!(delta.name, "run.delta");
+        assert_eq!(delta.data["text"], "hi");
+        assert!(s.next_event().is_none());
     }
 
     #[test]

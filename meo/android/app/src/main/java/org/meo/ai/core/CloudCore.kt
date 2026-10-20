@@ -45,6 +45,8 @@ class CloudCore(private val context: Context, clientId: String) : CloudCoreListe
             if (handle != 0L) {
                 refresh()
                 dispatch(JSONObject().put("type", "start"))
+                // Live sync with the user's other devices.
+                dispatch(JSONObject().put("type", "realtime"))
             }
         }
     }
