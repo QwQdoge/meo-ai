@@ -5,6 +5,23 @@ desktop and Android. This repository is a fork of `qwersyk/Newelle`: preserve it
 provenance and GPL-3.0 license. Read `docs/ownership.md` before changing layout,
 the Newelle-derived root tree, compatibility adapters, packaging or the legacy split.
 
+## Current direction (user decision 2026-10-20): cloud-first, one core
+
+- Every client renders the view produced by `meo/core-rs/src/cloud/` (`AppCore`):
+  account sign-in, Meo API calls, local cache, navigation/pages/settings and buttons.
+  Clients send back the action object attached to each element; they hold no product
+  logic. New pages, sections, settings or buttons belong in the core so all clients
+  update without UI edits. View contract: `meo/docs/cloud-core-view.md`.
+- Desktop is `meo/desktop-rs` (Rust + QtBridge + MeoUI QML generic renderer).
+  Android binds the same core through JNI; Web through WASM.
+- One Meo Account: provider keys live in Account/Meo API; the core only selects
+  credential + model. Login reuses the cached refresh token, otherwise opens the
+  browser (desktop client `meo-ai-native`, redirect `meoai://auth/callback`).
+- **Paused (not used, do not extend):** local AgentService/Python (`meo/service`,
+  `meo/runtime`, `meo/system`, `meo/adapters`), the C++ desktop client `meo/app`,
+  local/remote device Work (`meo/cloud`, `meo/device`) and the Newelle tree. They stay
+  in the repository until removed deliberately. Repair moves into the core + QML later.
+
 ## Repository map
 
 | Path | Role | Authority |

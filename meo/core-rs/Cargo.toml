@@ -14,8 +14,10 @@ path = "src/bin/meo-agent-service.rs"
 required-features = ["service"]
 
 [features]
-default = ["client"]
+default = ["client", "cloud"]
 client = ["dep:reqwest", "dep:futures-util", "dep:tokio", "dep:url"]
+# Cloud-first application core rendered by every client.
+cloud = ["dep:reqwest", "dep:futures-util", "dep:url", "dep:bytes", "dep:sha2", "dep:base64", "dep:getrandom"]
 service = [
     "client",
     "dep:async-trait",
@@ -42,6 +44,9 @@ dashmap = { version = "6", optional = true }
 futures-util = { version = "0.3", optional = true }
 jni = { version = "0.21", optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"], optional = true }
+sha2 = { version = "0.10", optional = true }
+base64 = { version = "0.22", optional = true }
+getrandom = { version = "0.2", optional = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "signal"], optional = true }
 tokio-stream = { version = "0.1", features = ["sync"], optional = true }
 tower-http = { version = "0.6", features = ["trace"], optional = true }
