@@ -123,13 +123,13 @@ Use **Try again** when the failure is marked retryable. Meo AI keeps cancellatio
 
 | Area | Responsibility |
 | --- | --- |
-| `meo/` | Meo-owned native assistant implementation |
-| `meo/service/` | Stable headless AgentService layer |
-| `meo/system/` | Unprivileged System AI Router client/tool layer |
-| `meo/adapters/` | Temporary compatibility adapters around the inherited engine |
-| `meo/web/` | Browser integration contract and Meo web policy |
-| `meo/cloud/` | Conversation, device and AgentRun contracts |
-| `meo/device/` | Authenticated bridge from remote work to local AgentService |
+| `meo/core-rs/` | Authoritative Rust protocol and shared core |
+| `meo/ui-schema/` | Shared navigation/pages/settings configuration and generator |
+| `meo/app/` | Desktop C++/QML + MeoUI client |
+| `meo/web/client/` | React/TypeScript Web client |
+| `meo/android/` | Kotlin/Compose Android client |
+| `meo/cloud/`, `meo/device/` | Remote AgentRun and authenticated device bridge to local AgentService |
+| `meo/service/`, `meo/system/`, `meo/adapters/` | Python AgentService, System AI Router client and Newelle compatibility (migration code) |
 
 Shared visual controls and design tokens belong to **MeoUI**. Account/session identity and encrypted BYOK credentials belong to **Meo Account**. Privileged desktop execution remains behind the typed **System AI Router** rather than inside the assistant.
 
@@ -145,11 +145,14 @@ Shared visual controls and design tokens belong to **MeoUI**. Account/session id
 ## Current architecture
 
 ```text
-Desktop (C++/QML + MeoUI) ─┐
-                           ├─> AgentService ─> providers / tools / memory
-Web (meo-ai-web) ──────────┘        │
-                                    ├─> Meo Account (identity + encrypted BYOK)
-                                    └─> System AI Router (typed system capabilities)
+Desktop (C++/QML + MeoUI) ──► local AgentService ──► providers / tools / memory
+        │                          ▲                       │
+        │                          │ device relay           └─► System AI Router (typed system capabilities)
+Web (meo/web/client, React) ─┐     │
+Android (Compose + Rust JNI) ┴─► Meo API (Chat, Projects, Skills, AgentRun, model broker)
+                                     └─► Meo Account (identity + encrypted BYOK)
+
+Shared: meo/core-rs (protocol, ContentBlocks, context) · meo/ui-schema (navigation/settings) · MeoUI (tokens/controls)
 ```
 
 The maintained architecture and migration details are in:
