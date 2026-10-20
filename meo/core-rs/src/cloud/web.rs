@@ -48,6 +48,7 @@ unsafe impl Sync for LocalStorage {}
 struct JsHooks {
     changed: js_sys::Function,
     open_url: js_sys::Function,
+    notify: Option<js_sys::Function>,
 }
 
 // SAFETY: see `LocalStorage`.
@@ -61,6 +62,16 @@ impl PlatformHooks for JsHooks {
 
     fn open_url(&self, url: &str) {
         let _ = self.open_url.call1(&JsValue::NULL, &JsValue::from_str(url));
+    }
+
+    fn notify(&self, title: &str, text: &str) {
+        if let Some(notify) = &self.notify {
+            let _ = notify.call2(
+                &JsValue::NULL,
+                &JsValue::from_str(title),
+                &JsValue::from_str(text),
+            );
+        }
     }
 }
 
@@ -78,6 +89,7 @@ impl WebCore {
         redirect_uri: &str,
         on_changed: js_sys::Function,
         open_url: js_sys::Function,
+        on_notify: Option<js_sys::Function>,
     ) -> WebCore {
         let client_id = if client_id.is_empty() {
             super::WEB_CLIENT_ID
@@ -101,6 +113,7 @@ impl WebCore {
                 Arc::new(JsHooks {
                     changed: on_changed,
                     open_url,
+                    notify: on_notify,
                 }),
             ),
         }
