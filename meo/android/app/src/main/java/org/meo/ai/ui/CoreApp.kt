@@ -642,7 +642,7 @@ private fun MessageBubble(message: JSONObject, strings: JSONObject, act: Act) {
             }
         } else {
             SelectionContainer {
-                RichBlockRenderer(blocksJson = markdownBlocks(text), modifier = Modifier.fillMaxWidth())
+                MarkdownText(text, Modifier.fillMaxWidth())
             }
         }
         if (!streaming && message.str("text").isNotEmpty()) {
