@@ -51,6 +51,7 @@ export default function CoreApp() {
           ))}
         </nav>
       )}
+      {view.dialog && <Dialog dialog={view.dialog} act={act} />}
       <div className="core-main">
         {view.notice && (
           <Banner error={view.notice.kind === "error"} action="Dismiss" onAction={() => act(view.notice.action)}>
@@ -69,6 +70,34 @@ function Banner(props: { children: ReactNode; error?: boolean; action?: string; 
     <div className={`core-banner${props.error ? " error" : ""}`} role={props.error ? "alert" : "status"}>
       <span>{props.children}</span>
       {props.action && <button onClick={props.onAction}>{props.action}</button>}
+    </div>
+  );
+}
+
+/** Generic modal question from the core: `prompt` has a text field, `confirm` does not. */
+function Dialog({ dialog, act }: { dialog: Spec; act: Act }) {
+  const [value, setValue] = useState<string>(dialog.input?.value ?? "");
+  const run = (a: Spec) => act(a.withInput ? { ...a.action, text: value } : a.action);
+  const [confirm, cancel] = dialog.actions ?? [];
+  return (
+    <div className="core-scrim" onKeyDown={(e) => e.key === "Escape" && act({ type: "close_dialog" })}>
+      <div className="core-dialog" role="dialog" aria-modal="true" aria-label={dialog.title}>
+        <h2>{dialog.title}</h2>
+        {dialog.text && <p className="core-muted">{dialog.text}</p>}
+        {dialog.input && (
+          <input
+            autoFocus
+            value={value}
+            placeholder={dialog.input.placeholder}
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && confirm && run(confirm)}
+          />
+        )}
+        <div className="core-dialog-actions">
+          {cancel && <button className="core-button secondary" onClick={() => run(cancel)}>{cancel.label}</button>}
+          {confirm && <button className={`core-button ${confirm.style ?? "primary"}`} onClick={() => run(confirm)}>{confirm.label}</button>}
+        </div>
+      </div>
     </div>
   );
 }
@@ -204,6 +233,43 @@ function Control({ item, act }: { item: Spec; act: Act }) {
   }
 }
 
+/** Debounced search field; the text is sent as `text` on the search action. */
+function SearchBox({ search, act }: { search: Spec; act: Act }) {
+  const [text, setText] = useState<string>(search.value ?? "");
+  useEffect(() => {
+    if (text === (search.value ?? "")) return;
+    const timer = setTimeout(() => act({ ...search.action, text }), 300);
+    return () => clearTimeout(timer);
+  }, [text]);
+  return (
+    <input
+      type="search"
+      className="core-search"
+      value={text}
+      placeholder={search.placeholder}
+      onChange={(e) => setText(e.target.value)}
+    />
+  );
+}
+
+function RowMenu({ menu, act }: { menu: Spec[]; act: Act }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="core-row-menu">
+      <button aria-label="More" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((v) => !v)} onBlur={() => setTimeout(() => setOpen(false), 150)}>⋮</button>
+      {open && (
+        <ul role="menu">
+          {menu.map((m, i) => (
+            <li key={i} role="menuitem">
+              <button className={m.style === "danger" ? "danger" : undefined} onMouseDown={(e) => e.preventDefault()} onClick={() => { setOpen(false); act(m.action); }}>{m.label}</button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function Conversation({ page, prefs, act }: { page: Spec; prefs: Spec; act: Act }) {
   const [drawer, setDrawer] = useState(false);
   const sidebar: Spec = page.sidebar ?? {};
@@ -229,14 +295,23 @@ function Conversation({ page, prefs, act }: { page: Spec; prefs: Spec; act: Act 
     <div className={`core-chat${drawer ? " drawer-open" : ""}`}>
       <aside className="core-sidebar" aria-label={sidebar.title}>
         {(sidebar.actions ?? []).map((a: Spec, i: number) => <Button key={i} spec={a} act={(x) => { setDrawer(false); act(x); }} />)}
+        {sidebar.search && <SearchBox search={sidebar.search} act={act} />}
+        {(sidebar.tabs ?? []).length > 0 && (
+          <div className="core-tabs" role="tablist">
+            {sidebar.tabs.map((tab: Spec, i: number) => (
+              <button key={i} role="tab" aria-selected={!!tab.selected} onClick={() => act(tab.action)}>{tab.label}</button>
+            ))}
+          </div>
+        )}
         <h2>{sidebar.title}</h2>
         <ul className="core-list">
           {(sidebar.items ?? []).map((item: Spec) => (
-            <li key={item.id}>
+            <li key={item.id} className="core-chat-row">
               <button aria-current={item.selected ? "true" : undefined} onClick={() => { setDrawer(false); act(item.action); }}>
                 <strong>{item.title}</strong>
                 <span>{item.subtitle}</span>
               </button>
+              {(item.menu ?? []).length > 0 && <RowMenu menu={item.menu} act={act} />}
             </li>
           ))}
         </ul>

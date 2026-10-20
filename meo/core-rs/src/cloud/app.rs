@@ -59,6 +59,31 @@ pub enum Action {
     },
     Refresh,
     DismissNotice,
+    /// Filters the chat list by title and message text (empty clears it).
+    Search {
+        text: String,
+    },
+    ShowArchived {
+        value: bool,
+    },
+    BeginRename {
+        id: String,
+    },
+    RenameConversation {
+        id: String,
+        text: String,
+    },
+    ArchiveConversation {
+        id: String,
+        archived: bool,
+    },
+    BeginDelete {
+        id: String,
+    },
+    DeleteConversation {
+        id: String,
+    },
+    CloseDialog,
     /// Long-running: keeps this device in sync with the user's other devices.
     /// Hosts dispatch it once after `Start` as its own task; extra calls return at once.
     Realtime,
@@ -88,6 +113,16 @@ struct PendingSend {
     consent: Value,
 }
 
+/// A modal question the client renders (`prompt` with a text field, or `confirm`).
+#[derive(Clone)]
+struct Dialog {
+    kind: &'static str,
+    title: String,
+    text: String,
+    value: String,
+    actions: Vec<Value>,
+}
+
 /// A model answer being generated on another of the user's devices.
 #[derive(Clone)]
 struct RemoteRun {
@@ -109,6 +144,9 @@ struct State {
     messages: HashMap<String, Vec<ChatMessage>>,
     streaming: Option<(String, String)>,
     remote_run: Option<RemoteRun>,
+    search: String,
+    show_archived: bool,
+    dialog: Option<Dialog>,
     consent: Option<PendingSend>,
     credentials: Vec<Credential>,
     models: Vec<Model>,
@@ -232,6 +270,27 @@ impl AppCore {
             Action::Refresh => self.load_all().await,
             Action::DismissNotice => self.update(|s| s.notice = None),
             Action::Realtime => self.realtime().await,
+            Action::Search { text } => {
+                self.update(|s| s.search = text.trim().to_owned());
+                self.refresh_conversations().await;
+            }
+            Action::ShowArchived { value } => {
+                self.update(|s| s.show_archived = value);
+                self.refresh_conversations().await;
+            }
+            Action::BeginRename { id } => self.begin_rename(id),
+            Action::RenameConversation { id, text } => {
+                self.update(|s| s.dialog = None);
+                self.change_conversation(&id, json!({ "title": text.trim() }))
+                    .await;
+            }
+            Action::ArchiveConversation { id, archived } => {
+                self.change_conversation(&id, json!({ "archived": archived }))
+                    .await;
+            }
+            Action::BeginDelete { id } => self.begin_delete(id),
+            Action::DeleteConversation { id } => self.delete_conversation(id).await,
+            Action::CloseDialog => self.update(|s| s.dialog = None),
         }
     }
 
@@ -502,13 +561,113 @@ impl AppCore {
     }
 
     async fn refresh_conversations(&self) {
-        if let Ok(list) = self
-            .call(|api, t| async move { api.list_conversations(&t).await })
-            .await
-        {
-            self.save_json(KEY_CONVERSATIONS, &list);
+        let (query, archived) = {
+            let s = self.state.lock().unwrap();
+            (s.search.clone(), s.show_archived)
+        };
+        let listed = self
+            .call(|api, t| {
+                let query = query.clone();
+                async move { api.search_conversations(&t, &query, archived).await }
+            })
+            .await;
+        if let Ok(list) = listed {
+            // Only the plain list is a cache of "my chats"; filtered views are transient.
+            if query.is_empty() && !archived {
+                self.save_json(KEY_CONVERSATIONS, &list);
+            }
             self.update(|s| s.conversations = list);
         }
+    }
+
+    fn begin_rename(&self, id: String) {
+        let title = self
+            .state
+            .lock()
+            .unwrap()
+            .conversations
+            .iter()
+            .find(|c| c.id == id)
+            .map(|c| c.title.clone())
+            .unwrap_or_default();
+        self.update(|s| {
+            s.dialog = Some(Dialog {
+                kind: "prompt",
+                title: "Rename chat".into(),
+                text: String::new(),
+                value: title,
+                actions: vec![
+                    input_button(
+                        "Save",
+                        "primary",
+                        json!({ "type": "rename_conversation", "id": id }),
+                    ),
+                    button("Cancel", "secondary", json!({ "type": "close_dialog" })),
+                ],
+            })
+        });
+    }
+
+    fn begin_delete(&self, id: String) {
+        self.update(|s| {
+            s.dialog = Some(Dialog {
+                kind: "confirm",
+                title: "Delete this chat?".into(),
+                text: "The chat and its messages are removed from every device. This cannot be undone.".into(),
+                value: String::new(),
+                actions: vec![
+                    button("Delete", "danger", json!({ "type": "delete_conversation", "id": id })),
+                    button("Cancel", "secondary", json!({ "type": "close_dialog" })),
+                ],
+            })
+        });
+    }
+
+    async fn change_conversation(&self, id: &str, patch: Value) {
+        let result = self
+            .call(|api, t| {
+                let (id, patch) = (id.to_owned(), patch.clone());
+                async move { api.patch_conversation(&t, &id, patch).await }
+            })
+            .await;
+        match result {
+            Ok(()) => self.refresh_conversations().await,
+            Err(e) => self.notice("error", e.to_string()),
+        }
+    }
+
+    async fn delete_conversation(&self, id: String) {
+        self.update(|s| s.dialog = None);
+        let result = self
+            .call(|api, t| {
+                let id = id.clone();
+                async move { api.delete_conversation(&t, &id).await }
+            })
+            .await;
+        match result {
+            Ok(()) => {
+                self.forget_conversation(&id);
+                self.refresh_conversations().await;
+            }
+            Err(e) => self.notice("error", e.to_string()),
+        }
+    }
+
+    /// Drops local state for a conversation that no longer exists.
+    fn forget_conversation(&self, id: &str) {
+        self.storage.remove(&format!("messages-{id}"));
+        self.update(|s| {
+            s.messages.remove(id);
+            if s.active.as_deref() == Some(id) {
+                s.active = None;
+            }
+            if s.remote_run
+                .as_ref()
+                .is_some_and(|r| r.conversation_id == id)
+            {
+                s.remote_run = None;
+            }
+        });
     }
 
     // ---- realtime sync ----------------------------------------------------
@@ -553,6 +712,11 @@ impl AppCore {
                 }
             }
             "conversation.changed" if !own => {
+                if data["deleted"].as_bool() == Some(true) {
+                    if let Some(id) = conversation.as_deref() {
+                        self.forget_conversation(id);
+                    }
+                }
                 self.refresh_conversations().await;
                 let active = self.state.lock().unwrap().active.clone();
                 if conversation.is_some() && conversation == active {
@@ -885,6 +1049,13 @@ impl AppCore {
             "route": s.route,
             "navigation": if signed_in { self.manifest.nav_json(&s.route) } else { json!([]) },
             "page": page,
+            "dialog": s.dialog.as_ref().map(|d| json!({
+                "kind": d.kind,
+                "title": d.title,
+                "text": d.text,
+                "input": (d.kind == "prompt").then(|| json!({ "value": d.value, "placeholder": "Title" })),
+                "actions": d.actions,
+            })),
             "notice": s.notice.as_ref().map(|(kind, text)| json!({
                 "kind": kind,
                 "text": text,
@@ -952,6 +1123,11 @@ impl AppCore {
 
 fn button(label: &str, style: &str, action: Value) -> Value {
     json!({ "label": label, "style": style, "action": action })
+}
+
+/// A dialog button whose client adds the dialog's text field to the action as `text`.
+fn input_button(label: &str, style: &str, action: Value) -> Value {
+    json!({ "label": label, "style": style, "action": action, "withInput": true })
 }
 
 /// Model controls: a picker, plus a free-text model ID when the selected
@@ -1069,14 +1245,25 @@ fn conversation_page(s: &State) -> Value {
         "kind": "conversation",
         "title": active.as_ref().and_then(|id| s.conversations.iter().find(|c| &c.id == id)).map(|c| c.title.clone()).unwrap_or_else(|| "New chat".into()),
         "sidebar": {
-            "title": "Chats",
+            "title": if s.show_archived { "Archived" } else { "Chats" },
             "actions": [button("New chat", "primary", json!({ "type": "new_conversation" }))],
+            "search": { "placeholder": "Search chats", "value": s.search, "action": { "type": "search" } },
+            "tabs": [
+                { "label": "Chats", "selected": !s.show_archived, "action": { "type": "show_archived", "value": false } },
+                { "label": "Archived", "selected": s.show_archived, "action": { "type": "show_archived", "value": true } },
+            ],
             "items": s.conversations.iter().map(|c| json!({
                 "id": c.id,
                 "title": if c.title.is_empty() { "New chat".to_owned() } else { c.title.clone() },
                 "subtitle": c.updated_at.get(..10).unwrap_or_default(),
                 "selected": Some(&c.id) == active.as_ref(),
                 "action": { "type": "select_conversation", "id": c.id },
+                "menu": [
+                    button("Rename", "secondary", json!({ "type": "begin_rename", "id": c.id })),
+                    button(if s.show_archived { "Restore" } else { "Archive" }, "secondary",
+                        json!({ "type": "archive_conversation", "id": c.id, "archived": !s.show_archived })),
+                    button("Delete", "danger", json!({ "type": "begin_delete", "id": c.id })),
+                ],
             })).collect::<Vec<_>>(),
         },
         "messages": messages,
@@ -1254,6 +1441,77 @@ mod tests {
             json!({ "conversationId": "elsewhere", "origin": "other", "text": "x" }),
         )));
         assert!(last_message(&c).is_none());
+    }
+
+    fn conversation(id: &str, title: &str) -> ConversationSummary {
+        serde_json::from_value(
+            json!({ "id": id, "title": title, "updated_at": "2026-10-20T10:00:00Z" }),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn rename_and_delete_use_dialogs_the_client_renders() {
+        let c = signed_in_core();
+        c.update(|s| s.conversations = vec![conversation("c1", "Old title")]);
+        let item = &c.view()["page"]["sidebar"]["items"][0];
+        assert_eq!(
+            item["menu"][0]["action"],
+            json!({ "type": "begin_rename", "id": "c1" })
+        );
+        assert_eq!(item["menu"][2]["style"], "danger");
+
+        c.begin_rename("c1".into());
+        let dialog = c.view()["dialog"].clone();
+        assert_eq!(
+            (dialog["kind"].as_str(), dialog["input"]["value"].as_str()),
+            (Some("prompt"), Some("Old title"))
+        );
+        assert_eq!(dialog["actions"][0]["withInput"], true);
+        assert_eq!(
+            dialog["actions"][0]["action"]["type"],
+            "rename_conversation"
+        );
+
+        c.begin_delete("c1".into());
+        let dialog = c.view()["dialog"].clone();
+        assert_eq!(dialog["kind"], "confirm");
+        assert!(dialog["input"].is_null());
+        futures_executor::block_on(c.dispatch(Action::CloseDialog));
+        assert!(c.view()["dialog"].is_null());
+    }
+
+    #[test]
+    fn deleting_a_conversation_elsewhere_clears_it_here() {
+        let c = signed_in_core();
+        c.update(|s| {
+            s.messages.insert("c1".into(), vec![]);
+            s.remote_run = Some(RemoteRun {
+                conversation_id: "c1".into(),
+                text: "x".into(),
+                done: false,
+            });
+        });
+        c.forget_conversation("c1");
+        let s = c.state.lock().unwrap();
+        assert!(s.active.is_none() && s.remote_run.is_none() && !s.messages.contains_key("c1"));
+    }
+
+    #[test]
+    fn new_actions_round_trip_as_tagged_json() {
+        for action in [
+            json!({ "type": "search", "text": "cats" }),
+            json!({ "type": "show_archived", "value": true }),
+            json!({ "type": "rename_conversation", "id": "c", "text": "t" }),
+            json!({ "type": "archive_conversation", "id": "c", "archived": true }),
+            json!({ "type": "delete_conversation", "id": "c" }),
+            json!({ "type": "close_dialog" }),
+        ] {
+            assert!(
+                serde_json::from_value::<Action>(action.clone()).is_ok(),
+                "{action}"
+            );
+        }
     }
 
     #[test]

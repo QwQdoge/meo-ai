@@ -137,10 +137,47 @@ impl MeoApi {
         &self,
         token: &str,
     ) -> Result<Vec<ConversationSummary>, ApiError> {
-        let body = self
-            .request(token, Method::GET, "/v1/conversations", None)
-            .await?;
+        self.search_conversations(token, "", false).await
+    }
+
+    /// `query` matches titles and message text; `archived` lists archived chats instead.
+    pub async fn search_conversations(
+        &self,
+        token: &str,
+        query: &str,
+        archived: bool,
+    ) -> Result<Vec<ConversationSummary>, ApiError> {
+        let mut path = String::from("/v1/conversations");
+        let mut separator = '?';
+        if !query.is_empty() {
+            let encoded: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
+            path.push_str(&format!("{separator}q={encoded}"));
+            separator = '&';
+        }
+        if archived {
+            path.push_str(&format!("{separator}archived=true"));
+        }
+        let body = self.request(token, Method::GET, &path, None).await?;
         Ok(serde_json::from_value(body["conversations"].clone()).unwrap_or_default())
+    }
+
+    pub async fn patch_conversation(
+        &self,
+        token: &str,
+        id: &str,
+        patch: Value,
+    ) -> Result<(), ApiError> {
+        let path = format!("/v1/conversations/{id}");
+        self.request(token, Method::PATCH, &path, Some(patch))
+            .await
+            .map(|_| ())
+    }
+
+    pub async fn delete_conversation(&self, token: &str, id: &str) -> Result<(), ApiError> {
+        let path = format!("/v1/conversations/{id}");
+        self.request(token, Method::DELETE, &path, None)
+            .await
+            .map(|_| ())
     }
 
     pub async fn create_conversation(

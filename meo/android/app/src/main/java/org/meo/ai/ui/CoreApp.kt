@@ -31,14 +31,18 @@ import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.ChatBubble
 import androidx.compose.material.icons.rounded.Extension
 import androidx.compose.material.icons.rounded.Folder
+import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Menu
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material.icons.rounded.Work
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.DropdownMenu
@@ -117,6 +121,8 @@ fun CoreApp(view: JSONObject, act: (JSONObject) -> Unit) {
     val page = view.obj("page") ?: JSONObject()
     val notice = view.obj("notice")
 
+    view.obj("dialog")?.let { CoreDialog(it, act) }
+
     BoxWithConstraints(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         val wide = maxWidth >= 840.dp
         Row(Modifier.fillMaxSize()) {
@@ -184,6 +190,51 @@ private fun navigationIcon(symbol: String): ImageVector = when (symbol) {
     "extension" -> Icons.Rounded.Extension
     "settings" -> Icons.Rounded.Settings
     else -> Icons.Rounded.AutoAwesome
+}
+
+/** Generic modal question from the core: `prompt` has a text field, `confirm` does not. */
+@Composable
+private fun CoreDialog(dialog: JSONObject, act: Act) {
+    val actions = dialog.list("actions")
+    val confirm = actions.getOrNull(0)
+    val cancel = actions.getOrNull(1)
+    val input = dialog.obj("input")
+    var value by remember(dialog.toString()) { mutableStateOf(input?.str("value") ?: "") }
+    fun run(spec: JSONObject) {
+        val action = spec.obj("action") ?: return
+        act(if (spec.optBoolean("withInput")) action.withField("text", value) else action)
+    }
+    AlertDialog(
+        onDismissRequest = { act(JSONObject().put("type", "close_dialog")) },
+        title = { Text(dialog.str("title")) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                dialog.str("text").takeIf { it.isNotEmpty() }?.let { Text(it) }
+                if (input != null) {
+                    OutlinedTextField(
+                        value = value,
+                        onValueChange = { value = it },
+                        singleLine = true,
+                        placeholder = { Text(input.str("placeholder")) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            if (confirm != null) {
+                TextButton(
+                    onClick = { run(confirm) },
+                    colors = if (confirm.str("style") == "danger")
+                        ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                    else ButtonDefaults.textButtonColors(),
+                ) { Text(confirm.str("label")) }
+            }
+        },
+        dismissButton = {
+            if (cancel != null) TextButton(onClick = { run(cancel) }) { Text(cancel.str("label")) }
+        },
+    )
 }
 
 @Composable
@@ -403,28 +454,89 @@ private fun ConversationPage(page: JSONObject, prefs: JSONObject?, wide: Boolean
 private fun Sidebar(sidebar: JSONObject, act: Act, modifier: Modifier) {
     Column(modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         sidebar.list("actions").forEach { ActionButton(it, act, Modifier.fillMaxWidth()) }
+        sidebar.obj("search")?.let { SearchField(it, act) }
+        val tabs = sidebar.list("tabs")
+        if (tabs.isNotEmpty()) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                tabs.forEach { tab ->
+                    FilterChip(
+                        selected = tab.optBoolean("selected"),
+                        onClick = { act.send(tab.obj("action")) },
+                        label = { Text(tab.str("label")) },
+                    )
+                }
+            }
+        }
         Text(sidebar.str("title"), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
         LazyColumn(Modifier.weight(1f)) {
             items(sidebar.list("items")) { item ->
                 val selected = item.optBoolean("selected")
+                var menuOpen by remember { mutableStateOf(false) }
                 Surface(
                     onClick = { act.send(item.obj("action")) },
                     shape = RoundedCornerShape(16.dp),
                     color = if (selected) MaterialTheme.colorScheme.secondaryContainer else androidx.compose.ui.graphics.Color.Transparent,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Column(Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
-                        Text(item.str("title"), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(
-                            item.str("subtitle"),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                    Row(Modifier.padding(start = 16.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f).padding(vertical = 6.dp)) {
+                            Text(item.str("title"), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(
+                                item.str("subtitle"),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        val menu = item.list("menu")
+                        if (menu.isNotEmpty()) {
+                            Box {
+                                IconButton(onClick = { menuOpen = true }) { Icon(Icons.Rounded.MoreVert, contentDescription = "More") }
+                                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                                    menu.forEach { entry ->
+                                        DropdownMenuItem(
+                                            text = {
+                                                Text(
+                                                    entry.str("label"),
+                                                    color = if (entry.str("style") == "danger") MaterialTheme.colorScheme.error
+                                                    else androidx.compose.ui.graphics.Color.Unspecified,
+                                                )
+                                            },
+                                            onClick = {
+                                                menuOpen = false
+                                                act.send(entry.obj("action"))
+                                            },
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
     }
+}
+
+/** Search field: the text is sent as `text` on the search action, debounced. */
+@Composable
+private fun SearchField(search: JSONObject, act: Act) {
+    val saved = search.str("value")
+    var text by remember(saved) { mutableStateOf(saved) }
+    LaunchedEffect(text) {
+        if (text != saved) {
+            kotlinx.coroutines.delay(300)
+            search.obj("action")?.let { act(it.withField("text", text)) }
+        }
+    }
+    OutlinedTextField(
+        value = text,
+        onValueChange = { text = it },
+        modifier = Modifier.fillMaxWidth(),
+        singleLine = true,
+        leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
+        placeholder = { Text(search.str("placeholder")) },
+        shape = RoundedCornerShape(24.dp),
+    )
 }
 
 @Composable
