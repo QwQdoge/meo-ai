@@ -10,6 +10,8 @@ pub mod app;
 pub mod auth;
 pub mod manifest;
 pub mod storage;
+#[cfg(all(feature = "wasm", target_arch = "wasm32"))]
+pub mod web;
 
 pub use app::{Action, AppCore, PlatformHooks};
 pub use auth::{OAuthConfig, Session};
@@ -30,9 +32,19 @@ pub const DESKTOP_REDIRECT_URI: &str = "http://127.0.0.1:43887/callback";
 pub const ANDROID_CLIENT_ID: &str = "org.meo.ai.android";
 pub const ANDROID_REDIRECT_URI: &str = "org.meo.ai:/oauth/callback";
 
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn now_secs() -> i64 {
+    (js_sys::Date::now() / 1000.0) as i64
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn now_secs() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
 }
+
+/// Web client registered for Meo AI on Cloudflare Pages (meo-api auth migration 0005).
+pub const WEB_CLIENT_ID: &str = "8f2e0255-187d-448f-9e25-bc275d1b6015";
+pub const WEB_REDIRECT_URI: &str = "https://chat.meoarch.org/oauth/openid/callback";

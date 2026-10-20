@@ -7,6 +7,10 @@ if (!process.env.MEO_OUTPUT_ROOT)
 export default defineConfig({
   resolve: {
     alias: {
+      "@meo-core": path.resolve(
+        process.env.MEO_OUTPUT_ROOT,
+        "meo-ai/build/web-core",
+      ),
       "@meo-tokens": path.resolve(
         process.env.MEO_OUTPUT_ROOT,
         "meo-ai/build/web/meo-tokens.css",

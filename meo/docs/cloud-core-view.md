@@ -51,4 +51,10 @@ set_setting{binding,value}, refresh, dismiss_notice`.
   `ui/CoreApp.kt` is the Compose renderer; `MainActivity` only forwards the
   `org.meo.ai:/oauth/callback` redirect as `auth_callback`. The pending sign-in is persisted
   by the core, and `auth_callback` waits for `start`, so a cold start from the redirect works.
-- **Web**: WASM (planned).
+- **Web** `web/client`: the same core compiled to WASM (`core-rs` feature `wasm`, built by
+  `scripts/build-core.mjs` into `$MEO_OUTPUT_ROOT/meo-ai/build/web-core`). `src/core/useCore.ts`
+  hosts it (state in `localStorage`, sign-in is a same-tab PKCE redirect to
+  `/oauth/openid/callback`, which the page hands to the core as `auth_callback`);
+  `src/core/CoreApp.tsx` is the React renderer. The legacy BFF function there only handles
+  the callback when it has its own flow cookie, otherwise it serves the app. The old
+  `src/meo/*` product components are unused and can be deleted once the Web release is accepted.

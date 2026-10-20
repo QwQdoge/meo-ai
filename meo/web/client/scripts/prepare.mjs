@@ -27,3 +27,8 @@ execFileSync(
   ],
   { cwd: root, stdio: "inherit" },
 );
+// The shared Rust core compiled for the browser (same core as desktop and Android).
+execFileSync(process.execPath, [path.join(root, "scripts/build-core.mjs")], {
+  cwd: root,
+  stdio: "inherit",
+});

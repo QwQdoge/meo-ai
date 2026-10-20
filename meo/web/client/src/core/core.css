@@ -1,0 +1,60 @@
+/* Layout for the generic core renderer; colors come from the MeoUI tokens in theme.css. */
+.core-app { display: flex; height: 100dvh; background: rgb(var(--surface-primary)); color: rgb(var(--text-primary)); }
+.core-nav { display: flex; flex-direction: column; gap: 4px; padding: 12px 8px; background: rgb(var(--surface-secondary)); border-inline-end: 1px solid rgb(var(--border-light)); }
+.core-nav-item { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 64px; padding: 8px; border: 0; border-radius: 16px; background: none; color: inherit; font-size: 12px; }
+.core-nav-item[aria-current="page"] { background: rgb(var(--surface-tertiary)); font-weight: 600; }
+.core-nav-dot { width: 20px; height: 20px; border-radius: 50%; background: rgb(var(--accent-primary)); opacity: 0.6; }
+.core-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.core-center { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 24px; text-align: center; min-height: 60dvh; }
+.core-center p, .core-muted { color: rgb(var(--text-secondary)); }
+.core-banner { display: flex; align-items: center; gap: 12px; margin: 8px 12px; padding: 8px 12px; border-radius: 16px; background: rgb(var(--surface-tertiary)); }
+.core-banner.error { background: rgb(var(--status-error-strong) / 0.15); }
+.core-banner > span { flex: 1; }
+.core-button { padding: 10px 20px; border-radius: 999px; border: 1px solid rgb(var(--border-light)); background: rgb(var(--surface-tertiary)); color: inherit; }
+.core-button.primary { background: rgb(var(--accent-primary)); border-color: transparent; color: #fff; }
+.core-button.danger { color: rgb(var(--status-error-strong)); }
+.core-page { padding: 16px 24px; overflow: auto; }
+.core-page.narrow { max-width: 720px; }
+.core-header { display: flex; align-items: center; gap: 12px; padding: 8px 0; }
+.core-header h1 { flex: 1; margin: 0; font-size: 1.4rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.core-section { display: flex; flex-direction: column; gap: 12px; margin-block: 24px; }
+.core-section h2 { margin: 0; font-size: 0.9rem; color: rgb(var(--accent-primary)); }
+.core-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.core-field { display: flex; flex-direction: column; gap: 4px; }
+.core-field select, .core-field input, .core-field textarea, .core-input-row textarea { padding: 10px 12px; border-radius: 12px; border: 1px solid rgb(var(--border-light)); background: rgb(var(--surface-primary)); color: inherit; }
+.core-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.core-list button { width: 100%; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 10px 14px; border: 0; border-radius: 16px; background: none; color: inherit; text-align: start; }
+.core-list button[aria-current="true"] { background: rgb(var(--surface-tertiary)); }
+.core-list span { font-size: 12px; color: rgb(var(--text-secondary)); }
+.core-chat { flex: 1; display: flex; min-height: 0; }
+.core-sidebar { width: 280px; flex: none; display: flex; flex-direction: column; gap: 8px; padding: 12px; overflow: auto; border-inline-end: 1px solid rgb(var(--border-light)); }
+.core-sidebar h2 { margin: 8px 0 0; font-size: 0.8rem; color: rgb(var(--text-secondary)); }
+.core-thread { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.core-thread .core-header { padding-inline: 16px; }
+.core-menu { display: none; border: 0; background: none; color: inherit; font-size: 20px; }
+.core-messages { flex: 1; overflow: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.core-empty { margin: auto; text-align: center; }
+.core-bubble.user { align-self: flex-end; max-width: 75%; padding: 10px 16px; border-radius: 18px; background: rgb(var(--surface-tertiary)); white-space: pre-wrap; }
+.core-bubble.assistant { max-width: 100%; overflow-wrap: anywhere; }
+.core-composer { display: flex; flex-direction: column; gap: 8px; padding: 12px 16px; }
+.core-input-row { display: flex; gap: 8px; align-items: flex-end; }
+.core-input-row textarea { flex: 1; max-height: 200px; resize: none; }
+.core-spinner { width: 28px; height: 28px; border-radius: 50%; border: 3px solid rgb(var(--border-light)); border-top-color: rgb(var(--accent-primary)); animation: core-spin 1s linear infinite; }
+@keyframes core-spin { to { transform: rotate(360deg); } }
+@media (max-width: 839px) {
+  .core-app { flex-direction: column-reverse; }
+  .core-nav { flex-direction: row; justify-content: space-around; border-inline-end: 0; border-block-start: 1px solid rgb(var(--border-light)); padding: 4px; }
+  .core-nav-item { min-width: 0; flex: 1; }
+  .core-menu { display: block; }
+  .core-sidebar { position: fixed; inset-block: 0; inset-inline-start: 0; z-index: 5; background: rgb(var(--surface-secondary)); transform: translateX(-100%); transition: transform 0.2s; }
+  .drawer-open .core-sidebar { transform: none; }
+}
+.core-bubble.assistant p { margin: 0 0 0.75em; }
+.core-bubble.assistant ul { list-style: disc; padding-inline-start: 1.4em; margin: 0 0 0.75em; }
+.core-bubble.assistant ol { list-style: decimal; padding-inline-start: 1.4em; margin: 0 0 0.75em; }
+.core-bubble.assistant code { padding: 1px 5px; border-radius: 6px; background: rgb(var(--surface-tertiary)); font-size: 0.9em; }
+.core-bubble.assistant pre { overflow: auto; padding: 12px; border-radius: 12px; background: rgb(var(--surface-tertiary)); }
+.core-bubble.assistant pre code { padding: 0; background: none; }
+.core-bubble.assistant table { border-collapse: collapse; }
+.core-bubble.assistant th, .core-bubble.assistant td { padding: 4px 10px; border: 1px solid rgb(var(--border-light)); }
+.core-bubble.assistant a { color: rgb(var(--accent-primary)); text-decoration: underline; }
