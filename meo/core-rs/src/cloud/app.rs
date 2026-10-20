@@ -160,6 +160,9 @@ struct State {
     remote_run: Option<RemoteRun>,
     search: String,
     show_archived: bool,
+    /// Realtime stream state: connected, and how many of the user's devices are live.
+    sync_live: bool,
+    sync_devices: usize,
     dialog: Option<Dialog>,
     consent: Option<PendingSend>,
     credentials: Vec<Credential>,
@@ -714,6 +717,10 @@ impl AppCore {
                     }
                 }
             }
+            self.update(|s| {
+                s.sync_live = false;
+                s.sync_devices = 0;
+            });
             futures_timer::Delay::new(std::time::Duration::from_secs(backoff)).await;
             backoff = (backoff * 2).min(30);
         }
@@ -724,7 +731,13 @@ impl AppCore {
         let own = data["origin"].as_str() == Some(self.client_id.as_str());
         let conversation = data["conversationId"].as_str().map(str::to_owned);
         match event.name.as_str() {
+            "presence" => {
+                let devices = data["devices"].as_u64().unwrap_or(0) as usize;
+                self.update(|s| s.sync_devices = devices);
+            }
             "hello" => {
+                let devices = data["devices"].as_u64().unwrap_or(0) as usize;
+                self.update(|s| s.sync_devices = devices);
                 self.refresh_conversations().await;
                 let active = self.state.lock().unwrap().active.clone();
                 if let Some(id) = active {
@@ -1261,6 +1274,7 @@ impl AppCore {
                 "email": s.session.as_ref().map(|x| x.email.clone()).unwrap_or_default(),
             },
             "online": s.online,
+            "sync": { "live": s.sync_live, "devices": s.sync_devices },
             "route": s.route,
             "navigation": if signed_in { self.manifest.nav_json(&s.route) } else { json!([]) },
             "page": page,
@@ -1325,6 +1339,16 @@ impl AppCore {
                         }));
                     }
                     "account" => {
+                        items.push(json!({
+                            "id": "sync", "label": "Live sync", "kind": "info",
+                            "value": if s.sync_live { "Connected" } else { "Reconnecting…" },
+                        }));
+                        if s.sync_live {
+                            items.push(json!({
+                                "id": "devices", "label": "Devices online", "kind": "info",
+                                "value": s.sync_devices.max(1),
+                            }));
+                        }
                         let email = s.session.as_ref().map(|x| x.email.clone()).unwrap_or_default();
                         items.push(json!({ "id": "email", "label": "Signed in as", "kind": "info", "value": email }));
                         items.push(json!({
@@ -1815,6 +1839,51 @@ mod tests {
             json!({ "type": "edit_message", "id": "m1" })
         );
         assert_eq!(dialog["actions"][0]["withInput"], true);
+    }
+
+    #[test]
+    fn presence_events_drive_the_sync_info() {
+        let c = signed_in_core();
+        c.update(|s| {
+            s.route = "settings".into();
+            s.sync_live = true;
+        });
+        futures_executor::block_on(c.on_remote_event(remote("presence", json!({ "devices": 3 }))));
+        let view = c.view();
+        assert_eq!(view["sync"], json!({ "live": true, "devices": 3 }));
+        let account = view["page"]["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["id"] == "account")
+            .unwrap();
+        let info = |id: &str| {
+            account["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|i| i["id"] == id)
+                .unwrap()["value"]
+                .clone()
+        };
+        assert_eq!(
+            (info("sync"), info("devices")),
+            (json!("Connected"), json!(3))
+        );
+        c.update(|s| s.sync_live = false);
+        let view = c.view();
+        let items = view["page"]["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["id"] == "account")
+            .unwrap()["items"]
+            .clone();
+        assert!(items
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|i| i["id"] != "devices"));
     }
 
     #[test]
