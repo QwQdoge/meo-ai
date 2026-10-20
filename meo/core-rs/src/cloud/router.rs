@@ -555,9 +555,47 @@ pub fn suggest(models: &[(String, Model)]) -> HashMap<String, Choice> {
     out
 }
 
+/// Whether a message is probably about something recent or outside the model's knowledge,
+/// so Auto mode should look it up on the web first.
+pub fn wants_search(prompt: &str) -> bool {
+    let lower = prompt.to_lowercase();
+    const WORDS: [&str; 22] = [
+        "latest",
+        "today",
+        "tonight",
+        "this week",
+        "right now",
+        "current price",
+        "news",
+        "weather",
+        "stock price",
+        "score",
+        "search the web",
+        "search for",
+        "look up",
+        "google ",
+        "who won",
+        "release date",
+        "搜索",
+        "搜一下",
+        "查一下",
+        "最新",
+        "今天",
+        "新闻",
+    ];
+    WORDS.iter().any(|w| lower.contains(w))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn search_is_wanted_for_recent_topics_only() {
+        assert!(super::wants_search("What's the latest Rust release?"));
+        assert!(super::wants_search("帮我搜索一下 Flutter 3.35"));
+        assert!(!super::wants_search("Explain how a binary tree works"));
+    }
 
     fn model(id: &str, task: &str, image_in: bool) -> Model {
         Model {

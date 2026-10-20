@@ -359,6 +359,19 @@ impl MeoApi {
             .collect())
     }
 
+    /// Web search results (`[{title,url,snippet}]`) for a query; empty when nothing was found.
+    pub async fn web_search(&self, token: &str, query: &str) -> Result<Vec<Value>, ApiError> {
+        let body = self
+            .request(
+                token,
+                Method::POST,
+                "/v1/search/web",
+                Some(json!({ "query": query })),
+            )
+            .await?;
+        Ok(body["results"].as_array().cloned().unwrap_or_default())
+    }
+
     /// Returns the consent preview Meo API requires before inference.
     pub async fn chat_prepare(&self, token: &str, input: &Value) -> Result<Value, ApiError> {
         let body = self

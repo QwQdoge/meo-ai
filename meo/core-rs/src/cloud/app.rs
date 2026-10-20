@@ -120,6 +120,15 @@ pub enum Action {
         name: String,
         text: String,
     },
+    /// A picture picked on the device, already downscaled by the host: `data` is base64.
+    AttachImage {
+        name: String,
+        mime: String,
+        data: String,
+    },
+    RemoveImage {
+        index: usize,
+    },
     /// Desktop: a file path (or `file://` URL) picked in the file dialog; the core reads the text.
     AttachPath {
         path: String,
@@ -183,6 +192,13 @@ enum AuthState {
     SignedOut,
     SigningIn,
     SignedIn,
+}
+
+#[derive(Clone)]
+struct AttachedImage {
+    name: String,
+    mime: String,
+    data: String,
 }
 
 #[derive(Clone)]
@@ -254,6 +270,8 @@ struct State {
     router_bootstrapped: bool,
     /// Created images that came back as raw data (not saved anywhere), by assistant message id.
     generated: HashMap<String, Vec<String>>,
+    /// Pictures waiting to go with the next message (sent once, never stored).
+    images: Vec<AttachedImage>,
     selected: Option<(String, String)>,
     projects: Option<Result<Vec<Value>, String>>,
     plugins: Option<Result<Vec<Value>, String>>,
@@ -443,6 +461,12 @@ impl AppCore {
             }
             Action::SetForeground { visible } => self.update(|s| s.foreground = visible),
             Action::AttachText { name, text } => self.attach_text(name, text).await,
+            Action::AttachImage { name, mime, data } => self.attach_image(name, mime, data),
+            Action::RemoveImage { index } => self.update(|s| {
+                if index < s.images.len() {
+                    s.images.remove(index);
+                }
+            }),
             Action::AttachPath { path } => self.attach_path(path).await,
             Action::RemoveFile { id } => self.remove_file(id).await,
             Action::OpenProject { id } => self.open_project(id).await,
@@ -900,6 +924,26 @@ impl AppCore {
         }
     }
 
+    fn attach_image(&self, name: String, mime: String, data: String) {
+        let name: String = name.trim().chars().take(120).collect();
+        if !["image/png", "image/jpeg", "image/webp", "image/gif"].contains(&mime.as_str()) {
+            return self.notice(
+                "error",
+                "Only PNG, JPEG, WebP and GIF pictures can be attached.",
+            );
+        }
+        if data.is_empty() || data.len() > 1_800_000 {
+            return self.notice(
+                "error",
+                "That picture is too large to send. Choose a smaller one.",
+            );
+        }
+        if self.state.lock().unwrap().images.len() >= 3 {
+            return self.notice("error", "You can attach up to 3 pictures to one message.");
+        }
+        self.update(|s| s.images.push(AttachedImage { name, mime, data }));
+    }
+
     async fn attach_text(&self, name: String, text: String) {
         let name: String = name.trim().chars().take(200).collect();
         if name.is_empty() || text.trim().is_empty() {
@@ -962,6 +1006,14 @@ impl AppCore {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
+        if let Some(mime) = image_mime(&name) {
+            return match shrink_image(&local) {
+                Ok((mime_out, data)) => {
+                    self.attach_image(name, mime_out.unwrap_or(mime).into(), data)
+                }
+                Err(e) => self.notice("error", e),
+            };
+        }
         match std::fs::metadata(&local) {
             Ok(m) if m.len() > 2 * 1024 * 1024 => {
                 return self.notice(
@@ -1455,7 +1507,8 @@ impl AppCore {
             return;
         }
         // The route decides the model: automatically from the message, or the one forced in the composer.
-        let mut route = router::route_for(&router, &mode, &text, false);
+        let has_pictures = !self.state.lock().unwrap().images.is_empty();
+        let mut route = router::route_for(&router, &mode, &text, has_pictures);
         let task = router::slot(&route).map_or("chat", |slot| slot.task);
         let image = task == "image_generation";
         if task != "chat" && !image {
@@ -1516,7 +1569,38 @@ impl AppCore {
                 .image_flow(conversation_id, text, credential, model, save_prompt)
                 .await;
         }
-        let request = json!({ "credentialId": credential, "model": model, "prompt": text, "conversationId": conversation_id });
+        let mut request = json!({ "credentialId": credential, "model": model, "prompt": text, "conversationId": conversation_id });
+        let search = self
+            .state
+            .lock()
+            .unwrap()
+            .prefs
+            .get("chat.web_search")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+            || (mode == "auto" && router::wants_search(&text));
+        let pictures = std::mem::take(&mut self.state.lock().unwrap().images);
+        if !pictures.is_empty() {
+            request["images"] = pictures
+                .iter()
+                .map(|p| json!({ "mimeType": p.mime, "data": p.data }))
+                .collect();
+        }
+        if search {
+            // Search once here: the same results go to both prepare and stream so consent covers them.
+            let query: String = text.chars().take(300).collect();
+            if let Ok(results) = self
+                .call(|api, t| {
+                    let query = query.clone();
+                    async move { api.web_search(&t, &query).await }
+                })
+                .await
+            {
+                if !results.is_empty() {
+                    request["webResults"] = Value::Array(results);
+                }
+            }
+        }
         let consent = match self
             .call(|api, t| {
                 let request = request.clone();
@@ -2247,6 +2331,51 @@ impl AppCore {
 }
 
 /// Server-accepted MIME type for a text file chosen by name (any code or text file is plain text).
+fn image_mime(name: &str) -> Option<&'static str> {
+    match name
+        .rsplit('.')
+        .next()
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("png") => Some("image/png"),
+        Some("jpg" | "jpeg") => Some("image/jpeg"),
+        Some("webp") => Some("image/webp"),
+        Some("gif") => Some("image/gif"),
+        _ => None,
+    }
+}
+
+/// Desktop: read a picture, shrink it to at most 1568 px on the long side and re-encode as JPEG
+/// so it fits the request limit. Returns (mime, base64).
+#[cfg(not(target_arch = "wasm32"))]
+fn shrink_image(path: &std::path::Path) -> Result<(Option<&'static str>, String), String> {
+    use base64::Engine as _;
+    let picture = image::open(path).map_err(|e| format!("Could not read that picture: {e}"))?;
+    let picture = if picture.width().max(picture.height()) > 1568 {
+        picture.resize(1568, 1568, image::imageops::FilterType::Triangle)
+    } else {
+        picture
+    };
+    let rgb = picture.to_rgb8();
+    for quality in [85u8, 70, 55, 40] {
+        let mut bytes = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, quality)
+            .encode_image(&rgb)
+            .map_err(|e| format!("Could not prepare that picture: {e}"))?;
+        let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
+        if data.len() <= 1_800_000 {
+            return Ok((Some("image/jpeg"), data));
+        }
+    }
+    Err("That picture is too detailed to send. Choose a smaller one.".into())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn shrink_image(_path: &std::path::Path) -> Result<(Option<&'static str>, String), String> {
+    Err("Attach a picture with the file picker.".into())
+}
+
 fn mime_for(name: &str) -> &'static str {
     match name
         .rsplit('.')
@@ -2533,14 +2662,22 @@ fn conversation_page(s: &State) -> Value {
             "name": f["name"],
             "subtitle": format!("{} KB", f["extracted_text_bytes"].as_u64().unwrap_or(0).div_ceil(1024).max(1)),
             "remove": button("Remove", "secondary", json!({ "type": "remove_file", "id": f["id"] })),
-        })).collect::<Vec<_>>(),
+        })).chain(s.images.iter().enumerate().map(|(i, image)| json!({
+            "id": format!("image-{i}"),
+            "name": image.name,
+            "subtitle": "Picture · sent with your next message",
+            "remove": button("Remove", "secondary", json!({ "type": "remove_image", "index": i })),
+        }))).collect::<Vec<_>>(),
         "composer": {
-            "attach": { "label": "Attach file", "action": "attach_text", "extensions": ["txt", "md", "markdown", "csv", "json", "py", "rs", "js", "ts", "tsx", "jsx", "java", "kt", "c", "h", "cpp", "go", "sh", "toml", "yaml", "yml", "html", "css", "sql", "log"] },
+            "attach": { "label": "Attach file", "action": "attach_text", "extensions": ["txt", "md", "markdown", "csv", "json", "py", "rs", "js", "ts", "tsx", "jsx", "java", "kt", "c", "h", "cpp", "go", "sh", "toml", "yaml", "yml", "html", "css", "sql", "log", "png", "jpg", "jpeg", "webp", "gif"] },
             "placeholder": "Message Meo",
             "busy": busy,
             "sendAction": { "type": "send" },
             "stopAction": { "type": "stop" },
-            "toolbar": mode_control(s).into_iter().collect::<Vec<_>>(),
+            "toolbar": mode_control(s).into_iter().chain(std::iter::once(json!({
+                "id": "web_search", "label": "Search the web", "kind": "toggle", "binding": "chat.web_search",
+                "value": s.prefs.get("chat.web_search").cloned().unwrap_or(json!(false)),
+            }))).collect::<Vec<_>>(),
         },
         "consent": s.consent.as_ref().map(|p| json!({
             "title": "Send to AI provider?",
@@ -3222,6 +3359,21 @@ mod tests {
     }
 
     #[test]
+    fn attached_pictures_show_up_and_can_be_removed() {
+        let c = signed_in_core();
+        c.attach_image("cat.jpg".into(), "image/jpeg".into(), "AAAA".into());
+        assert_eq!(c.view()["page"]["files"][0]["name"], "cat.jpg");
+        c.attach_image(
+            "x.exe".into(),
+            "application/x-msdownload".into(),
+            "AAAA".into(),
+        );
+        assert_eq!(c.view()["page"]["files"].as_array().unwrap().len(), 1);
+        c.update(|s| s.images.clear());
+        assert!(c.view()["page"]["files"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
     fn the_composer_offers_auto_and_the_configured_routes() {
         let c = signed_in_core();
         seed_models(&c);
@@ -3229,7 +3381,8 @@ mod tests {
             c.view()["page"]["composer"]["toolbar"]
                 .as_array()
                 .unwrap()
-                .is_empty(),
+                .iter()
+                .all(|c| c["id"] == "web_search"),
             "nothing to choose before routes exist"
         );
         c.update(|s| {
