@@ -20,7 +20,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
 use super::{
-    api::{ApiError, ChatEvent, ChatMessage, ConversationSummary, Credential, MeoApi, Model},
+    api::{
+        ApiError, ChatEvent, ChatMessage, ConversationSummary, Credential, MeoApi, Model,
+        RemoteEvent,
+    },
     auth::{self, OAuthConfig, PendingAuthorization, Session},
     manifest::Manifest,
     storage::Storage,
@@ -34,17 +37,31 @@ pub enum Action {
     Start,
     SignIn,
     SignOut,
-    AuthCallback { url: String },
-    Navigate { route: String },
+    AuthCallback {
+        url: String,
+    },
+    Navigate {
+        route: String,
+    },
     NewConversation,
-    SelectConversation { id: String },
-    Send { text: String },
+    SelectConversation {
+        id: String,
+    },
+    Send {
+        text: String,
+    },
     Stop,
     ApproveConsent,
     DenyConsent,
-    SetSetting { binding: String, value: Value },
+    SetSetting {
+        binding: String,
+        value: Value,
+    },
     Refresh,
     DismissNotice,
+    /// Long-running: keeps this device in sync with the user's other devices.
+    /// Hosts dispatch it once after `Start` as its own task; extra calls return at once.
+    Realtime,
 }
 
 pub trait PlatformHooks: Send + Sync {
@@ -71,6 +88,14 @@ struct PendingSend {
     consent: Value,
 }
 
+/// A model answer being generated on another of the user's devices.
+#[derive(Clone)]
+struct RemoteRun {
+    conversation_id: String,
+    text: String,
+    done: bool,
+}
+
 #[derive(Default)]
 struct State {
     auth: AuthState,
@@ -83,6 +108,7 @@ struct State {
     active: Option<String>,
     messages: HashMap<String, Vec<ChatMessage>>,
     streaming: Option<(String, String)>,
+    remote_run: Option<RemoteRun>,
     consent: Option<PendingSend>,
     credentials: Vec<Credential>,
     models: Vec<Model>,
@@ -103,6 +129,9 @@ pub struct AppCore {
     storage: Arc<dyn Storage>,
     hooks: Arc<dyn PlatformHooks>,
     manifest: Arc<Manifest>,
+    /// Random per-instance device id sent with writes so this device can ignore its own events.
+    client_id: String,
+    realtime_running: Arc<AtomicBool>,
 }
 
 const KEY_SESSION: &str = "session";
@@ -123,7 +152,9 @@ impl AppCore {
             .user_agent(concat!("MeoAI-Core/", env!("CARGO_PKG_VERSION")))
             .build()
             .expect("HTTP client");
-        let api = MeoApi::new(http.clone(), oauth.api_origin.clone());
+        let client_id = auth::random_token(12);
+        let api =
+            MeoApi::new(http.clone(), oauth.api_origin.clone()).with_client(client_id.clone());
         let manifest = Manifest::bundled();
         let route = manifest
             .navigation
@@ -144,6 +175,8 @@ impl AppCore {
             storage,
             hooks,
             manifest: Arc::new(manifest),
+            client_id,
+            realtime_running: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -198,6 +231,7 @@ impl AppCore {
             Action::SetSetting { binding, value } => self.set_setting(binding, value).await,
             Action::Refresh => self.load_all().await,
             Action::DismissNotice => self.update(|s| s.notice = None),
+            Action::Realtime => self.realtime().await,
         }
     }
 
@@ -449,17 +483,123 @@ impl AppCore {
                 s.messages.insert(id.clone(), cached);
             });
         }
+        self.refresh_messages(&id).await;
+    }
+
+    async fn refresh_messages(&self, id: &str) {
         let fetched = self
             .call(|api, t| {
-                let id = id.clone();
+                let id = id.to_owned();
                 async move { api.list_messages(&t, &id).await }
             })
             .await;
         if let Ok(messages) = fetched {
-            self.save_json(&key, &messages);
+            self.save_json(&format!("messages-{id}"), &messages);
             self.update(|s| {
-                s.messages.insert(id.clone(), messages);
+                s.messages.insert(id.to_owned(), messages);
             });
+        }
+    }
+
+    async fn refresh_conversations(&self) {
+        if let Ok(list) = self
+            .call(|api, t| async move { api.list_conversations(&t).await })
+            .await
+        {
+            self.save_json(KEY_CONVERSATIONS, &list);
+            self.update(|s| s.conversations = list);
+        }
+    }
+
+    // ---- realtime sync ----------------------------------------------------
+
+    /// Keeps the event stream open while signed in, reconnecting with backoff.
+    /// Every (re)connect resyncs, so a missed event never leaves stale data.
+    async fn realtime(&self) {
+        if self.realtime_running.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let mut backoff = 1u64;
+        loop {
+            let signed_in = self.state.lock().unwrap().auth == AuthState::SignedIn;
+            if !signed_in {
+                futures_timer::Delay::new(std::time::Duration::from_secs(2)).await;
+                continue;
+            }
+            if let Some(token) = self.token(false).await {
+                if let Ok(events) = self.api.open_events(&token).await {
+                    let mut events = Box::pin(events);
+                    backoff = 1;
+                    while let Some(Ok(event)) = events.next().await {
+                        self.on_remote_event(event).await;
+                    }
+                }
+            }
+            futures_timer::Delay::new(std::time::Duration::from_secs(backoff)).await;
+            backoff = (backoff * 2).min(30);
+        }
+    }
+
+    async fn on_remote_event(&self, event: RemoteEvent) {
+        let data = &event.data;
+        let own = data["origin"].as_str() == Some(self.client_id.as_str());
+        let conversation = data["conversationId"].as_str().map(str::to_owned);
+        match event.name.as_str() {
+            "hello" => {
+                self.refresh_conversations().await;
+                let active = self.state.lock().unwrap().active.clone();
+                if let Some(id) = active {
+                    self.refresh_messages(&id).await;
+                }
+            }
+            "conversation.changed" if !own => {
+                self.refresh_conversations().await;
+                let active = self.state.lock().unwrap().active.clone();
+                if conversation.is_some() && conversation == active {
+                    self.refresh_messages(conversation.as_deref().unwrap_or_default())
+                        .await;
+                    // The saved answer replaces the live one.
+                    self.update(|s| {
+                        if s.remote_run.as_ref().is_some_and(|r| r.done) {
+                            s.remote_run = None;
+                        }
+                    });
+                }
+            }
+            "run.started" if !own => {
+                if let Some(conversation_id) = conversation {
+                    self.update(|s| {
+                        s.remote_run = Some(RemoteRun {
+                            conversation_id,
+                            text: String::new(),
+                            done: false,
+                        })
+                    });
+                }
+            }
+            "run.delta" if !own => {
+                let text = data["text"].as_str().unwrap_or_default().to_owned();
+                self.update(|s| match s.remote_run.as_mut() {
+                    Some(run) if Some(&run.conversation_id) == conversation.as_ref() => {
+                        run.text.push_str(&text)
+                    }
+                    _ => {
+                        if let Some(conversation_id) = conversation.clone() {
+                            s.remote_run = Some(RemoteRun {
+                                conversation_id,
+                                text,
+                                done: false,
+                            });
+                        }
+                    }
+                });
+            }
+            "run.done" | "run.error" if !own => self.update(|s| {
+                if let Some(run) = s.remote_run.as_mut() {
+                    run.done = true;
+                }
+            }),
+            _ => {}
         }
     }
 
@@ -560,6 +700,17 @@ impl AppCore {
             "confirmationVersion": 1,
         });
         let id = pending.conversation_id.clone();
+        // Save the prompt first so the user's other devices see it while the answer streams.
+        let user = pending.prompt.clone();
+        let saved = self
+            .call(|api, t| {
+                let (id, user) = (id.clone(), user.clone());
+                async move { api.append_message(&t, &id, "user", &user).await }
+            })
+            .await;
+        if let Err(e) = saved {
+            return self.notice("error", e.to_string());
+        }
         self.cancel.store(false, Ordering::SeqCst);
         self.update(|s| s.streaming = Some((id.clone(), String::new())));
         let stream = self
@@ -601,14 +752,10 @@ impl AppCore {
             .unwrap_or_default();
         if !reply.is_empty() {
             self.push_message(&id, "assistant", &reply);
-            let user = pending.prompt.clone();
             let _ = self
                 .call(|api, t| {
-                    let (id, user, reply) = (id.clone(), user.clone(), reply.clone());
-                    async move {
-                        api.append_message(&t, &id, "user", &user).await?;
-                        api.append_message(&t, &id, "assistant", &reply).await
-                    }
+                    let (id, reply) = (id.clone(), reply.clone());
+                    async move { api.append_message(&t, &id, "assistant", &reply).await }
                 })
                 .await;
         }
@@ -894,6 +1041,16 @@ fn conversation_page(s: &State) -> Value {
     if let Some((_, text)) = streaming {
         messages.push(json!({ "role": "assistant", "text": text, "streaming": true }));
     }
+    // An answer being generated on another device of the same account.
+    if streaming.is_none() {
+        if let Some(run) = s
+            .remote_run
+            .as_ref()
+            .filter(|r| Some(&r.conversation_id) == active.as_ref())
+        {
+            messages.push(json!({ "role": "assistant", "text": run.text, "streaming": !run.done }));
+        }
+    }
     let busy = s.streaming.is_some();
     let model = model_select(s);
     let model_label = model["options"]
@@ -1033,6 +1190,70 @@ mod tests {
             .unwrap()
             .iter()
             .any(|s| s["id"] == "account"));
+    }
+
+    fn signed_in_core() -> AppCore {
+        let c = core();
+        c.update(|s| {
+            s.auth = AuthState::SignedIn;
+            s.active = Some("c1".into());
+        });
+        c
+    }
+
+    fn remote(name: &str, data: Value) -> RemoteEvent {
+        RemoteEvent {
+            name: name.into(),
+            data,
+        }
+    }
+
+    fn last_message(c: &AppCore) -> Option<Value> {
+        c.view()["page"]["messages"]
+            .as_array()
+            .and_then(|m| m.last().cloned())
+    }
+
+    #[test]
+    fn another_devices_answer_streams_into_the_active_conversation() {
+        let c = signed_in_core();
+        let run = |name: &str, extra: Value| {
+            let mut data = json!({ "conversationId": "c1", "runId": "r", "origin": "other" });
+            data.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            futures_executor::block_on(c.on_remote_event(remote(name, data)));
+        };
+        run("run.started", json!({}));
+        run("run.delta", json!({ "text": "Hel" }));
+        run("run.delta", json!({ "text": "lo" }));
+        let live = last_message(&c).unwrap();
+        assert_eq!(
+            (
+                live["role"].as_str(),
+                live["text"].as_str(),
+                live["streaming"].as_bool()
+            ),
+            (Some("assistant"), Some("Hello"), Some(true))
+        );
+        run("run.done", json!({}));
+        assert_eq!(last_message(&c).unwrap()["streaming"], false);
+    }
+
+    #[test]
+    fn own_events_and_other_conversations_are_ignored() {
+        let c = signed_in_core();
+        let own = c.client_id.clone();
+        futures_executor::block_on(c.on_remote_event(remote(
+            "run.delta",
+            json!({ "conversationId": "c1", "origin": own, "text": "mine" }),
+        )));
+        assert!(last_message(&c).is_none());
+        futures_executor::block_on(c.on_remote_event(remote(
+            "run.delta",
+            json!({ "conversationId": "elsewhere", "origin": "other", "text": "x" }),
+        )));
+        assert!(last_message(&c).is_none());
     }
 
     #[test]

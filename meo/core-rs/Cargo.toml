@@ -17,7 +17,7 @@ required-features = ["service"]
 default = ["client", "cloud"]
 client = ["dep:reqwest", "dep:futures-util", "dep:tokio", "dep:url"]
 # Cloud-first application core rendered by every client.
-cloud = ["dep:reqwest", "dep:futures-util", "dep:url", "dep:bytes", "dep:sha2", "dep:base64", "dep:getrandom"]
+cloud = ["dep:reqwest", "dep:futures-util", "dep:futures-timer", "dep:url", "dep:bytes", "dep:sha2", "dep:base64", "dep:getrandom"]
 # Browser build of the cloud core (wasm32-unknown-unknown, no tokio/rustls):
 # `cargo build --target wasm32-unknown-unknown --no-default-features --features wasm`.
 wasm = ["cloud", "dep:wasm-bindgen", "dep:wasm-bindgen-futures", "dep:js-sys", "dep:web-sys"]
@@ -58,16 +58,19 @@ uuid = { version = "1", features = ["v4", "serde"], optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"], optional = true }
+futures-timer = { version = "3", optional = true }
 
 # In the browser reqwest uses fetch; TLS and randomness come from the platform.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream"], optional = true }
 getrandom = { version = "0.2", features = ["js"], optional = true }
+futures-timer = { version = "3", features = ["wasm-bindgen"], optional = true }
 js-sys = { version = "0.3", optional = true }
 wasm-bindgen = { version = "0.2", optional = true }
 wasm-bindgen-futures = { version = "0.4", optional = true }
 web-sys = { version = "0.3", features = ["Window", "Storage"], optional = true }
 
 [dev-dependencies]
+futures-executor = "0.3"
 pretty_assertions = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }

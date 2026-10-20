@@ -33,6 +33,8 @@ export function useCore() {
         core.current = instance;
         setView(JSON.parse(instance.view()));
         await instance.start();
+        // Live sync with the user's other devices.
+        instance.dispatch(JSON.stringify({ type: "realtime" }));
         if (location.pathname === CALLBACK_PATH) {
           const url = location.href;
           history.replaceState(null, "", "/");

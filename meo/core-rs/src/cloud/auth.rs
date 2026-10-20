@@ -59,7 +59,7 @@ pub struct PendingAuthorization {
     pub url: String,
 }
 
-fn random_token(bytes: usize) -> String {
+pub(crate) fn random_token(bytes: usize) -> String {
     let mut buffer = vec![0u8; bytes];
     getrandom::getrandom(&mut buffer).expect("system random source unavailable");
     URL_SAFE_NO_PAD.encode(buffer)

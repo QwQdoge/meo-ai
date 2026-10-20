@@ -246,6 +246,10 @@ fn main() {
         }
     });
 
+    // Live sync with the user's other devices; runs for the life of the app.
+    let realtime = core.clone();
+    rt.spawn(async move { realtime.dispatch(Action::Realtime).await });
+
     let startup = core.clone();
     rt.spawn(async move {
         startup.dispatch(Action::Start).await;

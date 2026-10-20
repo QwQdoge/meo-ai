@@ -39,9 +39,20 @@ Clients must not interpret feature IDs; they render component kinds only.
 
 ## Actions
 
-`start, sign_in, sign_out, auth_callback{url}, navigate{route}, new_conversation,
+`start, realtime, sign_in, sign_out, auth_callback{url}, navigate{route}, new_conversation,
 select_conversation{id}, send{text}, stop, approve_consent, deny_consent,
 set_setting{binding,value}, refresh, dismiss_notice`.
+
+## Real-time sync
+
+Hosts dispatch `realtime` once after `start`, as its own long-running task (extra calls
+return at once). The core then keeps `GET /v1/realtime` (Meo API, one Durable Object per
+user) open while signed in, reconnects with backoff and resyncs on every (re)connect.
+Events from other devices (`conversation.changed`, `run.started/delta/done/error`; this
+device's own `?client=` events are ignored) refresh the conversation list and active
+messages, and an answer being generated elsewhere appears in `messages` as an assistant
+message with `streaming: true`. Clients render nothing new: it is the same view.
+The sender saves the user message before streaming so other devices see the prompt too.
 
 ## Hosts
 
