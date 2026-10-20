@@ -269,5 +269,8 @@
   "meo.work.runNumber": "任务 · {{id}}",
   "meo.work.resumeRun": "查看任务",
   "meo.work.viewingRun": "正在查看",
-  "meo.work.noRecentRuns": "账号中还没有任务。"
+  "meo.work.noRecentRuns": "账号中还没有任务。",
+  "meo.skills.githubWorkflowTitle": "GitHub 开发工作流",
+  "meo.skills.githubWorkflowScope": "预览 Meo 仓库里的代码审查、修改、测试、PR 和 CI 工作规范。导入不会授予 GitHub 权限，也不会直接执行代码。",
+  "meo.skills.previewGithubWorkflow": "预览 Meo GitHub Skill"
 }

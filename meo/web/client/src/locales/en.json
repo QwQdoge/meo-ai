@@ -294,5 +294,8 @@
   "meo.work.runNumber": "Task · {{id}}",
   "meo.work.resumeRun": "View task",
   "meo.work.viewingRun": "Currently viewing",
-  "meo.work.noRecentRuns": "No account tasks found."
+  "meo.work.noRecentRuns": "No account tasks found.",
+  "meo.skills.githubWorkflowTitle": "GitHub development workflow",
+  "meo.skills.githubWorkflowScope": "Review a Meo-maintained Skill for code review, changes, tests, PRs and CI. Importing does not grant GitHub access or execute code.",
+  "meo.skills.previewGithubWorkflow": "Preview Meo GitHub Skill"
 }
