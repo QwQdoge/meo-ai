@@ -119,6 +119,7 @@ private fun Act.send(action: JSONObject?) {
 
 @Composable
 fun CoreApp(view: JSONObject, act: (JSONObject) -> Unit) {
+    val strings = view.obj("strings") ?: JSONObject()
     val navigation = view.list("navigation")
     val page = view.obj("page") ?: JSONObject()
     val notice = view.obj("notice")
@@ -163,17 +164,17 @@ fun CoreApp(view: JSONObject, act: (JSONObject) -> Unit) {
                         Banner(
                             text = notice.str("text"),
                             error = notice.str("kind") == "error",
-                            actionLabel = "Dismiss",
+                            actionLabel = strings.str("dismiss").ifEmpty { "Dismiss" },
                             onAction = { act.send(notice.obj("action")) },
                         )
                     }
                     if (!view.optBoolean("online", true)) {
-                        Banner(text = "Offline — showing saved data", error = false)
+                        Banner(text = strings.str("offline").ifEmpty { "Offline — showing saved data" }, error = false)
                     }
                     Box(Modifier.weight(1f).fillMaxWidth()) {
                         when (page.str("kind")) {
                             "sign_in" -> SignInPage(page, act)
-                            "conversation" -> ConversationPage(page, view.obj("prefs"), wide, act)
+                            "conversation" -> ConversationPage(page, view.obj("prefs"), strings, wide, act)
                             "list" -> ListPage(page, act)
                             "settings" -> SettingsPage(page, act)
                             else -> UnavailablePage(page, act)
@@ -426,13 +427,13 @@ private fun TextControl(item: JSONObject, act: Act, modifier: Modifier) {
 }
 
 @Composable
-private fun ConversationPage(page: JSONObject, prefs: JSONObject?, wide: Boolean, act: Act) {
+private fun ConversationPage(page: JSONObject, prefs: JSONObject?, strings: JSONObject, wide: Boolean, act: Act) {
     val sidebar = page.obj("sidebar") ?: JSONObject()
     if (wide) {
         Row(Modifier.fillMaxSize()) {
             Sidebar(sidebar, act, Modifier.width(280.dp).fillMaxHeight())
             Box(Modifier.fillMaxHeight().width(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
-            ChatPane(page, prefs, onMenu = null, act = act, modifier = Modifier.weight(1f))
+            ChatPane(page, prefs, strings, onMenu = null, act = act, modifier = Modifier.weight(1f))
         }
     } else {
         val drawer = rememberDrawerState(DrawerValue.Closed)
@@ -448,7 +449,7 @@ private fun ConversationPage(page: JSONObject, prefs: JSONObject?, wide: Boolean
                 }
             },
         ) {
-            ChatPane(page, prefs, onMenu = { scope.launch { drawer.open() } }, act = act, modifier = Modifier.fillMaxSize())
+            ChatPane(page, prefs, strings, onMenu = { scope.launch { drawer.open() } }, act = act, modifier = Modifier.fillMaxSize())
         }
     }
 }
@@ -493,7 +494,7 @@ private fun Sidebar(sidebar: JSONObject, act: Act, modifier: Modifier) {
                         val menu = item.list("menu")
                         if (menu.isNotEmpty()) {
                             Box {
-                                IconButton(onClick = { menuOpen = true }) { Icon(Icons.Rounded.MoreVert, contentDescription = "More") }
+                                IconButton(onClick = { menuOpen = true }) { Icon(Icons.Rounded.MoreVert, contentDescription = "⋮") }
                                 DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                                     menu.forEach { entry ->
                                         DropdownMenuItem(
@@ -543,7 +544,7 @@ private fun SearchField(search: JSONObject, act: Act) {
 }
 
 @Composable
-private fun ChatPane(page: JSONObject, prefs: JSONObject?, onMenu: (() -> Unit)?, act: Act, modifier: Modifier) {
+private fun ChatPane(page: JSONObject, prefs: JSONObject?, strings: JSONObject, onMenu: (() -> Unit)?, act: Act, modifier: Modifier) {
     val messages = page.list("messages")
     val composer = page.obj("composer") ?: JSONObject()
     val consent = page.obj("consent")
@@ -588,7 +589,7 @@ private fun ChatPane(page: JSONObject, prefs: JSONObject?, onMenu: (() -> Unit)?
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                items(messages) { MessageBubble(it, act) }
+                items(messages) { MessageBubble(it, strings, act) }
             }
         }
         if (consent != null) {
@@ -602,12 +603,12 @@ private fun ChatPane(page: JSONObject, prefs: JSONObject?, onMenu: (() -> Unit)?
                 }
             }
         }
-        Composer(composer, prefs, act)
+        Composer(composer, prefs, strings, act)
     }
 }
 
 @Composable
-private fun MessageBubble(message: JSONObject, act: Act) {
+private fun MessageBubble(message: JSONObject, strings: JSONObject, act: Act) {
     val mine = message.str("role") == "user"
     val streaming = message.optBoolean("streaming")
     val text = message.str("text") + if (streaming) " ▍" else ""
@@ -630,7 +631,7 @@ private fun MessageBubble(message: JSONObject, act: Act) {
         }
         if (!streaming && message.str("text").isNotEmpty()) {
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                TextButton(onClick = { clipboard.setText(AnnotatedString(message.str("text"))) }) { Text("Copy") }
+                TextButton(onClick = { clipboard.setText(AnnotatedString(message.str("text"))) }) { Text(strings.str("copy").ifEmpty { "Copy" }) }
                 message.list("actions").forEach { entry ->
                     TextButton(onClick = { act.send(entry.obj("action")) }) { Text(entry.str("label")) }
                 }
@@ -640,7 +641,7 @@ private fun MessageBubble(message: JSONObject, act: Act) {
 }
 
 @Composable
-private fun Composer(composer: JSONObject, prefs: JSONObject?, act: Act) {
+private fun Composer(composer: JSONObject, prefs: JSONObject?, strings: JSONObject, act: Act) {
     var input by remember { mutableStateOf("") }
     val busy = composer.optBoolean("busy")
     val enterSends = prefs?.optBoolean("general.enter_to_send", true) ?: true
@@ -672,7 +673,7 @@ private fun Composer(composer: JSONObject, prefs: JSONObject?, act: Act) {
                 shape = RoundedCornerShape(24.dp),
             )
             FilledIconButton(onClick = { if (busy) act.send(composer.obj("stopAction")) else send() }) {
-                Icon(if (busy) Icons.Rounded.Stop else Icons.AutoMirrored.Rounded.Send, contentDescription = if (busy) "Stop" else "Send")
+                Icon(if (busy) Icons.Rounded.Stop else Icons.AutoMirrored.Rounded.Send, contentDescription = if (busy) strings.str("stop").ifEmpty { "Stop" } else strings.str("send").ifEmpty { "Send" })
             }
         }
     }
