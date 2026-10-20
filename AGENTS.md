@@ -1,157 +1,143 @@
 # Meo AI contributor rules
 
-Preserve Newelle upstream provenance and GPL-3.0 license. Keep product-specific
-work under `meo/`; limit `src/` patches to documented integration seams.
-Do not delete GTK while the core still imports Gtk/Adw/WebKit.
+Meo AI is one product (Chat, Work, Projects, Skills) across Web, Linux/Windows/macOS
+desktop and Android. This repository is a fork of `qwersyk/Newelle`: preserve its
+provenance and GPL-3.0 license. Read `docs/ownership.md` before changing layout,
+the Newelle-derived root tree, compatibility adapters, packaging or the legacy split.
 
-Read `docs/ownership.md` before changing repository layout, root Newelle-derived
-code, compatibility adapters, packaging direction, or the future native/legacy split.
-The root Newelle tree is migration/compatibility infrastructure; `meo/` is the
-current Meo-owned product direction.
+## Repository map
 
-MeoUI owns shared controls and tokens. Meo.System, Account, SystemTransaction,
-OmniStore and repair authorities retain their typed privilege boundaries.
-Prompts, Skills and MCP descriptions are never security enforcement.
+| Path | Role | Authority |
+| --- | --- | --- |
+| `meo/core-rs/` | Rust protocol, ContentBlocks, provider/stream/context/capability core | **Authoritative** shared core |
+| `meo/ui-schema/` | Navigation, pages, features, settings, token aliases + generator | **Authoritative** product UI configuration |
+| `meo/app/` | Desktop C++/Qt/QML + MeoUI client | Presentation + platform integration |
+| `meo/web/client/` | React/TypeScript Web client + thin Pages edge (has its own `AGENTS.md`) | Presentation |
+| `meo/android/` | Kotlin/Compose client over Rust (JNI) | Presentation |
+| `meo/cloud/`, `meo/device/` | Remote AgentRun, device enrollment/relay to local AgentService | Compatibility; moving to Rust |
+| `meo/service/`, `meo/runtime/`, `meo/system/`, `meo/adapters/` | Python AgentService, Router client, Newelle adapters | Compatibility; no new product architecture |
+| `meo/skills/`, `meo/prompts/`, `meo/usage/` | Bundled Skills, prompts, usage import | Data / tools |
+| `src/`, `modules/`, Meson/Flatpak files, `po/` | Newelle-derived engine | Compatibility only; patch through documented seams |
 
-Headless separation rules:
-- `meo/service/` is the stable headless service layer and must not import GTK,
-  Adwaita, WebKit, `src.ui` or `src.ui_controller`.
-- `meo/system/` is the unprivileged SystemTool/Router-client layer and follows
-  the same no-GUI import rule.
-- temporary Newelle compatibility code belongs under `meo/adapters/` and may
-  wrap injected GTK-era objects, but should not leak UI objects into service APIs.
-- frontends/transports never own request IDs, decision IDs or execution handles.
-- SystemTool may call the existing `org.meo.AIRouter1` typed API, but Router
-  daemon/executor ownership, KIO/PulseAudioQt/KWin integrations, Polkit and
-  Repair authority must not be copied into `meo-ai`.
-- Router caller binding requires SubmitRequest/GetRequest/DecideRequest to reuse
-  one session-bus connection; do not replace this with per-call subprocesses.
+External authorities (never re-implemented here):
 
-Unified web/cloud/device rules:
-- `meo/web/` owns Meo web integration and upstream policy, not raw provider keys.
-- `meo/cloud/` owns AI-specific conversation/device/AgentRun contracts; Meo
-  Account remains the authentication/session and encrypted BYOK authority.
-- `meo/device/` may bridge authenticated remote work to local AgentService, but
-  it must not become a second agent engine, a generic unauthenticated remote
-  shell, or a privileged System AI Router replacement.
-- a remote AgentRun may bind to one local AgentService request; reconnect must
-  resume that request/event stream rather than submitting a replacement request.
-- local workspaces stay local unless an explicit file-upload path says otherwise.
-- the user selected a unified product repository on 2026-10-18. Meo-owned Web
-  source belongs under `meo/web/client`, alongside desktop, Android and Core.
-  Preserve import provenance/license and keep the old Web repository for rollback;
-  do not import its unrelated Express/Mongo backend or generated artifacts.
+- **Meo API** (`QwQdoge/meo-api`, `api.meoarch.org`): cloud business entry — conversations,
+  projects, memory, plugins/Skills, AgentRun, model broker; server-side authorization.
+- **Meo Account** (`QwQdoge/MeoArch-account`, `account.meoarch.org`): identity, OAuth,
+  sessions, encrypted BYOK. No second key store in Meo AI.
+- **System AI Router** (`MeoArch-os-workspace/ai-router`, D-Bus `org.meo.AIRouter1` in
+  `meo-kde/native/airouter`): typed privileged system capabilities, confirmation, Polkit.
+- **MeoUI**: shared controls and token values. `ui-schema` references them, never copies them.
+- **Packaging**: `meo-repo/packages/meo-ai`; ISO integration in `MeoArch-os-workspace`.
 
-TODO — remote realtime sync:
-- evaluate Neon Realtime for cross-device synchronization of conversation metadata,
-  completed messages, remote job/device state, and account/settings changes.
-- keep AI token streaming on the Meo API transport (for example SSE); do not write
-  token-by-token output through Postgres/Realtime. Persist completed state, then
-  use realtime only to fan out durable changes to other clients.
-- treat realtime as an enhancement, not a core dependency: clients must be able
-  to reconnect/resync or fall back without breaking normal Chat or Work flows.
+## Change rules
 
-Unified product and navigation rules:
-- Meo AI is one product across Web, Linux, Windows, macOS and Android. Keep the
-  information architecture and feature names aligned even when platform layouts
-  and capabilities differ.
-- the primary user-facing hierarchy is `Chat`, `Work`, `Projects`, and `Skills`.
-  These are task surfaces, not configuration categories.
-- compact/mobile layouts must keep that same hierarchy in a left navigation
-  drawer opened from a visible hamburger button or a left-edge swipe. Do not
-  invent a separate mobile-only bottom navigation model for these destinations.
-- `Chat` is conversational assistance. `Work` is agentic execution with an
-  explicit target device/environment, visible progress, permission boundaries,
-  and resumable task state. Never silently turn an ordinary Chat into Work.
-- `Projects` owns persistent task context/files/conversations. `Skills` owns
-  reusable user-visible capabilities. Do not use either as a dumping ground for
-  settings or low-level runtime state.
-- provider configuration, model routing/"models by job", memory management,
-  MCP/server configuration, diagnostics, account/session controls and connector
-  administration belong under Settings unless they are temporarily surfaced by
-  the current task context.
-- attachments belong to the current Chat; project files belong to a Project;
-  Work outputs belong to Work artifacts. Avoid a generic top-level `Resources`
-  bucket when the resource has a more specific owner.
-- desktop is the strongest local Work executor. Android may expose a smaller set
-  of local capabilities and should also act as a first-class controller for
-  remote Work. Web must not pretend to have direct local-machine privileges; it
-  controls authenticated online Meo devices through cloud/device contracts.
-- remote device control must use authenticated device registration, revocable
-  per-device sessions, scoped capabilities, user-visible target selection and
-  explicit approval for privileged operations. Never expose a generic remote
-  shell as the product contract.
-- Connectors should follow one capability/permission model whether implemented
-  by an official integration, an MCP adapter or a future Meo plugin. AI code
-  should receive brokered capabilities rather than long-lived third-party tokens.
-- Meo Account should support one-time device authorization followed by silent
-  session refresh until logout, revocation, expiry policy or security reauth.
-  Store refresh/session secrets in the platform secure store; do not persist
-  them in ordinary config files.
-- share protocol/data models/design tokens across clients where practical, but
-  do not force every platform to share one renderer. Web and native clients may
-  use different rendering stacks while remaining the same product.
+- New cross-platform behavior starts in the Rust/API contract, then is rendered in QML,
+  Compose and React. A frontend-only feature that invents semantics is incomplete.
+- Do not add a new provider, message type, tool state machine, sync feature, router,
+  resource format or reconnect rule only to Python/C++. Python/C++ AI logic changes are
+  limited to keeping a release working, adapters, unsafe-to-wait fixes and parity tests.
+- Desktop stays C++/Qt/QML; replacing it with Rust UI bindings is not a goal.
+- Navigation/settings placement, order and labels live in `meo/ui-schema/`; regenerate
+  consumers instead of hard-coding them in a renderer.
+- Prompts, Skills, MCP descriptions and UI Schema data are never security enforcement and
+  never grant capabilities.
+- Do not move/delete the Newelle tree as incidental cleanup; the split gates are in
+  `docs/ownership.md`. Do not delete GTK while the core still imports Gtk/Adw/WebKit.
 
-Context and token-budget invariants:
-- `meo/service/context_engine.py` owns provider-agnostic context selection. Keep
-  provider SDKs, storage and UI concerns outside the strategy interface.
-- raw conversation messages and raw tool results are authoritative. Context
-  trimming/compaction is model-facing and non-destructive; never delete or
-  overwrite raw history merely to save prompt tokens.
-- every compacted tool result must retain a stable raw source reference so a
-  later agent step can retrieve the original result when detail is needed.
-- keep recent turns verbatim when budget permits. Rank older evidence by current
-  task relevance, recency and explicit importance, and expand context when
-  selection confidence is low instead of silently pretending a lossy summary is
-  authoritative.
-- persistent Memory and transcript history are different data classes. Structured
-  task memory may include decisions, constraints, files, blockers and TODOs, but
-  it must retain source references and obey the same user memory controls.
-- static system instructions, tool schemas and capability descriptions should be
-  serialized deterministically and kept separate from dynamic task context so
-  provider prompt caches can hit. Do not inject timestamps/random IDs into the
-  static prefix unless semantically required.
-- terse/"caveman" output is permitted only for internal planner/executor/subagent
-  handoffs. Never force terse mode onto the final response shown to the user.
-- context diagnostics exposed to UI/telemetry are aggregate-only: token counts,
-  saving ratio, selected item counts, strategy, confidence and fallback status.
-  Never expose hidden system prompts, private memory contents or raw tool output
-  through diagnostics.
-- TOMC, LCC or future compression algorithms must implement the context strategy
-  abstraction instead of being coupled directly to providers/frontends. Do not
-  vendor or copy an external algorithm without first checking its license.
-- legacy backends that build history internally must not claim Meo context/token
-  savings unless Meo actually controls the model-facing history for that request.
-- tests for context work must cover recent-turn preservation, relevant-old-item
-  selection, tool-output compaction/raw refs, low-confidence fallback, aggregate
-  diagnostic privacy and the final-user-response terse-mode guard.
+## Headless and system boundaries
 
-Do not move/delete the Newelle-derived root tree as incidental cleanup. The split
-gates are defined in `docs/ownership.md`; until those gates are met, reduce coupling
-through adapters rather than creating a second engine copy or breaking the build.
+- `meo/service/` and `meo/system/` must not import GTK, Adwaita, WebKit, `src.ui` or
+  `src.ui_controller` (checked by `meo/tools/check_headless_imports.py`).
+- Temporary Newelle wrappers belong in `meo/adapters/` and must not leak UI objects into
+  service APIs.
+- Frontends/transports never own request IDs, decision IDs or execution handles.
+- SystemTool may call the typed `org.meo.AIRouter1` API, but Router daemon/executor
+  ownership, KIO/PulseAudioQt/KWin integrations, Polkit and Repair authority stay out of
+  this repository. Router caller binding requires Submit/Get/DecideRequest to reuse one
+  session-bus connection; do not replace it with per-call subprocesses.
 
-Inspect status and nearest code/tests before changes. Preserve unrelated work.
-For Python changes run `python3 -m compileall -q src meo/service meo/system meo/adapters meo/runtime meo/tools meo/device`,
-`python3 meo/tools/check_headless_imports.py`, and
-`python3 -m unittest discover -s meo/tests -p 'test_*.py' -v`.
-For native changes configure/build `meo/` with MeoUI and run CTest offscreen.
-Distinguish mock protocol tests, native builds, real agent/provider execution,
-and live Plasma integration in reports. No release/tag/signing is implied.
+## Web, cloud and device
 
+- `meo/web/` owns Web integration/upstream policy, never raw provider keys. The old
+  `meo-ai-web` repository is deployment rollback only; do not import its Express/Mongo
+  backend or generated artifacts.
+- `meo/cloud/` owns AI conversation/device/AgentRun contracts; Meo Account remains the
+  authentication/session and BYOK authority.
+- `meo/device/` bridges authenticated remote work to the local AgentService. It must not
+  become a second agent engine, an unauthenticated remote shell or a Router replacement.
+- One remote AgentRun binds to at most one local AgentService request; reconnect resumes
+  that request/event stream and never submits a replacement (no duplicated side effects).
+- Local workspaces stay local unless an explicit upload path says otherwise. Account login
+  never silently uploads local projects, memories or workspaces.
+- Realtime sync (e.g. Neon Realtime) is a future enhancement: stream tokens over the API
+  transport (SSE), persist completed state, fan out only durable changes, keep fallback.
 
-## Selected UI architecture (2026-10-18)
+## Product and navigation
 
-- Desktop applications on Linux, Windows and macOS use C++/Qt/QML + MeoUI.
-  Keep desktop application/platform integration in C++; consume shared Core/API
-  contracts instead of mandating a Rust UI binding migration.
-- Web uses React/TypeScript; Android uses Kotlin/Compose. No shared rendering
-  framework is required.
-- `meo/ui-schema/` is the only editable product configuration for navigation
-  placement/order, page hierarchy/states, feature entry points and token aliases.
-  MeoUI owns the referenced shared token values and reusable controls.
-- Render primary/secondary groups natively, including compact navigation. A
-  placement change must preserve destination identity, state and permissions.
-- Use a restrained Pixel/Material direction: function and information first,
-  quiet surfaces, limited accents, subtle motion and system reduced motion.
-- Schema data never executes code, grants capabilities or replaces server-side
-  authorization. Page/feature declarations do not prove implementation parity.
+- Primary hierarchy is `Chat`, `Work`, `Projects`, `Skills` — task surfaces, not settings.
+  Compact/mobile layouts use the same hierarchy in a left drawer (hamburger or edge swipe);
+  no separate bottom-navigation model.
+- `Chat` is conversation. `Work` is agentic execution with an explicit target device,
+  visible progress, permission boundaries and resumable state. Never silently turn Chat
+  into Work. Chat and Work share one activity UI contract, not one execution engine.
+- `Projects` own persistent context/files/conversations; `Skills` own reusable visible
+  capabilities. Provider config, model routing, memory management, MCP, diagnostics,
+  account and connector administration belong in Settings.
+- Attachments belong to a Chat, project files to a Project, Work outputs to Work artifacts.
+- Desktop is the strongest local Work executor; Android has fewer local capabilities and is
+  a first-class remote controller; Web never pretends to have local-machine privileges.
+- Remote control requires authenticated device registration, revocable per-device sessions,
+  scoped capabilities, visible target selection and explicit approval for privileged work.
+- Connectors (official, MCP, plugin, Router provider) share one capability/permission model
+  and receive brokered capabilities, not long-lived third-party tokens.
+- Account: one-time device authorization, then silent refresh until logout/revocation/expiry.
+  Secrets go to the platform secure store, never ordinary config files.
+- Visual direction: restrained Pixel/Material — information first, quiet surfaces, limited
+  accents, subtle motion, system reduced motion. Share protocol, data models and tokens; do
+  not force one renderer.
+
+## Context and token budget
+
+- `meo/service/context_engine.py` owns provider-agnostic context selection (moving to
+  `core-rs/src/context.rs`); keep provider SDKs, storage and UI outside the strategy.
+- Raw messages and tool results are authoritative. Compaction is model-facing and
+  non-destructive; every compacted tool result keeps a stable raw source reference.
+- Keep recent turns verbatim when budget permits; rank older evidence by relevance, recency
+  and importance; expand when selection confidence is low.
+- Memory and transcript history are different data classes; structured task memory keeps
+  source references and obeys user memory controls.
+- Serialize static instructions/tool schemas deterministically, separate from dynamic
+  context, so prompt caches hit. No timestamps/random IDs in the static prefix.
+- Terse output only for internal planner/executor/subagent handoffs, never the final reply.
+- Context diagnostics are aggregate-only (counts, ratios, strategy, confidence); never expose
+  system prompts, private memory or raw tool output.
+- New compression algorithms (TOMC, LCC, …) implement the strategy abstraction; check
+  licenses before vendoring. Legacy backends that build history internally must not claim
+  Meo context savings.
+- Context tests cover recent-turn preservation, relevant-old-item selection, compaction raw
+  refs, low-confidence fallback, diagnostic privacy and the terse-mode guard.
+
+## Validation
+
+Run the narrowest set for what changed (mirrors `.github/workflows/`):
+
+| Area | Commands |
+| --- | --- |
+| Python compat | `python3 -m compileall -q src meo/service meo/system meo/adapters meo/runtime meo/tools meo/device`; `python3 meo/tools/check_headless_imports.py`; `python3 -m meo.runtime.main --self-check`; `python3 -m unittest discover -s meo/tests -p 'test_*.py' -v` |
+| Desktop | `cmake -S meo -B build/meo -DMEO_UI_ROOT="${MEO_UI_ROOT:-$PWD/../meo-ui}" -DBUILD_TESTING=ON`; `cmake --build build/meo --parallel 2`; `QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software ctest --test-dir build/meo --output-on-failure --timeout 60` |
+| Rust core | in `meo/core-rs`: `cargo fmt --check`; `cargo clippy --locked --all-features --all-targets -- -D warnings`; `cargo test --locked --all-features` |
+| UI Schema | `node meo/ui-schema/generate.mjs --check` |
+| Web | in `meo/web/client`: `npm ci`; `npm run typecheck`; `npm test`; `npm run build` |
+| Android | in `meo/android`: `./gradlew :app:assembleDebug` |
+
+Report mock/protocol tests, builds, real provider/agent execution, live OAuth, real devices
+and live Plasma separately. No release, tag, signing or deployment is implied.
+
+## Git and files
+
+- This is a fork: open PRs with `gh pr create -R QwQdoge/meo-ai` (never upstream Newelle).
+- Inspect `git status` and the nearest code/tests first; preserve unrelated work.
+- Plans, audits and decisions go to `$MEO_DOCS_ROOT/Projects/meo-ai/`; generated output to
+  `$MEO_OUTPUT_ROOT/meo-ai/{build,install,validation,packages,tmp}/`. Code-bound contracts
+  stay in `docs/` and `meo/docs/`.
