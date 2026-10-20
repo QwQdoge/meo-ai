@@ -104,6 +104,14 @@ pub enum Action {
         id: String,
     },
     BeginNewProject,
+    /// A text file picked on the device. Hosts send only its name and decoded text.
+    AttachText {
+        name: String,
+        text: String,
+    },
+    RemoveFile {
+        id: String,
+    },
     CreateProject {
         text: String,
     },
@@ -208,6 +216,8 @@ struct State {
     /// The user's own memories (Settings > Personalization).
     memories: Option<Vec<Value>>,
     new_chat_project: Option<String>,
+    /// Files attached to the active conversation.
+    files: Vec<Value>,
     host_locale: String,
     sync_devices: usize,
     dialog: Option<Dialog>,
@@ -320,6 +330,7 @@ impl AppCore {
                 }
             }
             Action::NewConversation => self.update(|s| {
+                s.files.clear();
                 s.new_chat_project = None;
                 s.active = None;
                 s.route = "chat".into();
@@ -361,6 +372,8 @@ impl AppCore {
             Action::CloseDialog => self.update(|s| s.dialog = None),
             Action::Regenerate => self.regenerate().await,
             Action::Retry => self.retry().await,
+            Action::AttachText { name, text } => self.attach_text(name, text).await,
+            Action::RemoveFile { id } => self.remove_file(id).await,
             Action::OpenProject { id } => self.open_project(id).await,
             Action::BeginNewProject => self.prompt(
                 "New project",
@@ -666,6 +679,7 @@ impl AppCore {
             });
         }
         self.refresh_messages(&id).await;
+        self.refresh_files().await;
     }
 
     async fn refresh_messages(&self, id: &str) {
@@ -700,6 +714,91 @@ impl AppCore {
                 self.save_json(KEY_CONVERSATIONS, &list);
             }
             self.update(|s| s.conversations = list);
+        }
+    }
+
+    // ---- attachments ----------------------------------------------------------
+
+    async fn refresh_files(&self) {
+        let Some(id) = self.state.lock().unwrap().active.clone() else {
+            return self.update(|s| s.files.clear());
+        };
+        if let Ok(files) = self
+            .call(|api, t| {
+                let id = id.clone();
+                async move { api.list_files(&t, &id).await }
+            })
+            .await
+        {
+            self.update(|s| {
+                if s.active.as_deref() == Some(&id) {
+                    s.files = files;
+                }
+            });
+        }
+    }
+
+    async fn attach_text(&self, name: String, text: String) {
+        let name: String = name.trim().chars().take(200).collect();
+        if name.is_empty() || text.trim().is_empty() {
+            return self.notice("error", "That file has no text to attach.");
+        }
+        let active = self.state.lock().unwrap().active.clone();
+        let conversation_id = match active {
+            Some(id) => id,
+            None => {
+                let project = self.state.lock().unwrap().new_chat_project.clone();
+                let title = name.clone();
+                match self
+                    .call(|api, t| {
+                        let (title, project) = (title.clone(), project.clone());
+                        async move {
+                            api.create_conversation(&t, &title, project.as_deref())
+                                .await
+                        }
+                    })
+                    .await
+                {
+                    Ok(conversation) => {
+                        let id = conversation.id.clone();
+                        self.update(|s| {
+                            s.conversations.insert(0, conversation);
+                            s.active = Some(id.clone());
+                            s.new_chat_project = None;
+                        });
+                        id
+                    }
+                    Err(e) => return self.notice("error", e.to_string()),
+                }
+            }
+        };
+        let mime = mime_for(&name);
+        match self
+            .call(|api, t| {
+                let (id, name, text) = (conversation_id.clone(), name.clone(), text.clone());
+                async move { api.add_file(&t, &id, &name, mime, &text).await }
+            })
+            .await
+        {
+            Ok(()) => self.refresh_files().await,
+            Err(ApiError::Status { status: 413, .. }) => self.notice(
+                "error",
+                "That file is too large to attach (the account limit is 10 MB of text).",
+            ),
+            Err(e) => self.notice("error", e.to_string()),
+        }
+    }
+
+    async fn remove_file(&self, id: String) {
+        match self
+            .call(|api, t| {
+                let id = id.clone();
+                async move { api.delete_file(&t, &id).await }
+            })
+            .await
+        {
+            Ok(()) => self.refresh_files().await,
+            Err(e) => self.notice("error", e.to_string()),
         }
     }
 
@@ -1742,6 +1841,21 @@ impl AppCore {
     }
 }
 
+/// Server-accepted MIME type for a text file chosen by name (any code or text file is plain text).
+fn mime_for(name: &str) -> &'static str {
+    match name
+        .rsplit('.')
+        .next()
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("md" | "markdown") => "text/markdown",
+        Some("csv") => "text/csv",
+        Some("json") => "application/json",
+        _ => "text/plain",
+    }
+}
+
 /// First line of a model-written title without quotes or trailing punctuation; `None` if unusable.
 fn clean_title(raw: &str) -> Option<String> {
     let line = raw.lines().map(str::trim).find(|l| !l.is_empty())?;
@@ -1915,7 +2029,14 @@ fn conversation_page(s: &State) -> Value {
         },
         "messages": messages,
         "empty": messages.is_empty().then(|| json!({ "title": "How can Meo help?", "text": format!("Using {model_label}") })),
+        "files": s.files.iter().map(|f| json!({
+            "id": f["id"],
+            "name": f["name"],
+            "subtitle": format!("{} KB", f["extracted_text_bytes"].as_u64().unwrap_or(0).div_ceil(1024).max(1)),
+            "remove": button("Remove", "secondary", json!({ "type": "remove_file", "id": f["id"] })),
+        })).collect::<Vec<_>>(),
         "composer": {
+            "attach": { "label": "Attach file", "action": "attach_text", "extensions": ["txt", "md", "markdown", "csv", "json", "py", "rs", "js", "ts", "tsx", "jsx", "java", "kt", "c", "h", "cpp", "go", "sh", "toml", "yaml", "yml", "html", "css", "sql", "log"] },
             "placeholder": "Message Meo",
             "busy": busy,
             "sendAction": { "type": "send" },
@@ -2433,6 +2554,27 @@ mod tests {
             (row["label"].as_str(), row["buttons"][0]["label"].as_str()),
             (Some("Settings"), Some("删除"))
         );
+    }
+
+    #[test]
+    fn attachments_are_listed_and_files_get_a_mime_type_by_name() {
+        assert_eq!(mime_for("README.md"), "text/markdown");
+        assert_eq!(mime_for("data.CSV"), "text/csv");
+        assert_eq!(mime_for("config.json"), "application/json");
+        assert_eq!(mime_for("main.rs"), "text/plain");
+        assert_eq!(mime_for("Makefile"), "text/plain");
+        let c = signed_in_core();
+        c.update(|s| {
+            s.files = vec![json!({ "id": "f1", "name": "notes.txt", "extracted_text_bytes": 2048 })]
+        });
+        let page = c.view()["page"].clone();
+        assert_eq!(page["files"][0]["name"], "notes.txt");
+        assert_eq!(page["files"][0]["subtitle"], "2 KB");
+        assert_eq!(
+            page["files"][0]["remove"]["action"],
+            json!({ "type": "remove_file", "id": "f1" })
+        );
+        assert_eq!(page["composer"]["attach"]["action"], "attach_text");
     }
 
     #[test]
