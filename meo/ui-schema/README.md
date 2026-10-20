@@ -93,7 +93,7 @@ dynamic color may differ while hierarchy, meaning and interaction stay aligned.
 
 ## Checked navigation adapters
 
-The generator also maintains the existing public `GeneratedNavigation.js` and
-`GeneratedNavigation.kt` bindings from the same schema. `--check` detects drift;
+The generator also maintains the existing public `GeneratedNavigation.js` binding
+from the same schema (Android no longer needs one: it renders the Rust core view). `--check` detects drift;
 `--web-output <path>` writes/checks the retained Web navigation adapter. Shared
 configuration and external build artifacts continue to use `--output <dir>`.

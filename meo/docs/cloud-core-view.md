@@ -42,3 +42,13 @@ Clients must not interpret feature IDs; they render component kinds only.
 `start, sign_in, sign_out, auth_callback{url}, navigate{route}, new_conversation,
 select_conversation{id}, send{text}, stop, approve_consent, deny_consent,
 set_setting{binding,value}, refresh, dismiss_notice`.
+
+## Hosts
+
+- **Desktop** `desktop-rs`: Rust + QtBridge, renderer `qml/Main.qml`, loopback sign-in.
+- **Android** `android/`: `org.meo.ai.core.CloudCore` wraps `AppCore` through JNI
+  (`core-rs/src/android.rs`, feature `android-jni`: `nativeCreate/View/Dispatch/Destroy`);
+  `ui/CoreApp.kt` is the Compose renderer; `MainActivity` only forwards the
+  `org.meo.ai:/oauth/callback` redirect as `auth_callback`. The pending sign-in is persisted
+  by the core, and `auth_callback` waits for `start`, so a cold start from the redirect works.
+- **Web**: WASM (planned).

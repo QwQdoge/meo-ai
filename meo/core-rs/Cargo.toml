@@ -29,7 +29,7 @@ service = [
     "dep:tracing-subscriber",
     "dep:uuid",
 ]
-android-jni = ["client", "dep:jni"]
+android-jni = ["client", "cloud", "dep:jni"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

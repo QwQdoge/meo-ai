@@ -1,12 +1,4 @@
-import org.gradle.api.DefaultTask
-import org.gradle.api.file.DirectoryProperty
-import org.gradle.api.tasks.InputDirectory
-import org.gradle.api.tasks.OutputDirectory
-import org.gradle.api.tasks.TaskAction
 import org.gradle.api.tasks.Exec
-import org.gradle.process.ExecOperations
-import javax.inject.Inject
-import java.net.URI
 
 plugins {
     id("com.android.application")
@@ -21,22 +13,6 @@ val escapedOAuthClientId = meoOAuthClientId
     .replace("\\", "\\\\")
     .replace("\"", "\\\"")
 
-// This is a trusted deployment origin, not a user-supplied URL or an OAuth secret.
-// An absent origin keeps remote Work visibly unavailable instead of falling back
-// to an arbitrary endpoint or pretending the device is enrolled.
-val configuredAgentCloud = providers.gradleProperty("MEO_AGENT_CLOUD_URL")
-    .orElse(providers.environmentVariable("MEO_AGENT_CLOUD_URL"))
-    .orElse("").get().trim().trimEnd('/')
-if (configuredAgentCloud.isNotEmpty()) {
-    val origin = URI(configuredAgentCloud)
-    require(origin.scheme == "https" && !origin.host.isNullOrBlank() &&
-        origin.userInfo == null && origin.rawPath.isNullOrEmpty() &&
-        origin.rawQuery == null && origin.rawFragment == null) {
-        "MEO_AGENT_CLOUD_URL must be an HTTPS origin without paths or credentials"
-    }
-}
-val escapedAgentCloud = configuredAgentCloud.replace("\\", "\\\\").replace("\"", "\\\"")
-
 android {
     namespace = "org.meo.ai"
     compileSdk = 37
@@ -49,7 +25,6 @@ android {
         versionCode = 1
         versionName = "0.1.0"
         buildConfigField("String", "MEO_OAUTH_CLIENT_ID", "\"$escapedOAuthClientId\"")
-        buildConfigField("String", "MEO_AGENT_CLOUD_URL", "\"$escapedAgentCloud\"")
     }
 
     buildFeatures {
@@ -64,38 +39,6 @@ android {
 
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
-    }
-}
-
-abstract class GenerateMeoUiSchema : DefaultTask() {
-    @get:InputDirectory abstract val schemaRoot: DirectoryProperty
-    @get:OutputDirectory abstract val outputDirectory: DirectoryProperty
-    @get:Inject abstract val execOperations: ExecOperations
-
-    @TaskAction
-    fun generate() {
-        execOperations.exec {
-            commandLine(
-                "node",
-                schemaRoot.file("generate.mjs").get().asFile.absolutePath,
-                "--output",
-                outputDirectory.get().asFile.absolutePath,
-            )
-        }
-    }
-}
-
-val generateUiSchema = tasks.register<GenerateMeoUiSchema>("generateMeoUiSchema") {
-    schemaRoot.set(rootProject.layout.projectDirectory.dir("../ui-schema"))
-    outputDirectory.set(layout.buildDirectory.dir("generated/ui-schema"))
-}
-androidComponents {
-    onVariants(selector().all()) { variant ->
-        // AGP 9 requires generated sources to be registered via the Variant API.
-        // The output contains kotlin/MeoUiSchema.kt plus non-source metadata.
-        variant.sources.java?.addGeneratedSourceDirectory(
-            generateUiSchema, GenerateMeoUiSchema::outputDirectory,
-        )
     }
 }
 

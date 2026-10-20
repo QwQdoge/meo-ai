@@ -110,6 +110,8 @@ const KEY_PREFS: &str = "prefs";
 const KEY_CONVERSATIONS: &str = "conversations";
 const KEY_CREDENTIALS: &str = "credentials";
 const KEY_MODELS: &str = "models";
+/// Survives the app process being killed while the browser sign-in is open.
+const KEY_PENDING_AUTH: &str = "pending_auth";
 
 impl AppCore {
     pub fn new(oauth: OAuthConfig, storage: Arc<dyn Storage>, hooks: Arc<dyn PlatformHooks>) -> Self {
@@ -218,15 +220,17 @@ impl AppCore {
         let url = pending.url.clone();
         self.update(|s| {
             s.auth = AuthState::SigningIn;
-            s.pending_auth = Some(pending);
+            s.pending_auth = Some(pending.clone());
             s.notice = None;
         });
+        self.save_json(KEY_PENDING_AUTH, &pending);
         self.hooks.open_url(&url);
     }
 
     async fn complete_sign_in(&self, url: &str) {
-        let pending = self.state.lock().unwrap().pending_auth.clone();
+        let pending = self.state.lock().unwrap().pending_auth.clone().or_else(|| self.load_json(KEY_PENDING_AUTH));
         let Some(pending) = pending else { return };
+        self.storage.remove(KEY_PENDING_AUTH);
         let result = match auth::parse_callback(url, &pending.state) {
             Ok(code) => auth::exchange(&self.http, &self.oauth, &code, &pending.verifier).await,
             Err(e) => Err(e),
@@ -252,7 +256,7 @@ impl AppCore {
     }
 
     fn sign_out(&self) {
-        for key in [KEY_SESSION, KEY_CONVERSATIONS, KEY_CREDENTIALS, KEY_MODELS] {
+        for key in [KEY_SESSION, KEY_CONVERSATIONS, KEY_CREDENTIALS, KEY_MODELS, KEY_PENDING_AUTH] {
             self.storage.remove(key);
         }
         self.update(|s| {
