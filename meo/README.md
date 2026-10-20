@@ -14,7 +14,7 @@ On Arch Linux, install Qt 6.8+ base/declarative/shadertools/tools, CMake and a C
 compiler. Clone MeoUI alongside this repository.
 
 ```sh
-cmake -S meo -B build/meo -DMEO_UI_ROOT="$PWD/../MeoUI" -DBUILD_TESTING=ON
+cmake -S meo -B build/meo -DMEO_UI_ROOT="${MEO_UI_ROOT:-$PWD/../meo-ui}" -DBUILD_TESTING=ON
 cmake --build build/meo --parallel 2
 QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software ctest --test-dir build/meo --output-on-failure
 python3 meo/tools/check_headless_imports.py

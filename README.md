@@ -11,7 +11,7 @@
 Meo AI's desktop client is built with C++/QML and the shared **MeoUI** design system.
 
 ```sh
-cmake -S meo -B build/meo -DMEO_UI_ROOT="$PWD/../MeoUI" -DBUILD_TESTING=ON
+cmake -S meo -B build/meo -DMEO_UI_ROOT="${MEO_UI_ROOT:-$PWD/../meo-ui}" -DBUILD_TESTING=ON
 cmake --build build/meo --parallel 2
 ```
 
