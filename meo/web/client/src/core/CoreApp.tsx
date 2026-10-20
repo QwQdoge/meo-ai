@@ -432,7 +432,13 @@ function Conversation({ page, prefs, strings, act }: { page: Spec; prefs: Spec; 
                   onChange={async (e) => {
                     const file = e.target.files?.[0];
                     e.target.value = "";
-                    if (file && file.size <= 2 * 1024 * 1024) act({ type: composer.attach.action, name: file.name, text: await file.text() });
+                    if (!file) return;
+                    if (file.type.startsWith("image/")) {
+                      const data = await shrinkImage(file);
+                      if (data) act({ type: "attach_image", name: file.name, mime: "image/jpeg", data });
+                    } else if (file.size <= 2 * 1024 * 1024) {
+                      act({ type: composer.attach.action, name: file.name, text: await file.text() });
+                    }
                   }}
                 />
               </>
@@ -464,3 +470,27 @@ function Conversation({ page, prefs, strings, act }: { page: Spec; prefs: Spec; 
 }
 
 export type { View };
+
+/** Downscale a picture to at most 1568 px and return it as base64 JPEG (no prefix), or null. */
+async function shrinkImage(file: File): Promise<string | null> {
+  try {
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, 1568 / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(bitmap.width * scale);
+    canvas.height = Math.round(bitmap.height * scale);
+    const context = canvas.getContext("2d");
+    if (!context) return null;
+    context.fillStyle = "#fff";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    for (const quality of [0.85, 0.7, 0.55, 0.4]) {
+      const url = canvas.toDataURL("image/jpeg", quality);
+      const data = url.slice(url.indexOf(",") + 1);
+      if (data.length <= 1_800_000) return data;
+    }
+  } catch {
+    // fall through
+  }
+  return null;
+}

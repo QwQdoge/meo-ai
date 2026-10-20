@@ -696,6 +696,16 @@ private fun Composer(composer: JSONObject, files: List<JSONObject>, prefs: JSONO
             val resolver = context.contentResolver
             val name = resolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
                 ?.use { if (it.moveToFirst()) it.getString(0) else null } ?: "file.txt"
+            val type = resolver.getType(uri).orEmpty()
+            if (type.startsWith("image/")) {
+                val data = shrinkPicture(context, uri)
+                if (data == null) {
+                    android.widget.Toast.makeText(context, "That picture could not be prepared.", android.widget.Toast.LENGTH_SHORT).show()
+                } else {
+                    act(JSONObject().put("type", "attach_image").put("name", name).put("mime", "image/jpeg").put("data", data))
+                }
+                return@rememberLauncherForActivityResult
+            }
             val text = runCatching {
                 resolver.openInputStream(uri)?.use { it.readBytes() }?.takeIf { it.size <= 2 * 1024 * 1024 }?.let {
                     Charsets.UTF_8.newDecoder()
@@ -726,7 +736,7 @@ private fun Composer(composer: JSONObject, files: List<JSONObject>, prefs: JSONO
         composer.list("toolbar").forEach { SettingControl(it, act) }
         Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             if (attach != null) {
-                IconButton(onClick = { picker.launch(arrayOf("text/*", "application/json", "application/xml", "application/x-sh", "application/octet-stream")) }) {
+                IconButton(onClick = { picker.launch(arrayOf("image/*", "text/*", "application/json", "application/xml", "application/x-sh", "application/octet-stream")) }) {
                     Icon(Icons.Rounded.AttachFile, contentDescription = attach.str("label"))
                 }
             }
@@ -752,3 +762,24 @@ private fun Composer(composer: JSONObject, files: List<JSONObject>, prefs: JSONO
         }
     }
 }
+
+
+/** Downscale a picture to at most 1568 px and return base64 JPEG (no wrapping), or null. */
+private fun shrinkPicture(context: android.content.Context, uri: android.net.Uri): String? = runCatching {
+    val resolver = context.contentResolver
+    val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    resolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, bounds) }
+    var sample = 1
+    while (maxOf(bounds.outWidth, bounds.outHeight) / sample > 3136) sample *= 2
+    val options = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
+    val decoded = resolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, options) } ?: return null
+    val scale = minOf(1f, 1568f / maxOf(decoded.width, decoded.height))
+    val bitmap = if (scale < 1f) android.graphics.Bitmap.createScaledBitmap(decoded, (decoded.width * scale).toInt(), (decoded.height * scale).toInt(), true) else decoded
+    for (quality in intArrayOf(85, 70, 55, 40)) {
+        val out = java.io.ByteArrayOutputStream()
+        bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, quality, out)
+        val data = android.util.Base64.encodeToString(out.toByteArray(), android.util.Base64.NO_WRAP)
+        if (data.length <= 1_800_000) return data
+    }
+    null
+}.getOrNull()

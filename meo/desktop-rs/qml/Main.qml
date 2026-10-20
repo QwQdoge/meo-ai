@@ -102,7 +102,7 @@ ApplicationWindow {
     FileDialog {
         id: attachDialog
         property string actionType: "attach_path"
-        nameFilters: [qsTr("Text and code files (*.txt *.md *.markdown *.csv *.json *.py *.rs *.js *.ts *.tsx *.jsx *.java *.kt *.c *.h *.cpp *.go *.sh *.toml *.yaml *.yml *.html *.css *.sql *.log)"), qsTr("All files (*)")]
+        nameFilters: [qsTr("Text, code and pictures (*.png *.jpg *.jpeg *.webp *.gif *.txt *.md *.markdown *.csv *.json *.py *.rs *.js *.ts *.tsx *.jsx *.java *.kt *.c *.h *.cpp *.go *.sh *.toml *.yaml *.yml *.html *.css *.sql *.log)"), qsTr("All files (*)")]
         onAccepted: window.act({ type: "attach_path", path: selectedFile.toString() })
     }
 
