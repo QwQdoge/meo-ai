@@ -32,7 +32,7 @@ import androidx.compose.material.icons.rounded.ChatBubble
 import androidx.compose.material.icons.rounded.Extension
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.Menu
-import androidx.compose.material.icons.rounded.Send
+import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material.icons.rounded.Work
@@ -548,7 +548,7 @@ private fun Composer(composer: JSONObject, prefs: JSONObject?, act: Act) {
                 shape = RoundedCornerShape(24.dp),
             )
             FilledIconButton(onClick = { if (busy) act.send(composer.obj("stopAction")) else send() }) {
-                Icon(if (busy) Icons.Rounded.Stop else Icons.Rounded.Send, contentDescription = if (busy) "Stop" else "Send")
+                Icon(if (busy) Icons.Rounded.Stop else Icons.AutoMirrored.Rounded.Send, contentDescription = if (busy) "Stop" else "Send")
             }
         }
     }
