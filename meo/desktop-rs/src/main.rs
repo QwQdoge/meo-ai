@@ -4,13 +4,14 @@
 //! sends every user intent back through `core.dispatch(json)`. No product
 //! logic lives here, so core changes reach the desktop without UI edits.
 //!
-//! Sign-in uses the system browser; the `meoai://auth/callback` redirect
-//! launches a second process that forwards the URL to the running instance
-//! over a per-user socket and exits.
+//! Sign-in uses the system browser and a one-shot loopback listener on
+//! `127.0.0.1:43887/callback` (RFC 8252). A second launch forwards to the
+//! running instance over a per-user socket and exits.
 
 use std::{
     env,
-    io::{Read, Write},
+    io::{BufRead, BufReader, Read, Write},
+    net::TcpListener,
     os::unix::net::{UnixListener, UnixStream},
     path::PathBuf,
     sync::{
@@ -95,6 +96,42 @@ mod meo_core {
 struct DesktopHooks {
     invoker: Mutex<QmlMethodInvoker>,
     pending: Arc<AtomicBool>,
+    callbacks: Mutex<Option<std::sync::mpsc::Sender<String>>>,
+}
+
+/// Waits for the single browser redirect to the loopback callback.
+fn listen_for_callback(callbacks: std::sync::mpsc::Sender<String>) {
+    let listener = match TcpListener::bind(("127.0.0.1", cloud::DESKTOP_LOOPBACK_PORT)) {
+        Ok(listener) => listener,
+        Err(error) => {
+            tracing::error!(%error, "sign-in callback port is busy");
+            return;
+        }
+    };
+    std::thread::spawn(move || {
+        for mut stream in listener.incoming().flatten() {
+            let mut request_line = String::new();
+            if BufReader::new(&stream).read_line(&mut request_line).is_err() {
+                continue;
+            }
+            let path = request_line.split_whitespace().nth(1).unwrap_or("/").to_owned();
+            if !path.starts_with("/callback") {
+                let _ = stream.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n");
+                continue;
+            }
+            let body = "<!doctype html><meta charset=utf-8><title>Meo AI</title>\
+                <body style=\"font-family:sans-serif;text-align:center;padding-top:20vh\">\
+                <h2>Signed in to Meo AI</h2><p>You can close this tab and return to the app.</p>";
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = callbacks.send(format!("http://127.0.0.1:{}{}", cloud::DESKTOP_LOOPBACK_PORT, path));
+            break;
+        }
+    });
 }
 
 impl PlatformHooks for DesktopHooks {
@@ -106,6 +143,9 @@ impl PlatformHooks for DesktopHooks {
     }
 
     fn open_url(&self, url: &str) {
+        if let Some(callbacks) = self.callbacks.lock().unwrap().clone() {
+            listen_for_callback(callbacks);
+        }
         if let Err(error) = std::process::Command::new("xdg-open").arg(url).spawn() {
             tracing::error!(%error, "could not open the browser for sign-in");
         }
@@ -127,6 +167,7 @@ fn main() {
         .init();
 
     let callback = env::args().find(|a| a.starts_with("meoai://"));
+    let (callback_tx, callback_rx) = std::sync::mpsc::channel::<String>();
     let socket = socket_path();
     if let Ok(mut stream) = UnixStream::connect(&socket) {
         let _ = stream.write_all(callback.as_deref().unwrap_or("activate").as_bytes());
@@ -141,6 +182,7 @@ fn main() {
     let hooks = Arc::new(DesktopHooks {
         invoker: Mutex::new(object.borrow().get_qml_method_invoker()),
         pending,
+        callbacks: Mutex::new(Some(callback_tx)),
     });
     let core = AppCore::new(
         OAuthConfig {
@@ -168,6 +210,15 @@ fn main() {
                 let core = forwarded.clone();
                 handle.spawn(async move { core.dispatch(Action::AuthCallback { url: message }).await });
             }
+        }
+    });
+
+    let handle = rt.handle().clone();
+    let signed_in = core.clone();
+    std::thread::spawn(move || {
+        for url in callback_rx {
+            let core = signed_in.clone();
+            handle.spawn(async move { core.dispatch(Action::AuthCallback { url }).await });
         }
     });
 

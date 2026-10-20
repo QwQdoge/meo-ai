@@ -18,9 +18,13 @@ pub use storage::{FileStorage, MemoryStorage, Storage};
 pub const ACCOUNT_ORIGIN: &str = "https://account.meoarch.org";
 pub const API_ORIGIN: &str = "https://api.meoarch.org";
 
-/// OAuth client registered for the Meo AI desktop app (meo-api auth migration 0006).
-pub const DESKTOP_CLIENT_ID: &str = "meo-ai-native";
-pub const DESKTOP_REDIRECT_URI: &str = "meoai://auth/callback";
+/// Desktop sign-in uses the registered native loopback client (meo-api auth
+/// migration 0006, "Meo Account Desktop"). Browsers hand loopback redirects to
+/// the app directly; the `meoai://` scheme of `meo-ai-native` depends on a
+/// browser protocol prompt and was not delivered reliably.
+pub const DESKTOP_CLIENT_ID: &str = "06beedbb-88ae-46bd-92ae-bd91f450ec27";
+pub const DESKTOP_LOOPBACK_PORT: u16 = 43887;
+pub const DESKTOP_REDIRECT_URI: &str = "http://127.0.0.1:43887/callback";
 
 /// OAuth client registered for Android (meo-api auth migration 0004).
 pub const ANDROID_CLIENT_ID: &str = "org.meo.ai.android";
