@@ -23,6 +23,15 @@ ApplicationWindow {
     readonly property var page: v.page || ({})
     readonly property var prefs: v.prefs || ({})
 
+    Connections {
+        target: window.core
+        function onActivateRequested() {
+            window.show()
+            window.raise()
+            window.requestActivate()
+        }
+    }
+
     function act(action) {
         if (action)
             core.dispatch(JSON.stringify(action))
@@ -218,9 +227,17 @@ ApplicationWindow {
             currentIndex: (item.options || []).findIndex(o => o.value === item.value)
             onSelected: (index, value) => window.act({ type: "set_setting", binding: item.binding, value: item.options[index].value })
         }
+        MeoTextField {
+            visible: item.kind === "text" && !!item.single_line
+            Layout.fillWidth: true
+            label: item.label || ""
+            placeholder: item.placeholder || ""
+            text: item.value || ""
+            onEditingFinished: if (text !== (item.value || "")) window.act({ type: "set_setting", binding: item.binding, value: text })
+        }
         MeoTextArea {
             id: textField
-            visible: item.kind === "text"
+            visible: item.kind === "text" && !item.single_line
             Layout.fillWidth: true
             Layout.preferredHeight: 96
             label: item.label || ""
@@ -355,15 +372,11 @@ ApplicationWindow {
 
                     Repeater {
                         model: parent.composer.toolbar || []
-                        MeoExposedDropdown {
+                        SettingControl {
                             required property var modelData
+                            item: modelData
                             Layout.preferredWidth: 240
-                            label: modelData.label
-                            model: modelData.options
-                            textRole: "label"
-                            valueRole: "value"
-                            currentIndex: modelData.options.findIndex(o => o.value === modelData.value)
-                            onSelected: (index, value) => window.act({ type: "set_setting", binding: modelData.binding, value: modelData.options[index].value })
+                            Layout.alignment: Qt.AlignBottom
                         }
                     }
 

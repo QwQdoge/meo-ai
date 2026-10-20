@@ -550,6 +550,20 @@ impl AppCore {
             }
             return;
         }
+        if binding == "model.custom" {
+            let model = value.as_str().unwrap_or_default().trim().to_owned();
+            let credential = self.state.lock().unwrap().selected.as_ref().map(|(c, _)| c.clone())
+                .or_else(|| self.state.lock().unwrap().credentials.first().map(|c| c.id.clone()));
+            if let Some(credential) = credential {
+                let joined = json!(format!("{credential}|{model}"));
+                self.update(|s| {
+                    s.selected = Some((credential.clone(), model.clone()));
+                    s.prefs.insert("model.selected".into(), joined);
+                });
+                self.save_json(KEY_PREFS, &self.state.lock().unwrap().prefs.clone());
+            }
+            return;
+        }
         let cloud_field = match binding.as_str() {
             "personalization.custom_instructions" => Some("personalInstructions"),
             "memory.enabled" => Some("memoryEnabled"),
@@ -665,7 +679,7 @@ impl AppCore {
                     .collect();
                 match section.id.as_str() {
                     "models" => {
-                        items.push(model_select(s));
+                        items.extend(model_controls(s));
                         items.push(json!({
                             "id": "auto_consent", "label": "Send to the provider without asking each time",
                             "kind": "toggle", "binding": "chat.auto_consent",
@@ -691,6 +705,29 @@ impl AppCore {
 
 fn button(label: &str, style: &str, action: Value) -> Value {
     json!({ "label": label, "style": style, "action": action })
+}
+
+/// Model controls: a picker, plus a free-text model ID when the selected
+/// connection cannot list its models and has no default.
+fn model_controls(s: &State) -> Vec<Value> {
+    let select = model_select(s);
+    let empty = select["options"].as_array().is_none_or(|o| o.is_empty());
+    let mut controls = vec![];
+    if !empty {
+        controls.push(select);
+    }
+    if let Some((credential, model)) = &s.selected {
+        let listed = s.models.iter().any(|m| &m.id == model);
+        if empty || !listed {
+            controls.push(json!({
+                "id": "model_id", "label": "Model ID", "kind": "text", "single_line": true,
+                "binding": "model.custom", "value": model,
+                "placeholder": "e.g. gpt-4o-mini",
+                "credential": credential,
+            }));
+        }
+    }
+    controls
 }
 
 fn model_select(s: &State) -> Value {
@@ -747,8 +784,9 @@ fn conversation_page(s: &State) -> Value {
         .as_array()
         .and_then(|o| o.iter().find(|x| x["value"] == model["value"]))
         .and_then(|x| x["label"].as_str())
-        .unwrap_or("No model")
-        .to_owned();
+        .map(str::to_owned)
+        .or_else(|| s.selected.as_ref().map(|(_, m)| m.clone()).filter(|m| !m.is_empty()))
+        .unwrap_or_else(|| "no model yet — enter a model ID below".to_owned());
     json!({
         "kind": "conversation",
         "title": active.as_ref().and_then(|id| s.conversations.iter().find(|c| &c.id == id)).map(|c| c.title.clone()).unwrap_or_else(|| "New chat".into()),
@@ -770,7 +808,7 @@ fn conversation_page(s: &State) -> Value {
             "busy": busy,
             "sendAction": { "type": "send" },
             "stopAction": { "type": "stop" },
-            "toolbar": [model],
+            "toolbar": model_controls(s),
         },
         "consent": s.consent.as_ref().map(|p| json!({
             "title": "Send to AI provider?",

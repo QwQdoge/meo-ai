@@ -70,6 +70,15 @@ mod meo_core {
         #[qsignal(qml_name = "viewChanged")]
         fn view_changed(&mut self);
 
+        /// Raise the window (second launch, or the link on the sign-in success page).
+        #[qsignal(qml_name = "activateRequested")]
+        fn activate_requested(&mut self);
+
+        #[qslot(qml_name = "activate")]
+        fn activate(&mut self) {
+            self.activate_requested();
+        }
+
         /// `action` is the JSON of an action object taken from the view.
         #[qslot]
         fn dispatch(&mut self, action: &String) {
@@ -96,6 +105,7 @@ mod meo_core {
 struct DesktopHooks {
     invoker: Mutex<QmlMethodInvoker>,
     pending: Arc<AtomicBool>,
+    last_refresh: Mutex<std::time::Instant>,
     callbacks: Mutex<Option<std::sync::mpsc::Sender<String>>>,
 }
 
@@ -121,7 +131,9 @@ fn listen_for_callback(callbacks: std::sync::mpsc::Sender<String>) {
             }
             let body = "<!doctype html><meta charset=utf-8><title>Meo AI</title>\
                 <body style=\"font-family:sans-serif;text-align:center;padding-top:20vh\">\
-                <h2>Signed in to Meo AI</h2><p>You can close this tab and return to the app.</p>";
+                <h2>Signed in to Meo AI</h2><p>You can close this tab and return to the app.</p>\
+                <p><a href=\"meoai://open\" style=\"display:inline-block;padding:12px 24px;border-radius:24px;\
+                background:#6750a4;color:#fff;text-decoration:none\">Open Meo AI</a></p>";
             let _ = write!(
                 stream,
                 "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -136,8 +148,12 @@ fn listen_for_callback(callbacks: std::sync::mpsc::Sender<String>) {
 
 impl PlatformHooks for DesktopHooks {
     fn changed(&self) {
-        // Coalesce bursts (e.g. streamed tokens) into one view refresh per event-loop turn.
-        if !self.pending.swap(true, Ordering::SeqCst) {
+        // Coalesce bursts (e.g. streamed tokens). The flag is cleared by the
+        // refresh itself and, as a fallback, here, so a call dropped before the
+        // QML engine is ready can never block later refreshes.
+        let stale = self.pending.swap(true, Ordering::SeqCst);
+        if !stale || self.last_refresh.lock().unwrap().elapsed() > std::time::Duration::from_millis(250) {
+            *self.last_refresh.lock().unwrap() = std::time::Instant::now();
             self.invoker.lock().unwrap().invoke_method("refreshView");
         }
     }
@@ -182,6 +198,7 @@ fn main() {
     let hooks = Arc::new(DesktopHooks {
         invoker: Mutex::new(object.borrow().get_qml_method_invoker()),
         pending,
+        last_refresh: Mutex::new(std::time::Instant::now()),
         callbacks: Mutex::new(Some(callback_tx)),
     });
     let core = AppCore::new(
@@ -203,22 +220,29 @@ fn main() {
 
     let handle = rt.handle().clone();
     let forwarded = core.clone();
+    let activator = Mutex::new(object.borrow().get_qml_method_invoker());
     std::thread::spawn(move || {
         for mut stream in listener.incoming().flatten() {
             let mut message = String::new();
-            if stream.read_to_string(&mut message).is_ok() && message.starts_with("meoai://") {
+            if stream.read_to_string(&mut message).is_err() {
+                continue;
+            }
+            if message.starts_with("meoai://auth/callback") {
                 let core = forwarded.clone();
                 handle.spawn(async move { core.dispatch(Action::AuthCallback { url: message }).await });
             }
+            activator.lock().unwrap().invoke_method("activate");
         }
     });
 
     let handle = rt.handle().clone();
     let signed_in = core.clone();
+    let raiser = Mutex::new(object.borrow().get_qml_method_invoker());
     std::thread::spawn(move || {
         for url in callback_rx {
             let core = signed_in.clone();
             handle.spawn(async move { core.dispatch(Action::AuthCallback { url }).await });
+            raiser.lock().unwrap().invoke_method("activate");
         }
     });
 
