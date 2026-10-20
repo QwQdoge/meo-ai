@@ -377,6 +377,15 @@ private fun SettingControl(item: JSONObject, act: Act, modifier: Modifier = Modi
             Text(item.str("value"), color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         "button" -> ActionButton(item, act, modifier)
+        "item" -> Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(Modifier.weight(1f)) {
+                Text(item.str("label"))
+                item.str("value").takeIf { it.isNotEmpty() }?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            item.list("buttons").forEach { ActionButton(it, act) }
+        }
     }
 }
 
@@ -413,6 +422,13 @@ private fun TextControl(item: JSONObject, act: Act, modifier: Modifier) {
     val singleLine = item.optBoolean("single_line")
     val hint = item.str("placeholder")
     val commit = { if (text != saved) act(setting(item, text)) }
+    // Phones have no reliable "blur": also save when typing pauses.
+    LaunchedEffect(text) {
+        if (text != saved) {
+            kotlinx.coroutines.delay(800)
+            act(setting(item, text))
+        }
+    }
     OutlinedTextField(
         value = text,
         onValueChange = { text = it },

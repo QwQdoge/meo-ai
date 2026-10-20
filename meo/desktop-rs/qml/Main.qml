@@ -307,6 +307,27 @@ ApplicationWindow {
             visible: item.kind === "button"
             spec: ({ label: item.label, style: item.style, action: item.action })
         }
+        RowLayout {
+            visible: item.kind === "item"
+            Layout.fillWidth: true
+            spacing: 12
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 2
+                MeoText { text: item.label || ""; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                MeoText {
+                    visible: !!item.value
+                    text: String(item.value || "")
+                    color: MeoTheme.onSurfaceVariant
+                    typeRole: "label"
+                    Layout.fillWidth: true
+                }
+            }
+            Repeater {
+                model: item.buttons || []
+                ActionButton { spec: modelData }
+            }
+        }
     }
 
     Component {

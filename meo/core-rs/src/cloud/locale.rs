@@ -60,6 +60,11 @@ fn buttons(c: &HashMap<String, String>, value: &mut Value, key: &str) {
 }
 
 fn control(c: &HashMap<String, String>, item: &mut Value) {
+    if item["kind"] == "item" {
+        // Chat titles, memories and the like are the user's own content.
+        buttons(c, item, "buttons");
+        return;
+    }
     field(c, item, "label");
     field(c, item, "placeholder");
     for option in each(item, "options") {

@@ -231,6 +231,16 @@ function Control({ item, act }: { item: Spec; act: Act }) {
       return (
         <div className="core-row"><span>{item.label}</span><span className="core-muted">{String(item.value ?? "")}</span></div>
       );
+    case "item":
+      return (
+        <div className="core-item">
+          <div className="core-item-text">
+            <span>{item.label}</span>
+            {item.value && <small className="core-muted">{item.value}</small>}
+          </div>
+          {(item.buttons ?? []).map((b: Spec, i: number) => <Button key={i} spec={b} act={act} />)}
+        </div>
+      );
     case "button":
       return <Button spec={item} act={act} />;
     default:
