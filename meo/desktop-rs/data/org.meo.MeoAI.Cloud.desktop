@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Meo AI
+Comment=Cloud-first Meo AI assistant
+Exec=meo-ai-desktop %u
+Icon=org.meo.AI
+Terminal=false
+Categories=Utility;
+MimeType=x-scheme-handler/meoai;
+StartupWMClass=meo-ai-desktop

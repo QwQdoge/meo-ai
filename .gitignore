@@ -5,3 +5,8 @@ __pycache__/
 flatpak-pip-generator
 build/
 .DS_Store
+
+# Android build state
+meo/android/.gradle/
+meo/android/.kotlin/
+meo/android/local.properties

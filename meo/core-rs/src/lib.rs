@@ -21,6 +21,8 @@ pub mod stream;
 pub mod capability_transport;
 #[cfg(feature = "client")]
 pub mod client;
+#[cfg(feature = "cloud")]
+pub mod cloud;
 #[cfg(feature = "service")]
 pub mod provider;
 #[cfg(feature = "service")]
