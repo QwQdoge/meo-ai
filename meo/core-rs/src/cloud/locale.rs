@@ -129,6 +129,10 @@ pub fn localize(view: &mut Value, locale: &str) {
             }
             for message in each(page, "messages") {
                 buttons(c, message, "actions");
+                // The "Creating your image…" placeholder is product copy, not the model's words.
+                if message["streaming"] == true && message["role"] == "assistant" {
+                    field(c, message, "text");
+                }
             }
             if let Some(empty) = page.get_mut("empty").filter(|e| e.is_object()) {
                 field(c, empty, "title");

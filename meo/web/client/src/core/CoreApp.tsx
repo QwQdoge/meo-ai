@@ -385,6 +385,9 @@ function Conversation({ page, prefs, strings, act }: { page: Spec; prefs: Spec; 
                   <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ pre: (props) => <CodeBlock {...props} label={strings.copy ?? "Copy"} done={strings.copied ?? "Copied"} /> }}>
                     {m.text + (m.streaming ? " ▍" : "")}
                   </ReactMarkdown>
+                  {(m.images ?? []).map((img: Spec, k: number) => (
+                    <img key={k} className="core-image" src={img.url} alt="" loading="lazy" />
+                  ))}
                 </div>
               )}
               {!m.streaming && m.text && (

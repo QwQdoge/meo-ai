@@ -3,6 +3,10 @@ package org.meo.ai.ui
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import coil3.compose.AsyncImage
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -648,7 +652,17 @@ private fun MessageBubble(message: JSONObject, strings: JSONObject, act: Act) {
             }
         } else {
             SelectionContainer {
-                MarkdownText(text, Modifier.fillMaxWidth())
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    MarkdownText(text, Modifier.fillMaxWidth())
+                    message.list("images").forEach { image ->
+                        AsyncImage(
+                            model = image.str("url"),
+                            contentDescription = null,
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp).clip(RoundedCornerShape(14.dp)),
+                        )
+                    }
+                }
             }
         }
         if (!streaming && message.str("text").isNotEmpty()) {

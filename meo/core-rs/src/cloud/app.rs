@@ -187,6 +187,8 @@ enum AuthState {
 
 #[derive(Clone)]
 struct PendingSend {
+    /// Create an image instead of a chat answer.
+    image: bool,
     /// Save the prompt as a user message before streaming (false when it is already saved).
     save_prompt: bool,
     conversation_id: String,
@@ -250,6 +252,8 @@ struct State {
     router: Router,
     /// The first-run automatic setup was already tried this session.
     router_bootstrapped: bool,
+    /// Created images that came back as raw data (not saved anywhere), by assistant message id.
+    generated: HashMap<String, Vec<String>>,
     selected: Option<(String, String)>,
     projects: Option<Result<Vec<Value>, String>>,
     plugins: Option<Result<Vec<Value>, String>>,
@@ -368,7 +372,11 @@ impl AppCore {
             Action::ApproveConsent => {
                 let pending = self.state.lock().unwrap().consent.take();
                 if let Some(pending) = pending {
-                    self.stream(pending).await;
+                    if pending.image {
+                        self.run_image(pending).await;
+                    } else {
+                        self.stream(pending).await;
+                    }
                 }
             }
             Action::DenyConsent => self.update(|s| s.consent = None),
@@ -1449,7 +1457,8 @@ impl AppCore {
         // The route decides the model: automatically from the message, or the one forced in the composer.
         let mut route = router::route_for(&router, &mode, &text, false);
         let task = router::slot(&route).map_or("chat", |slot| slot.task);
-        if task != "chat" {
+        let image = task == "image_generation";
+        if task != "chat" && !image {
             if mode != "auto" {
                 return self.notice(
                     "info",
@@ -1502,6 +1511,11 @@ impl AppCore {
         if push_local {
             self.push_message(&conversation_id, "user", &text);
         }
+        if image {
+            return self
+                .image_flow(conversation_id, text, credential, model, save_prompt)
+                .await;
+        }
         let request = json!({ "credentialId": credential, "model": model, "prompt": text, "conversationId": conversation_id });
         let consent = match self
             .call(|api, t| {
@@ -1514,6 +1528,7 @@ impl AppCore {
             Err(e) => return self.notice("error", e.to_string()),
         };
         let pending = PendingSend {
+            image: false,
             save_prompt,
             conversation_id,
             prompt: text,
@@ -1533,6 +1548,131 @@ impl AppCore {
         } else {
             self.update(|s| s.consent = Some(pending));
         }
+    }
+
+    /// Text to image: consent preview first, like chat.
+    async fn image_flow(
+        &self,
+        conversation_id: String,
+        prompt: String,
+        credential: String,
+        model: String,
+        save_prompt: bool,
+    ) {
+        let request = json!({ "credentialId": credential, "model": model, "prompt": prompt });
+        let consent = match self
+            .call(|api, t| {
+                let request = request.clone();
+                async move { api.image_prepare(&t, &request).await }
+            })
+            .await
+        {
+            Ok(consent) => consent,
+            Err(e) => return self.notice("error", e.to_string()),
+        };
+        let pending = PendingSend {
+            image: true,
+            save_prompt,
+            conversation_id,
+            prompt,
+            request,
+            consent,
+        };
+        let auto = self
+            .state
+            .lock()
+            .unwrap()
+            .prefs
+            .get("chat.auto_consent")
+            .and_then(Value::as_bool)
+            .unwrap_or(true);
+        if auto {
+            self.run_image(pending).await;
+        } else {
+            self.update(|s| s.consent = Some(pending));
+        }
+    }
+
+    async fn run_image(&self, pending: PendingSend) {
+        let id = pending.conversation_id.clone();
+        let model = pending.request["model"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
+        if pending.save_prompt {
+            let (cid, prompt) = (id.clone(), pending.prompt.clone());
+            if let Err(e) = self
+                .call(|api, t| {
+                    let (cid, prompt) = (cid.clone(), prompt.clone());
+                    async move { api.append_message(&t, &cid, "user", &prompt).await }
+                })
+                .await
+            {
+                return self.notice("error", e.to_string());
+            }
+        }
+        let mut body = pending.request.clone();
+        body["consent"] = json!({
+            "requestId": pending.consent["requestId"],
+            "payloadSha256": pending.consent["payloadSha256"],
+            "confirmationVersion": 1,
+        });
+        self.update(|s| s.streaming = Some((id.clone(), "Creating your image…".to_owned())));
+        self.hooks.busy(true);
+        let result = self
+            .call(|api, t| {
+                let body = body.clone();
+                async move { api.image_generate(&t, &body).await }
+            })
+            .await;
+        self.update(|s| s.streaming = None);
+        self.hooks.busy(false);
+        let image = match result {
+            Ok(image) => image,
+            Err(e) => return self.notice("error", e.to_string()),
+        };
+        let mime = image["mimeType"].as_str().unwrap_or("image/png");
+        let (text, raw): (String, Option<String>) = if let Some(url) = image["url"].as_str() {
+            (
+                format!("Created with {model}.\n\n![Generated image]({url})"),
+                None,
+            )
+        } else if let Some(b64) = image["base64"].as_str() {
+            (
+                format!("Created with {model}. This image is not saved."),
+                Some(format!("data:{mime};base64,{b64}")),
+            )
+        } else {
+            return self.notice("error", "The provider returned no image.");
+        };
+        let reply = text.clone();
+        let _ = self
+            .call(|api, t| {
+                let (id, reply) = (id.clone(), reply.clone());
+                async move { api.append_message(&t, &id, "assistant", &reply).await }
+            })
+            .await;
+        self.refresh_messages(&id).await;
+        if let Some(raw) = raw {
+            let last = self
+                .state
+                .lock()
+                .unwrap()
+                .messages
+                .get(&id)
+                .and_then(|list| {
+                    list.iter()
+                        .rev()
+                        .find(|m| m.role == "assistant" && !m.id.is_empty())
+                })
+                .map(|m| m.id.clone());
+            if let Some(message) = last {
+                self.update(|s| {
+                    s.generated.insert(message, vec![raw]);
+                });
+            }
+        }
+        self.notify_answer(&id, "Your image is ready.");
     }
 
     fn active_messages(&self) -> Option<(String, Vec<ChatMessage>, bool)> {
@@ -2163,7 +2303,7 @@ fn mode_control(s: &State) -> Option<Value> {
     if s.router.auto {
         options.push(json!({ "value": "auto", "label": "Auto" }));
     }
-    for id in ["default", "fast", "thinking"] {
+    for id in ["default", "fast", "thinking", "image"] {
         if let (Some(choice), Some(slot)) = (s.router.choice(id), router::slot(id)) {
             options.push(json!({ "value": id, "label": format!("{} · {}", slot.label, model_name(s, choice)) }));
         }
@@ -2225,7 +2365,8 @@ fn router_controls(s: &State) -> Vec<Value> {
         let mut rows: Vec<(String, String, String)> = models
             .iter()
             .filter(|(_, m)| {
-                m.task == task && (!needs_image || m.input.iter().any(|i| i == "image"))
+                (m.task == task || m.tasks.iter().any(|t| t == task))
+                    && (!needs_image || m.input.iter().any(|i| i == "image"))
             })
             .map(|(c, m)| {
                 (
@@ -2331,7 +2472,12 @@ fn conversation_page(s: &State) -> Value {
                             actions.push(button("Regenerate", "secondary", json!({ "type": "regenerate" })));
                         }
                     }
-                    json!({ "id": m.id, "role": m.role, "text": m.text, "streaming": false, "actions": actions })
+                    let (text, mut images) = extract_images(&m.text);
+                    images.extend(s.generated.get(&m.id).into_iter().flatten().cloned());
+                    json!({
+                        "id": m.id, "role": m.role, "text": text, "streaming": false, "actions": actions,
+                        "images": images.into_iter().map(|u| json!({ "url": u })).collect::<Vec<_>>(),
+                    })
                 })
                 .collect()
         })
@@ -2405,6 +2551,33 @@ fn conversation_page(s: &State) -> Value {
             ],
         })),
     })
+}
+
+/// Markdown images (`![alt](url)`) of a message: the text without them, and the urls.
+fn extract_images(text: &str) -> (String, Vec<String>) {
+    let mut urls = Vec::new();
+    let mut clean = String::new();
+    let mut rest = text;
+    while let Some(start) = rest.find("![") {
+        let Some(close) = rest[start..].find("](") else {
+            break;
+        };
+        let url_start = start + close + 2;
+        let Some(end) = rest[url_start..].find(')') else {
+            break;
+        };
+        let url = &rest[url_start..url_start + end];
+        if url.starts_with("https://") || url.starts_with("data:image/") {
+            clean.push_str(&rest[..start]);
+            urls.push(url.to_owned());
+            rest = &rest[url_start + end + 1..];
+        } else {
+            clean.push_str(&rest[..url_start + end + 1]);
+            rest = &rest[url_start + end + 1..];
+        }
+    }
+    clean.push_str(rest);
+    (clean.trim().to_owned(), urls)
 }
 
 /// Every model of every connected provider, in connection order.
@@ -3134,6 +3307,7 @@ mod tests {
                 && !values("route_vision").contains(&"c1|llama-3-70b".to_owned())
         );
         assert_eq!(values("route_image"), ["", "c1|flux-1.1-pro"]);
+        assert!(!values("route_image").contains(&"c1|gpt-5.1".to_owned()));
         assert_eq!(values("route_transcription"), ["", "c1|whisper-1"]);
         assert_eq!(control("route_default")["binding"], "route:default");
     }
@@ -3202,6 +3376,44 @@ mod tests {
         assert!(
             c.state.lock().unwrap().router.choice("fast").is_none(),
             "a route the user clears is not refilled"
+        );
+    }
+
+    #[test]
+    fn created_images_are_taken_out_of_the_message_text() {
+        let (text, urls) = extract_images(
+            "Created with m.\n\n![Generated image](https://cdn.example/a.jpg?x=1&y=2)",
+        );
+        assert_eq!(text, "Created with m.");
+        assert_eq!(urls, ["https://cdn.example/a.jpg?x=1&y=2"]);
+        let (text, urls) =
+            extract_images("a ![x](http://insecure/x.png) b ![y](data:image/png;base64,AAAA) c");
+        assert_eq!(
+            urls,
+            ["data:image/png;base64,AAAA"],
+            "only https and data images are shown"
+        );
+        assert!(text.contains("![x](http://insecure/x.png)"));
+        assert_eq!(extract_images("no images here").1.len(), 0);
+
+        let c = signed_in_core();
+        c.update(|s| {
+            s.messages.insert(
+                "c1".into(),
+                vec![ChatMessage {
+                    id: "m9".into(),
+                    role: "assistant".into(),
+                    text: "Created.\n\n![i](https://cdn.example/p.png)".into(),
+                }],
+            );
+            s.generated
+                .insert("m9".into(), vec!["data:image/png;base64,QUJD".into()]);
+        });
+        let message = c.view()["page"]["messages"][0].clone();
+        assert_eq!(message["text"], "Created.");
+        assert_eq!(
+            message["images"],
+            json!([{ "url": "https://cdn.example/p.png" }, { "url": "data:image/png;base64,QUJD" }])
         );
     }
 

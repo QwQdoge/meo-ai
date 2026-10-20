@@ -470,6 +470,34 @@ impl MeoApi {
         ))
     }
 
+    // ---- images -------------------------------------------------------------
+
+    /// Consent preview for creating an image from a prompt.
+    pub async fn image_prepare(&self, token: &str, input: &Value) -> Result<Value, ApiError> {
+        let body = self
+            .request(
+                token,
+                Method::POST,
+                "/v1/images/prepare",
+                Some(input.clone()),
+            )
+            .await?;
+        Ok(body["consent"].clone())
+    }
+
+    /// The created image: `{url | base64, mimeType}`.
+    pub async fn image_generate(&self, token: &str, input: &Value) -> Result<Value, ApiError> {
+        let body = self
+            .request(
+                token,
+                Method::POST,
+                "/v1/images/generate",
+                Some(input.clone()),
+            )
+            .await?;
+        Ok(body["image"].clone())
+    }
+
     // ---- files -----------------------------------------------------------
 
     pub async fn list_files(

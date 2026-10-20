@@ -123,5 +123,6 @@
   "Routes set up from your connected models.": "已根据你连接的模型完成配置。",
   "You can have up to 5 custom routes.": "最多可以有 5 条自定义路由。",
   "Connect an AI provider to your Meo Account first.": "请先在 Meo Account 中连接 AI 提供商。",
-  "no model yet — connect a provider in Meo Account": "还没有模型，请先在 Meo Account 中连接提供商"
+  "no model yet — connect a provider in Meo Account": "还没有模型，请先在 Meo Account 中连接提供商",
+  "Creating your image…": "正在生成图片…"
 }
