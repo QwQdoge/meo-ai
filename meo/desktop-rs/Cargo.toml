@@ -13,3 +13,8 @@ serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+# Build scripts and proc-macros need no optimisation; compiling cxx-qt-gen at
+# opt-level 3 crashes rustc (SIGSEGV) on the current Arch toolchain.
+[profile.release.build-override]
+opt-level = 0

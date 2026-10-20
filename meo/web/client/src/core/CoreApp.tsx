@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import React, { useEffect, useRef, useState, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useCore, type Action, type View } from "./useCore";
@@ -248,6 +248,22 @@ function Control({ item, act }: { item: Spec; act: Act }) {
   }
 }
 
+/** Fenced code from a model answer, with a language label and a copy button. */
+function CodeBlock({ node, children, label, done }: { node?: any; children?: React.ReactNode; label: string; done: string }) {
+  const code = node?.children?.[0];
+  const language = String(code?.properties?.className?.[0] ?? "").replace("language-", "") || "code";
+  const text = (code?.children ?? []).map((c: any) => c.value ?? "").join("");
+  return (
+    <div className="core-code">
+      <div className="core-code-head">
+        <span>{language}</span>
+        <CopyButton text={text} label={label} done={done} />
+      </div>
+      <pre>{children}</pre>
+    </div>
+  );
+}
+
 function CopyButton({ text, label, done: doneLabel }: { text: string; label: string; done: string }) {
   const [done, setDone] = useState(false);
   return (
@@ -365,7 +381,9 @@ function Conversation({ page, prefs, strings, act }: { page: Spec; prefs: Spec; 
                 <div className="core-bubble user">{m.text}</div>
               ) : (
                 <div className="core-bubble assistant">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.text + (m.streaming ? " ▍" : "")}</ReactMarkdown>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ pre: (props) => <CodeBlock {...props} label={strings.copy ?? "Copy"} done={strings.copied ?? "Copied"} /> }}>
+                    {m.text + (m.streaming ? " ▍" : "")}
+                  </ReactMarkdown>
                 </div>
               )}
               {!m.streaming && m.text && (
