@@ -72,8 +72,11 @@ pub fn code_challenge(verifier: &str) -> String {
 pub fn begin(config: &OAuthConfig) -> PendingAuthorization {
     let verifier = random_token(48);
     let state = random_token(24);
-    let mut url = Url::parse(&format!("{}/v1/auth/oauth2/authorize", config.account_origin))
-        .expect("account origin is a valid URL");
+    let mut url = Url::parse(&format!(
+        "{}/v1/auth/oauth2/authorize",
+        config.account_origin
+    ))
+    .expect("account origin is a valid URL");
     url.query_pairs_mut()
         .append_pair("response_type", "code")
         .append_pair("client_id", &config.client_id)
@@ -83,14 +86,20 @@ pub fn begin(config: &OAuthConfig) -> PendingAuthorization {
         .append_pair("code_challenge", &code_challenge(&verifier))
         .append_pair("code_challenge_method", "S256")
         .append_pair("resource", &config.api_origin);
-    PendingAuthorization { state, verifier, url: url.into() }
+    PendingAuthorization {
+        state,
+        verifier,
+        url: url.into(),
+    }
 }
 
 /// Validates a redirect such as `meoai://auth/callback?code=..&state=..`.
 pub fn parse_callback(callback: &str, expected_state: &str) -> Result<String, AuthError> {
     let url = Url::parse(callback).map_err(|e| AuthError::Invalid(e.to_string()))?;
     let get = |key: &str| {
-        url.query_pairs().find(|(k, _)| k == key).map(|(_, v)| v.into_owned())
+        url.query_pairs()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.into_owned())
     };
     if let Some(error) = get("error") {
         return Err(AuthError::Denied(error));
@@ -98,7 +107,9 @@ pub fn parse_callback(callback: &str, expected_state: &str) -> Result<String, Au
     if get("state").as_deref() != Some(expected_state) {
         return Err(AuthError::StateMismatch);
     }
-    get("code").filter(|c| !c.is_empty()).ok_or(AuthError::MissingCode)
+    get("code")
+        .filter(|c| !c.is_empty())
+        .ok_or(AuthError::MissingCode)
 }
 
 pub async fn exchange(
@@ -184,7 +195,13 @@ async fn token_request(
         .as_i64()
         .filter(|t| *t > now_secs())
         .unwrap_or_else(|| now_secs() + body["expires_in"].as_i64().unwrap_or(3600));
-    Ok(Session { access_token, refresh_token, expires_at, email: String::new(), sub: String::new() })
+    Ok(Session {
+        access_token,
+        refresh_token,
+        expires_at,
+        email: String::new(),
+        sub: String::new(),
+    })
 }
 
 async fn user_info(
@@ -244,9 +261,15 @@ mod tests {
             Err(AuthError::StateMismatch)
         ));
         assert!(matches!(
-            parse_callback("meoai://auth/callback?error=access_denied&state=good", "good"),
+            parse_callback(
+                "meoai://auth/callback?error=access_denied&state=good",
+                "good"
+            ),
             Err(AuthError::Denied(_))
         ));
-        assert_eq!(parse_callback("meoai://auth/callback?code=abc&state=good", "good").unwrap(), "abc");
+        assert_eq!(
+            parse_callback("meoai://auth/callback?code=abc&state=good", "good").unwrap(),
+            "abc"
+        );
     }
 }

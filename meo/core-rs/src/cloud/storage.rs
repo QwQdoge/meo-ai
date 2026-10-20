@@ -37,7 +37,13 @@ impl FileStorage {
     fn path(&self, key: &str) -> PathBuf {
         let safe: String = key
             .chars()
-            .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' { c } else { '_' })
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' {
+                    c
+                } else {
+                    '_'
+                }
+            })
             .collect();
         self.dir.join(format!("{safe}.json"))
     }
@@ -77,7 +83,10 @@ impl Storage for MemoryStorage {
     }
 
     fn save(&self, key: &str, value: &str) {
-        self.values.lock().unwrap().insert(key.to_owned(), value.to_owned());
+        self.values
+            .lock()
+            .unwrap()
+            .insert(key.to_owned(), value.to_owned());
     }
 
     fn remove(&self, key: &str) {

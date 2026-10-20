@@ -114,15 +114,27 @@ const KEY_MODELS: &str = "models";
 const KEY_PENDING_AUTH: &str = "pending_auth";
 
 impl AppCore {
-    pub fn new(oauth: OAuthConfig, storage: Arc<dyn Storage>, hooks: Arc<dyn PlatformHooks>) -> Self {
+    pub fn new(
+        oauth: OAuthConfig,
+        storage: Arc<dyn Storage>,
+        hooks: Arc<dyn PlatformHooks>,
+    ) -> Self {
         let http = reqwest::Client::builder()
             .user_agent(concat!("MeoAI-Core/", env!("CARGO_PKG_VERSION")))
             .build()
             .expect("HTTP client");
         let api = MeoApi::new(http.clone(), oauth.api_origin.clone());
         let manifest = Manifest::bundled();
-        let route = manifest.navigation.first().map(|n| n.page.clone()).unwrap_or_else(|| "chat".into());
-        let state = State { route, online: true, ..State::default() };
+        let route = manifest
+            .navigation
+            .first()
+            .map(|n| n.page.clone())
+            .unwrap_or_else(|| "chat".into());
+        let state = State {
+            route,
+            online: true,
+            ..State::default()
+        };
         Self {
             state: Arc::new(Mutex::new(state)),
             cancel: Arc::new(AtomicBool::new(false)),
@@ -146,7 +158,9 @@ impl AppCore {
     }
 
     fn load_json<T: for<'de> Deserialize<'de>>(&self, key: &str) -> Option<T> {
-        self.storage.load(key).and_then(|raw| serde_json::from_str(&raw).ok())
+        self.storage
+            .load(key)
+            .and_then(|raw| serde_json::from_str(&raw).ok())
     }
 
     fn save_json<T: Serialize>(&self, key: &str, value: &T) {
@@ -192,7 +206,8 @@ impl AppCore {
     async fn start(&self) {
         let session: Option<Session> = self.load_json(KEY_SESSION);
         let prefs: Map<String, Value> = self.load_json(KEY_PREFS).unwrap_or_default();
-        let conversations: Vec<ConversationSummary> = self.load_json(KEY_CONVERSATIONS).unwrap_or_default();
+        let conversations: Vec<ConversationSummary> =
+            self.load_json(KEY_CONVERSATIONS).unwrap_or_default();
         let credentials: Vec<Credential> = self.load_json(KEY_CREDENTIALS).unwrap_or_default();
         let models: Vec<Model> = self.load_json(KEY_MODELS).unwrap_or_default();
         let selected = prefs
@@ -203,7 +218,11 @@ impl AppCore {
         let signed_in = session.is_some();
         self.update(|s| {
             s.session = session;
-            s.auth = if signed_in { AuthState::SignedIn } else { AuthState::SignedOut };
+            s.auth = if signed_in {
+                AuthState::SignedIn
+            } else {
+                AuthState::SignedOut
+            };
             s.prefs = prefs;
             s.conversations = conversations;
             s.credentials = credentials;
@@ -228,7 +247,13 @@ impl AppCore {
     }
 
     async fn complete_sign_in(&self, url: &str) {
-        let pending = self.state.lock().unwrap().pending_auth.clone().or_else(|| self.load_json(KEY_PENDING_AUTH));
+        let pending = self
+            .state
+            .lock()
+            .unwrap()
+            .pending_auth
+            .clone()
+            .or_else(|| self.load_json(KEY_PENDING_AUTH));
         let Some(pending) = pending else { return };
         self.storage.remove(KEY_PENDING_AUTH);
         let result = match auth::parse_callback(url, &pending.state) {
@@ -256,12 +281,23 @@ impl AppCore {
     }
 
     fn sign_out(&self) {
-        for key in [KEY_SESSION, KEY_CONVERSATIONS, KEY_CREDENTIALS, KEY_MODELS, KEY_PENDING_AUTH] {
+        for key in [
+            KEY_SESSION,
+            KEY_CONVERSATIONS,
+            KEY_CREDENTIALS,
+            KEY_MODELS,
+            KEY_PENDING_AUTH,
+        ] {
             self.storage.remove(key);
         }
         self.update(|s| {
             let prefs = std::mem::take(&mut s.prefs);
-            *s = State { route: "chat".into(), online: true, prefs, ..State::default() };
+            *s = State {
+                route: "chat".into(),
+                online: true,
+                prefs,
+                ..State::default()
+            };
         });
     }
 
@@ -302,7 +338,10 @@ impl AppCore {
         F: Fn(MeoApi, String) -> Fut,
         Fut: std::future::Future<Output = Result<T, ApiError>>,
     {
-        let unauthorized = || ApiError::Status { status: 401, code: "unauthenticated".into() };
+        let unauthorized = || ApiError::Status {
+            status: 401,
+            code: "unauthenticated".into(),
+        };
         let token = self.token(false).await.ok_or_else(unauthorized)?;
         let result = match f(self.api.clone(), token).await {
             Err(e) if e.is_unauthorized() => {
@@ -319,18 +358,29 @@ impl AppCore {
     // ---- data ----------------------------------------------------------
 
     async fn load_all(&self) {
-        let conversations = self.call(|api, t| async move { api.list_conversations(&t).await }).await;
+        let conversations = self
+            .call(|api, t| async move { api.list_conversations(&t).await })
+            .await;
         if let Ok(list) = conversations {
             self.save_json(KEY_CONVERSATIONS, &list);
             self.update(|s| s.conversations = list);
         }
-        if let Ok(credentials) = self.call(|api, t| async move { api.list_credentials(&t).await }).await {
+        if let Ok(credentials) = self
+            .call(|api, t| async move { api.list_credentials(&t).await })
+            .await
+        {
             self.save_json(KEY_CREDENTIALS, &credentials);
             let keep = {
                 let s = self.state.lock().unwrap();
-                s.selected.clone().filter(|(c, _)| credentials.iter().any(|x| &x.id == c))
+                s.selected
+                    .clone()
+                    .filter(|(c, _)| credentials.iter().any(|x| &x.id == c))
             };
-            let selected = keep.or_else(|| credentials.first().map(|c| (c.id.clone(), c.default_model.clone())));
+            let selected = keep.or_else(|| {
+                credentials
+                    .first()
+                    .map(|c| (c.id.clone(), c.default_model.clone()))
+            });
             self.update(|s| {
                 s.credentials = credentials;
                 s.selected = selected.clone();
@@ -339,7 +389,10 @@ impl AppCore {
                 self.load_models(credential).await;
             }
         }
-        if let Ok(settings) = self.call(|api, t| async move { api.get_settings(&t).await }).await {
+        if let Ok(settings) = self
+            .call(|api, t| async move { api.get_settings(&t).await })
+            .await
+        {
             self.update(|s| s.cloud_settings = Some(settings));
         }
         let route = self.state.lock().unwrap().route.clone();
@@ -370,11 +423,15 @@ impl AppCore {
     async fn load_route(&self, route: &str) {
         match route {
             "projects" => {
-                let r = self.call(|api, t| async move { api.list_projects(&t).await }).await;
+                let r = self
+                    .call(|api, t| async move { api.list_projects(&t).await })
+                    .await;
                 self.update(|s| s.projects = Some(r.map_err(|e| e.to_string())));
             }
             "skills" => {
-                let r = self.call(|api, t| async move { api.list_plugins(&t).await }).await;
+                let r = self
+                    .call(|api, t| async move { api.list_plugins(&t).await })
+                    .await;
                 self.update(|s| s.plugins = Some(r.map_err(|e| e.to_string())));
             }
             _ => {}
@@ -418,7 +475,10 @@ impl AppCore {
             return;
         }
         let Some((credential, model)) = selected.filter(|(_, m)| !m.is_empty()) else {
-            self.notice("error", "Connect an AI provider to your Meo Account, then choose a model in Settings.");
+            self.notice(
+                "error",
+                "Connect an AI provider to your Meo Account, then choose a model in Settings.",
+            );
             return;
         };
         let conversation_id = match active {
@@ -456,8 +516,20 @@ impl AppCore {
             Ok(consent) => consent,
             Err(e) => return self.notice("error", e.to_string()),
         };
-        let pending = PendingSend { conversation_id, prompt: text, request, consent };
-        let auto = self.state.lock().unwrap().prefs.get("chat.auto_consent").and_then(Value::as_bool).unwrap_or(true);
+        let pending = PendingSend {
+            conversation_id,
+            prompt: text,
+            request,
+            consent,
+        };
+        let auto = self
+            .state
+            .lock()
+            .unwrap()
+            .prefs
+            .get("chat.auto_consent")
+            .and_then(Value::as_bool)
+            .unwrap_or(true);
         if auto {
             self.stream(pending).await;
         } else {
@@ -470,7 +542,10 @@ impl AppCore {
         let snapshot = {
             let mut s = self.state.lock().unwrap();
             let list = s.messages.entry(conversation_id.to_owned()).or_default();
-            list.push(ChatMessage { role: role.to_owned(), text: text.to_owned() });
+            list.push(ChatMessage {
+                role: role.to_owned(),
+                text: text.to_owned(),
+            });
             list.clone()
         };
         self.save_json(&key, &snapshot);
@@ -516,7 +591,14 @@ impl AppCore {
             }
             Err(e) => failure = Some(e.to_string()),
         }
-        let reply = self.state.lock().unwrap().streaming.take().map(|(_, t)| t).unwrap_or_default();
+        let reply = self
+            .state
+            .lock()
+            .unwrap()
+            .streaming
+            .take()
+            .map(|(_, t)| t)
+            .unwrap_or_default();
         if !reply.is_empty() {
             self.push_message(&id, "assistant", &reply);
             let user = pending.prompt.clone();
@@ -542,7 +624,8 @@ impl AppCore {
         if binding == "model.selected" {
             if let Some((c, m)) = value.as_str().and_then(|v| v.split_once('|')) {
                 let (c, m) = (c.to_owned(), m.to_owned());
-                let credential_changed = self.state.lock().unwrap().selected.as_ref().map(|s| &s.0) != Some(&c);
+                let credential_changed =
+                    self.state.lock().unwrap().selected.as_ref().map(|s| &s.0) != Some(&c);
                 self.update(|s| {
                     s.selected = Some((c.clone(), m));
                     s.prefs.insert(binding.clone(), value.clone());
@@ -556,8 +639,21 @@ impl AppCore {
         }
         if binding == "model.custom" {
             let model = value.as_str().unwrap_or_default().trim().to_owned();
-            let credential = self.state.lock().unwrap().selected.as_ref().map(|(c, _)| c.clone())
-                .or_else(|| self.state.lock().unwrap().credentials.first().map(|c| c.id.clone()));
+            let credential = self
+                .state
+                .lock()
+                .unwrap()
+                .selected
+                .as_ref()
+                .map(|(c, _)| c.clone())
+                .or_else(|| {
+                    self.state
+                        .lock()
+                        .unwrap()
+                        .credentials
+                        .first()
+                        .map(|c| c.id.clone())
+                });
             if let Some(credential) = credential {
                 let joined = json!(format!("{credential}|{model}"));
                 self.update(|s| {
@@ -737,11 +833,20 @@ fn model_controls(s: &State) -> Vec<Value> {
 fn model_select(s: &State) -> Value {
     let mut options: Vec<Value> = Vec::new();
     for credential in &s.credentials {
-        let selected_here = s.selected.as_ref().is_some_and(|(c, _)| c == &credential.id);
+        let selected_here = s
+            .selected
+            .as_ref()
+            .is_some_and(|(c, _)| c == &credential.id);
         let models: Vec<(String, String)> = if selected_here && !s.models.is_empty() {
-            s.models.iter().map(|m| (m.id.clone(), m.name.clone())).collect()
+            s.models
+                .iter()
+                .map(|m| (m.id.clone(), m.name.clone()))
+                .collect()
         } else if !credential.default_model.is_empty() {
-            vec![(credential.default_model.clone(), credential.default_model.clone())]
+            vec![(
+                credential.default_model.clone(),
+                credential.default_model.clone(),
+            )]
         } else {
             Vec::new()
         };
@@ -776,9 +881,16 @@ fn conversation_page(s: &State) -> Value {
     let mut messages: Vec<Value> = active
         .as_ref()
         .and_then(|id| s.messages.get(id))
-        .map(|list| list.iter().map(|m| json!({ "role": m.role, "text": m.text, "streaming": false })).collect())
+        .map(|list| {
+            list.iter()
+                .map(|m| json!({ "role": m.role, "text": m.text, "streaming": false }))
+                .collect()
+        })
         .unwrap_or_default();
-    let streaming = s.streaming.as_ref().filter(|(id, _)| Some(id) == active.as_ref());
+    let streaming = s
+        .streaming
+        .as_ref()
+        .filter(|(id, _)| Some(id) == active.as_ref());
     if let Some((_, text)) = streaming {
         messages.push(json!({ "role": "assistant", "text": text, "streaming": true }));
     }
@@ -789,7 +901,12 @@ fn conversation_page(s: &State) -> Value {
         .and_then(|o| o.iter().find(|x| x["value"] == model["value"]))
         .and_then(|x| x["label"].as_str())
         .map(str::to_owned)
-        .or_else(|| s.selected.as_ref().map(|(_, m)| m.clone()).filter(|m| !m.is_empty()))
+        .or_else(|| {
+            s.selected
+                .as_ref()
+                .map(|(_, m)| m.clone())
+                .filter(|m| !m.is_empty())
+        })
         .unwrap_or_else(|| "no model yet — enter a model ID below".to_owned());
     json!({
         "kind": "conversation",
@@ -884,23 +1001,48 @@ mod tests {
         let c = core();
         c.update(|s| {
             s.auth = AuthState::SignedIn;
-            s.session = Some(Session { access_token: "a".into(), refresh_token: "r".into(), expires_at: i64::MAX, email: "me@x".into(), sub: "1".into() });
+            s.session = Some(Session {
+                access_token: "a".into(),
+                refresh_token: "r".into(),
+                expires_at: i64::MAX,
+                email: "me@x".into(),
+                sub: "1".into(),
+            });
         });
         let v = c.view();
-        let ids: Vec<_> = v["navigation"].as_array().unwrap().iter().map(|n| n["id"].as_str().unwrap().to_owned()).collect();
-        assert_eq!(ids, Manifest::bundled().navigation.iter().map(|n| n.id.clone()).collect::<Vec<_>>());
+        let ids: Vec<_> = v["navigation"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|n| n["id"].as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(
+            ids,
+            Manifest::bundled()
+                .navigation
+                .iter()
+                .map(|n| n.id.clone())
+                .collect::<Vec<_>>()
+        );
         assert_eq!(v["page"]["kind"], "conversation");
         c.update(|s| s.route = "settings".into());
         let settings = c.view();
         assert_eq!(settings["page"]["kind"], "settings");
-        assert!(settings["page"]["sections"].as_array().unwrap().iter().any(|s| s["id"] == "account"));
+        assert!(settings["page"]["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["id"] == "account"));
     }
 
     #[test]
     fn actions_round_trip_as_tagged_json() {
-        let a: Action = serde_json::from_value(json!({ "type": "set_setting", "binding": "x", "value": true })).unwrap();
+        let a: Action =
+            serde_json::from_value(json!({ "type": "set_setting", "binding": "x", "value": true }))
+                .unwrap();
         assert!(matches!(a, Action::SetSetting { .. }));
-        let n: Action = serde_json::from_value(json!({ "type": "navigate", "route": "chat" })).unwrap();
+        let n: Action =
+            serde_json::from_value(json!({ "type": "navigate", "route": "chat" })).unwrap();
         assert!(matches!(n, Action::Navigate { .. }));
     }
 }

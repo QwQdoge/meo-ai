@@ -84,7 +84,9 @@ struct JavaHooks {
 
 impl JavaHooks {
     fn call(&self, method: &str, signature: &str, argument: Option<&str>) {
-        let Ok(mut env) = self.vm.attach_current_thread() else { return };
+        let Ok(mut env) = self.vm.attach_current_thread() else {
+            return;
+        };
         let result = match argument {
             Some(text) => match env.new_string(text) {
                 Ok(text) => env.call_method(&self.listener, method, signature, &[(&text).into()]),
@@ -130,13 +132,21 @@ fn build_native(
         OAuthConfig {
             account_origin: cloud::ACCOUNT_ORIGIN.into(),
             api_origin: cloud::API_ORIGIN.into(),
-            client_id: if client_id.trim().is_empty() { cloud::ANDROID_CLIENT_ID.into() } else { client_id },
+            client_id: if client_id.trim().is_empty() {
+                cloud::ANDROID_CLIENT_ID.into()
+            } else {
+                client_id
+            },
             redirect_uri: cloud::ANDROID_REDIRECT_URI.into(),
         },
         Arc::new(FileStorage::new(data_dir)),
         Arc::new(hooks),
     );
-    Ok(Native { core, runtime, started: tokio::sync::watch::channel(false).0 })
+    Ok(Native {
+        core,
+        runtime,
+        started: tokio::sync::watch::channel(false).0,
+    })
 }
 
 /// Returns an opaque handle, or 0 when the core could not be created.
@@ -148,9 +158,11 @@ pub extern "system" fn Java_org_meo_ai_core_CloudCore_nativeCreate(
     client_id: JString,
     listener: JObject,
 ) -> jlong {
-    catch_unwind(AssertUnwindSafe(|| match build_native(&mut env, data_dir, client_id, listener) {
-        Ok(native) => Box::into_raw(Box::new(native)) as jlong,
-        Err(_) => 0,
+    catch_unwind(AssertUnwindSafe(|| {
+        match build_native(&mut env, data_dir, client_id, listener) {
+            Ok(native) => Box::into_raw(Box::new(native)) as jlong,
+            Err(_) => 0,
+        }
     }))
     .unwrap_or(0)
 }
@@ -169,7 +181,9 @@ pub extern "system" fn Java_org_meo_ai_core_CloudCore_nativeView(
     handle: jlong,
 ) -> jstring {
     let view = catch_unwind(AssertUnwindSafe(|| {
-        unsafe { native(handle) }.map(|n| n.core.view().to_string()).unwrap_or_else(|| "{}".into())
+        unsafe { native(handle) }
+            .map(|n| n.core.view().to_string())
+            .unwrap_or_else(|| "{}".into())
     }))
     .unwrap_or_else(|_| "{}".into());
     to_java_string(&mut env, view)
@@ -182,9 +196,13 @@ pub extern "system" fn Java_org_meo_ai_core_CloudCore_nativeDispatch(
     handle: jlong,
     action: JString,
 ) {
-    let Ok(action) = java_string(&mut env, action) else { return };
+    let Ok(action) = java_string(&mut env, action) else {
+        return;
+    };
     let _ = catch_unwind(AssertUnwindSafe(|| {
-        let Some(native) = (unsafe { native(handle) }) else { return };
+        let Some(native) = (unsafe { native(handle) }) else {
+            return;
+        };
         match serde_json::from_str::<Action>(&action) {
             Ok(action) => {
                 let core = native.core.clone();

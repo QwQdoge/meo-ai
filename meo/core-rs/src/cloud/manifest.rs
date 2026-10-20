@@ -73,17 +73,26 @@ impl Manifest {
         struct Settings {
             sections: Vec<SettingSection>,
         }
-        let mut navigation = serde_json::from_str::<Nav>(NAVIGATION).expect("navigation.json").navigation;
+        let mut navigation = serde_json::from_str::<Nav>(NAVIGATION)
+            .expect("navigation.json")
+            .navigation;
         navigation.sort_by_key(|n| n.order);
         Self {
             navigation,
-            pages: serde_json::from_str::<Pages>(PAGES).expect("pages.json").pages,
-            settings: serde_json::from_str::<Settings>(SETTINGS).expect("settings.json").sections,
+            pages: serde_json::from_str::<Pages>(PAGES)
+                .expect("pages.json")
+                .pages,
+            settings: serde_json::from_str::<Settings>(SETTINGS)
+                .expect("settings.json")
+                .sections,
         }
     }
 
     pub fn renderer(&self, page: &str) -> Option<&str> {
-        self.pages.iter().find(|p| p.id == page).map(|p| p.renderer.as_str())
+        self.pages
+            .iter()
+            .find(|p| p.id == page)
+            .map(|p| p.renderer.as_str())
     }
 
     pub fn nav_json(&self, route: &str) -> Value {
