@@ -141,3 +141,43 @@ and live Plasma separately. No release, tag, signing or deployment is implied.
 - Plans, audits and decisions go to `$MEO_DOCS_ROOT/Projects/meo-ai/`; generated output to
   `$MEO_OUTPUT_ROOT/meo-ai/{build,install,validation,packages,tmp}/`. Code-bound contracts
   stay in `docs/` and `meo/docs/`.
+
+## TODO: Work parity reference (Claude Code)
+
+Reference product: Claude Code (`code.claude.com/docs`). It is the closest existing model
+for Meo `Work`: cloud execution, phone/Web control of local work, and explicit permissions.
+Copy the behavior, not the implementation; every item below must follow the rules above.
+Items are not started. Check the official docs again before implementing, because parts of
+the remote-control behavior were only confirmed through third-party sources.
+
+- [ ] **Cloud Work sessions** (ref: `claude-code-on-the-web`, `cloud-environments`).
+  Run Work in an isolated cloud VM per environment, with a setup script, session env vars
+  and a per-environment network policy (deny, trusted registries, or custom allowlist).
+  Owner: `meo/cloud/` AgentRun contract; one run = one request (existing rule).
+- [ ] **Branch-scoped output** (ref: cloud Work pushing a working branch only). Cloud Work
+  output lands as a reviewable branch or Work artifact, never a direct write to a user's
+  default branch. Pushes are logged.
+- [ ] **Brokered credentials** (ref: scoped proxy credentials in cloud sessions). Cloud
+  sandboxes receive short-lived scoped capabilities through a proxy, not raw tokens. Matches
+  the connector rule and Meo Account as the only key authority.
+- [ ] **Remote control from phone and Web** (ref: `remote-control`). A desktop or device
+  keeps execution and files local; Android/Web only observe and answer prompts. Requires
+  authenticated device registration, revocable per-device sessions and a visible target
+  (existing rules).
+- [ ] **Remote approval must release the local prompt** (ref: known Claude Code issue where
+  approving on a phone left the host blocked). Acceptance test: approve remotely, then
+  confirm the local run resumes without a host-side click.
+- [ ] **Permission modes and audit** (ref: `security`, `/permissions`). Provide at least:
+  read-only plan mode, ask-each-time, accept-edits, and an explicit bypass that is clearly
+  marked. Show current allow/deny rules in Settings, and make them editable and auditable.
+  Prompts and UI copy are not enforcement; the device/Router enforces the rules.
+- [ ] **Sandboxed local execution** (ref: sandboxed Bash). Commands run in a sandbox with
+  network/file limits and an approval path for escalation. Verify whether auto-allow inside
+  the sandbox is on by default before copying it; default to the safer setting.
+- [ ] **Resumable, detachable sessions** (ref: cloud sessions persist after the browser
+  closes). Closing a client does not kill a Work run; reconnect resumes the existing event
+  stream (existing reconnect rule). Show background-task state in the Work activity view.
+- [ ] **Work outputs panel** (ref: Outputs list in the Claude Code session view). Files
+  produced by a Work run are shown as Work artifacts with source and run references.
+- [ ] **Acceptance**: each item above has a contract test in `core-rs` or `meo/cloud/` and a
+  mock-protocol test. Report real-device, real-cloud and live-network runs separately.
