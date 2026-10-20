@@ -33,6 +33,12 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            // Needed to tell you when an answer finishes while the app is in the background.
+            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1)
+        }
         if (savedInstanceState == null) deliverCallback(intent?.data)
         setContent {
             val view = model.core.view
@@ -45,6 +51,16 @@ class MainActivity : ComponentActivity() {
                 CoreApp(view, model.core::dispatch)
             }
         }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        model.core.dispatch(JSONObject().put("type", "set_foreground").put("visible", true))
+    }
+
+    override fun onStop() {
+        model.core.dispatch(JSONObject().put("type", "set_foreground").put("visible", false))
+        super.onStop()
     }
 
     override fun onNewIntent(intent: Intent) {

@@ -100,5 +100,6 @@
   "That file is too large to attach (the account limit is 10 MB of text).": "文件太大，无法添加（账号上限为 10 MB 文本）。",
   "That file is larger than 2 MB; attach a smaller text file.": "文件超过 2 MB，请添加更小的文本文件。",
   "Only text files can be attached.": "只能添加文本文件。",
-  "Attach a file with the file picker.": "请用文件选择器添加文件。"
+  "Attach a file with the file picker.": "请用文件选择器添加文件。",
+  "Answer ready": "回答已完成"
 }
