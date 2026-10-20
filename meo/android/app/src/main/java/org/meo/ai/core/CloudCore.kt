@@ -1,6 +1,7 @@
 package org.meo.ai.core
 
 import android.content.ActivityNotFoundException
+import androidx.browser.customtabs.CustomTabsIntent
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -67,9 +68,13 @@ class CloudCore(private val context: Context, clientId: String) : CloudCoreListe
 
     override fun onOpenUrl(url: String) {
         main.post {
-            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            // A Custom Tab is the system browser shown in-app (RFC 8252): passkeys, saved
+            // passwords and the existing Account session work, which an embedded
+            // WebView would not provide.
+            val tab = CustomTabsIntent.Builder().setShowTitle(true).build()
+            tab.intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             try {
-                context.startActivity(intent)
+                tab.launchUrl(context, Uri.parse(url))
             } catch (_: ActivityNotFoundException) {
                 // No browser installed: the core keeps showing the sign-in page.
             }
