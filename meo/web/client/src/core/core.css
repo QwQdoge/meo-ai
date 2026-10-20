@@ -74,3 +74,11 @@
 .core-row-menu li button { width: 100%; padding: 8px 12px; border: 0; border-radius: 8px; background: none; color: inherit; text-align: start; }
 .core-row-menu li button:hover { background: rgb(var(--surface-tertiary)); }
 .core-row-menu li button.danger { color: rgb(var(--status-error-strong)); }
+.core-message { display: flex; flex-direction: column; gap: 2px; }
+.core-message.user { align-items: flex-end; }
+.core-message-actions { display: flex; gap: 4px; opacity: 0; transition: opacity 0.15s; }
+.core-message:hover .core-message-actions, .core-message:focus-within .core-message-actions { opacity: 1; }
+@media (hover: none) { .core-message-actions { opacity: 1; } }
+.core-message-actions button { padding: 2px 10px; border: 0; border-radius: 999px; background: none; color: rgb(var(--text-secondary)); font-size: 12px; }
+.core-message-actions button:hover { background: rgb(var(--surface-tertiary)); color: rgb(var(--text-primary)); }
+.core-dialog textarea { padding: 10px 12px; border-radius: 12px; border: 1px solid rgb(var(--border-light)); background: rgb(var(--surface-primary)); color: inherit; resize: vertical; }

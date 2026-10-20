@@ -54,7 +54,7 @@ ApplicationWindow {
         message: spec && spec.text ? spec.text : ""
         confirmText: spec && spec.actions[0] ? spec.actions[0].label : ""
         cancelText: spec && spec.actions[1] ? spec.actions[1].label : ""
-        supportingContent: spec && spec.input ? promptField : null
+        supportingContent: spec && spec.input ? (spec.input.multiline ? promptArea : promptField) : null
         onSpecKeyChanged: {
             if (spec) {
                 inputValue = spec.input ? (spec.input.value || "") : ""
@@ -81,6 +81,21 @@ ApplicationWindow {
             Component.onCompleted: forceActiveFocus()
         }
     }
+
+    Component {
+        id: promptArea
+        MeoTextArea {
+            width: 320
+            height: 120
+            placeholder: appDialog.spec && appDialog.spec.input ? appDialog.spec.input.placeholder : ""
+            text: appDialog.inputValue
+            onTextChanged: appDialog.inputValue = text
+            Component.onCompleted: forceActiveFocus()
+        }
+    }
+
+    // QML has no direct clipboard API: select and copy from an invisible field.
+    TextEdit { id: clipboardHelper; visible: false }
 
     RowLayout {
         anchors.fill: parent
@@ -419,8 +434,35 @@ ApplicationWindow {
                         onContentHeightChanged: if (atYEnd || window.page.composer.busy) positionViewAtEnd()
                         delegate: Item {
                             width: ListView.view.width
-                            implicitHeight: bubble.implicitHeight
+                            implicitHeight: bubble.implicitHeight + (messageActions.visible ? messageActions.implicitHeight + 4 : 0)
                             readonly property bool mine: modelData.role === "user"
+                            Row {
+                                id: messageActions
+                                visible: !modelData.streaming && !!modelData.text
+                                y: bubble.implicitHeight + 4
+                                anchors.right: parent.mine ? parent.right : undefined
+                                spacing: 4
+                                MeoButton {
+                                    text: qsTr("Copy")
+                                    type: "text"
+                                    size: "xs"
+                                    onClicked: {
+                                        clipboardHelper.text = modelData.text
+                                        clipboardHelper.selectAll()
+                                        clipboardHelper.copy()
+                                    }
+                                }
+                                Repeater {
+                                    model: modelData.actions || []
+                                    MeoButton {
+                                        required property var modelData
+                                        text: modelData.label
+                                        type: "text"
+                                        size: "xs"
+                                        onClicked: window.act(modelData.action)
+                                    }
+                                }
+                            }
                             Rectangle {
                                 id: bubble
                                 anchors.right: parent.mine ? parent.right : undefined
