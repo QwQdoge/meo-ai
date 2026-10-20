@@ -1,5 +1,9 @@
 package org.meo.ai.core
 
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.ActivityNotFoundException
 import androidx.browser.customtabs.CustomTabsIntent
 import android.content.Context
@@ -18,6 +22,8 @@ import org.json.JSONObject
 interface CloudCoreListener {
     fun onChanged()
     fun onOpenUrl(url: String)
+    fun onNotify(title: String, text: String)
+    fun onBusy(busy: Boolean)
 }
 
 /**
@@ -82,6 +88,35 @@ class CloudCore(private val context: Context, clientId: String) : CloudCoreListe
                 // No browser installed: the core keeps showing the sign-in page.
             }
         }
+    }
+
+    /** Keeps the process (and its network) alive while an answer is generated, even in the background. */
+    override fun onBusy(busy: Boolean) {
+        main.post {
+            val intent = Intent(context, org.meo.ai.RunService::class.java)
+            if (busy) runCatching { context.startForegroundService(intent) } else context.stopService(intent)
+        }
+    }
+
+    /** A finished answer while the app is in the background (the core decides when). */
+    override fun onNotify(title: String, text: String) {
+        val manager = context.getSystemService(NotificationManager::class.java) ?: return
+        manager.createNotificationChannel(NotificationChannel("answers", "Answers", NotificationManager.IMPORTANCE_DEFAULT))
+        val open = PendingIntent.getActivity(
+            context, 0,
+            Intent(context, org.meo.ai.MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_NEW_TASK),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        val notification = Notification.Builder(context, "answers")
+            .setSmallIcon(android.R.drawable.stat_notify_chat)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setStyle(Notification.BigTextStyle().bigText(text))
+            .setContentIntent(open)
+            .setAutoCancel(true)
+            .build()
+        // Silently skipped when the notification permission was not granted.
+        runCatching { manager.notify(title.hashCode(), notification) }
     }
 
     private fun refresh() {

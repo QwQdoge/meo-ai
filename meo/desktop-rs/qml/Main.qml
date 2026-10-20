@@ -33,6 +33,9 @@ ApplicationWindow {
         }
     }
 
+    // Tell the core whether the window is in front, so it only notifies from the background.
+    onActiveChanged: core.dispatch(JSON.stringify({ type: "set_foreground", visible: active }))
+
     function act(action) {
         if (action)
             core.dispatch(JSON.stringify(action))

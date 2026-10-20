@@ -83,16 +83,21 @@ struct JavaHooks {
 }
 
 impl JavaHooks {
-    fn call(&self, method: &str, signature: &str, argument: Option<&str>) {
+    fn call(&self, method: &str, signature: &str, arguments: &[&str]) {
         let Ok(mut env) = self.vm.attach_current_thread() else {
             return;
         };
-        let result = match argument {
-            Some(text) => match env.new_string(text) {
-                Ok(text) => env.call_method(&self.listener, method, signature, &[(&text).into()]),
-                Err(error) => Err(error),
-            },
-            None => env.call_method(&self.listener, method, signature, &[]),
+        let strings: Result<Vec<_>, _> =
+            arguments.iter().map(|text| env.new_string(text)).collect();
+        let result = match strings {
+            Ok(strings) => {
+                let values: Vec<jni::objects::JValue> = strings
+                    .iter()
+                    .map(|s| jni::objects::JValue::Object(s))
+                    .collect();
+                env.call_method(&self.listener, method, signature, &values)
+            }
+            Err(error) => Err(error),
         };
         if result.is_err() {
             // Never leave a pending Java exception on a core thread.
@@ -103,11 +108,36 @@ impl JavaHooks {
 
 impl PlatformHooks for JavaHooks {
     fn changed(&self) {
-        self.call("onChanged", "()V", None);
+        self.call("onChanged", "()V", &[]);
     }
 
     fn open_url(&self, url: &str) {
-        self.call("onOpenUrl", "(Ljava/lang/String;)V", Some(url));
+        self.call("onOpenUrl", "(Ljava/lang/String;)V", &[url]);
+    }
+
+    fn busy(&self, busy: bool) {
+        let Ok(mut env) = self.vm.attach_current_thread() else {
+            return;
+        };
+        if env
+            .call_method(
+                &self.listener,
+                "onBusy",
+                "(Z)V",
+                &[jni::objects::JValue::Bool(busy as u8)],
+            )
+            .is_err()
+        {
+            let _ = env.exception_clear();
+        }
+    }
+
+    fn notify(&self, title: &str, text: &str) {
+        self.call(
+            "onNotify",
+            "(Ljava/lang/String;Ljava/lang/String;)V",
+            &[title, text],
+        );
     }
 }
 

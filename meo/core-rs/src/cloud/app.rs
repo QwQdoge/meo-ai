@@ -35,6 +35,10 @@ pub const VIEW_SCHEMA: u32 = 1;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Action {
+    /// The app window became visible (`true`) or hidden (`false`); decides whether to notify.
+    SetForeground {
+        visible: bool,
+    },
     Start,
     SignIn,
     SignOut,
@@ -157,6 +161,12 @@ pub trait PlatformHooks: Send + Sync {
     fn changed(&self);
     /// Open a URL in the system browser (used for Meo Account sign-in).
     fn open_url(&self, url: &str);
+    /// Show a system notification. Only called while the app is in the background
+    /// (see [`Action::SetForeground`]); hosts that cannot notify keep the default.
+    fn notify(&self, _title: &str, _text: &str) {}
+    /// An answer started (`true`) or finished/stopped (`false`). Mobile hosts use it to keep
+    /// the process alive (foreground service) while the answer is generated.
+    fn busy(&self, _busy: bool) {}
 }
 
 #[derive(Default, Clone, Copy, PartialEq, Serialize)]
@@ -214,6 +224,7 @@ struct State {
     show_archived: bool,
     /// Realtime stream state: connected, and how many of the user's devices are live.
     sync_live: bool,
+    foreground: bool,
     open_project: Option<String>,
     project_memories: Vec<Value>,
     project_chats: Vec<ConversationSummary>,
@@ -280,6 +291,7 @@ impl AppCore {
         let state = State {
             route,
             online: true,
+            foreground: true,
             ..State::default()
         };
         Self {
@@ -376,6 +388,7 @@ impl AppCore {
             Action::CloseDialog => self.update(|s| s.dialog = None),
             Action::Regenerate => self.regenerate().await,
             Action::Retry => self.retry().await,
+            Action::SetForeground { visible } => self.update(|s| s.foreground = visible),
             Action::AttachText { name, text } => self.attach_text(name, text).await,
             Action::AttachPath { path } => self.attach_path(path).await,
             Action::RemoveFile { id } => self.remove_file(id).await,
@@ -1508,6 +1521,7 @@ impl AppCore {
         }
         self.cancel.store(false, Ordering::SeqCst);
         self.update(|s| s.streaming = Some((id.clone(), String::new())));
+        self.hooks.busy(true);
         let stream = self
             .call(|api, t| {
                 let body = body.clone();
@@ -1545,6 +1559,7 @@ impl AppCore {
             .take()
             .map(|(_, t)| t)
             .unwrap_or_default();
+        self.hooks.busy(false);
         if !reply.is_empty() {
             self.push_message(&id, "assistant", &reply);
             let _ = self
@@ -1560,6 +1575,7 @@ impl AppCore {
             Some(e) => self.notice("error", e),
             None => {
                 self.hooks.changed();
+                self.notify_answer(&id, &reply);
                 let first_round = self
                     .state
                     .lock()
@@ -1572,6 +1588,40 @@ impl AppCore {
                 }
             }
         }
+    }
+
+    /// A finished answer while the app is in the background.
+    fn notify_answer(&self, conversation_id: &str, reply: &str) {
+        let (title, locale) = {
+            let s = self.state.lock().unwrap();
+            if s.foreground || reply.is_empty() {
+                return;
+            }
+            let language = s
+                .prefs
+                .get("appearance.language")
+                .and_then(Value::as_str)
+                .unwrap_or("system");
+            let title = s
+                .conversations
+                .iter()
+                .find(|c| c.id == conversation_id)
+                .map(|c| c.title.clone())
+                .filter(|t| !t.is_empty())
+                .unwrap_or_else(|| "Meo AI".to_owned());
+            (title, locale::effective(language, &s.host_locale))
+        };
+        let preview: String = reply
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .chars()
+            .take(140)
+            .collect();
+        self.hooks.notify(
+            &format!("{} — {}", title, locale::tr(locale, "Answer ready")),
+            &preview,
+        );
     }
 
     /// Replaces the placeholder title (the first words typed) with a short model-written one.
@@ -2630,6 +2680,51 @@ mod tests {
             json!({ "type": "remove_file", "id": "f1" })
         );
         assert_eq!(page["composer"]["attach"]["action"], "attach_text");
+    }
+
+    #[test]
+    fn answers_notify_only_while_the_app_is_in_the_background() {
+        use std::sync::Mutex as StdMutex;
+        struct Recording(StdMutex<Vec<(String, String)>>);
+        impl PlatformHooks for Recording {
+            fn changed(&self) {}
+            fn open_url(&self, _: &str) {}
+            fn notify(&self, title: &str, text: &str) {
+                self.0.lock().unwrap().push((title.into(), text.into()));
+            }
+        }
+        let hooks = Arc::new(Recording(StdMutex::new(vec![])));
+        let c = AppCore::new(
+            OAuthConfig {
+                account_origin: "https://a.invalid".into(),
+                api_origin: "https://b.invalid".into(),
+                client_id: "c".into(),
+                redirect_uri: "x:/".into(),
+            },
+            Arc::new(MemoryStorage::default()),
+            hooks.clone(),
+        );
+        c.update(|s| s.conversations = vec![conversation("c1", "Trip plan")]);
+        c.notify_answer("c1", "Foreground answer");
+        assert!(
+            hooks.0.lock().unwrap().is_empty(),
+            "no notification while visible"
+        );
+        futures_executor::block_on(c.dispatch(Action::SetForeground { visible: false }));
+        c.notify_answer("c1", "Pack  light\n and early");
+        futures_executor::block_on(c.dispatch(Action::SetLocale {
+            locale: "zh_CN".into(),
+        }));
+        c.notify_answer("c1", "好的");
+        let sent = hooks.0.lock().unwrap().clone();
+        assert_eq!(
+            sent[0],
+            (
+                "Trip plan — Answer ready".to_owned(),
+                "Pack light and early".to_owned()
+            )
+        );
+        assert_eq!(sent[1].0, "Trip plan — 回答已完成");
     }
 
     #[test]

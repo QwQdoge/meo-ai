@@ -7,6 +7,7 @@ declare module "@meo-core/meo_ai_core.js" {
       redirectUri: string,
       onChanged: () => void,
       openUrl: (url: string) => void,
+      onNotify?: (title: string, text: string) => void,
     );
     start(): Promise<void>;
     view(): string;

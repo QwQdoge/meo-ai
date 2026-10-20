@@ -29,7 +29,16 @@ export function useCore() {
             if (!disposed) setView(JSON.parse(instance.view()));
           },
           (url) => location.assign(url),
+          (title, text) => {
+            if (typeof Notification !== "undefined" && Notification.permission === "granted")
+              new Notification(title, { body: text, icon: "/meo-ai.svg" });
+          },
         );
+        // Only notify from the background; ask for permission on the first click.
+        const report = () => instance.dispatch(JSON.stringify({ type: "set_foreground", visible: !document.hidden }));
+        document.addEventListener("visibilitychange", report);
+        if (typeof Notification !== "undefined" && Notification.permission === "default")
+          addEventListener("click", () => void Notification.requestPermission(), { once: true });
         core.current = instance;
         setView(JSON.parse(instance.view()));
         instance.dispatch(JSON.stringify({ type: "set_locale", locale: navigator.language }));

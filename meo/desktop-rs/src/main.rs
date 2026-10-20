@@ -158,6 +158,15 @@ impl PlatformHooks for DesktopHooks {
         }
     }
 
+    fn notify(&self, title: &str, text: &str) {
+        if let Err(error) = std::process::Command::new("notify-send")
+            .args(["--app-name=Meo AI", "--icon=org.meo.AI", title, text])
+            .spawn()
+        {
+            tracing::warn!(%error, "could not show a desktop notification");
+        }
+    }
+
     fn open_url(&self, url: &str) {
         if let Some(callbacks) = self.callbacks.lock().unwrap().clone() {
             listen_for_callback(callbacks);
