@@ -433,6 +433,39 @@ impl MeoApi {
         ))
     }
 
+    // ---- files -----------------------------------------------------------
+
+    pub async fn list_files(
+        &self,
+        token: &str,
+        conversation_id: &str,
+    ) -> Result<Vec<Value>, ApiError> {
+        let path = format!("/v1/files?conversation_id={conversation_id}");
+        let body = self.request(token, Method::GET, &path, None).await?;
+        Ok(body["files"].as_array().cloned().unwrap_or_default())
+    }
+
+    pub async fn add_file(
+        &self,
+        token: &str,
+        conversation_id: &str,
+        name: &str,
+        mime_type: &str,
+        text: &str,
+    ) -> Result<(), ApiError> {
+        let input = json!({ "name": name, "mime_type": mime_type, "text": text, "conversation_id": conversation_id });
+        self.request(token, Method::POST, "/v1/files", Some(input))
+            .await
+            .map(|_| ())
+    }
+
+    pub async fn delete_file(&self, token: &str, id: &str) -> Result<(), ApiError> {
+        let path = format!("/v1/files/{id}");
+        self.request(token, Method::DELETE, &path, None)
+            .await
+            .map(|_| ())
+    }
+
     // ---- projects and memory ------------------------------------------
 
     pub async fn create_project(&self, token: &str, name: &str) -> Result<Value, ApiError> {

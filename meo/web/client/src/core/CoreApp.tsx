@@ -323,6 +323,7 @@ function Conversation({ page, prefs, strings, act }: { page: Spec; prefs: Spec; 
   const messages: Spec[] = page.messages ?? [];
   const composer: Spec = page.composer ?? {};
   const end = useRef<HTMLDivElement>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
   const [input, setInput] = useState("");
   const last = messages[messages.length - 1]?.text?.length ?? 0;
 
@@ -405,8 +406,34 @@ function Conversation({ page, prefs, strings, act }: { page: Spec; prefs: Spec; 
           </div>
         )}
         <div className="core-composer">
+          {(page.files ?? []).length > 0 && (
+            <div className="core-files">
+              {page.files.map((f: Spec) => (
+                <span key={f.id} className="core-chip">
+                  {f.name} <small>{f.subtitle}</small>
+                  <button aria-label={f.remove?.label} onClick={() => act(f.remove?.action)}>×</button>
+                </span>
+              ))}
+            </div>
+          )}
           {(composer.toolbar ?? []).map((item: Spec) => <Control key={item.id} item={item} act={act} />)}
           <div className="core-input-row">
+            {composer.attach && (
+              <>
+                <button className="core-attach" aria-label={composer.attach.label} title={composer.attach.label} onClick={() => fileInput.current?.click()}>📎</button>
+                <input
+                  ref={fileInput}
+                  type="file"
+                  hidden
+                  accept={(composer.attach.extensions ?? []).map((e: string) => "." + e).join(",")}
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    e.target.value = "";
+                    if (file && file.size <= 2 * 1024 * 1024) act({ type: composer.attach.action, name: file.name, text: await file.text() });
+                  }}
+                />
+              </>
+            )}
             <textarea
               rows={1}
               value={input}

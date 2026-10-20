@@ -5,6 +5,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Dialogs
 import MeoUI 1.0
 
 ApplicationWindow {
@@ -92,6 +93,14 @@ ApplicationWindow {
             onTextChanged: appDialog.inputValue = text
             Component.onCompleted: forceActiveFocus()
         }
+    }
+
+    // File picker for attachments; the core reads the chosen file itself.
+    FileDialog {
+        id: attachDialog
+        property string actionType: "attach_path"
+        nameFilters: [qsTr("Text and code files (*.txt *.md *.markdown *.csv *.json *.py *.rs *.js *.ts *.tsx *.jsx *.java *.kt *.c *.h *.cpp *.go *.sh *.toml *.yaml *.yml *.html *.css *.sql *.log)"), qsTr("All files (*)")]
+        onAccepted: window.act({ type: "attach_path", path: selectedFile.toString() })
     }
 
     // QML has no direct clipboard API: select and copy from an invisible field.
@@ -521,11 +530,37 @@ ApplicationWindow {
                     onCancelled: window.act(window.page.consent.actions[1].action)
                 }
 
+                Flow {
+                    visible: (window.page.files || []).length > 0
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 16
+                    Layout.rightMargin: 16
+                    spacing: 6
+                    Repeater {
+                        model: window.page.files || []
+                        MeoButton {
+                            required property var modelData
+                            text: modelData.name + "  ✕"
+                            type: "tonal"
+                            size: "xs"
+                            onClicked: window.act(modelData.remove.action)
+                        }
+                    }
+                }
+
                 RowLayout {
                     Layout.fillWidth: true
                     Layout.margins: 16
                     spacing: 8
                     readonly property var composer: window.page.composer || ({})
+
+                    MeoIconButton {
+                        visible: !!parent.composer.attach
+                        Layout.alignment: Qt.AlignBottom
+                        type: "standard"
+                        icon.name: "attach_file"
+                        onClicked: attachDialog.open()
+                    }
 
                     Repeater {
                         model: parent.composer.toolbar || []
