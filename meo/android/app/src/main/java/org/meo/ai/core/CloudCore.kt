@@ -44,6 +44,7 @@ class CloudCore(private val context: Context, clientId: String) : CloudCoreListe
             handle = nativeCreate(dir, clientId, this)
             if (handle != 0L) {
                 refresh()
+                dispatch(JSONObject().put("type", "set_locale").put("locale", java.util.Locale.getDefault().toLanguageTag()))
                 dispatch(JSONObject().put("type", "start"))
                 // Live sync with the user's other devices.
                 dispatch(JSONObject().put("type", "realtime"))

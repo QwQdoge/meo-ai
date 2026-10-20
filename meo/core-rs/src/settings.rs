@@ -24,11 +24,26 @@ impl Default for GeneralPreferences {
         }
     }
 }
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AppearancePreferences {
     pub theme: Theme,
     pub reduce_motion: bool,
+    /// Interface language: `system`, `en` or `zh-CN`.
+    #[serde(default = "system_language")]
+    pub language: String,
+}
+fn system_language() -> String {
+    "system".to_owned()
+}
+impl Default for AppearancePreferences {
+    fn default() -> Self {
+        Self {
+            theme: Theme::default(),
+            reduce_motion: false,
+            language: system_language(),
+        }
+    }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -110,6 +125,7 @@ impl Preferences {
                 "system", "en", "zh-CN", "zh-TW", "ja", "ko", "es", "fr", "de",
             ]
             .contains(&self.personalization.response_language.as_str())
+            || !["system", "en", "zh-CN"].contains(&self.appearance.language.as_str())
         {
             return Err(SettingsError::Invalid);
         }

@@ -251,7 +251,12 @@ fn main() {
     rt.spawn(async move { realtime.dispatch(Action::Realtime).await });
 
     let startup = core.clone();
+    let host_locale = env::var("LC_ALL")
+        .or_else(|_| env::var("LC_MESSAGES"))
+        .or_else(|_| env::var("LANG"))
+        .unwrap_or_default();
     rt.spawn(async move {
+        startup.dispatch(Action::SetLocale { locale: host_locale }).await;
         startup.dispatch(Action::Start).await;
         if let Some(url) = callback {
             startup.dispatch(Action::AuthCallback { url }).await;

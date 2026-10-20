@@ -32,6 +32,7 @@ export function useCore() {
         );
         core.current = instance;
         setView(JSON.parse(instance.view()));
+        instance.dispatch(JSON.stringify({ type: "set_locale", locale: navigator.language }));
         await instance.start();
         // Live sync with the user's other devices.
         instance.dispatch(JSON.stringify({ type: "realtime" }));

@@ -27,6 +27,18 @@
           ]
         },
         {
+          "id": "language",
+          "label": "Language",
+          "labelKey": "meo.settings.language",
+          "kind": "select",
+          "binding": "appearance.language",
+          "options": [
+            "system",
+            "en",
+            "zh-CN"
+          ]
+        },
+        {
           "id": "reduce_motion",
           "label": "Reduce motion",
           "labelKey": "meo.settings.reduceMotion",

@@ -25,6 +25,7 @@ use super::{
         RemoteEvent,
     },
     auth::{self, OAuthConfig, PendingAuthorization, Session},
+    locale,
     manifest::Manifest,
     storage::Storage,
 };
@@ -88,6 +89,10 @@ pub enum Action {
     Regenerate,
     /// Asks again after a failed answer, without saving the prompt twice.
     Retry,
+    /// The host's language (`en-US`, `zh_CN.UTF-8`, ...), used when the language setting is "system".
+    SetLocale {
+        locale: String,
+    },
     BeginEdit {
         id: String,
     },
@@ -162,6 +167,7 @@ struct State {
     show_archived: bool,
     /// Realtime stream state: connected, and how many of the user's devices are live.
     sync_live: bool,
+    host_locale: String,
     sync_devices: usize,
     dialog: Option<Dialog>,
     consent: Option<PendingSend>,
@@ -310,6 +316,7 @@ impl AppCore {
             Action::CloseDialog => self.update(|s| s.dialog = None),
             Action::Regenerate => self.regenerate().await,
             Action::Retry => self.retry().await,
+            Action::SetLocale { locale } => self.update(|s| s.host_locale = locale),
             Action::BeginEdit { id } => self.begin_edit(id),
             Action::EditMessage { id, text } => self.edit_message(id, text).await,
         }
@@ -1267,8 +1274,20 @@ impl AppCore {
                 }),
             }
         };
-        json!({
+        let language = s
+            .prefs
+            .get("appearance.language")
+            .and_then(Value::as_str)
+            .unwrap_or("system");
+        let locale = locale::effective(language, &s.host_locale);
+        let mut view = json!({
             "schema": VIEW_SCHEMA,
+            "locale": locale,
+            // Short UI texts clients use themselves (already translated below).
+            "strings": {
+                "copy": "Copy", "copied": "Copied", "dismiss": "Dismiss", "more": "More",
+                "send": "Send", "stop": "Stop", "offline": "Offline — showing saved data",
+            },
             "auth": {
                 "state": s.auth,
                 "email": s.session.as_ref().map(|x| x.email.clone()).unwrap_or_default(),
@@ -1291,7 +1310,9 @@ impl AppCore {
                 "action": { "type": "dismiss_notice" },
             })),
             "prefs": s.prefs,
-        })
+        });
+        locale::localize(&mut view, locale);
+        view
     }
 
     fn settings_page(&self, s: &State) -> Value {
@@ -1839,6 +1860,30 @@ mod tests {
             json!({ "type": "edit_message", "id": "m1" })
         );
         assert_eq!(dialog["actions"][0]["withInput"], true);
+    }
+
+    #[test]
+    fn the_view_follows_the_host_language_unless_a_choice_is_saved() {
+        let c = signed_in_core();
+        futures_executor::block_on(c.dispatch(Action::SetLocale {
+            locale: "zh_CN.UTF-8".into(),
+        }));
+        let view = c.view();
+        assert_eq!(view["locale"], "zh-CN");
+        assert_eq!(view["navigation"][0]["label"], "聊天");
+        assert_eq!(view["strings"]["copy"], "复制");
+        c.update(|s| {
+            s.prefs.insert("appearance.language".into(), json!("en"));
+        });
+        let view = c.view();
+        assert_eq!(
+            (
+                view["locale"].as_str(),
+                view["navigation"][0]["label"].as_str()
+            ),
+            (Some("en"), Some("Chat"))
+        );
+        assert_eq!(view["strings"]["copy"], "Copy");
     }
 
     #[test]

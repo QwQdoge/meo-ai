@@ -15,6 +15,7 @@ type Spec = Record<string, any>;
 export default function CoreApp() {
   const { view, act, error } = useCore();
   const prefs: Spec = view.prefs ?? {};
+  const strings: Spec = view.strings ?? {};
 
   useEffect(() => {
     const theme = ["light", "dark"].includes(prefs["appearance.theme"]) ? prefs["appearance.theme"] : "system";
@@ -54,12 +55,12 @@ export default function CoreApp() {
       {view.dialog && <Dialog dialog={view.dialog} act={act} />}
       <div className="core-main">
         {view.notice && (
-          <Banner error={view.notice.kind === "error"} action="Dismiss" onAction={() => act(view.notice.action)}>
+          <Banner error={view.notice.kind === "error"} action={strings.dismiss ?? "Dismiss"} onAction={() => act(view.notice.action)}>
             {view.notice.text}
           </Banner>
         )}
-        {view.online === false && <Banner>Offline — showing saved data</Banner>}
-        <Page page={page} prefs={prefs} act={act} />
+        {view.online === false && <Banner>{strings.offline ?? "Offline — showing saved data"}</Banner>}
+        <Page page={page} prefs={prefs} strings={strings} act={act} />
       </div>
     </div>
   );
@@ -106,12 +107,12 @@ function Dialog({ dialog, act }: { dialog: Spec; act: Act }) {
   );
 }
 
-function Page({ page, prefs, act }: { page: Spec; prefs: Spec; act: Act }) {
+function Page({ page, prefs, strings, act }: { page: Spec; prefs: Spec; strings: Spec; act: Act }) {
   switch (page.kind) {
     case "sign_in":
       return <SignIn page={page} act={act} />;
     case "conversation":
-      return <Conversation page={page} prefs={prefs} act={act} />;
+      return <Conversation page={page} prefs={prefs} strings={strings} act={act} />;
     case "list":
       return <ListPage page={page} act={act} />;
     case "settings":
@@ -237,7 +238,7 @@ function Control({ item, act }: { item: Spec; act: Act }) {
   }
 }
 
-function CopyButton({ text }: { text: string }) {
+function CopyButton({ text, label, done: doneLabel }: { text: string; label: string; done: string }) {
   const [done, setDone] = useState(false);
   return (
     <button
@@ -248,7 +249,7 @@ function CopyButton({ text }: { text: string }) {
         });
       }}
     >
-      {done ? "Copied" : "Copy"}
+      {done ? doneLabel : label}
     </button>
   );
 }
@@ -272,11 +273,11 @@ function SearchBox({ search, act }: { search: Spec; act: Act }) {
   );
 }
 
-function RowMenu({ menu, act }: { menu: Spec[]; act: Act }) {
+function RowMenu({ menu, act, label }: { menu: Spec[]; act: Act; label: string }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="core-row-menu">
-      <button aria-label="More" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((v) => !v)} onBlur={() => setTimeout(() => setOpen(false), 150)}>⋮</button>
+      <button aria-label={label} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((v) => !v)} onBlur={() => setTimeout(() => setOpen(false), 150)}>⋮</button>
       {open && (
         <ul role="menu">
           {menu.map((m, i) => (
@@ -290,7 +291,7 @@ function RowMenu({ menu, act }: { menu: Spec[]; act: Act }) {
   );
 }
 
-function Conversation({ page, prefs, act }: { page: Spec; prefs: Spec; act: Act }) {
+function Conversation({ page, prefs, strings, act }: { page: Spec; prefs: Spec; strings: Spec; act: Act }) {
   const [drawer, setDrawer] = useState(false);
   const sidebar: Spec = page.sidebar ?? {};
   const messages: Spec[] = page.messages ?? [];
@@ -331,7 +332,7 @@ function Conversation({ page, prefs, act }: { page: Spec; prefs: Spec; act: Act 
                 <strong>{item.title}</strong>
                 <span>{item.subtitle}</span>
               </button>
-              {(item.menu ?? []).length > 0 && <RowMenu menu={item.menu} act={act} />}
+              {(item.menu ?? []).length > 0 && <RowMenu menu={item.menu} act={act} label={strings.more ?? "More"} />}
             </li>
           ))}
         </ul>
@@ -359,7 +360,7 @@ function Conversation({ page, prefs, act }: { page: Spec; prefs: Spec; act: Act 
               )}
               {!m.streaming && m.text && (
                 <div className="core-message-actions">
-                  <CopyButton text={m.text} />
+                  <CopyButton text={m.text} label={strings.copy ?? "Copy"} done={strings.copied ?? "Copied"} />
                   {(m.actions ?? []).map((a: Spec, j: number) => (
                     <button key={j} onClick={() => act(a.action)}>{a.label}</button>
                   ))}
@@ -392,7 +393,7 @@ function Conversation({ page, prefs, act }: { page: Spec; prefs: Spec; act: Act 
             />
             <button
               className="core-button primary"
-              aria-label={composer.busy ? "Stop" : "Send"}
+              aria-label={composer.busy ? (strings.stop ?? "Stop") : (strings.send ?? "Send")}
               onClick={() => (composer.busy ? act(composer.stopAction) : send())}
             >
               {composer.busy ? "■" : "↑"}

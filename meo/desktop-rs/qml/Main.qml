@@ -120,7 +120,7 @@ ApplicationWindow {
                 Layout.margins: 12
                 tone: window.v.notice && window.v.notice.kind === "error" ? "error" : "tonal"
                 text: window.v.notice ? window.v.notice.text : ""
-                confirmText: qsTr("Dismiss")
+                confirmText: (window.v.strings || {}).dismiss || qsTr("Dismiss")
                 onConfirmed: window.act(window.v.notice.action)
             }
 
@@ -130,7 +130,7 @@ ApplicationWindow {
                 Layout.margins: 12
                 tone: "warning"
                 icon: "cloud_off"
-                text: qsTr("Offline — showing saved data")
+                text: (window.v.strings || {}).offline || qsTr("Offline — showing saved data")
             }
 
             Loader {
@@ -443,7 +443,7 @@ ApplicationWindow {
                                 anchors.right: parent.mine ? parent.right : undefined
                                 spacing: 4
                                 MeoButton {
-                                    text: qsTr("Copy")
+                                    text: (window.v.strings || {}).copy || qsTr("Copy")
                                     type: "text"
                                     size: "xs"
                                     onClicked: {
