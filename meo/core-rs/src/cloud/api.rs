@@ -170,6 +170,9 @@ impl MeoApi {
             .iter()
             .filter_map(|row| {
                 let id = row["id"].as_str().filter(|s| !s.is_empty())?.to_owned();
+                if !is_chat_model(&id) {
+                    return None;
+                }
                 let name = row["name"].as_str().filter(|s| !s.is_empty()).unwrap_or(&id).to_owned();
                 Some(Model { id, name })
             })
@@ -254,6 +257,19 @@ impl MeoApi {
     }
 }
 
+/// Providers list every model they host. Chat can only use text models, so
+/// drop the ones that are plainly image, video, speech, embedding or ranking.
+fn is_chat_model(id: &str) -> bool {
+    const NOT_CHAT: [&str; 26] = [
+        "image", "video", "dall-e", "sora", "tts", "speech", "whisper", "transcribe",
+        "embed", "rerank", "moderation", "stable-diffusion", "flux", "midjourney",
+        "vidu", "pixverse", "veo", "kling", "seedance", "seedream", "wan2", "i2v", "t2v",
+        "i2i", "suno", "music",
+    ];
+    let id = id.to_ascii_lowercase();
+    !NOT_CHAT.iter().any(|word| id.contains(word))
+}
+
 fn error_code(body: &Value) -> String {
     body["error"]["code"]
         .as_str()
@@ -331,6 +347,16 @@ mod tests {
             event: String::new(),
             data: String::new(),
             finished: false,
+        }
+    }
+
+    #[test]
+    fn model_list_keeps_chat_models_only() {
+        for id in ["gpt-5-mini", "claude-opus-4-7", "qwen3.8-27b", "glm-5.1", "kimi-k2.7-code", "o4-mini", "llama-3-8b"] {
+            assert!(is_chat_model(id), "{id} should be offered");
+        }
+        for id in ["qwen-image-2.0-2026-03-03", "grok-1.5-video", "gpt-image-1.5", "Qwen/Qwen3-Reranker-0.6B", "viduq3-turbo", "wan2.6-i2v", "pixverse-swap", "veo_3_1-components", "gpt-4o-mini-transcribe", "speech-2.8-hd", "tts-1-hd", "text-embedding-3-small"] {
+            assert!(!is_chat_model(id), "{id} should be hidden");
         }
     }
 
