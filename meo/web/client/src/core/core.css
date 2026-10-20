@@ -58,3 +58,19 @@
 .core-bubble.assistant table { border-collapse: collapse; }
 .core-bubble.assistant th, .core-bubble.assistant td { padding: 4px 10px; border: 1px solid rgb(var(--border-light)); }
 .core-bubble.assistant a { color: rgb(var(--accent-primary)); text-decoration: underline; }
+.core-scrim { position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center; background: rgb(0 0 0 / 0.4); }
+.core-dialog { width: min(420px, calc(100vw - 32px)); display: flex; flex-direction: column; gap: 12px; padding: 24px; border-radius: 28px; background: rgb(var(--surface-secondary)); color: rgb(var(--text-primary)); }
+.core-dialog h2 { margin: 0; font-size: 1.25rem; }
+.core-dialog input { padding: 10px 12px; border-radius: 12px; border: 1px solid rgb(var(--border-light)); background: rgb(var(--surface-primary)); color: inherit; }
+.core-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.core-search { padding: 10px 14px; border-radius: 999px; border: 1px solid rgb(var(--border-light)); background: rgb(var(--surface-primary)); color: inherit; }
+.core-tabs { display: flex; gap: 8px; }
+.core-tabs button { padding: 4px 14px; border-radius: 999px; border: 1px solid rgb(var(--border-light)); background: none; color: inherit; }
+.core-tabs button[aria-selected="true"] { background: rgb(var(--surface-tertiary)); font-weight: 600; }
+.core-chat-row { position: relative; }
+.core-row-menu { position: absolute; inset-block-start: 6px; inset-inline-end: 6px; }
+.core-row-menu > button { width: 32px; height: 32px; border: 0; border-radius: 50%; background: none; color: inherit; font-size: 18px; width: 32px; }
+.core-row-menu ul { position: absolute; inset-inline-end: 0; z-index: 10; min-width: 140px; margin: 0; padding: 6px; list-style: none; border-radius: 12px; background: rgb(var(--surface-secondary)); border: 1px solid rgb(var(--border-light)); box-shadow: 0 4px 16px rgb(0 0 0 / 0.2); }
+.core-row-menu li button { width: 100%; padding: 8px 12px; border: 0; border-radius: 8px; background: none; color: inherit; text-align: start; }
+.core-row-menu li button:hover { background: rgb(var(--surface-tertiary)); }
+.core-row-menu li button.danger { color: rgb(var(--status-error-strong)); }

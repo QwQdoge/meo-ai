@@ -44,6 +44,44 @@ ApplicationWindow {
         return copy
     }
 
+    // Generic modal question from the core (`view.dialog`): kind "prompt" has a text field.
+    MeoDialog {
+        id: appDialog
+        readonly property var spec: window.v.dialog || null
+        readonly property string specKey: spec ? JSON.stringify(spec) : ""
+        property string inputValue: ""
+        title: spec ? spec.title : ""
+        message: spec && spec.text ? spec.text : ""
+        confirmText: spec && spec.actions[0] ? spec.actions[0].label : ""
+        cancelText: spec && spec.actions[1] ? spec.actions[1].label : ""
+        supportingContent: spec && spec.input ? promptField : null
+        onSpecKeyChanged: {
+            if (spec) {
+                inputValue = spec.input ? (spec.input.value || "") : ""
+                open()
+            } else {
+                close()
+            }
+        }
+        onConfirmed: {
+            const a = spec.actions[0]
+            window.act(a.withInput ? window.withFields(a.action, { text: inputValue }) : a.action)
+        }
+        onCancelled: if (spec && spec.actions[1]) window.act(spec.actions[1].action)
+        onDismissed: if (spec && !dismissedByAction) window.act({ type: "close_dialog" })
+    }
+
+    Component {
+        id: promptField
+        MeoTextField {
+            width: 320
+            placeholder: appDialog.spec && appDialog.spec.input ? appDialog.spec.input.placeholder : ""
+            text: appDialog.inputValue
+            onTextChanged: appDialog.inputValue = text
+            Component.onCompleted: forceActiveFocus()
+        }
+    }
+
     RowLayout {
         anchors.fill: parent
         spacing: 0
@@ -270,6 +308,35 @@ ApplicationWindow {
                     model: (window.page.sidebar || {}).actions || []
                     ActionButton { spec: modelData; Layout.fillWidth: true }
                 }
+                MeoTextField {
+                    id: searchField
+                    visible: !!(window.page.sidebar || {}).search
+                    Layout.fillWidth: true
+                    placeholder: ((window.page.sidebar || {}).search || {}).placeholder || ""
+                    leadingIcon: "search"
+                    // Typed text wins; the core echoes it back as the saved value.
+                    onTextChanged: if (text !== ((window.page.sidebar || {}).search || {}).value) searchTimer.restart()
+                    Timer {
+                        id: searchTimer
+                        interval: 300
+                        onTriggered: window.act(window.withFields(window.page.sidebar.search.action, { text: searchField.text }))
+                    }
+                }
+                RowLayout {
+                    visible: ((window.page.sidebar || {}).tabs || []).length > 0
+                    Layout.fillWidth: true
+                    spacing: 8
+                    Repeater {
+                        model: (window.page.sidebar || {}).tabs || []
+                        MeoButton {
+                            required property var modelData
+                            text: modelData.label
+                            type: modelData.selected ? "tonal" : "outlined"
+                            size: "xs"
+                            onClicked: window.act(modelData.action)
+                        }
+                    }
+                }
                 MeoText { text: (window.page.sidebar || {}).title || ""; typeRole: "label"; color: MeoTheme.onSurfaceVariant }
                 ListView {
                     Layout.fillWidth: true
@@ -277,12 +344,39 @@ ApplicationWindow {
                     clip: true
                     spacing: 2
                     model: (window.page.sidebar || {}).items || []
-                    delegate: MeoListItem {
+                    delegate: Item {
+                        id: chatRow
+                        required property var modelData
                         width: ListView.view.width
-                        headline: modelData.title
-                        supportingText: modelData.subtitle
-                        selected: !!modelData.selected
-                        onClicked: window.act(modelData.action)
+                        implicitHeight: row.implicitHeight
+                        MeoListItem {
+                            id: row
+                            anchors.fill: parent
+                            headline: chatRow.modelData.title
+                            supportingText: chatRow.modelData.subtitle
+                            selected: !!chatRow.modelData.selected
+                            onClicked: window.act(chatRow.modelData.action)
+                        }
+                        MeoIconButton {
+                            visible: (chatRow.modelData.menu || []).length > 0
+                            anchors.right: parent.right
+                            anchors.verticalCenter: parent.verticalCenter
+                            type: "standard"
+                            size: "xs"
+                            icon.name: "more_vert"
+                            onClicked: chatMenu.popup()
+                        }
+                        Menu {
+                            id: chatMenu
+                            Repeater {
+                                model: chatRow.modelData.menu || []
+                                MenuItem {
+                                    required property var modelData
+                                    text: modelData.label
+                                    onTriggered: window.act(modelData.action)
+                                }
+                            }
+                        }
                     }
                 }
             }
