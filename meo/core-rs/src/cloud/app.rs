@@ -100,6 +100,41 @@ pub enum Action {
         id: String,
         text: String,
     },
+    OpenProject {
+        id: String,
+    },
+    BeginNewProject,
+    CreateProject {
+        text: String,
+    },
+    BeginDeleteProject {
+        id: String,
+    },
+    DeleteProject {
+        id: String,
+    },
+    BeginAddProjectMemory {
+        id: String,
+    },
+    AddProjectMemory {
+        id: String,
+        text: String,
+    },
+    DeleteProjectMemory {
+        id: String,
+        memory: String,
+    },
+    /// Starts an empty chat that will belong to the project.
+    NewChatInProject {
+        id: String,
+    },
+    BeginAddMemory,
+    AddMemory {
+        text: String,
+    },
+    DeleteMemory {
+        id: String,
+    },
     /// Long-running: keeps this device in sync with the user's other devices.
     /// Hosts dispatch it once after `Start` as its own task; extra calls return at once.
     Realtime,
@@ -167,6 +202,12 @@ struct State {
     show_archived: bool,
     /// Realtime stream state: connected, and how many of the user's devices are live.
     sync_live: bool,
+    open_project: Option<String>,
+    project_memories: Vec<Value>,
+    project_chats: Vec<ConversationSummary>,
+    /// The user's own memories (Settings > Personalization).
+    memories: Option<Vec<Value>>,
+    new_chat_project: Option<String>,
     host_locale: String,
     sync_devices: usize,
     dialog: Option<Dialog>,
@@ -271,11 +312,15 @@ impl AppCore {
             Action::AuthCallback { url } => self.complete_sign_in(&url).await,
             Action::Navigate { route } => {
                 if self.manifest.renderer(&route).is_some() {
-                    self.update(|s| s.route = route.clone());
+                    self.update(|s| {
+                        s.route = route.clone();
+                        s.open_project = None;
+                    });
                     self.load_route(&route).await;
                 }
             }
             Action::NewConversation => self.update(|s| {
+                s.new_chat_project = None;
                 s.active = None;
                 s.route = "chat".into();
             }),
@@ -316,6 +361,54 @@ impl AppCore {
             Action::CloseDialog => self.update(|s| s.dialog = None),
             Action::Regenerate => self.regenerate().await,
             Action::Retry => self.retry().await,
+            Action::OpenProject { id } => self.open_project(id).await,
+            Action::BeginNewProject => self.prompt(
+                "New project",
+                "",
+                "",
+                false,
+                input_button("Create", "primary", json!({ "type": "create_project" })),
+            ),
+            Action::CreateProject { text } => self.create_project(text).await,
+            Action::BeginDeleteProject { id } => self.confirm(
+                "Delete this project?",
+                "Its chats stay, without the project's instructions and memory.",
+                button(
+                    "Delete",
+                    "danger",
+                    json!({ "type": "delete_project", "id": id }),
+                ),
+            ),
+            Action::DeleteProject { id } => self.delete_project(id).await,
+            Action::BeginAddProjectMemory { id } => self.prompt(
+                "Add project memory",
+                "Facts and preferences used in every chat of this project.",
+                "",
+                true,
+                input_button(
+                    "Add",
+                    "primary",
+                    json!({ "type": "add_project_memory", "id": id }),
+                ),
+            ),
+            Action::AddProjectMemory { id, text } => self.add_project_memory(id, text).await,
+            Action::DeleteProjectMemory { id, memory } => {
+                self.delete_project_memory(id, memory).await
+            }
+            Action::NewChatInProject { id } => self.update(|s| {
+                s.active = None;
+                s.route = "chat".into();
+                s.new_chat_project = Some(id);
+            }),
+            Action::BeginAddMemory => self.prompt(
+                "Add memory",
+                "Something Meo should remember about you in every chat.",
+                "",
+                true,
+                input_button("Add", "primary", json!({ "type": "add_memory" })),
+            ),
+            Action::AddMemory { text } => self.add_memory(text).await,
+            Action::DeleteMemory { id } => self.delete_memory(id).await,
             Action::SetLocale { locale } => self.update(|s| s.host_locale = locale),
             Action::BeginEdit { id } => self.begin_edit(id),
             Action::EditMessage { id, text } => self.edit_message(id, text).await,
@@ -543,6 +636,7 @@ impl AppCore {
 
     async fn load_route(&self, route: &str) {
         match route {
+            "settings" => self.refresh_memories().await,
             "projects" => {
                 let r = self
                     .call(|api, t| async move { api.list_projects(&t).await })
@@ -563,6 +657,7 @@ impl AppCore {
         self.update(|s| {
             s.active = Some(id.clone());
             s.route = "chat".into();
+            s.new_chat_project = None;
         });
         let key = format!("messages-{id}");
         if let Some(cached) = self.load_json::<Vec<ChatMessage>>(&key) {
@@ -605,6 +700,219 @@ impl AppCore {
                 self.save_json(KEY_CONVERSATIONS, &list);
             }
             self.update(|s| s.conversations = list);
+        }
+    }
+
+    // ---- dialogs ----------------------------------------------------------
+
+    fn prompt(&self, title: &str, text: &str, value: &str, multiline: bool, confirm: Value) {
+        self.update(|s| {
+            s.dialog = Some(Dialog {
+                kind: "prompt",
+                multiline,
+                title: title.into(),
+                text: text.into(),
+                value: value.into(),
+                actions: vec![
+                    confirm,
+                    button("Cancel", "secondary", json!({ "type": "close_dialog" })),
+                ],
+            })
+        });
+    }
+
+    fn confirm(&self, title: &str, text: &str, confirm: Value) {
+        self.update(|s| {
+            s.dialog = Some(Dialog {
+                kind: "confirm",
+                multiline: false,
+                title: title.into(),
+                text: text.into(),
+                value: String::new(),
+                actions: vec![
+                    confirm,
+                    button("Cancel", "secondary", json!({ "type": "close_dialog" })),
+                ],
+            })
+        });
+    }
+
+    // ---- memory and projects ------------------------------------------------
+
+    async fn refresh_memories(&self) {
+        if let Ok(list) = self
+            .call(|api, t| async move { api.list_memories(&t).await })
+            .await
+        {
+            self.update(|s| s.memories = Some(list));
+        }
+    }
+
+    async fn add_memory(&self, text: String) {
+        self.update(|s| s.dialog = None);
+        let text = text.trim().to_owned();
+        if text.is_empty() {
+            return;
+        }
+        match self
+            .call(|api, t| {
+                let text = text.clone();
+                async move { api.add_memory(&t, &text).await }
+            })
+            .await
+        {
+            Ok(()) => self.refresh_memories().await,
+            Err(e) => self.notice("error", e.to_string()),
+        }
+    }
+
+    async fn delete_memory(&self, id: String) {
+        match self
+            .call(|api, t| {
+                let id = id.clone();
+                async move { api.delete_memory(&t, &id).await }
+            })
+            .await
+        {
+            Ok(()) => self.refresh_memories().await,
+            Err(e) => self.notice("error", e.to_string()),
+        }
+    }
+
+    async fn refresh_projects(&self) {
+        let r = self
+            .call(|api, t| async move { api.list_projects(&t).await })
+            .await;
+        self.update(|s| s.projects = Some(r.map_err(|e| e.to_string())));
+    }
+
+    async fn open_project(&self, id: String) {
+        self.update(|s| {
+            s.open_project = Some(id.clone());
+            s.project_memories.clear();
+            s.project_chats.clear();
+        });
+        self.refresh_open_project().await;
+    }
+
+    async fn refresh_open_project(&self) {
+        let Some(id) = self.state.lock().unwrap().open_project.clone() else {
+            return;
+        };
+        let memories = self
+            .call(|api, t| {
+                let id = id.clone();
+                async move { api.list_project_memories(&t, &id).await }
+            })
+            .await;
+        let chats = self
+            .call(|api, t| {
+                let id = id.clone();
+                async move { api.list_project_conversations(&t, &id).await }
+            })
+            .await;
+        self.update(|s| {
+            if let Ok(memories) = memories {
+                s.project_memories = memories;
+            }
+            if let Ok(chats) = chats {
+                s.project_chats = chats;
+            }
+        });
+    }
+
+    async fn create_project(&self, text: String) {
+        self.update(|s| s.dialog = None);
+        let name = text.trim().to_owned();
+        if name.is_empty() {
+            return;
+        }
+        match self
+            .call(|api, t| {
+                let name = name.clone();
+                async move { api.create_project(&t, &name).await }
+            })
+            .await
+        {
+            Ok(project) => {
+                self.refresh_projects().await;
+                if let Some(id) = project["id"].as_str() {
+                    self.open_project(id.to_owned()).await;
+                }
+            }
+            Err(e) => self.notice("error", e.to_string()),
+        }
+    }
+
+    async fn delete_project(&self, id: String) {
+        self.update(|s| s.dialog = None);
+        match self
+            .call(|api, t| {
+                let id = id.clone();
+                async move { api.delete_project(&t, &id).await }
+            })
+            .await
+        {
+            Ok(()) => {
+                self.update(|s| s.open_project = None);
+                self.refresh_projects().await;
+                self.refresh_conversations().await;
+            }
+            Err(e) => self.notice("error", e.to_string()),
+        }
+    }
+
+    async fn add_project_memory(&self, id: String, text: String) {
+        self.update(|s| s.dialog = None);
+        let text = text.trim().to_owned();
+        if text.is_empty() {
+            return;
+        }
+        match self
+            .call(|api, t| {
+                let (id, text) = (id.clone(), text.clone());
+                async move { api.add_project_memory(&t, &id, &text).await }
+            })
+            .await
+        {
+            Ok(()) => self.refresh_open_project().await,
+            Err(e) => self.notice("error", e.to_string()),
+        }
+    }
+
+    async fn delete_project_memory(&self, id: String, memory: String) {
+        match self
+            .call(|api, t| {
+                let (id, memory) = (id.clone(), memory.clone());
+                async move { api.delete_project_memory(&t, &id, &memory).await }
+            })
+            .await
+        {
+            Ok(()) => self.refresh_open_project().await,
+            Err(e) => self.notice("error", e.to_string()),
+        }
+    }
+
+    /// Saves an edited project field (`project:<id>:<name|description|instructions>`).
+    async fn edit_project_field(&self, binding: &str, value: Value) {
+        let mut parts = binding.splitn(3, ':');
+        let (_, Some(id), Some(field)) = (parts.next(), parts.next(), parts.next()) else {
+            return;
+        };
+        if !["name", "description", "instructions"].contains(&field) {
+            return;
+        }
+        let patch = json!({ field: value.as_str().unwrap_or_default() });
+        let id = id.to_owned();
+        match self
+            .call(|api, t| {
+                let (id, patch) = (id.clone(), patch.clone());
+                async move { api.patch_project(&t, &id, patch).await }
+            })
+            .await
+        {
+            Ok(()) => self.refresh_projects().await,
+            Err(e) => self.notice("error", e.to_string()),
         }
     }
 
@@ -719,6 +1027,7 @@ impl AppCore {
                 if let Ok(events) = self.api.open_events(&token).await {
                     let mut events = Box::pin(events);
                     backoff = 1;
+                    self.update(|s| s.sync_live = true);
                     while let Some(Ok(event)) = events.next().await {
                         self.on_remote_event(event).await;
                     }
@@ -835,10 +1144,14 @@ impl AppCore {
             Some(id) => id,
             None => {
                 let title: String = text.chars().take(60).collect();
+                let project = self.state.lock().unwrap().new_chat_project.clone();
                 match self
                     .call(|api, t| {
-                        let title = title.clone();
-                        async move { api.create_conversation(&t, &title).await }
+                        let (title, project) = (title.clone(), project.clone());
+                        async move {
+                            api.create_conversation(&t, &title, project.as_deref())
+                                .await
+                        }
                     })
                     .await
                 {
@@ -847,6 +1160,7 @@ impl AppCore {
                         self.update(|s| {
                             s.conversations.insert(0, conversation);
                             s.active = Some(id.clone());
+                            s.new_chat_project = None;
                         });
                         id
                     }
@@ -1167,6 +1481,9 @@ impl AppCore {
     // ---- settings ------------------------------------------------------
 
     async fn set_setting(&self, binding: String, value: Value) {
+        if binding.starts_with("project:") {
+            return self.edit_project_field(&binding, value).await;
+        }
         if binding == "model.selected" {
             if let Some((c, m)) = value.as_str().and_then(|v| v.split_once('|')) {
                 let (c, m) = (c.to_owned(), m.to_owned());
@@ -1253,12 +1570,37 @@ impl AppCore {
         } else {
             match self.manifest.renderer(&s.route).unwrap_or("conversation") {
                 "conversation" => conversation_page(&s),
-                "projects" => list_page(
-                    "Projects",
-                    &s.projects,
-                    |p| json!({ "id": p["id"], "title": p["name"], "subtitle": p["updated_at"] }),
-                    "No projects yet",
-                ),
+                "projects" => match &s.open_project {
+                    Some(id) => project_page(&s, id),
+                    None => {
+                        let mut page = list_page(
+                            "Projects",
+                            &s.projects,
+                            |p| {
+                                json!({
+                                    "id": p["id"],
+                                    "title": p["name"],
+                                    "subtitle": p["description"].as_str().filter(|d| !d.is_empty())
+                                        .map(str::to_owned)
+                                        .unwrap_or_else(|| p["updated_at"].as_str().unwrap_or_default().chars().take(10).collect()),
+                                    "action": { "type": "open_project", "id": p["id"] },
+                                })
+                            },
+                            "No projects yet",
+                        );
+                        if page["kind"] == "list" {
+                            page["actions"] = json!([
+                                button(
+                                    "New project",
+                                    "primary",
+                                    json!({ "type": "begin_new_project" })
+                                ),
+                                button("Refresh", "secondary", json!({ "type": "refresh" })),
+                            ]);
+                        }
+                        page
+                    }
+                },
                 "skills" => list_page(
                     "Skills",
                     &s.plugins,
@@ -1346,6 +1688,20 @@ impl AppCore {
                     })
                     .collect();
                 match section.id.as_str() {
+                    "personalization" => {
+                        items.push(json!({
+                            "id": "add_memory", "kind": "button", "label": "Add memory", "style": "secondary",
+                            "action": { "type": "begin_add_memory" },
+                        }));
+                        for m in s.memories.iter().flatten() {
+                            items.push(item(
+                                format!("memory-{}", m["id"].as_str().unwrap_or_default()),
+                                m["content"].as_str().unwrap_or_default(),
+                                m["kind"].as_str().unwrap_or_default(),
+                                vec![button("Delete", "danger", json!({ "type": "delete_memory", "id": m["id"] }))],
+                            ));
+                        }
+                    }
                     "models" => {
                         items.extend(model_controls(s));
                         items.push(json!({
@@ -1574,6 +1930,92 @@ fn conversation_page(s: &State) -> Value {
                 button("Cancel", "secondary", json!({ "type": "deny_consent" })),
             ],
         })),
+    })
+}
+
+/// A row with a title, a smaller second line and buttons (the `item` control).
+fn item(id: String, label: &str, value: &str, buttons: Vec<Value>) -> Value {
+    json!({ "id": id, "kind": "item", "label": label, "value": value, "buttons": buttons })
+}
+
+/// The detail page of one project, built only from generic settings controls.
+fn project_page(s: &State, id: &str) -> Value {
+    let project = s
+        .projects
+        .as_ref()
+        .and_then(|r| r.as_ref().ok())
+        .and_then(|list| list.iter().find(|p| p["id"] == id))
+        .cloned()
+        .unwrap_or(Value::Null);
+    let field = |key: &str| project[key].as_str().unwrap_or_default().to_owned();
+    let text = |name: &str, label: &str, key: &str, single: bool, placeholder: &str| {
+        json!({
+            "id": format!("project_{key}"), "label": label, "kind": "text", "single_line": single,
+            "binding": format!("project:{id}:{name}"), "value": field(key), "placeholder": placeholder,
+        })
+    };
+    let chats: Vec<Value> = s
+        .project_chats
+        .iter()
+        .map(|c| {
+            item(
+                format!("chat-{}", c.id),
+                if c.title.is_empty() {
+                    "New chat"
+                } else {
+                    &c.title
+                },
+                c.updated_at.get(..10).unwrap_or_default(),
+                vec![button(
+                    "Open",
+                    "secondary",
+                    json!({ "type": "select_conversation", "id": c.id }),
+                )],
+            )
+        })
+        .collect();
+    let memories: Vec<Value> = s
+        .project_memories
+        .iter()
+        .map(|m| {
+            item(
+                format!("memory-{}", m["id"].as_str().unwrap_or_default()),
+                m["content"].as_str().unwrap_or_default(),
+                "",
+                vec![button(
+                    "Delete",
+                    "danger",
+                    json!({ "type": "delete_project_memory", "id": id, "memory": m["id"] }),
+                )],
+            )
+        })
+        .collect();
+    let mut chat_items = vec![json!({
+        "id": "new_chat", "kind": "button", "label": "New chat in this project", "style": "primary",
+        "action": { "type": "new_chat_in_project", "id": id },
+    })];
+    chat_items.extend(chats);
+    let mut memory_items = vec![json!({
+        "id": "add_memory", "kind": "button", "label": "Add memory", "style": "secondary",
+        "action": { "type": "begin_add_project_memory", "id": id },
+    })];
+    memory_items.extend(memories);
+    json!({
+        "kind": "settings",
+        "title": if field("name").is_empty() { "Project".to_owned() } else { field("name") },
+        "sections": [
+            { "id": "project", "label": "Project", "items": [
+                text("name", "Name", "name", true, ""),
+                text("description", "Description", "description", false, ""),
+                text("instructions", "Instructions", "instructions", false, "How Meo should behave in this project"),
+            ]},
+            { "id": "project_chats", "label": "Chats", "items": chat_items },
+            { "id": "project_memory", "label": "Project memory", "items": memory_items },
+            { "id": "project_danger", "label": "Danger zone", "items": [{
+                "id": "delete_project", "kind": "button", "label": "Delete project", "style": "danger",
+                "action": { "type": "begin_delete_project", "id": id },
+            }]},
+        ],
     })
 }
 
@@ -1884,6 +2326,113 @@ mod tests {
             (Some("en"), Some("Chat"))
         );
         assert_eq!(view["strings"]["copy"], "Copy");
+    }
+
+    #[test]
+    fn a_project_page_edits_through_generic_controls() {
+        let c = signed_in_core();
+        c.update(|s| {
+            s.route = "projects".into();
+            s.projects = Some(Ok(vec![json!({ "id": "p1", "name": "Trip", "description": "", "instructions": "Be brief", "updated_at": "2026-10-20T10:00:00Z" })]));
+        });
+        let list = c.view()["page"].clone();
+        assert_eq!(list["kind"], "list");
+        assert_eq!(
+            list["items"][0]["action"],
+            json!({ "type": "open_project", "id": "p1" })
+        );
+        assert_eq!(list["actions"][0]["action"]["type"], "begin_new_project");
+
+        c.update(|s| {
+            s.open_project = Some("p1".into());
+            s.project_memories = vec![json!({ "id": "m1", "content": "likes trains" })];
+            s.project_chats = vec![conversation("c9", "Kyoto plan")];
+        });
+        let page = c.view()["page"].clone();
+        assert_eq!(
+            (page["kind"].as_str(), page["title"].as_str()),
+            (Some("settings"), Some("Trip"))
+        );
+        let controls = &page["sections"][0]["items"];
+        assert_eq!(controls[2]["binding"], "project:p1:instructions");
+        assert_eq!(controls[2]["value"], "Be brief");
+        let chats = &page["sections"][1]["items"];
+        assert_eq!(
+            chats[0]["action"],
+            json!({ "type": "new_chat_in_project", "id": "p1" })
+        );
+        assert_eq!(chats[1]["kind"], "item");
+        assert_eq!(
+            chats[1]["buttons"][0]["action"],
+            json!({ "type": "select_conversation", "id": "c9" })
+        );
+        let memory = &page["sections"][2]["items"][1];
+        assert_eq!(
+            (
+                memory["label"].as_str(),
+                memory["buttons"][0]["style"].as_str()
+            ),
+            (Some("likes trains"), Some("danger"))
+        );
+
+        // Starting a chat in the project, then opening another chat, drops the project.
+        futures_executor::block_on(c.dispatch(Action::NewChatInProject { id: "p1".into() }));
+        assert_eq!(
+            c.state.lock().unwrap().new_chat_project.as_deref(),
+            Some("p1")
+        );
+        futures_executor::block_on(c.dispatch(Action::NewConversation));
+        assert!(c.state.lock().unwrap().new_chat_project.is_none());
+    }
+
+    #[test]
+    fn personal_memories_are_listed_in_settings() {
+        let c = signed_in_core();
+        c.update(|s| {
+            s.route = "settings".into();
+            s.memories = Some(vec![
+                json!({ "id": "a1", "content": "Settings", "kind": "fact" }),
+            ]);
+        });
+        let view = c.view();
+        let section = view["page"]["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["id"] == "personalization")
+            .unwrap();
+        let items = section["items"].as_array().unwrap();
+        let row = items
+            .iter()
+            .find(|i| i["id"] == "memory-a1")
+            .expect("memory row");
+        assert_eq!(row["kind"], "item");
+        assert_eq!(
+            row["buttons"][0]["action"],
+            json!({ "type": "delete_memory", "id": "a1" })
+        );
+        assert!(items.iter().any(|i| i["id"] == "add_memory"));
+        // A memory that happens to match a UI word is still left untouched in Chinese.
+        futures_executor::block_on(c.dispatch(Action::SetLocale {
+            locale: "zh-CN".into(),
+        }));
+        let zh = c.view();
+        let section = zh["page"]["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["id"] == "personalization")
+            .unwrap();
+        let row = section["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["id"] == "memory-a1")
+            .unwrap();
+        assert_eq!(
+            (row["label"].as_str(), row["buttons"][0]["label"].as_str()),
+            (Some("Settings"), Some("删除"))
+        );
     }
 
     #[test]

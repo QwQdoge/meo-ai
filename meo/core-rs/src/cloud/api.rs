@@ -187,15 +187,15 @@ impl MeoApi {
         &self,
         token: &str,
         title: &str,
+        project_id: Option<&str>,
     ) -> Result<ConversationSummary, ApiError> {
         let title: String = title.chars().take(200).collect();
+        let mut input = json!({ "title": title });
+        if let Some(project_id) = project_id {
+            input["project_id"] = json!(project_id);
+        }
         let body = self
-            .request(
-                token,
-                Method::POST,
-                "/v1/conversations",
-                Some(json!({ "title": title })),
-            )
+            .request(token, Method::POST, "/v1/conversations", Some(input))
             .await?;
         serde_json::from_value(body["conversation"].clone()).map_err(|_| ApiError::Status {
             status: 502,
@@ -431,6 +431,108 @@ impl MeoApi {
                 }
             },
         ))
+    }
+
+    // ---- projects and memory ------------------------------------------
+
+    pub async fn create_project(&self, token: &str, name: &str) -> Result<Value, ApiError> {
+        let body = self
+            .request(
+                token,
+                Method::POST,
+                "/v1/projects",
+                Some(json!({ "name": name })),
+            )
+            .await?;
+        Ok(body["project"].clone())
+    }
+
+    pub async fn patch_project(&self, token: &str, id: &str, patch: Value) -> Result<(), ApiError> {
+        let path = format!("/v1/projects/{id}");
+        self.request(token, Method::PATCH, &path, Some(patch))
+            .await
+            .map(|_| ())
+    }
+
+    pub async fn delete_project(&self, token: &str, id: &str) -> Result<(), ApiError> {
+        let path = format!("/v1/projects/{id}");
+        self.request(token, Method::DELETE, &path, None)
+            .await
+            .map(|_| ())
+    }
+
+    pub async fn list_project_memories(
+        &self,
+        token: &str,
+        id: &str,
+    ) -> Result<Vec<Value>, ApiError> {
+        let path = format!("/v1/projects/{id}/memories");
+        let body = self.request(token, Method::GET, &path, None).await?;
+        Ok(body["memories"].as_array().cloned().unwrap_or_default())
+    }
+
+    pub async fn add_project_memory(
+        &self,
+        token: &str,
+        id: &str,
+        content: &str,
+    ) -> Result<(), ApiError> {
+        let path = format!("/v1/projects/{id}/memories");
+        self.request(
+            token,
+            Method::POST,
+            &path,
+            Some(json!({ "content": content })),
+        )
+        .await
+        .map(|_| ())
+    }
+
+    pub async fn delete_project_memory(
+        &self,
+        token: &str,
+        id: &str,
+        memory: &str,
+    ) -> Result<(), ApiError> {
+        let path = format!("/v1/projects/{id}/memories/{memory}");
+        self.request(token, Method::DELETE, &path, None)
+            .await
+            .map(|_| ())
+    }
+
+    pub async fn list_project_conversations(
+        &self,
+        token: &str,
+        id: &str,
+    ) -> Result<Vec<ConversationSummary>, ApiError> {
+        let path = format!("/v1/conversations?project_id={id}");
+        let body = self.request(token, Method::GET, &path, None).await?;
+        Ok(serde_json::from_value(body["conversations"].clone()).unwrap_or_default())
+    }
+
+    pub async fn list_memories(&self, token: &str) -> Result<Vec<Value>, ApiError> {
+        let body = self
+            .request(token, Method::GET, "/v1/ai/memories", None)
+            .await?;
+        Ok(body["memories"].as_array().cloned().unwrap_or_default())
+    }
+
+    pub async fn add_memory(&self, token: &str, content: &str) -> Result<(), ApiError> {
+        self.request(
+            token,
+            Method::POST,
+            "/v1/ai/memories",
+            Some(json!({ "content": content })),
+        )
+        .await
+        .map(|_| ())
+    }
+
+    pub async fn delete_memory(&self, token: &str, id: &str) -> Result<(), ApiError> {
+        let path = format!("/v1/ai/memories/{id}");
+        self.request(token, Method::DELETE, &path, None)
+            .await
+            .map(|_| ())
     }
 
     pub async fn list_projects(&self, token: &str) -> Result<Vec<Value>, ApiError> {
