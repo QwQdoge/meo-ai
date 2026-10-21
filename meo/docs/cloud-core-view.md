@@ -37,6 +37,14 @@ Clients must not interpret feature IDs; they render component kinds only.
 `kind` ∈ `toggle | select | text | info | button`. Changing a control dispatches
 `{"type":"set_setting","binding":…,"value":…}`; `button` dispatches its `action`.
 
+## Slash commands and starters
+
+`composer.commands[{name,hint,label}]` lists the `/commands` the core handles inside `send`
+(`/new /model /search /retry /rename /archive /remember /help`; unknown `/words` are plain
+text). Clients show the matching ones while the composer text is `/word` and either fill
+`name + " "` (hint present) or send `name`. `empty.suggestions[{label,action}]` are starter
+prompts rendered as chips; activating one dispatches its `send` action.
+
 ## Actions
 
 `start, realtime, sign_in, sign_out, auth_callback{url}, navigate{route}, new_conversation,

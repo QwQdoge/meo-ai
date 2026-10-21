@@ -338,6 +338,16 @@ function Conversation({ page, prefs, strings, act }: { page: Spec; prefs: Spec; 
     setInput("");
   };
   const enterSends = prefs["general.enter_to_send"] !== false;
+  const matches: Spec[] = /^\/\S*$/.test(input)
+    ? (composer.commands ?? []).filter((c: Spec) => c.name.startsWith(input.toLowerCase()))
+    : [];
+  const pick = (c: Spec) => {
+    if (c.hint) setInput(c.name + " ");
+    else if (!composer.busy) {
+      act({ ...composer.sendAction, text: c.name });
+      setInput("");
+    }
+  };
 
   return (
     <div className={`core-chat${drawer ? " drawer-open" : ""}`}>
@@ -374,6 +384,11 @@ function Conversation({ page, prefs, strings, act }: { page: Spec; prefs: Spec; 
             <div className="core-empty">
               <h2>{page.empty.title}</h2>
               <p className="core-muted">{page.empty.text}</p>
+              <div className="core-chips">
+                {(page.empty.suggestions ?? []).map((c: Spec, i: number) => (
+                  <button key={i} className="core-chip" onClick={() => act(c.action)}>{c.label}</button>
+                ))}
+              </div>
             </div>
           )}
           {messages.map((m, i) => (
@@ -409,6 +424,17 @@ function Conversation({ page, prefs, strings, act }: { page: Spec; prefs: Spec; 
           </div>
         )}
         <div className="core-composer">
+          {matches.length > 0 && (
+            <ul className="core-commands" role="listbox">
+              {matches.map((c: Spec) => (
+                <li key={c.name}>
+                  <button role="option" onClick={() => pick(c)}>
+                    <b>{c.name}</b>{c.hint ? <i> {c.hint}</i> : null}<span className="core-muted"> {c.label}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
           {(page.files ?? []).length > 0 && (
             <div className="core-files">
               {page.files.map((f: Spec) => (
@@ -449,6 +475,11 @@ function Conversation({ page, prefs, strings, act }: { page: Spec; prefs: Spec; 
               placeholder={composer.placeholder}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => {
+                if (e.key === "Escape" && composer.busy) act(composer.stopAction);
+                if (e.key === "Tab" && matches.length > 0) {
+                  e.preventDefault();
+                  setInput(matches[0].name + " ");
+                }
                 if (e.key === "Enter" && !e.nativeEvent.isComposing && enterSends !== e.shiftKey) {
                   e.preventDefault();
                   send();

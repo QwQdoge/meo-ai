@@ -1482,7 +1482,129 @@ impl AppCore {
     // ---- chat ----------------------------------------------------------
 
     async fn send(&self, text: String) {
+        if self.slash_command(&text).await {
+            return;
+        }
         self.turn(text, true, true).await;
+    }
+
+    /// Runs `/command args` typed in the composer. Returns false for ordinary text
+    /// (including unknown `/words`, which are sent to the model as written).
+    async fn slash_command(&self, text: &str) -> bool {
+        let text = text.trim();
+        let Some(rest) = text.strip_prefix('/') else {
+            return false;
+        };
+        let (name, arg) = rest
+            .split_once(char::is_whitespace)
+            .map_or((rest, ""), |(n, a)| (n, a.trim()));
+        let name = name.to_ascii_lowercase();
+        if !COMMANDS.iter().any(|(n, ..)| n[1..] == name) && name != "clear" {
+            return false;
+        }
+        let active = self.state.lock().unwrap().active.clone();
+        match name.as_str() {
+            "new" | "clear" => Box::pin(self.dispatch(Action::NewConversation)).await,
+            "retry" => Box::pin(self.dispatch(Action::Retry)).await,
+            "help" => {
+                let list = COMMANDS
+                    .iter()
+                    .map(|(n, hint, about)| {
+                        if hint.is_empty() {
+                            format!("{n} — {about}")
+                        } else {
+                            format!("{n} <{hint}> — {about}")
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                self.notice("info", list);
+            }
+            "search" => {
+                let current = self
+                    .state
+                    .lock()
+                    .unwrap()
+                    .prefs
+                    .get("chat.web_search")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                let on = match arg.to_ascii_lowercase().as_str() {
+                    "on" => true,
+                    "off" => false,
+                    _ => !current,
+                };
+                self.set_setting("chat.web_search".into(), json!(on)).await;
+                self.notice(
+                    "info",
+                    if on {
+                        "Web search is on."
+                    } else {
+                        "Web search is off."
+                    },
+                );
+            }
+            "model" => {
+                let options = mode_control(&self.state.lock().unwrap())
+                    .and_then(|c| c["options"].as_array().cloned())
+                    .unwrap_or_default();
+                let wanted = arg.to_lowercase();
+                let found = options.iter().find(|o| {
+                    !wanted.is_empty()
+                        && (o["value"].as_str().is_some_and(|v| v == wanted)
+                            || o["label"]
+                                .as_str()
+                                .is_some_and(|l| l.to_lowercase().contains(&wanted)))
+                });
+                match found {
+                    Some(o) => {
+                        let label = o["label"].as_str().unwrap_or_default().to_owned();
+                        self.set_setting("chat.mode".into(), o["value"].clone())
+                            .await;
+                        self.notice("info", format!("Model: {label}"));
+                    }
+                    None => {
+                        let names = options
+                            .iter()
+                            .filter_map(|o| o["value"].as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        self.notice(
+                            "info",
+                            if names.is_empty() {
+                                "No model routes to choose from yet.".to_owned()
+                            } else {
+                                format!("Choose one of: {names}")
+                            },
+                        );
+                    }
+                }
+            }
+            "rename" => match active {
+                Some(id) if !arg.is_empty() => {
+                    self.change_conversation(&id, json!({ "title": arg })).await
+                }
+                _ => self.notice("info", "Open a chat and give it a title: /rename <title>"),
+            },
+            "archive" => match active {
+                Some(id) => {
+                    self.change_conversation(&id, json!({ "archived": true }))
+                        .await;
+                    self.update(|s| s.active = None);
+                }
+                None => self.notice("info", "Open a chat to archive it."),
+            },
+            "remember" => {
+                if arg.is_empty() {
+                    self.notice("info", "Say what to remember: /remember <note>");
+                } else {
+                    self.add_memory(arg.to_owned()).await;
+                    self.notice("info", "Saved to memory.");
+                }
+            }
+            _ => return false,
+        }
+        true
     }
 
     /// One question/answer round. `push_local`: show the prompt as a new message;
@@ -2401,6 +2523,38 @@ fn clean_title(raw: &str) -> Option<String> {
     (!title.is_empty()).then_some(title)
 }
 
+/// Composer slash commands: (name, argument hint, what it does).
+const COMMANDS: &[(&str, &str, &str)] = &[
+    ("/new", "", "Start a new chat"),
+    ("/model", "route", "Choose the model"),
+    ("/search", "on|off", "Turn web search on or off"),
+    ("/retry", "", "Ask the last question again"),
+    ("/rename", "title", "Rename this chat"),
+    ("/archive", "", "Archive this chat"),
+    ("/remember", "note", "Save a note to memory"),
+    ("/help", "", "List the commands"),
+];
+
+/// Starter prompts of an empty chat: (label, prompt).
+const STARTERS: &[(&str, &str)] = &[
+    (
+        "Explain something simply",
+        "Explain how large language models work, in simple terms.",
+    ),
+    (
+        "Plan my day",
+        "Help me plan a productive day. Ask me what is on my list first.",
+    ),
+    (
+        "Review my code",
+        "I will paste some code. Review it for bugs and suggest improvements.",
+    ),
+    (
+        "Draft a message",
+        "Help me write a clear, friendly message. Ask who it is for first.",
+    ),
+];
+
 fn button(label: &str, style: &str, action: Value) -> Value {
     json!({ "label": label, "style": style, "action": action })
 }
@@ -2656,7 +2810,10 @@ fn conversation_page(s: &State) -> Value {
             })).collect::<Vec<_>>(),
         },
         "messages": messages,
-        "empty": messages.is_empty().then(|| json!({ "title": "How can Meo help?", "text": format!("Using {using}") })),
+        "empty": messages.is_empty().then(|| json!({
+            "title": "How can Meo help?", "text": format!("Using {using}"),
+            "suggestions": STARTERS.iter().map(|(label, prompt)| json!({ "label": label, "action": { "type": "send", "text": prompt } })).collect::<Vec<_>>(),
+        })),
         "files": s.files.iter().map(|f| json!({
             "id": f["id"],
             "name": f["name"],
@@ -2670,7 +2827,8 @@ fn conversation_page(s: &State) -> Value {
         }))).collect::<Vec<_>>(),
         "composer": {
             "attach": { "label": "Attach file", "action": "attach_text", "extensions": ["txt", "md", "markdown", "csv", "json", "py", "rs", "js", "ts", "tsx", "jsx", "java", "kt", "c", "h", "cpp", "go", "sh", "toml", "yaml", "yml", "html", "css", "sql", "log", "png", "jpg", "jpeg", "webp", "gif"] },
-            "placeholder": "Message Meo",
+            "placeholder": "Message Meo — type / for commands",
+            "commands": COMMANDS.iter().map(|(name, hint, about)| json!({ "name": name, "hint": hint, "label": about })).collect::<Vec<_>>(),
             "busy": busy,
             "sendAction": { "type": "send" },
             "stopAction": { "type": "stop" },
@@ -3124,6 +3282,30 @@ mod tests {
             (Some("en"), Some("Chat"))
         );
         assert_eq!(view["strings"]["copy"], "Copy");
+    }
+
+    #[test]
+    fn slash_commands_run_in_the_core_and_unknown_ones_are_plain_text() {
+        let c = signed_in_core();
+        c.update(|s| s.active = Some("c1".into()));
+        futures_executor::block_on(c.dispatch(Action::Send {
+            text: "/search on".into(),
+        }));
+        assert_eq!(
+            c.state.lock().unwrap().prefs["chat.web_search"],
+            json!(true)
+        );
+        futures_executor::block_on(c.dispatch(Action::Send {
+            text: "/new".into(),
+        }));
+        assert!(c.state.lock().unwrap().active.is_none());
+        assert!(futures_executor::block_on(c.slash_command("/help")));
+        assert!(!futures_executor::block_on(
+            c.slash_command("/etc/hosts what is this")
+        ));
+        let view = c.view();
+        assert_eq!(view["page"]["composer"]["commands"][0]["name"], "/new");
+        assert!(view["page"]["empty"]["suggestions"][0]["action"]["text"].is_string());
     }
 
     #[test]

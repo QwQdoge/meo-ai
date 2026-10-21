@@ -456,6 +456,24 @@ ApplicationWindow {
                         description: window.page.empty ? window.page.empty.text : ""
                     }
 
+                    Flow {
+                        visible: !!window.page.empty
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        anchors.top: parent.verticalCenter
+                        anchors.topMargin: 90
+                        width: Math.min(parent.width - 64, 560)
+                        spacing: 8
+                        Repeater {
+                            model: window.page.empty ? (window.page.empty.suggestions || []) : []
+                            MeoButton {
+                                required property var modelData
+                                text: modelData.label
+                                type: "tonal"
+                                onClicked: window.act(modelData.action)
+                            }
+                        }
+                    }
+
                     ListView {
                         id: messages
                         anchors.fill: parent
@@ -563,6 +581,31 @@ ApplicationWindow {
                             type: "tonal"
                             size: "xs"
                             onClicked: window.act(modelData.remove.action)
+                        }
+                    }
+                }
+
+                Column {
+                    id: commandList
+                    readonly property var matches: /^\/\S*$/.test(input.text)
+                        ? (window.page.composer.commands || []).filter(c => c.name.indexOf(input.text.toLowerCase()) === 0) : []
+                    visible: matches.length > 0
+                    Layout.leftMargin: 16
+                    Layout.rightMargin: 16
+                    Repeater {
+                        model: commandList.matches
+                        MeoButton {
+                            required property var modelData
+                            text: modelData.name + (modelData.hint ? " <" + modelData.hint + ">" : "") + " — " + modelData.label
+                            type: "text"
+                            size: "xs"
+                            onClicked: {
+                                if (modelData.hint) { input.text = modelData.name + " "; input.forceActiveFocus() }
+                                else if (!window.page.composer.busy) {
+                                    window.act(window.withFields(window.page.composer.sendAction, { text: modelData.name }))
+                                    input.text = ""
+                                }
+                            }
                         }
                     }
                 }

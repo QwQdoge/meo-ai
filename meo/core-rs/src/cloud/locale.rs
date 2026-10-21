@@ -136,6 +136,12 @@ pub fn localize(view: &mut Value, locale: &str) {
             }
             if let Some(empty) = page.get_mut("empty").filter(|e| e.is_object()) {
                 field(c, empty, "title");
+                for suggestion in each(empty, "suggestions") {
+                    field(c, suggestion, "label");
+                    if let Some(action) = suggestion.get_mut("action") {
+                        field(c, action, "text");
+                    }
+                }
                 if let Some(text) = empty["text"]
                     .as_str()
                     .and_then(|t| t.strip_prefix("Using "))
@@ -155,6 +161,9 @@ pub fn localize(view: &mut Value, locale: &str) {
                 }
                 for item in each(composer, "toolbar") {
                     control(c, item);
+                }
+                for command in each(composer, "commands") {
+                    field(c, command, "label");
                 }
             }
             if let Some(consent) = page.get_mut("consent").filter(|e| e.is_object()) {

@@ -607,6 +607,11 @@ private fun ChatPane(page: JSONObject, prefs: JSONObject?, strings: JSONObject, 
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center,
                     )
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)) {
+                        empty.list("suggestions").forEach { s ->
+                            androidx.compose.material3.AssistChip(onClick = { act.send(s.obj("action")) }, label = { Text(s.str("label")) })
+                        }
+                    }
                 }
             }
             LazyColumn(
@@ -734,6 +739,27 @@ private fun Composer(composer: JSONObject, files: List<JSONObject>, prefs: JSONO
             }
         }
         composer.list("toolbar").forEach { SettingControl(it, act) }
+        val matches = if (Regex("^/\\S*$").matches(input)) {
+            composer.list("commands").filter { it.str("name").startsWith(input.lowercase()) }
+        } else emptyList()
+        if (matches.isNotEmpty()) {
+            Card(Modifier.fillMaxWidth()) {
+                matches.forEach { c ->
+                    Column(
+                        Modifier.fillMaxWidth().clickable {
+                            if (c.str("hint").isNotEmpty()) input = c.str("name") + " "
+                            else if (!busy) {
+                                composer.obj("sendAction")?.let { act(it.withField("text", c.str("name"))) }
+                                input = ""
+                            }
+                        }.padding(horizontal = 16.dp, vertical = 8.dp),
+                    ) {
+                        Text(c.str("name") + if (c.str("hint").isNotEmpty()) " ${c.str("hint")}" else "", style = MaterialTheme.typography.titleSmall)
+                        Text(c.str("label"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+        }
         Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             if (attach != null) {
                 IconButton(onClick = { picker.launch(arrayOf("image/*", "text/*", "application/json", "application/xml", "application/x-sh", "application/octet-stream")) }) {
