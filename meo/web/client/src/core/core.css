@@ -183,3 +183,17 @@
 .core-pop { position: relative; }
 .core-popover { position: absolute; bottom: 100%; inset-inline-start: 0; margin-bottom: 4px; display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; min-width: 160px; border-radius: 12px; border: 1px solid rgb(var(--border-light)); background: rgb(var(--surface-primary)); box-shadow: 0 4px 16px rgb(0 0 0 / .15); z-index: 5; }
 .core-inspector { width: 210px; padding: 8px 10px; border-radius: 12px; font-size: 12px; background: rgb(var(--surface-primary)); }
+
+.core-send { width: 30px; height: 30px; padding: 0; border: 0; border-radius: 50%; background: rgb(var(--accent-primary)); color: #fff; cursor: pointer; display: grid; place-items: center; font-size: 15px; }
+.core-send[aria-label="Stop"] { font-size: 11px; }
+.core-attach { border: 0; background: none; color: inherit; cursor: pointer; font-size: 16px; filter: grayscale(1); opacity: .7; }
+.core-side-link span[aria-hidden], .core-newchat span[aria-hidden] { filter: grayscale(1); opacity: .75; }
+.core-thread { position: relative; }
+.core-messages > * { width: 100%; max-width: 760px; margin-inline: auto; }
+.core-messages > .core-message.user { display: flex; justify-content: flex-end; }
+.core-inspector { width: 210px; max-width: 210px; position: absolute; top: 56px; inset-inline-end: 16px; margin: 0; align-self: auto; }
+.core-input-box, .core-controls { max-width: 760px; }
+@media (max-width: 1099px) { .core-inspector { position: static; align-self: flex-end; margin: 0 0 8px; } }
+@media (min-width: 1100px) { .core-messages:has(.core-inspector) { padding-inline-end: 240px; } }
+.core-modes span[aria-hidden] { filter: grayscale(1); opacity: .75; }
+.collapsed .core-side-top { flex-direction: column; }

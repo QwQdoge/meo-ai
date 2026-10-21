@@ -76,7 +76,7 @@ function Sidebar({ sidebar, strings, act, open, setOpen }: { sidebar: Spec; stri
         <div className="core-modes" role="tablist">
           {(sidebar.modes ?? []).map((m: Spec) => (
             <button key={m.id} role="tab" aria-selected={!!m.selected} title={m.label} onClick={() => go(m.action)}>
-              <span aria-hidden>{ICONS[m.icon] ?? "•"}</span>{!collapsed && <span>{m.label}</span>}
+              {collapsed ? <span aria-hidden>{ICONS[m.icon] ?? "•"}</span> : <span>{m.label}</span>}
             </button>
           ))}
         </div>
@@ -632,7 +632,7 @@ function Conversation({ page, prefs, strings, act }: { page: Spec; prefs: Spec; 
             )}
               <span className="core-spacer" />
             <button
-                className="core-button primary"
+                className="core-send"
                 aria-label={composer.busy ? (strings.stop ?? "Stop") : (strings.send ?? "Send")}
                 onClick={() => (composer.busy ? act(composer.stopAction) : send())}
               >
