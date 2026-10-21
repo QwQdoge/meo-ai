@@ -149,5 +149,9 @@
   "Open a chat and give it a title: /rename <title>": "请先打开一个对话并提供标题：/rename <标题>",
   "Open a chat to archive it.": "请先打开要归档的对话。",
   "Say what to remember: /remember <note>": "请说明要记住什么：/remember <内容>",
-  "Saved to memory.": "已保存到记忆。"
+  "Saved to memory.": "已保存到记忆。",
+  "Web search": "联网搜索",
+  "Answer": "回答",
+  "Image": "图片",
+  "Working…": "处理中…"
 }

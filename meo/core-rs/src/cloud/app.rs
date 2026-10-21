@@ -244,6 +244,8 @@ struct State {
     active: Option<String>,
     messages: HashMap<String, Vec<ChatMessage>>,
     streaming: Option<(String, String)>,
+    /// Steps of the current or last answer: (conversation id, steps) — shown collapsed on that answer.
+    activity: Option<(String, Vec<Value>)>,
     remote_run: Option<RemoteRun>,
     search: String,
     show_archived: bool,
@@ -1607,6 +1609,38 @@ impl AppCore {
         true
     }
 
+    /// Starts the step list of an answer in `conversation_id`.
+    fn begin_activity(&self, conversation_id: &str) {
+        self.update(|s| s.activity = Some((conversation_id.to_owned(), Vec::new())));
+    }
+
+    /// Keeps the steps already recorded for this conversation (regenerate / retry start without any).
+    fn ensure_activity(&self, conversation_id: &str) {
+        let same = self
+            .state
+            .lock()
+            .unwrap()
+            .activity
+            .as_ref()
+            .is_some_and(|(c, _)| c == conversation_id);
+        if !same {
+            self.begin_activity(conversation_id);
+        }
+    }
+
+    /// Adds or updates a step (`status`: running / done / error) of the current answer.
+    fn step(&self, id: &str, title: &str, detail: &str, status: &str, items: Vec<Value>) {
+        self.update(|s| {
+            if let Some((_, steps)) = s.activity.as_mut() {
+                let step = json!({ "id": id, "title": title, "detail": detail, "status": status, "items": items });
+                match steps.iter_mut().find(|x| x["id"] == id) {
+                    Some(old) => *old = step,
+                    None => steps.push(step),
+                }
+            }
+        });
+    }
+
     /// One question/answer round. `push_local`: show the prompt as a new message;
     /// `save_prompt`: store it on the server before streaming.
     async fn turn(&self, text: String, push_local: bool, save_prompt: bool) {
@@ -1692,6 +1726,16 @@ impl AppCore {
                 .await;
         }
         let mut request = json!({ "credentialId": credential, "model": model, "prompt": text, "conversationId": conversation_id });
+        self.begin_activity(&conversation_id);
+        let route_label =
+            router::slot(&route).map_or_else(|| "Custom".to_owned(), |x| x.label.to_owned());
+        self.step(
+            "model",
+            "Model",
+            &format!("{route_label} · {model}"),
+            "done",
+            vec![],
+        );
         let search = self
             .state
             .lock()
@@ -1711,16 +1755,24 @@ impl AppCore {
         if search {
             // Search once here: the same results go to both prepare and stream so consent covers them.
             let query: String = text.chars().take(300).collect();
-            if let Ok(results) = self
+            self.step("search", "Web search", &query, "running", vec![]);
+            let found = self
                 .call(|api, t| {
                     let query = query.clone();
                     async move { api.web_search(&t, &query).await }
                 })
-                .await
-            {
-                if !results.is_empty() {
+                .await;
+            match found {
+                Ok(results) if !results.is_empty() => {
+                    let items = results
+                        .iter()
+                        .map(|r| json!({ "title": r["title"], "url": r["url"], "subtitle": r["url"] }))
+                        .collect();
+                    self.step("search", "Web search", &query, "done", items);
                     request["webResults"] = Value::Array(results);
                 }
+                Ok(_) => self.step("search", "Web search", &query, "done", vec![]),
+                Err(_) => self.step("search", "Web search", &query, "error", vec![]),
             }
         }
         let consent = match self
@@ -1825,6 +1877,8 @@ impl AppCore {
         });
         self.update(|s| s.streaming = Some((id.clone(), "Creating your image…".to_owned())));
         self.hooks.busy(true);
+        self.begin_activity(&id);
+        self.step("image", "Image", &model, "running", vec![]);
         let result = self
             .call(|api, t| {
                 let body = body.clone();
@@ -1833,6 +1887,13 @@ impl AppCore {
             .await;
         self.update(|s| s.streaming = None);
         self.hooks.busy(false);
+        self.step(
+            "image",
+            "Image",
+            &model,
+            if result.is_ok() { "done" } else { "error" },
+            vec![],
+        );
         let image = match result {
             Ok(image) => image,
             Err(e) => return self.notice("error", e.to_string()),
@@ -2032,6 +2093,8 @@ impl AppCore {
         self.cancel.store(false, Ordering::SeqCst);
         self.update(|s| s.streaming = Some((id.clone(), String::new())));
         self.hooks.busy(true);
+        self.ensure_activity(&id);
+        self.step("answer", "Answer", "", "running", vec![]);
         let stream = self
             .call(|api, t| {
                 let body = body.clone();
@@ -2070,6 +2133,13 @@ impl AppCore {
             .map(|(_, t)| t)
             .unwrap_or_default();
         self.hooks.busy(false);
+        self.step(
+            "answer",
+            "Answer",
+            "",
+            if failure.is_some() { "error" } else { "done" },
+            vec![],
+        );
         if !reply.is_empty() {
             self.push_message(&id, "assistant", &reply);
             let _ = self
@@ -2523,6 +2593,10 @@ fn clean_title(raw: &str) -> Option<String> {
     (!title.is_empty()).then_some(title)
 }
 
+fn steps_empty(activity: &Option<(String, Vec<Value>)>) -> bool {
+    activity.as_ref().is_none_or(|(_, steps)| steps.is_empty())
+}
+
 /// Composer slash commands: (name, argument hint, what it does).
 const COMMANDS: &[(&str, &str, &str)] = &[
     ("/new", "", "Start a new chat"),
@@ -2771,6 +2845,35 @@ fn conversation_page(s: &State) -> Value {
         .filter(|(id, _)| Some(id) == active.as_ref());
     if let Some((_, text)) = streaming {
         messages.push(json!({ "role": "assistant", "text": text, "streaming": true }));
+    }
+    // Steps of the current / last answer, collapsed under it.
+    if let Some((_, steps)) = s
+        .activity
+        .as_ref()
+        .filter(|(c, _)| Some(c) == active.as_ref() && !steps_empty(&s.activity))
+    {
+        let running = steps.iter().any(|x| x["status"] == "running");
+        if running && streaming.is_none() {
+            messages.push(json!({ "role": "assistant", "text": "", "streaming": true }));
+        }
+        let label = if running {
+            "Working…".to_owned()
+        } else {
+            format!("{} steps", steps.len())
+        };
+        if let Some(target) = messages.iter_mut().rev().find(|m| m["role"] == "assistant") {
+            // After a finished answer only its latest message carries the steps.
+            let latest = target["streaming"] == true
+                || !s
+                    .messages
+                    .get(active.as_deref().unwrap_or_default())
+                    .is_some_and(|l| l.last().is_some_and(|m| m.role == "user"));
+            if latest {
+                target["steps"] = Value::Array(steps.clone());
+                target["stepsLabel"] = json!(label);
+                target["stepsOpen"] = json!(running);
+            }
+        }
     }
     // An answer being generated on another device of the same account.
     if streaming.is_none() {
@@ -3306,6 +3409,39 @@ mod tests {
         let view = c.view();
         assert_eq!(view["page"]["composer"]["commands"][0]["name"], "/new");
         assert!(view["page"]["empty"]["suggestions"][0]["action"]["text"].is_string());
+    }
+
+    #[test]
+    fn steps_of_an_answer_are_listed_on_it_and_open_only_while_working() {
+        let c = signed_in_core();
+        c.update(|s| s.active = Some("c1".into()));
+        c.begin_activity("c1");
+        c.step("search", "Web search", "rust", "running", vec![]);
+        let messages = c.view()["page"]["messages"].clone();
+        assert_eq!(messages[0]["stepsLabel"], "Working…");
+        assert_eq!(messages[0]["stepsOpen"], true);
+        c.step(
+            "search",
+            "Web search",
+            "rust",
+            "done",
+            vec![json!({ "title": "t", "url": "https://a" })],
+        );
+        c.step("answer", "Answer", "", "done", vec![]);
+        c.update(|s| {
+            s.messages.insert(
+                "c1".into(),
+                vec![ChatMessage {
+                    id: "m".into(),
+                    role: "assistant".into(),
+                    text: "hi".into(),
+                }],
+            );
+        });
+        let messages = c.view()["page"]["messages"].clone();
+        assert_eq!(messages[0]["stepsLabel"], "2 steps");
+        assert_eq!(messages[0]["stepsOpen"], false);
+        assert_eq!(messages[0]["steps"][0]["items"][0]["url"], "https://a");
     }
 
     #[test]

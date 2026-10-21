@@ -103,3 +103,8 @@
 .core-commands { list-style: none; margin: 0 0 4px; padding: 4px; border: 1px solid var(--core-outline, rgba(128,128,128,.4)); border-radius: 12px; }
 .core-commands button { display: block; width: 100%; text-align: left; background: transparent; color: inherit; border: 0; padding: 8px 10px; border-radius: 8px; cursor: pointer; font: inherit; }
 .core-commands button:hover { background: rgba(128,128,128,.12); }
+.core-steps { font-size: 13px; margin-bottom: 8px; opacity: .85; }
+.core-steps summary { cursor: pointer; }
+.core-steps ul { margin: 4px 0; padding-left: 18px; list-style: none; }
+.core-steps ul ul { list-style: disc; padding-left: 20px; }
+.core-steps .step-error span:first-child { color: #d33; }

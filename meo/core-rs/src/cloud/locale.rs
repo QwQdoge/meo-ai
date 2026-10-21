@@ -129,6 +129,18 @@ pub fn localize(view: &mut Value, locale: &str) {
             }
             for message in each(page, "messages") {
                 buttons(c, message, "actions");
+                for step in each(message, "steps") {
+                    field(c, step, "title");
+                }
+                if let Some(n) = message["stepsLabel"]
+                    .as_str()
+                    .and_then(|l| l.strip_suffix(" steps"))
+                    .map(str::to_owned)
+                {
+                    message["stepsLabel"] = Value::String(format!("{n} 个步骤"));
+                } else {
+                    field(c, message, "stepsLabel");
+                }
                 // The "Creating your image…" placeholder is product copy, not the model's words.
                 if message["streaming"] == true && message["role"] == "assistant" {
                     field(c, message, "text");

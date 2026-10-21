@@ -397,6 +397,26 @@ function Conversation({ page, prefs, strings, act }: { page: Spec; prefs: Spec; 
                 <div className="core-bubble user">{m.text}</div>
               ) : (
                 <div className="core-bubble assistant">
+                  {m.steps && (
+                    <details className="core-steps" open={!!m.stepsOpen}>
+                      <summary>{m.stepsLabel}</summary>
+                      <ul>
+                        {m.steps.map((st: Spec) => (
+                          <li key={st.id} className={`step-${st.status}`}>
+                            <span aria-hidden>{st.status === "done" ? "✓" : st.status === "error" ? "✕" : "…"}</span> <b>{st.title}</b>
+                            {st.detail ? <span className="core-muted"> — {st.detail}</span> : null}
+                            {(st.items ?? []).length > 0 && (
+                              <ul>
+                                {st.items.map((it: Spec, k: number) => (
+                                  <li key={k}>{/^https?:\/\//.test(it.url) ? <a href={it.url} target="_blank" rel="noreferrer noopener">{it.title || it.url}</a> : it.title}</li>
+                                ))}
+                              </ul>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                  )}
                   <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ pre: (props) => <CodeBlock {...props} label={strings.copy ?? "Copy"} done={strings.copied ?? "Copied"} /> }}>
                     {m.text + (m.streaming ? " ▍" : "")}
                   </ReactMarkdown>

@@ -485,12 +485,61 @@ ApplicationWindow {
                         onContentHeightChanged: if (atYEnd || window.page.composer.busy) positionViewAtEnd()
                         delegate: Item {
                             width: ListView.view.width
-                            implicitHeight: bubble.implicitHeight + pictures.height + (messageActions.visible ? messageActions.implicitHeight + 4 : 0)
+                            implicitHeight: stepsBox.height + bubble.implicitHeight + pictures.height + (messageActions.visible ? messageActions.implicitHeight + 4 : 0)
                             readonly property bool mine: modelData.role === "user"
+                            // Steps of the answer (search, model, ...): collapsed once it is done.
+                            Column {
+                                id: stepsBox
+                                visible: !!modelData.steps
+                                width: parent.width
+                                height: visible ? implicitHeight : 0
+                                spacing: 2
+                                property bool toggled: false
+                                property bool manual: false
+                                readonly property bool open: toggled ? manual : !!modelData.stepsOpen
+                                MeoButton {
+                                    text: (stepsBox.open ? "▾ " : "▸ ") + (modelData.stepsLabel || "")
+                                    type: "text"
+                                    size: "xs"
+                                    onClicked: { stepsBox.manual = !stepsBox.open; stepsBox.toggled = true }
+                                }
+                                Repeater {
+                                    model: stepsBox.open ? (modelData.steps || []) : []
+                                    Column {
+                                        required property var modelData
+                                        x: 16
+                                        width: stepsBox.width - 32
+                                        Text {
+                                            width: parent.width
+                                            wrapMode: Text.Wrap
+                                            color: MeoTheme.onSurfaceVariant
+                                            font.pixelSize: 13
+                                            text: (modelData.status === "done" ? "✓ " : modelData.status === "error" ? "✕ " : "… ") + modelData.title + (modelData.detail ? " — " + modelData.detail : "")
+                                        }
+                                        Repeater {
+                                            model: modelData.items || []
+                                            Text {
+                                                required property var modelData
+                                                x: 16
+                                                width: parent.width - 16
+                                                elide: Text.ElideRight
+                                                color: MeoTheme.primary
+                                                font.pixelSize: 12
+                                                text: modelData.title || modelData.url
+                                                MouseArea {
+                                                    anchors.fill: parent
+                                                    cursorShape: Qt.PointingHandCursor
+                                                    onClicked: if (/^https?:\/\//.test(modelData.url)) Qt.openUrlExternally(modelData.url)
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                             // Images created by the model (urls or data urls).
                             Column {
                                 id: pictures
-                                y: bubble.implicitHeight + 4
+                                y: stepsBox.height + bubble.implicitHeight + 4
                                 spacing: 8
                                 Repeater {
                                     model: modelData.images || []
@@ -506,7 +555,7 @@ ApplicationWindow {
                             Row {
                                 id: messageActions
                                 visible: !modelData.streaming && !!modelData.text
-                                y: bubble.implicitHeight + pictures.height + 4
+                                y: stepsBox.height + bubble.implicitHeight + pictures.height + 4
                                 anchors.right: parent.mine ? parent.right : undefined
                                 spacing: 4
                                 MeoButton {
@@ -532,6 +581,7 @@ ApplicationWindow {
                             }
                             Rectangle {
                                 id: bubble
+                                y: stepsBox.height
                                 anchors.right: parent.mine ? parent.right : undefined
                                 width: Math.min(parent.width * (parent.mine ? 0.75 : 1), body.implicitWidth + 32)
                                 implicitHeight: body.implicitHeight + 24

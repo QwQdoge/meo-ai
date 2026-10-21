@@ -658,6 +658,7 @@ private fun MessageBubble(message: JSONObject, strings: JSONObject, act: Act) {
         } else {
             SelectionContainer {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (message.has("steps")) Steps(message, act)
                     MarkdownText(text, Modifier.fillMaxWidth())
                     message.list("images").forEach { image ->
                         AsyncImage(
@@ -675,6 +676,48 @@ private fun MessageBubble(message: JSONObject, strings: JSONObject, act: Act) {
                 TextButton(onClick = { clipboard.setText(AnnotatedString(message.str("text"))) }) { Text(strings.str("copy").ifEmpty { "Copy" }) }
                 message.list("actions").forEach { entry ->
                     TextButton(onClick = { act.send(entry.obj("action")) }) { Text(entry.str("label")) }
+                }
+            }
+        }
+    }
+}
+
+/** Collapsible list of what the core did for this answer (model, web search, ...). */
+@Composable
+private fun Steps(message: JSONObject, act: Act) {
+    val auto = message.optBoolean("stepsOpen")
+    var toggled by remember { mutableStateOf<Boolean?>(null) }
+    val open = toggled ?: auto
+    val context = LocalContext.current
+    Column(Modifier.fillMaxWidth().clickable { toggled = !open }.padding(vertical = 2.dp)) {
+        Text(
+            (if (open) "▾ " else "▸ ") + message.str("stepsLabel"),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (open) {
+            message.list("steps").forEach { step ->
+                val mark = when (step.str("status")) { "done" -> "✓ "; "error" -> "✕ "; else -> "… " }
+                Text(
+                    mark + step.str("title") + step.str("detail").let { if (it.isEmpty()) "" else " — $it" },
+                    Modifier.padding(start = 16.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                step.list("items").forEach { item ->
+                    Text(
+                        item.str("title").ifEmpty { item.str("url") },
+                        Modifier.padding(start = 32.dp).clickable {
+                            val url = item.str("url")
+                            if (url.startsWith("https://") || url.startsWith("http://")) {
+                                runCatching { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))) }
+                            }
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
             }
         }

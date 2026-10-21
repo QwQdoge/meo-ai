@@ -45,6 +45,13 @@ text). Clients show the matching ones while the composer text is `/word` and eit
 `name + " "` (hint present) or send `name`. `empty.suggestions[{label,action}]` are starter
 prompts rendered as chips; activating one dispatches its `send` action.
 
+## Answer steps
+
+An assistant message may carry `steps[{id,title,detail,status(running/done/error),items[{title,url}]}]`,
+`stepsLabel` ("Working…" / "N steps") and `stepsOpen`. Clients render a collapsible list under
+that label, expanded while `stepsOpen` is true (the core collapses it when the answer is done)
+unless the user toggled it. Steps today: model route, web search (with result links), answer, image.
+
 ## Actions
 
 `start, realtime, sign_in, sign_out, auth_callback{url}, navigate{route}, new_conversation,
