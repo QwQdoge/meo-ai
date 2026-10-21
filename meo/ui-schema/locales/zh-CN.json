@@ -153,5 +153,22 @@
   "Web search": "联网搜索",
   "Answer": "回答",
   "Image": "图片",
-  "Working…": "处理中…"
+  "Working…": "处理中…",
+  "Plugins": "插件",
+  "Details": "详情",
+  "Tools used": "已用工具",
+  "Context": "上下文",
+  "Files changed": "已改文件",
+  "Environment": "环境",
+  "Cloud chat": "云端聊天",
+  "Permissions": "权限",
+  "Ask every time": "每次询问",
+  "Allow low risk": "允许低风险",
+  "Auto choose": "自动选择",
+  "Allow all": "全部允许",
+  "Thinking": "思考",
+  "Low": "低",
+  "Medium": "中",
+  "High": "高",
+  "Max": "最高"
 }

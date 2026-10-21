@@ -107,23 +107,43 @@ pub fn localize(view: &mut Value, locale: &str) {
             field(c, input, "placeholder");
         }
     }
+    if let Some(sidebar) = view.get_mut("sidebar").filter(|v| v.is_object()) {
+        for mode in each(sidebar, "modes") {
+            field(c, mode, "label");
+        }
+        if let Some(search) = sidebar.get_mut("search") {
+            field(c, search, "placeholder");
+        }
+        if let Some(new_chat) = sidebar.get_mut("newChat") {
+            field(c, new_chat, "label");
+        }
+        for item in each(sidebar, "footer") {
+            field(c, item, "label");
+        }
+        for section in each(sidebar, "sections") {
+            field(c, section, "label");
+            buttons(c, section, "tabs");
+            let chats = section["id"] == "chats";
+            let each_item = |item: &mut Value| {
+                // Only the "New chat" placeholder matches; titles are the user's own.
+                if chats || item.get("menu").is_some() {
+                    field(c, item, "title");
+                    buttons(c, item, "menu");
+                }
+            };
+            for item in each(section, "items") {
+                each_item(item);
+                for child in each(item, "children") {
+                    each_item(child);
+                }
+            }
+        }
+    }
     let Some(page) = view.get_mut("page") else {
         return;
     };
     match page["kind"].as_str().unwrap_or_default() {
         "conversation" => {
-            if let Some(sidebar) = page.get_mut("sidebar") {
-                field(c, sidebar, "title");
-                buttons(c, sidebar, "actions");
-                buttons(c, sidebar, "tabs");
-                if let Some(search) = sidebar.get_mut("search") {
-                    field(c, search, "placeholder");
-                }
-                for item in each(sidebar, "items") {
-                    field(c, item, "title"); // only the "New chat" placeholder matches
-                    buttons(c, item, "menu");
-                }
-            }
             if page["title"] == "New chat" {
                 field(c, page, "title");
             }
@@ -159,6 +179,15 @@ pub fn localize(view: &mut Value, locale: &str) {
                     .and_then(|t| t.strip_prefix("Using "))
                 {
                     empty["text"] = Value::String(format!("使用 {text}"));
+                }
+            }
+            if let Some(card) = page.get_mut("inspector").filter(|i| i.is_object()) {
+                field(c, card, "title");
+                for row in each(card, "rows") {
+                    field(c, row, "label");
+                    if row["value"] == "Cloud chat" {
+                        field(c, row, "value");
+                    }
                 }
             }
             for file in each(page, "files") {
@@ -222,16 +251,19 @@ mod tests {
         let mut view = json!({
             "navigation": [{ "label": "Settings" }],
             "notice": { "text": "Cancel", "kind": "error" },
-            "page": {
-                "kind": "conversation",
-                "title": "Settings",
-                "sidebar": {
-                    "title": "Chats",
+            "sidebar": {
+                "modes": [{ "label": "Work" }],
+                "sections": [{
+                    "id": "chats", "label": "Chats",
                     "items": [
                         { "title": "Settings", "menu": [{ "label": "Rename" }] },
                         { "title": "New chat", "menu": [] },
                     ],
-                },
+                }],
+            },
+            "page": {
+                "kind": "conversation",
+                "title": "Settings",
                 "messages": [{ "role": "user", "text": "Settings", "actions": [{ "label": "Edit" }] }],
                 "empty": null,
                 "composer": { "placeholder": "Message Meo", "toolbar": [] },
@@ -239,16 +271,19 @@ mod tests {
         });
         localize(&mut view, "zh-CN");
         assert_eq!(view["navigation"][0]["label"], "设置");
-        assert_eq!(view["page"]["sidebar"]["title"], "对话");
+        assert_eq!(view["sidebar"]["sections"][0]["label"], "对话");
         assert_eq!(
             view["page"]["title"], "Settings",
             "a chat called Settings stays untouched"
         );
         assert_eq!(view["page"]["messages"][0]["text"], "Settings");
         assert_eq!(view["page"]["messages"][0]["actions"][0]["label"], "编辑");
-        assert_eq!(view["page"]["sidebar"]["items"][1]["title"], "新对话");
         assert_eq!(
-            view["page"]["sidebar"]["items"][0]["menu"][0]["label"],
+            view["sidebar"]["sections"][0]["items"][1]["title"],
+            "新对话"
+        );
+        assert_eq!(
+            view["sidebar"]["sections"][0]["items"][0]["menu"][0]["label"],
             "重命名"
         );
         assert_eq!(view["page"]["composer"]["placeholder"], "给 Meo 发消息");

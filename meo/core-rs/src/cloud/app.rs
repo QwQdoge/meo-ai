@@ -1665,6 +1665,25 @@ impl AppCore {
         // The route decides the model: automatically from the message, or the one forced in the composer.
         let has_pictures = !self.state.lock().unwrap().images.is_empty();
         let mut route = router::route_for(&router, &mode, &text, has_pictures);
+        if mode == "auto" && route == "default" {
+            let level = self
+                .state
+                .lock()
+                .unwrap()
+                .prefs
+                .get("chat.thinking")
+                .and_then(Value::as_str)
+                .unwrap_or("medium")
+                .to_owned();
+            let wanted = match level.as_str() {
+                "low" => "fast",
+                "high" | "max" => "thinking",
+                _ => "default",
+            };
+            if router.choice(wanted).is_some_and(|c| !c.1.is_empty()) {
+                route = wanted.into();
+            }
+        }
         let task = router::slot(&route).map_or("chat", |slot| slot.task);
         let image = task == "image_generation";
         if task != "chat" && !image {
@@ -2307,6 +2326,13 @@ impl AppCore {
             });
             return self.persist_router().await;
         }
+        if binding == "chat.permission" {
+            // Only "ask every time" holds the request back; the finer levels need real tool calls.
+            let ask = value.as_str() == Some("ask");
+            self.update(|s| {
+                s.prefs.insert("chat.auto_consent".into(), json!(!ask));
+            });
+        }
         let cloud_field = match binding.as_str() {
             "personalization.custom_instructions" => Some("personalInstructions"),
             "memory.enabled" => Some("memoryEnabled"),
@@ -2418,6 +2444,7 @@ impl AppCore {
             "sync": { "live": s.sync_live, "devices": s.sync_devices },
             "route": s.route,
             "navigation": if signed_in { self.manifest.nav_json(&s.route) } else { json!([]) },
+            "sidebar": if signed_in { shell_sidebar(&s) } else { Value::Null },
             "page": page,
             "dialog": s.dialog.as_ref().map(|d| json!({
                 "kind": d.kind,
@@ -2593,6 +2620,91 @@ fn clean_title(raw: &str) -> Option<String> {
     (!title.is_empty()).then_some(title)
 }
 
+fn pref_bool(s: &State, key: &str, default: bool) -> bool {
+    s.prefs.get(key).and_then(Value::as_bool).unwrap_or(default)
+}
+
+/// The Claude-style left column shared by every page: Chat | Work switch, search, new chat,
+/// plugins, projects tree and plain chats. `collapsed` leaves only the icon rail.
+fn shell_sidebar(s: &State) -> Value {
+    let work = s.route == "work";
+    let active = s.active.as_ref();
+    let chat_item = |c: &ConversationSummary| {
+        json!({
+            "id": c.id,
+            "title": if c.title.is_empty() { "New chat".to_owned() } else { c.title.clone() },
+            "subtitle": c.updated_at.get(..10).unwrap_or_default(),
+            "selected": Some(&c.id) == active && s.route == "chat",
+            "action": { "type": "select_conversation", "id": c.id },
+            "menu": [
+                button("Rename", "secondary", json!({ "type": "begin_rename", "id": c.id })),
+                button(if s.show_archived { "Restore" } else { "Archive" }, "secondary",
+                    json!({ "type": "archive_conversation", "id": c.id, "archived": !s.show_archived })),
+                button("Delete", "danger", json!({ "type": "begin_delete", "id": c.id })),
+            ],
+        })
+    };
+    let projects: Vec<Value> = s
+        .projects
+        .as_ref()
+        .and_then(|r| r.as_ref().ok())
+        .map(|list| {
+            list.iter()
+                .map(|p| {
+                    let id = p["id"].as_str().unwrap_or_default();
+                    json!({
+                        "id": id,
+                        "title": p["name"],
+                        "selected": s.open_project.as_deref() == Some(id) && s.route == "projects",
+                        "action": { "type": "open_project", "id": id },
+                        "children": if work { vec![] } else {
+                            s.conversations.iter().filter(|c| c.project_id.as_deref() == Some(id)).map(&chat_item).collect::<Vec<_>>()
+                        },
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let plain: Vec<Value> = s
+        .conversations
+        .iter()
+        .filter(|c| c.project_id.is_none())
+        .map(chat_item)
+        .collect();
+    let mut sections = vec![
+        json!({ "id": "plugins", "kind": "link", "label": "Plugins", "icon": "skills", "selected": s.route == "skills",
+            "action": { "type": "navigate", "route": "skills" } }),
+        json!({ "id": "projects", "kind": "tree", "label": "Projects", "icon": "projects", "selected": s.route == "projects" && s.open_project.is_none(),
+            "action": { "type": "navigate", "route": "projects" }, "items": projects }),
+    ];
+    if !work {
+        sections.push(json!({
+            "id": "chats", "kind": "list", "label": if s.show_archived { "Archived" } else { "Chats" }, "icon": "chat",
+            "tabs": [
+                { "label": "Chats", "selected": !s.show_archived, "action": { "type": "show_archived", "value": false } },
+                { "label": "Archived", "selected": s.show_archived, "action": { "type": "show_archived", "value": true } },
+            ],
+            "items": plain,
+        }));
+    }
+    let collapsed = pref_bool(s, "ui.sidebar_collapsed", false);
+    json!({
+        "collapsed": collapsed,
+        "toggle": { "type": "set_setting", "binding": "ui.sidebar_collapsed", "value": !collapsed },
+        "modes": [
+            { "id": "chat", "label": "Chat", "icon": "chat", "selected": !work, "action": { "type": "navigate", "route": "chat" } },
+            { "id": "work", "label": "Work", "icon": "work", "selected": work, "action": { "type": "navigate", "route": "work" } },
+        ],
+        "search": { "placeholder": "Search chats", "value": s.search, "action": { "type": "search" } },
+        "newChat": button("New chat", "primary", json!({ "type": "new_conversation" })),
+        "sections": sections,
+        "footer": [
+            { "id": "settings", "label": "Settings", "icon": "settings", "selected": s.route == "settings",
+              "action": { "type": "navigate", "route": "settings" } },
+        ],
+    })
+}
+
 fn steps_empty(activity: &Option<(String, Vec<Value>)>) -> bool {
     activity.as_ref().is_none_or(|(_, steps)| steps.is_empty())
 }
@@ -2686,6 +2798,144 @@ fn mode_control(s: &State) -> Option<Value> {
     Some(
         json!({ "id": "mode", "label": "Model", "kind": "select", "binding": "chat.mode", "value": value, "options": options }),
     )
+}
+
+/// Ordered choices shown as a slider: (value, label).
+fn slider(
+    id: &str,
+    label: &str,
+    binding: &str,
+    value: &str,
+    options: &[(&str, &str)],
+    end: bool,
+) -> Value {
+    json!({
+        "id": id, "label": label, "kind": "slider", "binding": binding, "value": value,
+        "options": options.iter().map(|(v, l)| json!({ "value": v, "label": l })).collect::<Vec<_>>(),
+        "align": if end { "end" } else { "start" },
+    })
+}
+
+const PERMISSIONS: &[(&str, &str)] = &[
+    ("ask", "Ask every time"),
+    ("low", "Allow low risk"),
+    ("smart", "Auto choose"),
+    ("all", "Allow all"),
+];
+const THINKING: &[(&str, &str)] = &[
+    ("low", "Low"),
+    ("medium", "Medium"),
+    ("high", "High"),
+    ("max", "Max"),
+];
+
+/// Controls under the composer, left to right: permission, web search; then (right) model,
+/// thinking level, sub-agents.
+fn composer_controls(s: &State) -> Vec<Value> {
+    let text = |key: &str, default: &str| {
+        s.prefs
+            .get(key)
+            .and_then(Value::as_str)
+            .unwrap_or(default)
+            .to_owned()
+    };
+    // Older settings only had the consent switch.
+    let permission = s
+        .prefs
+        .get("chat.permission")
+        .and_then(Value::as_str)
+        .map_or_else(
+            || {
+                if pref_bool(s, "chat.auto_consent", true) {
+                    "all"
+                } else {
+                    "ask"
+                }
+                .to_owned()
+            },
+            str::to_owned,
+        );
+    let mut controls = vec![
+        slider(
+            "permission",
+            "Permissions",
+            "chat.permission",
+            &permission,
+            PERMISSIONS,
+            false,
+        ),
+        json!({
+            "id": "web_search", "label": "Search the web", "kind": "toggle", "binding": "chat.web_search",
+            "value": s.prefs.get("chat.web_search").cloned().unwrap_or(json!(false)), "align": "start",
+        }),
+    ];
+    if let Some(mut model) = mode_control(s) {
+        model["align"] = json!("end");
+        controls.push(model);
+    }
+    controls.push(slider(
+        "thinking",
+        "Thinking",
+        "chat.thinking",
+        &text("chat.thinking", "medium"),
+        THINKING,
+        true,
+    ));
+    controls.push(json!({
+        "id": "subagents", "label": "Sub-agents", "kind": "toggle", "binding": "chat.subagents",
+        "value": pref_bool(s, "chat.subagents", false), "align": "end",
+    }));
+    controls
+}
+
+/// Details card of the open chat: what this answer used. `None` until something was said.
+fn inspector(s: &State, messages: &[Value], active: Option<&String>) -> Value {
+    let started = s.streaming.is_some()
+        || messages
+            .iter()
+            .any(|m| m["role"] == "assistant" && m["text"] != "");
+    let visible = pref_bool(s, "ui.inspector", true);
+    let toggle =
+        |value: bool| json!({ "type": "set_setting", "binding": "ui.inspector", "value": value });
+    if !started {
+        return Value::Null;
+    }
+    let steps: Vec<&Value> = s
+        .activity
+        .as_ref()
+        .filter(|(c, _)| Some(c) == active)
+        .map(|(_, steps)| steps.iter().collect())
+        .unwrap_or_default();
+    let tools = steps
+        .iter()
+        .filter(|x| x["id"] == "search" || x["id"] == "image")
+        .count();
+    let chars: usize = messages
+        .iter()
+        .map(|m| m["text"].as_str().map_or(0, |t| t.chars().count()))
+        .sum();
+    let resources: Vec<Value> = steps
+        .iter()
+        .flat_map(|x| x["items"].as_array().cloned().unwrap_or_default())
+        .map(|i| json!({ "title": i["title"], "url": i["url"] }))
+        .chain(
+            s.files
+                .iter()
+                .map(|f| json!({ "title": f["name"], "url": null })),
+        )
+        .collect();
+    json!({
+        "visible": visible,
+        "title": "Details",
+        "hide": toggle(false),
+        "show": toggle(true),
+        "rows": [
+            { "label": "Tools used", "value": tools.to_string() },
+            { "label": "Context", "value": format!("≈ {} tokens", chars / 4) },
+            { "label": "Environment", "value": "Cloud chat" },
+        ],
+        "resources": resources,
+    })
 }
 
 /// What the empty chat says it will use.
@@ -2890,28 +3140,7 @@ fn conversation_page(s: &State) -> Value {
     json!({
         "kind": "conversation",
         "title": active.as_ref().and_then(|id| s.conversations.iter().find(|c| &c.id == id)).map(|c| c.title.clone()).unwrap_or_else(|| "New chat".into()),
-        "sidebar": {
-            "title": if s.show_archived { "Archived" } else { "Chats" },
-            "actions": [button("New chat", "primary", json!({ "type": "new_conversation" }))],
-            "search": { "placeholder": "Search chats", "value": s.search, "action": { "type": "search" } },
-            "tabs": [
-                { "label": "Chats", "selected": !s.show_archived, "action": { "type": "show_archived", "value": false } },
-                { "label": "Archived", "selected": s.show_archived, "action": { "type": "show_archived", "value": true } },
-            ],
-            "items": s.conversations.iter().map(|c| json!({
-                "id": c.id,
-                "title": if c.title.is_empty() { "New chat".to_owned() } else { c.title.clone() },
-                "subtitle": c.updated_at.get(..10).unwrap_or_default(),
-                "selected": Some(&c.id) == active.as_ref(),
-                "action": { "type": "select_conversation", "id": c.id },
-                "menu": [
-                    button("Rename", "secondary", json!({ "type": "begin_rename", "id": c.id })),
-                    button(if s.show_archived { "Restore" } else { "Archive" }, "secondary",
-                        json!({ "type": "archive_conversation", "id": c.id, "archived": !s.show_archived })),
-                    button("Delete", "danger", json!({ "type": "begin_delete", "id": c.id })),
-                ],
-            })).collect::<Vec<_>>(),
-        },
+        "inspector": inspector(s, &messages, active.as_ref()),
         "messages": messages,
         "empty": messages.is_empty().then(|| json!({
             "title": "How can Meo help?", "text": format!("Using {using}"),
@@ -2935,10 +3164,7 @@ fn conversation_page(s: &State) -> Value {
             "busy": busy,
             "sendAction": { "type": "send" },
             "stopAction": { "type": "stop" },
-            "toolbar": mode_control(s).into_iter().chain(std::iter::once(json!({
-                "id": "web_search", "label": "Search the web", "kind": "toggle", "binding": "chat.web_search",
-                "value": s.prefs.get("chat.web_search").cloned().unwrap_or(json!(false)),
-            }))).collect::<Vec<_>>(),
+            "toolbar": composer_controls(s),
         },
         "consent": s.consent.as_ref().map(|p| json!({
             "title": "Send to AI provider?",
@@ -3246,7 +3472,8 @@ mod tests {
     fn rename_and_delete_use_dialogs_the_client_renders() {
         let c = signed_in_core();
         c.update(|s| s.conversations = vec![conversation("c1", "Old title")]);
-        let item = &c.view()["page"]["sidebar"]["items"][0];
+        let view = c.view();
+        let item = &view["sidebar"]["sections"][2]["items"][0];
         assert_eq!(
             item["menu"][0]["action"],
             json!({ "type": "begin_rename", "id": "c1" })
@@ -3442,6 +3669,60 @@ mod tests {
         assert_eq!(messages[0]["stepsLabel"], "2 steps");
         assert_eq!(messages[0]["stepsOpen"], false);
         assert_eq!(messages[0]["steps"][0]["items"][0]["url"], "https://a");
+    }
+
+    #[test]
+    fn the_shell_sidebar_files_chats_under_projects_and_controls_follow_prefs() {
+        let c = signed_in_core();
+        c.update(|s| {
+            s.projects = Some(Ok(vec![json!({ "id": "p1", "name": "Site" })]));
+            let mut inside = conversation("c2", "In project");
+            inside.project_id = Some("p1".into());
+            s.conversations = vec![conversation("c1", "Plain"), inside];
+        });
+        let view = c.view();
+        let sections = &view["sidebar"]["sections"];
+        assert_eq!(view["sidebar"]["modes"][0]["selected"], true);
+        assert_eq!(
+            sections[1]["items"][0]["children"][0]["title"],
+            "In project"
+        );
+        assert_eq!(
+            sections[2]["items"].as_array().unwrap().len(),
+            1,
+            "only plain chats at the top level"
+        );
+        // Work has no plain chat level.
+        c.update(|s| s.route = "work".into());
+        let view = c.view();
+        assert_eq!(view["sidebar"]["modes"][1]["selected"], true);
+        assert!(view["sidebar"]["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|x| x["id"] != "chats"));
+        // Permission "ask" holds requests back; the thinking slider is a plain preference.
+        futures_executor::block_on(c.dispatch(Action::SetSetting {
+            binding: "chat.permission".into(),
+            value: json!("ask"),
+        }));
+        assert_eq!(
+            c.state.lock().unwrap().prefs["chat.auto_consent"],
+            json!(false)
+        );
+        c.update(|s| s.route = "chat".into());
+        let toolbar = c.view()["page"]["composer"]["toolbar"].clone();
+        let find = |id: &str| {
+            toolbar
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|x| x["id"] == id)
+                .cloned()
+                .unwrap()
+        };
+        assert_eq!(find("permission")["value"], "ask");
+        assert_eq!(find("thinking")["align"], "end");
     }
 
     #[test]
@@ -3700,7 +3981,7 @@ mod tests {
                 .as_array()
                 .unwrap()
                 .iter()
-                .all(|c| c["id"] == "web_search"),
+                .all(|c| c["binding"] != "chat.mode"),
             "nothing to choose before routes exist"
         );
         c.update(|s| {
@@ -3711,7 +3992,12 @@ mod tests {
                 .set("fast", Some(("c2".into(), "gemini-3.5-flash".into())));
         });
         let toolbar = c.view()["page"]["composer"]["toolbar"].clone();
-        let select = &toolbar[0];
+        let select = toolbar
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["binding"] == "chat.mode")
+            .unwrap();
         assert_eq!(
             (select["binding"].as_str(), select["value"].as_str()),
             (Some("chat.mode"), Some("auto"))

@@ -22,6 +22,14 @@ the Newelle-derived root tree, compatibility adapters, packaging or the legacy s
   local/remote device Work (`meo/cloud`, `meo/device`) and the Newelle tree. They stay
   in the repository until removed deliberately. Repair moves into the core + QML later.
 
+## UI direction (user decision 2026-10-21)
+
+Use the Claude desktop layout instead of designing our own: sidebar with a large Chat | Work
+switch, search, prominent New chat, Plugins, Projects tree and chats; chat area with a
+growing composer, controls row (permission, model, thinking, sub-agents) and a details card.
+Spec, status and TODO: `meo/docs/ui-redesign.md`. Product structure goes in the core view;
+the three renderers stay identical.
+
 ## Repository map
 
 | Path | Role | Authority |

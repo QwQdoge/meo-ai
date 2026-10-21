@@ -113,13 +113,179 @@ ApplicationWindow {
         anchors.fill: parent
         spacing: 0
 
-        MeoNavigationRail {
-            visible: (window.v.navigation || []).length > 0
+        // Claude-style left column from `view.sidebar`: Chat | Work, search, new chat, plugins,
+        // projects tree and chats; collapses to an icon rail.
+        ColumnLayout {
+            id: sidebar
+            visible: !!window.v.sidebar
+            readonly property var sb: window.v.sidebar || ({})
+            readonly property bool collapsed: !!sb.collapsed
+            readonly property var rows: {
+                const out = []
+                const symbol = icon => icon === "skills" ? "extension" : icon === "projects" ? "folder" : icon === "work" ? "work" : icon === "settings" ? "settings" : "chat"
+                for (const sec of (sb.sections || [])) {
+                    if (sec.kind === "list") {
+                        if (collapsed) continue
+                        out.push({ kind: "header", label: sec.label, tabs: sec.tabs || [] })
+                        for (const item of (sec.items || [])) out.push({ kind: "item", depth: 0, data: item })
+                    } else {
+                        out.push({ kind: "link", label: sec.label, symbol: symbol(sec.icon), selected: !!sec.selected, action: sec.action })
+                        if (sec.kind === "tree" && !collapsed)
+                            for (const p of (sec.items || [])) {
+                                out.push({ kind: "item", depth: 1, data: p })
+                                for (const c of (p.children || [])) out.push({ kind: "item", depth: 2, data: c })
+                            }
+                    }
+                }
+                return out
+            }
+            Layout.preferredWidth: collapsed ? 56 : 232
             Layout.fillHeight: true
-            model: (window.v.navigation || []).map(n => ({ id: n.id, icon: n.symbol, label: n.label }))
-            currentId: ((window.v.navigation || []).find(n => n.selected) || {}).id || ""
-            onActivated: (item, index) => window.act(window.v.navigation[index].action)
+            Layout.margins: 12
+            spacing: 8
+
+            RowLayout {
+                Layout.fillWidth: true
+                MeoSegmentedButtons {
+                    visible: !sidebar.collapsed
+                    Layout.fillWidth: true
+                    size: "xs"
+                    model: (sidebar.sb.modes || []).map(m => m.label)
+                    currentIndex: Math.max(0, (sidebar.sb.modes || []).findIndex(m => m.selected))
+                    onSelected: (index, data) => window.act(sidebar.sb.modes[index].action)
+                }
+                MeoIconButton {
+                    type: "standard"
+                    icon.name: sidebar.collapsed ? "chevron_right" : "chevron_left"
+                    onClicked: window.act(sidebar.sb.toggle)
+                }
+            }
+            Repeater {
+                model: sidebar.collapsed ? (sidebar.sb.modes || []) : []
+                MeoIconButton {
+                    required property var modelData
+                    Layout.alignment: Qt.AlignHCenter
+                    type: modelData.selected ? "tonal" : "standard"
+                    icon.name: modelData.icon === "work" ? "work" : "chat"
+                    onClicked: window.act(modelData.action)
+                }
+            }
+            MeoTextField {
+                id: searchField
+                visible: !sidebar.collapsed && !!sidebar.sb.search
+                Layout.fillWidth: true
+                placeholder: (sidebar.sb.search || {}).placeholder || ""
+                leadingIcon: "search"
+                // Typed text wins; the core echoes it back as the saved value.
+                onTextChanged: if (text !== (sidebar.sb.search || {}).value) searchTimer.restart()
+                Timer {
+                    id: searchTimer
+                    interval: 300
+                    onTriggered: window.act(window.withFields(sidebar.sb.search.action, { text: searchField.text }))
+                }
+            }
+            MeoButton {
+                Layout.fillWidth: true
+                visible: !!sidebar.sb.newChat
+                type: "text"
+                size: "xs"
+                text: sidebar.collapsed ? "+" : "+  " + ((sidebar.sb.newChat || {}).label || "")
+                onClicked: window.act((sidebar.sb.newChat || {}).action)
+            }
+            ListView {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+                spacing: 2
+                model: sidebar.rows
+                delegate: Item {
+                    id: sideRow
+                    required property var modelData
+                    width: ListView.view.width
+                    implicitHeight: modelData.kind === "item" ? itemRow.implicitHeight : modelData.kind === "header" ? headerCol.implicitHeight : linkButton.implicitHeight
+                    height: implicitHeight
+                    MeoListItem {
+                        id: linkButton
+                        visible: sideRow.modelData.kind === "link"
+                        width: parent.width
+                        isDense: true
+                        headline: sidebar.collapsed ? "" : (sideRow.modelData.label || "")
+                        leadingIcon: sideRow.modelData.symbol || ""
+                        selected: !!sideRow.modelData.selected
+                        onClicked: window.act(sideRow.modelData.action)
+                    }
+                    ColumnLayout {
+                        id: headerCol
+                        visible: sideRow.modelData.kind === "header"
+                        width: parent.width
+                        spacing: 4
+                        MeoText { text: sideRow.modelData.label || ""; typeRole: "label"; color: MeoTheme.onSurfaceVariant }
+                        RowLayout {
+                            spacing: 8
+                            Repeater {
+                                model: sideRow.modelData.tabs || []
+                                MeoButton {
+                                    required property var modelData
+                                    text: modelData.label
+                                    type: modelData.selected ? "tonal" : "outlined"
+                                    size: "xs"
+                                    onClicked: window.act(modelData.action)
+                                }
+                            }
+                        }
+                    }
+                    Item {
+                        id: itemRow
+                        visible: sideRow.modelData.kind === "item"
+                        width: parent.width
+                        implicitHeight: row.implicitHeight
+                        MeoListItem {
+                            id: row
+                            x: ((sideRow.modelData.depth || 0) > 0 ? (sideRow.modelData.depth - 1) * 16 : 0)
+                            width: parent.width - x
+                            headline: (sideRow.modelData.data || {}).title || ""
+                            isDense: true
+                            selected: !!(sideRow.modelData.data || {}).selected
+                            onClicked: window.act(sideRow.modelData.data.action)
+                        }
+                        MeoIconButton {
+                            visible: ((sideRow.modelData.data || {}).menu || []).length > 0
+                            anchors.right: parent.right
+                            anchors.verticalCenter: parent.verticalCenter
+                            type: "standard"
+                            size: "xs"
+                            icon.name: "more_vert"
+                            onClicked: chatMenu.popup()
+                        }
+                        Menu {
+                            id: chatMenu
+                            Repeater {
+                                model: (sideRow.modelData.data || {}).menu || []
+                                MenuItem {
+                                    required property var modelData
+                                    text: modelData.label
+                                    onTriggered: window.act(modelData.action)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Repeater {
+                model: sidebar.sb.footer || []
+                MeoListItem {
+                    required property var modelData
+                    Layout.fillWidth: true
+                    isDense: true
+                    headline: sidebar.collapsed ? "" : modelData.label
+                    leadingIcon: "settings"
+                    selected: !!modelData.selected
+                    onClicked: window.act(modelData.action)
+                }
+            }
         }
+
+        Rectangle { visible: !!window.v.sidebar; Layout.fillHeight: true; width: 1; color: MeoTheme.outlineVariant }
 
         ColumnLayout {
             Layout.fillWidth: true
@@ -271,6 +437,51 @@ ApplicationWindow {
         }
     }
 
+    // Quiet text control under the composer (Claude style): slider/select open a small popup.
+    component ControlChip: Item {
+        id: chipRoot
+        property var item: ({})
+        readonly property var options: item.options || []
+        readonly property int index: Math.max(0, options.findIndex(o => o.value === item.value))
+        implicitWidth: chip.implicitWidth
+        implicitHeight: chip.implicitHeight
+        function choose(value) { window.act({ type: "set_setting", binding: item.binding, value: value }) }
+        MeoButton {
+            id: chip
+            type: "text"
+            size: "xs"
+            text: item.kind === "toggle" ? ((item.value === true ? "● " : "○ ") + (item.label || ""))
+                                          : (((options[index] || {}).label || item.label || "") + " ▾")
+            onClicked: item.kind === "toggle" ? chipRoot.choose(item.value !== true)
+                       : item.kind === "select" ? selectMenu.popup() : sliderPopup.open()
+        }
+        Menu {
+            id: selectMenu
+            Repeater {
+                model: chipRoot.item.kind === "select" ? chipRoot.options : []
+                MenuItem { required property var modelData; text: modelData.label; onTriggered: chipRoot.choose(modelData.value) }
+            }
+        }
+        Popup {
+            id: sliderPopup
+            y: -height - 4
+            padding: 12
+            ColumnLayout {
+                spacing: 4
+                MeoText { text: (chipRoot.item.label || "") + " · " + ((chipRoot.options[chipRoot.index] || {}).label || ""); typeRole: "label"; color: MeoTheme.onSurfaceVariant }
+                MeoSlider {
+                    Layout.preferredWidth: 160
+                    from: 0
+                    to: Math.max(1, chipRoot.options.length - 1)
+                    stepSize: 1
+                    discrete: true
+                    value: chipRoot.index
+                    onMoved: v => chipRoot.choose(chipRoot.options[Math.round(v)].value)
+                }
+            }
+        }
+    }
+
     component SettingControl: ColumnLayout {
         property var item: ({})
         spacing: 4
@@ -281,6 +492,25 @@ ApplicationWindow {
             text: item.label || ""
             checked: item.value === true
             onToggled: checked => window.act({ type: "set_setting", binding: item.binding, value: checked })
+        }
+        ColumnLayout {
+            visible: item.kind === "slider"
+            spacing: 0
+            readonly property int index: Math.max(0, (item.options || []).findIndex(o => o.value === item.value))
+            MeoText {
+                text: (item.label || "") + " · " + (((item.options || [])[parent.index] || {}).label || "")
+                typeRole: "label"
+                color: MeoTheme.onSurfaceVariant
+            }
+            MeoSlider {
+                Layout.preferredWidth: 110
+                from: 0
+                to: Math.max(1, (item.options || []).length - 1)
+                stepSize: 1
+                discrete: true
+                value: parent.index
+                onMoved: v => window.act({ type: "set_setting", binding: item.binding, value: item.options[Math.round(v)].value })
+            }
         }
         MeoExposedDropdown {
             visible: item.kind === "select"
@@ -348,90 +578,6 @@ ApplicationWindow {
             spacing: 0
 
             ColumnLayout {
-                Layout.preferredWidth: 280
-                Layout.fillHeight: true
-                Layout.margins: 12
-                spacing: 8
-                Repeater {
-                    model: (window.page.sidebar || {}).actions || []
-                    ActionButton { spec: modelData; Layout.fillWidth: true }
-                }
-                MeoTextField {
-                    id: searchField
-                    visible: !!(window.page.sidebar || {}).search
-                    Layout.fillWidth: true
-                    placeholder: ((window.page.sidebar || {}).search || {}).placeholder || ""
-                    leadingIcon: "search"
-                    // Typed text wins; the core echoes it back as the saved value.
-                    onTextChanged: if (text !== ((window.page.sidebar || {}).search || {}).value) searchTimer.restart()
-                    Timer {
-                        id: searchTimer
-                        interval: 300
-                        onTriggered: window.act(window.withFields(window.page.sidebar.search.action, { text: searchField.text }))
-                    }
-                }
-                RowLayout {
-                    visible: ((window.page.sidebar || {}).tabs || []).length > 0
-                    Layout.fillWidth: true
-                    spacing: 8
-                    Repeater {
-                        model: (window.page.sidebar || {}).tabs || []
-                        MeoButton {
-                            required property var modelData
-                            text: modelData.label
-                            type: modelData.selected ? "tonal" : "outlined"
-                            size: "xs"
-                            onClicked: window.act(modelData.action)
-                        }
-                    }
-                }
-                MeoText { text: (window.page.sidebar || {}).title || ""; typeRole: "label"; color: MeoTheme.onSurfaceVariant }
-                ListView {
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    clip: true
-                    spacing: 2
-                    model: (window.page.sidebar || {}).items || []
-                    delegate: Item {
-                        id: chatRow
-                        required property var modelData
-                        width: ListView.view.width
-                        implicitHeight: row.implicitHeight
-                        MeoListItem {
-                            id: row
-                            anchors.fill: parent
-                            headline: chatRow.modelData.title
-                            supportingText: chatRow.modelData.subtitle
-                            selected: !!chatRow.modelData.selected
-                            onClicked: window.act(chatRow.modelData.action)
-                        }
-                        MeoIconButton {
-                            visible: (chatRow.modelData.menu || []).length > 0
-                            anchors.right: parent.right
-                            anchors.verticalCenter: parent.verticalCenter
-                            type: "standard"
-                            size: "xs"
-                            icon.name: "more_vert"
-                            onClicked: chatMenu.popup()
-                        }
-                        Menu {
-                            id: chatMenu
-                            Repeater {
-                                model: chatRow.modelData.menu || []
-                                MenuItem {
-                                    required property var modelData
-                                    text: modelData.label
-                                    onTriggered: window.act(modelData.action)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            Rectangle { Layout.fillHeight: true; width: 1; color: MeoTheme.outlineVariant }
-
-            ColumnLayout {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 spacing: 0
@@ -472,6 +618,68 @@ ApplicationWindow {
                                 onClicked: window.act(modelData.action)
                             }
                         }
+                    }
+
+                    Rectangle {
+                        id: inspectorCard
+                        readonly property var info: window.page.inspector || ({})
+                        visible: !!info.visible
+                        z: 2
+                        anchors.top: parent.top
+                        anchors.right: parent.right
+                        anchors.margins: 16
+                        width: 210
+                        height: inspectorColumn.implicitHeight + 24
+                        radius: 16
+                        color: MeoTheme.surfaceContainer
+                        border.color: MeoTheme.outlineVariant
+                        ColumnLayout {
+                            id: inspectorColumn
+                            x: 12
+                            y: 12
+                            width: parent.width - 24
+                            spacing: 4
+                            RowLayout {
+                                Layout.fillWidth: true
+                                MeoText { text: inspectorCard.info.title || ""; typeRole: "label"; Layout.fillWidth: true }
+                                MeoIconButton { type: "standard"; size: "xs"; icon.name: "close"; onClicked: window.act(inspectorCard.info.hide) }
+                            }
+                            Repeater {
+                                model: (inspectorCard.info.rows || []).filter(r => r.value !== null)
+                                RowLayout {
+                                    required property var modelData
+                                    Layout.fillWidth: true
+                                    MeoText { text: modelData.label; typeRole: "label"; color: MeoTheme.onSurfaceVariant; Layout.fillWidth: true }
+                                    MeoText { text: String(modelData.value); typeRole: "label"; horizontalAlignment: Text.AlignRight; elide: Text.ElideRight; Layout.maximumWidth: 130 }
+                                }
+                            }
+                            Repeater {
+                                model: inspectorCard.info.resources || []
+                                MeoText {
+                                    required property var modelData
+                                    text: modelData.title || modelData.url || ""
+                                    typeRole: "label"
+                                    color: MeoTheme.primary
+                                    elide: Text.ElideRight
+                                    Layout.fillWidth: true
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: if (/^https?:\/\//.test(modelData.url || "")) Qt.openUrlExternally(modelData.url)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    MeoButton {
+                        visible: !!(window.page.inspector || {}).title && !(window.page.inspector || {}).visible
+                        anchors.top: parent.top
+                        anchors.right: parent.right
+                        anchors.margins: 16
+                        type: "tonal"
+                        size: "xs"
+                        text: (window.page.inspector || {}).title || ""
+                        onClicked: window.act(window.page.inspector.show)
                     }
 
                     ListView {
@@ -674,16 +882,6 @@ ApplicationWindow {
                         onClicked: attachDialog.open()
                     }
 
-                    Repeater {
-                        model: parent.composer.toolbar || []
-                        SettingControl {
-                            required property var modelData
-                            item: modelData
-                            Layout.preferredWidth: 240
-                            Layout.alignment: Qt.AlignBottom
-                        }
-                    }
-
                     MeoTextArea {
                         id: input
                         Layout.fillWidth: true
@@ -710,6 +908,24 @@ ApplicationWindow {
                     MeoIconButton {
                         icon.name: parent.composer.busy ? "stop" : "arrow_upward"
                         onClicked: parent.composer.busy ? window.act(parent.composer.stopAction) : input.send()
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 16
+                    Layout.rightMargin: 16
+                    Layout.bottomMargin: 8
+                    spacing: 4
+                    readonly property var items: (window.page.composer || {}).toolbar || []
+                    Repeater {
+                        model: parent.items.filter(i => i.align !== "end")
+                        ControlChip { required property var modelData; item: modelData }
+                    }
+                    Item { Layout.fillWidth: true }
+                    Repeater {
+                        model: parent.items.filter(i => i.align === "end")
+                        ControlChip { required property var modelData; item: modelData }
                     }
                 }
             }

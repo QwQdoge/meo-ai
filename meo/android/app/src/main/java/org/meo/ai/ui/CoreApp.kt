@@ -35,6 +35,10 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AttachFile
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.ChevronLeft
+import androidx.compose.material.icons.rounded.ChevronRight
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.ChatBubble
 import androidx.compose.material.icons.rounded.Extension
@@ -73,6 +77,8 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
+import androidx.compose.material3.Slider
+import androidx.compose.ui.zIndex
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDrawerState
@@ -130,7 +136,7 @@ private fun Act.send(action: JSONObject?) {
 @Composable
 fun CoreApp(view: JSONObject, act: (JSONObject) -> Unit) {
     val strings = view.obj("strings") ?: JSONObject()
-    val navigation = view.list("navigation")
+    val sidebar = view.obj("sidebar")
     val page = view.obj("page") ?: JSONObject()
     val notice = view.obj("notice")
 
@@ -138,60 +144,58 @@ fun CoreApp(view: JSONObject, act: (JSONObject) -> Unit) {
 
     BoxWithConstraints(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         val wide = maxWidth >= 840.dp
-        Row(Modifier.fillMaxSize()) {
-            if (wide && navigation.isNotEmpty()) {
-                NavigationRail(containerColor = MaterialTheme.colorScheme.surfaceContainer) {
-                    navigation.forEach { item ->
-                        NavigationRailItem(
-                            selected = item.optBoolean("selected"),
-                            onClick = { act.send(item.obj("action")) },
-                            icon = { Icon(navigationIcon(item.str("symbol")), contentDescription = null) },
-                            label = { Text(item.str("label")) },
-                        )
-                    }
+        val drawer = rememberDrawerState(DrawerValue.Closed)
+        val scope = rememberCoroutineScope()
+        val content: @Composable () -> Unit = {
+            Column(Modifier.fillMaxSize()) {
+                if (notice != null) {
+                    Banner(
+                        text = notice.str("text"),
+                        error = notice.str("kind") == "error",
+                        actionLabel = strings.str("dismiss").ifEmpty { "Dismiss" },
+                        onAction = { act.send(notice.obj("action")) },
+                    )
                 }
-            }
-            Scaffold(
-                modifier = Modifier.weight(1f),
-                containerColor = MaterialTheme.colorScheme.background,
-                bottomBar = {
-                    if (!wide && navigation.isNotEmpty()) {
-                        NavigationBar {
-                            navigation.forEach { item ->
-                                NavigationBarItem(
-                                    selected = item.optBoolean("selected"),
-                                    onClick = { act.send(item.obj("action")) },
-                                    icon = { Icon(navigationIcon(item.str("symbol")), contentDescription = null) },
-                                    label = { Text(item.str("label"), maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                                )
+                if (!view.optBoolean("online", true)) {
+                    Banner(text = strings.str("offline").ifEmpty { "Offline — showing saved data" }, error = false)
+                }
+                Box(Modifier.weight(1f).fillMaxWidth()) {
+                    val menu: (() -> Unit)? = if (wide || sidebar == null) null else ({ scope.launch { drawer.open() } })
+                    when (page.str("kind")) {
+                        "sign_in" -> SignInPage(page, act)
+                        "conversation" -> ChatPane(page, view.obj("prefs"), strings, onMenu = menu, act = act, modifier = Modifier.fillMaxSize())
+                        else -> Column(Modifier.fillMaxSize()) {
+                            if (menu != null) IconButton(onClick = menu) { Icon(Icons.Rounded.Menu, contentDescription = "Menu") }
+                            Box(Modifier.weight(1f)) {
+                                when (page.str("kind")) {
+                                    "list" -> ListPage(page, act)
+                                    "settings" -> SettingsPage(page, act)
+                                    else -> UnavailablePage(page, act)
+                                }
                             }
                         }
                     }
-                },
-            ) { padding ->
-                Column(Modifier.padding(padding).fillMaxSize()) {
-                    if (notice != null) {
-                        Banner(
-                            text = notice.str("text"),
-                            error = notice.str("kind") == "error",
-                            actionLabel = strings.str("dismiss").ifEmpty { "Dismiss" },
-                            onAction = { act.send(notice.obj("action")) },
-                        )
-                    }
-                    if (!view.optBoolean("online", true)) {
-                        Banner(text = strings.str("offline").ifEmpty { "Offline — showing saved data" }, error = false)
-                    }
-                    Box(Modifier.weight(1f).fillMaxWidth()) {
-                        when (page.str("kind")) {
-                            "sign_in" -> SignInPage(page, act)
-                            "conversation" -> ConversationPage(page, view.obj("prefs"), strings, wide, act)
-                            "list" -> ListPage(page, act)
-                            "settings" -> SettingsPage(page, act)
-                            else -> UnavailablePage(page, act)
-                        }
-                    }
                 }
             }
+        }
+        if (sidebar == null) {
+            content()
+        } else if (wide) {
+            Row(Modifier.fillMaxSize()) {
+                ShellSidebar(sidebar, act, Modifier.width(if (sidebar.optBoolean("collapsed")) 60.dp else 260.dp).fillMaxHeight())
+                Box(Modifier.fillMaxHeight().width(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
+                Box(Modifier.weight(1f)) { content() }
+            }
+        } else {
+            ModalNavigationDrawer(
+                drawerState = drawer,
+                drawerContent = {
+                    ModalDrawerSheet {
+                        // The drawer always shows the full sidebar, never the icon rail.
+                        ShellSidebar(sidebar, { action -> scope.launch { drawer.close() }; act(action) }, Modifier.fillMaxHeight(), forceExpanded = true)
+                    }
+                },
+            ) { content() }
         }
     }
 }
@@ -380,6 +384,19 @@ private fun SettingControl(item: JSONObject, act: Act, modifier: Modifier = Modi
             Text(item.str("label"), Modifier.weight(1f))
             Switch(checked = item.optBoolean("value"), onCheckedChange = { act(setting(item, it)) })
         }
+        "slider" -> {
+            val options = item.list("options")
+            val index = options.indexOfFirst { it.str("value") == item.str("value") }.coerceAtLeast(0)
+            Column(modifier) {
+                Text(item.str("label") + " · " + (options.getOrNull(index)?.str("label") ?: ""), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Slider(
+                    value = index.toFloat(),
+                    onValueChange = { v -> options.getOrNull(v.toInt())?.let { if (it.str("value") != item.str("value")) act(setting(item, it.str("value"))) } },
+                    valueRange = 0f..(options.size - 1).coerceAtLeast(1).toFloat(),
+                    steps = (options.size - 2).coerceAtLeast(0),
+                )
+            }
+        }
         "select" -> SelectControl(item, act, modifier)
         "text" -> TextControl(item, act, modifier)
         "info" -> Row(modifier, verticalAlignment = Alignment.CenterVertically) {
@@ -452,93 +469,128 @@ private fun TextControl(item: JSONObject, act: Act, modifier: Modifier) {
     )
 }
 
+/** Claude-style left column: Chat | Work, search, new chat, plugins, projects tree, chats. */
 @Composable
-private fun ConversationPage(page: JSONObject, prefs: JSONObject?, strings: JSONObject, wide: Boolean, act: Act) {
-    val sidebar = page.obj("sidebar") ?: JSONObject()
-    if (wide) {
-        Row(Modifier.fillMaxSize()) {
-            Sidebar(sidebar, act, Modifier.width(280.dp).fillMaxHeight())
-            Box(Modifier.fillMaxHeight().width(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
-            ChatPane(page, prefs, strings, onMenu = null, act = act, modifier = Modifier.weight(1f))
-        }
-    } else {
-        val drawer = rememberDrawerState(DrawerValue.Closed)
-        val scope = rememberCoroutineScope()
-        ModalNavigationDrawer(
-            drawerState = drawer,
-            drawerContent = {
-                ModalDrawerSheet {
-                    Sidebar(sidebar, { action ->
-                        scope.launch { drawer.close() }
-                        act(action)
-                    }, Modifier.fillMaxHeight())
+private fun ShellSidebar(sb: JSONObject, act: Act, modifier: Modifier, forceExpanded: Boolean = false) {
+    val collapsed = sb.optBoolean("collapsed") && !forceExpanded
+    val rows = remember(sb.toString(), collapsed) {
+        val out = mutableListOf<Triple<String, JSONObject, Int>>()
+        sb.list("sections").forEach { sec ->
+            if (sec.str("kind") == "list") {
+                if (!collapsed) {
+                    out.add(Triple("header", sec, 0))
+                    sec.list("items").forEach { out.add(Triple("item", it, 0)) }
                 }
-            },
-        ) {
-            ChatPane(page, prefs, strings, onMenu = { scope.launch { drawer.open() } }, act = act, modifier = Modifier.fillMaxSize())
+            } else {
+                out.add(Triple("link", sec, 0))
+                if (sec.str("kind") == "tree" && !collapsed) {
+                    sec.list("items").forEach { p ->
+                        out.add(Triple("item", p, 1))
+                        p.list("children").forEach { out.add(Triple("item", it, 2)) }
+                    }
+                }
+            }
+        }
+        out
+    }
+    Column(modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (!collapsed) {
+                Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    sb.list("modes").forEach { mode ->
+                        val on = mode.optBoolean("selected")
+                        val click = { act.send(mode.obj("action")) }
+                        if (on) FilledTonalButton(onClick = click, modifier = Modifier.weight(1f)) { Text(mode.str("label")) }
+                        else OutlinedButton(onClick = click, modifier = Modifier.weight(1f)) { Text(mode.str("label")) }
+                    }
+                }
+            }
+            if (!forceExpanded) {
+                IconButton(onClick = { act.send(sb.obj("toggle")) }) {
+                    Icon(if (collapsed) Icons.Rounded.ChevronRight else Icons.Rounded.ChevronLeft, contentDescription = "Collapse")
+                }
+            }
+        }
+        if (collapsed) {
+            sb.list("modes").forEach { mode ->
+                IconButton(onClick = { act.send(mode.obj("action")) }) {
+                    Icon(navigationIcon(if (mode.str("icon") == "work") "work" else "chat"), contentDescription = mode.str("label"))
+                }
+            }
+        } else {
+            sb.obj("search")?.let { SearchField(it, act) }
+        }
+        sb.obj("newChat")?.let { n ->
+            TextButton(onClick = { act.send(n.obj("action")) }, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Rounded.Add, contentDescription = n.str("label"))
+                if (!collapsed) Text(n.str("label"), Modifier.weight(1f).padding(start = 12.dp))
+            }
+        }
+        LazyColumn(Modifier.weight(1f)) {
+            items(rows) { (kind, item, depth) ->
+                when (kind) {
+                    "link" -> {
+                        val on = item.optBoolean("selected")
+                        TextButton(
+                            onClick = { act.send(item.obj("action")) },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = if (on) ButtonDefaults.textButtonColors(containerColor = MaterialTheme.colorScheme.secondaryContainer) else ButtonDefaults.textButtonColors(),
+                        ) {
+                            Icon(navigationIcon(item.str("icon").let { if (it == "skills") "extension" else if (it == "projects") "folder" else it }), contentDescription = item.str("label"))
+                            if (!collapsed) Text(item.str("label"), Modifier.weight(1f).padding(start = 12.dp))
+                        }
+                    }
+                    "header" -> Column(Modifier.padding(top = 8.dp)) {
+                        Text(item.str("label"), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            item.list("tabs").forEach { tab ->
+                                FilterChip(selected = tab.optBoolean("selected"), onClick = { act.send(tab.obj("action")) }, label = { Text(tab.str("label")) })
+                            }
+                        }
+                    }
+                    else -> SideRow(item, depth, act)
+                }
+            }
+        }
+        sb.list("footer").forEach { f ->
+            TextButton(onClick = { act.send(f.obj("action")) }, modifier = Modifier.fillMaxWidth()) {
+                Icon(navigationIcon("settings"), contentDescription = f.str("label"))
+                if (!collapsed) Text(f.str("label"), Modifier.weight(1f).padding(start = 12.dp))
+            }
         }
     }
 }
 
 @Composable
-private fun Sidebar(sidebar: JSONObject, act: Act, modifier: Modifier) {
-    Column(modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        sidebar.list("actions").forEach { ActionButton(it, act, Modifier.fillMaxWidth()) }
-        sidebar.obj("search")?.let { SearchField(it, act) }
-        val tabs = sidebar.list("tabs")
-        if (tabs.isNotEmpty()) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                tabs.forEach { tab ->
-                    FilterChip(
-                        selected = tab.optBoolean("selected"),
-                        onClick = { act.send(tab.obj("action")) },
-                        label = { Text(tab.str("label")) },
-                    )
-                }
+private fun SideRow(item: JSONObject, depth: Int, act: Act) {
+    val selected = item.optBoolean("selected")
+    var menuOpen by remember { mutableStateOf(false) }
+    Surface(
+        onClick = { act.send(item.obj("action")) },
+        shape = RoundedCornerShape(16.dp),
+        color = if (selected) MaterialTheme.colorScheme.secondaryContainer else androidx.compose.ui.graphics.Color.Transparent,
+        modifier = Modifier.fillMaxWidth().padding(start = (depth * 12).dp),
+    ) {
+        Row(Modifier.padding(start = 16.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f).padding(vertical = 6.dp)) {
+                Text(item.str("title"), maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-        }
-        Text(sidebar.str("title"), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        LazyColumn(Modifier.weight(1f)) {
-            items(sidebar.list("items")) { item ->
-                val selected = item.optBoolean("selected")
-                var menuOpen by remember { mutableStateOf(false) }
-                Surface(
-                    onClick = { act.send(item.obj("action")) },
-                    shape = RoundedCornerShape(16.dp),
-                    color = if (selected) MaterialTheme.colorScheme.secondaryContainer else androidx.compose.ui.graphics.Color.Transparent,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Row(Modifier.padding(start = 16.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f).padding(vertical = 6.dp)) {
-                            Text(item.str("title"), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(
-                                item.str("subtitle"),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            val menu = item.list("menu")
+            if (menu.isNotEmpty()) {
+                Box {
+                    IconButton(onClick = { menuOpen = true }) { Icon(Icons.Rounded.MoreVert, contentDescription = "⋮") }
+                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        menu.forEach { entry ->
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        entry.str("label"),
+                                        color = if (entry.str("style") == "danger") MaterialTheme.colorScheme.error
+                                        else androidx.compose.ui.graphics.Color.Unspecified,
+                                    )
+                                },
+                                onClick = { menuOpen = false; act.send(entry.obj("action")) },
                             )
-                        }
-                        val menu = item.list("menu")
-                        if (menu.isNotEmpty()) {
-                            Box {
-                                IconButton(onClick = { menuOpen = true }) { Icon(Icons.Rounded.MoreVert, contentDescription = "⋮") }
-                                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                                    menu.forEach { entry ->
-                                        DropdownMenuItem(
-                                            text = {
-                                                Text(
-                                                    entry.str("label"),
-                                                    color = if (entry.str("style") == "danger") MaterialTheme.colorScheme.error
-                                                    else androidx.compose.ui.graphics.Color.Unspecified,
-                                                )
-                                            },
-                                            onClick = {
-                                                menuOpen = false
-                                                act.send(entry.obj("action"))
-                                            },
-                                        )
-                                    }
-                                }
-                            }
                         }
                     }
                 }
@@ -614,6 +666,43 @@ private fun ChatPane(page: JSONObject, prefs: JSONObject?, strings: JSONObject, 
                     }
                 }
             }
+            val inspector = page.obj("inspector")
+            if (inspector != null) {
+                Box(Modifier.align(Alignment.TopEnd).padding(8.dp).zIndex(1f)) {
+                    if (inspector.optBoolean("visible")) {
+                        Card(Modifier.width(220.dp)) {
+                            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(inspector.str("title"), Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
+                                    IconButton(onClick = { act.send(inspector.obj("hide")) }, Modifier.size(24.dp)) { Icon(Icons.Rounded.Close, contentDescription = "Hide") }
+                                }
+                                inspector.list("rows").filter { !it.isNull("value") }.forEach { r ->
+                                    Row {
+                                        Text(r.str("label"), Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text(r.str("value"), style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 110.dp))
+                                    }
+                                }
+                                inspector.list("resources").forEach { r ->
+                                    val url = r.str("url")
+                                    val context = LocalContext.current
+                                    Text(
+                                        r.str("title").ifEmpty { url },
+                                        Modifier.clickable(enabled = url.startsWith("http")) {
+                                            runCatching { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))) }
+                                        },
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        androidx.compose.material3.AssistChip(onClick = { act.send(inspector.obj("show")) }, label = { Text(inspector.str("title")) })
+                    }
+                }
+            }
             LazyColumn(
                 Modifier.fillMaxSize(),
                 state = listState,
@@ -676,6 +765,45 @@ private fun MessageBubble(message: JSONObject, strings: JSONObject, act: Act) {
                 TextButton(onClick = { clipboard.setText(AnnotatedString(message.str("text"))) }) { Text(strings.str("copy").ifEmpty { "Copy" }) }
                 message.list("actions").forEach { entry ->
                     TextButton(onClick = { act.send(entry.obj("action")) }) { Text(entry.str("label")) }
+                }
+            }
+        }
+    }
+}
+
+/** Quiet text control under the composer; slider and select open a small menu. */
+@Composable
+private fun ControlChip(item: JSONObject, act: Act) {
+    var open by remember { mutableStateOf(false) }
+    val options = item.list("options")
+    val index = options.indexOfFirst { it.str("value") == item.str("value") }.coerceAtLeast(0)
+    val kind = item.str("kind")
+    Box {
+        TextButton(
+            onClick = { if (kind == "toggle") act(setting(item, !item.optBoolean("value"))) else open = true },
+            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+        ) {
+            Text(
+                if (kind == "toggle") (if (item.optBoolean("value")) "● " else "○ ") + item.str("label")
+                else (options.getOrNull(index)?.str("label") ?: item.str("label")) + " ▾",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            if (kind == "slider") {
+                Column(Modifier.padding(horizontal = 16.dp).widthIn(min = 200.dp)) {
+                    Text(item.str("label") + " · " + (options.getOrNull(index)?.str("label") ?: ""), style = MaterialTheme.typography.labelMedium)
+                    Slider(
+                        value = index.toFloat(),
+                        onValueChange = { v -> options.getOrNull(v.toInt())?.let { if (it.str("value") != item.str("value")) act(setting(item, it.str("value"))) } },
+                        valueRange = 0f..(options.size - 1).coerceAtLeast(1).toFloat(),
+                        steps = (options.size - 2).coerceAtLeast(0),
+                    )
+                }
+            } else {
+                options.forEach { o ->
+                    DropdownMenuItem(text = { Text(o.str("label")) }, onClick = { open = false; act(setting(item, o.str("value"))) })
                 }
             }
         }
@@ -781,7 +909,6 @@ private fun Composer(composer: JSONObject, files: List<JSONObject>, prefs: JSONO
                 }
             }
         }
-        composer.list("toolbar").forEach { SettingControl(it, act) }
         val matches = if (Regex("^/\\S*$").matches(input)) {
             composer.list("commands").filter { it.str("name").startsWith(input.lowercase()) }
         } else emptyList()
@@ -828,6 +955,11 @@ private fun Composer(composer: JSONObject, files: List<JSONObject>, prefs: JSONO
             FilledIconButton(onClick = { if (busy) act.send(composer.obj("stopAction")) else send() }) {
                 Icon(if (busy) Icons.Rounded.Stop else Icons.AutoMirrored.Rounded.Send, contentDescription = if (busy) strings.str("stop").ifEmpty { "Stop" } else strings.str("send").ifEmpty { "Send" })
             }
+        }
+        // Controls under the input: permission, web search on the left; model, thinking, sub-agents on the right.
+        val toolbar = composer.list("toolbar")
+        FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(2.dp), verticalArrangement = Arrangement.spacedBy(0.dp)) {
+            (toolbar.filter { it.str("align") != "end" } + toolbar.filter { it.str("align") == "end" }).forEach { ControlChip(it, act) }
         }
     }
 }
