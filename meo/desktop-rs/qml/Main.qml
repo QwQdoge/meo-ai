@@ -457,7 +457,7 @@ ApplicationWindow {
                     }
 
                     Flow {
-                        visible: !!window.page.empty
+                        visible: !!window.page.empty && commandList.matches.length === 0
                         anchors.horizontalCenter: parent.horizontalCenter
                         anchors.top: parent.verticalCenter
                         anchors.topMargin: 90
@@ -646,7 +646,7 @@ ApplicationWindow {
                         model: commandList.matches
                         MeoButton {
                             required property var modelData
-                            text: modelData.name + (modelData.hint ? " <" + modelData.hint + ">" : "") + " — " + modelData.label
+                            text: modelData.name + (modelData.hint ? " " + modelData.hint : "") + " — " + modelData.label
                             type: "text"
                             size: "xs"
                             onClicked: {
