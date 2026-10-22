@@ -680,6 +680,7 @@ mod tests {
                 vec!["text".into()]
             },
             output: vec!["text".into()],
+            rank: None,
         }
     }
 
@@ -733,6 +734,7 @@ mod tests {
             tasks: vec!["image_edit".into(), "image_generation".into()],
             input: vec!["text".into(), "image".into()],
             output: vec!["image".into()],
+            rank: None,
         };
         let only_edit = vec![("c".to_owned(), both("gpt-image-1.5"))];
         assert_eq!(

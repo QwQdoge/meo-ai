@@ -74,6 +74,33 @@ pub struct Model {
     pub input: Vec<String>,
     #[serde(default)]
     pub output: Vec<String>,
+    /// Ordering hint for chat models, from Meo API (absent from older servers and other tasks).
+    #[serde(default)]
+    pub rank: Option<Rank>,
+}
+
+/// Tier, generation and 0-100 scores (higher is better; `cost` is higher for cheaper models).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct Rank {
+    #[serde(default)]
+    pub tier: String,
+    #[serde(default)]
+    pub generation: f64,
+    #[serde(default)]
+    pub intelligence: u32,
+    #[serde(default)]
+    pub speed: u32,
+    #[serde(default)]
+    pub cost: u32,
+    #[serde(default)]
+    pub balanced: u32,
+}
+
+/// Outcome of asking one model to answer a one-word prompt.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Probe {
+    pub ok: bool,
+    pub latency_ms: u64,
 }
 
 fn chat_task() -> String {
@@ -354,7 +381,38 @@ impl MeoApi {
                     tasks,
                     input,
                     output: list(&row["outputModalities"]),
+                    rank: serde_json::from_value(row["rank"].clone()).ok(),
                 })
+            })
+            .collect())
+    }
+
+    /// Asks up to 8 models of one connection to answer a fixed one-word prompt, side by side.
+    /// Returns `(model, ok, latency_ms)` per model.
+    pub async fn probe_models(
+        &self,
+        token: &str,
+        credential_id: &str,
+        models: &[String],
+    ) -> Result<Vec<(String, Probe)>, ApiError> {
+        let body = self
+            .broker(
+                token,
+                json!({ "action": "probe_models", "credentialId": credential_id, "models": models }),
+            )
+            .await?;
+        Ok(body["results"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|r| {
+                Some((
+                    r["model"].as_str()?.to_owned(),
+                    Probe {
+                        ok: r["ok"].as_bool().unwrap_or(false),
+                        latency_ms: r["latencyMs"].as_u64().unwrap_or(0),
+                    },
+                ))
             })
             .collect())
     }

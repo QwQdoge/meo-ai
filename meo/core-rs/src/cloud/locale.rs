@@ -61,7 +61,13 @@ fn buttons(c: &HashMap<String, String>, value: &mut Value, key: &str) {
 
 fn control(c: &HashMap<String, String>, item: &mut Value) {
     if item["kind"] == "item" {
-        // Chat titles, memories and the like are the user's own content.
+        // Chat titles, memories and the like are the user's own content; generated profiles are ours.
+        if item["id"]
+            .as_str()
+            .is_some_and(|id| id.starts_with("profile-req:"))
+        {
+            field(c, item, "label");
+        }
         buttons(c, item, "buttons");
         return;
     }

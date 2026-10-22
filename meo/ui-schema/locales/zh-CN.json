@@ -196,5 +196,17 @@
   "AI": "AI",
   "Model profiles": "模型方案",
   "Model routes": "模型路线",
-  "Account": "账户"
+  "Account": "账户",
+  "Switch the model profile": "切换模型方案",
+  "Test which models work": "测试哪些模型可用",
+  "Testing models…": "正在测试模型…",
+  "Tested models": "已测试的模型",
+  "Not tested yet — profiles use each model's ranking": "尚未测试，方案暂按模型排名选择",
+  "Main model": "主模型",
+  "Smartest": "最聪明",
+  "Fastest": "最快",
+  "Cheapest": "最便宜",
+  "Balanced": "均衡",
+  "Could not test the models. Try again later.": "无法测试模型，请稍后再试。",
+  "No profiles yet.": "还没有方案。"
 }
