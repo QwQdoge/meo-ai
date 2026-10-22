@@ -310,6 +310,9 @@ pub struct AppCore {
     /// Random per-instance device id sent with writes so this device can ignore its own events.
     client_id: String,
     realtime_running: Arc<AtomicBool>,
+    /// Held while one task refreshes the access token, so parallel calls never refresh twice
+    /// (a rotated refresh token would make the second refresh look like a revoked session).
+    refreshing: Arc<AtomicBool>,
 }
 
 const KEY_SESSION: &str = "session";
@@ -348,6 +351,7 @@ impl AppCore {
         Self {
             state: Arc::new(Mutex::new(state)),
             cancel: Arc::new(AtomicBool::new(false)),
+            refreshing: Arc::new(AtomicBool::new(false)),
             http,
             api,
             oauth,
@@ -695,7 +699,17 @@ impl AppCore {
         if !force_refresh && !session.needs_refresh() {
             return Some(session.access_token);
         }
-        match auth::refresh(&self.http, &self.oauth, &session).await {
+        // Another call is already refreshing: wait for it and use the token it obtained.
+        while self.refreshing.swap(true, Ordering::SeqCst) {
+            futures_timer::Delay::new(std::time::Duration::from_millis(25)).await;
+            let current = self.state.lock().unwrap().session.clone()?;
+            if current.access_token != session.access_token {
+                return Some(current.access_token);
+            }
+        }
+        let refreshed = auth::refresh(&self.http, &self.oauth, &session).await;
+        self.refreshing.store(false, Ordering::SeqCst);
+        match refreshed {
             Ok(fresh) => {
                 self.save_json(KEY_SESSION, &fresh);
                 let token = fresh.access_token.clone();
@@ -746,17 +760,16 @@ impl AppCore {
     // ---- data ----------------------------------------------------------
 
     async fn load_all(&self) {
-        let conversations = self
-            .call(|api, t| async move { api.list_conversations(&t).await })
-            .await;
+        // Independent requests run side by side; only what needs the credential list waits for it.
+        let (conversations, credentials) = futures_util::join!(
+            self.call(|api, t| async move { api.list_conversations(&t).await }),
+            self.call(|api, t| async move { api.list_credentials(&t).await }),
+        );
         if let Ok(list) = conversations {
             self.save_json(KEY_CONVERSATIONS, &list);
             self.update(|s| s.conversations = list);
         }
-        if let Ok(credentials) = self
-            .call(|api, t| async move { api.list_credentials(&t).await })
-            .await
-        {
+        if let Ok(credentials) = credentials {
             self.save_json(KEY_CREDENTIALS, &credentials);
             let keep = {
                 let s = self.state.lock().unwrap();
@@ -773,20 +786,18 @@ impl AppCore {
                 s.credentials = credentials;
                 s.selected = selected.clone();
             });
-            self.load_catalogue().await;
         }
-        if let Ok(settings) = self
-            .call(|api, t| async move { api.get_settings(&t).await })
-            .await
-        {
+        let (_, settings, projects) = futures_util::join!(
+            self.load_catalogue(),
+            self.call(|api, t| async move { api.get_settings(&t).await }),
+            self.call(|api, t| async move { api.list_projects(&t).await }),
+        );
+        if let Ok(settings) = settings {
             self.set_cloud_settings(settings);
         }
-        self.bootstrap_router().await;
         // The sidebar's Projects tree needs the list on every page.
-        let projects = self
-            .call(|api, t| async move { api.list_projects(&t).await })
-            .await;
         self.update(|s| s.projects = Some(projects.map_err(|e| e.to_string())));
+        self.bootstrap_router().await;
         let route = self.state.lock().unwrap().route.clone();
         self.load_route(&route).await;
     }
@@ -801,16 +812,24 @@ impl AppCore {
             .iter()
             .map(|c| c.id.clone())
             .collect();
-        for credential in ids {
-            let listed = self
-                .call(|api, t| {
-                    let credential = credential.clone();
-                    async move { api.list_models(&t, &credential).await }
-                })
-                .await;
+        // All providers at once, each result applied as it arrives: one slow or unreachable
+        // provider (the API waits up to 15 s for it) no longer delays the others.
+        let mut pending: futures_util::stream::FuturesUnordered<_> = ids
+            .into_iter()
+            .map(|credential| async move {
+                let listed = self
+                    .call(|api, t| {
+                        let credential = credential.clone();
+                        async move { api.list_models(&t, &credential).await }
+                    })
+                    .await;
+                (credential, listed)
+            })
+            .collect();
+        while let Some((credential, listed)) = pending.next().await {
             if let Ok(models) = listed {
                 self.update(|s| {
-                    s.catalogue.insert(credential.clone(), models);
+                    s.catalogue.insert(credential, models);
                 });
             }
         }
