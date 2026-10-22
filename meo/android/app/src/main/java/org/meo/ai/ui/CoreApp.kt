@@ -746,26 +746,7 @@ private fun ChatPane(page: JSONObject, prefs: JSONObject?, strings: JSONObject, 
                                     Text(inspector.str("title"), Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
                                     IconButton(onClick = { act.send(inspector.obj("hide")) }, Modifier.size(24.dp)) { Icon(Icons.Rounded.Close, contentDescription = "Hide") }
                                 }
-                                inspector.list("rows").filter { !it.isNull("value") }.forEach { r ->
-                                    Row {
-                                        Text(r.str("label"), Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        Text(r.str("value"), style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 110.dp))
-                                    }
-                                }
-                                inspector.list("resources").forEach { r ->
-                                    val url = r.str("url")
-                                    val context = LocalContext.current
-                                    Text(
-                                        r.str("title").ifEmpty { url },
-                                        Modifier.clickable(enabled = url.startsWith("http")) {
-                                            runCatching { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))) }
-                                        },
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.primary,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                }
+                                inspector.list("sections").forEach { InspectorSection(it) }
                             }
                         }
                     } else {
@@ -832,7 +813,16 @@ private fun MessageBubble(message: JSONObject, strings: JSONObject, act: Act) {
             SelectionContainer {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (message.has("steps")) Steps(message, act)
-                    MarkdownText(text, Modifier.fillMaxWidth())
+                    val blocks = message.list("blocks")
+                    if (blocks.isEmpty()) MarkdownText(stripIcons(text), Modifier.fillMaxWidth())
+                    else blocks.forEachIndexed { i, block ->
+                        val cursor = if (streaming && i == blocks.lastIndex) " ▍" else ""
+                        when (block.str("type")) {
+                            "callout" -> CalloutBlock(block)
+                            "draft" -> DraftBlock(block, strings)
+                            else -> MarkdownText(stripIcons(block.str("text")) + cursor, Modifier.fillMaxWidth())
+                        }
+                    }
                     message.list("images").forEach { image ->
                         AsyncImage(
                             model = image.str("url"),
@@ -924,17 +914,29 @@ private fun Steps(message: JSONObject, act: Act) {
         )
         if (open) {
             message.list("steps").forEach { step ->
+                var expanded by remember { mutableStateOf(false) }
+                val more = step.str("detail").isNotEmpty() || step.list("items").isNotEmpty()
                 val mark = when (step.str("status")) { "done" -> "✓ "; "error" -> "✕ "; else -> "… " }
                 Text(
-                    mark + step.str("title") + step.str("detail").let { if (it.isEmpty()) "" else " — $it" },
-                    Modifier.padding(start = 16.dp),
+                    (if (more) (if (expanded) "▾ " else "▸ ") else "   ") + mark + step.str("title"),
+                    Modifier.padding(start = 16.dp).clickable(enabled = more) { expanded = !expanded },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
-                step.list("items").forEach { item ->
+                if (expanded && step.str("detail").isNotEmpty()) {
+                    Text(
+                        step.str("detail"),
+                        Modifier.padding(start = 40.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (expanded) step.list("items").forEach { item ->
                     Text(
                         item.str("title").ifEmpty { item.str("url") },
-                        Modifier.padding(start = 32.dp).clickable {
+                        Modifier.padding(start = 40.dp).clickable {
                             val url = item.str("url")
                             if (url.startsWith("https://") || url.startsWith("http://")) {
                                 runCatching { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))) }
@@ -946,6 +948,114 @@ private fun Steps(message: JSONObject, act: Act) {
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
+            }
+        }
+    }
+}
+
+private fun stripIcons(text: String): String = text.replace(Regex(":icon\\[[^\\]]*\\]:"), "")
+
+/** A highlighted note (tip, warning, ...) with a coloured edge. */
+@Composable
+private fun CalloutBlock(block: JSONObject) {
+    val accent = when (block.str("kind")) {
+        "warning", "caution", "important" -> MaterialTheme.colorScheme.error
+        "note", "info" -> MaterialTheme.colorScheme.outline
+        else -> MaterialTheme.colorScheme.primary
+    }
+    Surface(shape = RoundedCornerShape(10.dp), color = MaterialTheme.colorScheme.surfaceContainer, modifier = Modifier.fillMaxWidth()) {
+        Row(Modifier.padding(end = 12.dp)) {
+            Box(Modifier.padding(vertical = 6.dp).width(3.dp).fillMaxHeight().clip(RoundedCornerShape(2.dp)).background(accent))
+            Column(Modifier.padding(start = 10.dp, top = 8.dp, bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                if (block.str("title").isNotEmpty()) Text(block.str("title"), style = MaterialTheme.typography.labelLarge)
+                MarkdownText(stripIcons(block.str("text")), Modifier.fillMaxWidth())
+            }
+        }
+    }
+}
+
+/** A ready-to-send draft: variant tabs, subject, body and a copy button. */
+@Composable
+private fun DraftBlock(block: JSONObject, strings: JSONObject) {
+    val variants = block.list("variants")
+    var pick by remember { mutableStateOf(0) }
+    val variant = variants.getOrNull(pick) ?: return
+    val clipboard = LocalClipboardManager.current
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (block.str("title").isNotEmpty()) Text(block.str("title"), style = MaterialTheme.typography.labelLarge)
+            if (variants.size > 1) {
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    variants.forEachIndexed { i, v ->
+                        FilterChip(selected = i == pick, onClick = { pick = i }, label = { Text(v.str("label").ifEmpty { ('A' + i).toString() }) })
+                    }
+                }
+            }
+            if (variant.str("subject").isNotEmpty()) {
+                Text("${strings.str("subject").ifEmpty { "Subject" }}: ${variant.str("subject")}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            androidx.compose.material3.HorizontalDivider()
+            Text(variant.str("body"), style = MaterialTheme.typography.bodyMedium)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                FilledTonalButton(onClick = { clipboard.setText(AnnotatedString(variant.str("body"))) }) { Text(strings.str("copy").ifEmpty { "Copy" }) }
+            }
+        }
+    }
+}
+
+/** One collapsible section of the details card (environment, context, tools, resources). */
+@Composable
+private fun InspectorSection(sec: JSONObject) {
+    var open by remember { mutableStateOf(sec.optBoolean("open", true)) }
+    val context = LocalContext.current
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Text(
+            (if (open) "▾ " else "▸ ") + sec.str("title"),
+            Modifier.clickable { open = !open },
+            style = MaterialTheme.typography.labelMedium,
+        )
+        if (open) {
+            sec.obj("bar")?.let { bar ->
+                val segs = bar.list("segments")
+                val total = segs.sumOf { it.optDouble("value", 0.0) }.coerceAtLeast(1.0)
+                Row(Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)), horizontalArrangement = Arrangement.spacedBy(1.dp)) {
+                    segs.forEachIndexed { i, x ->
+                        val w = (x.optDouble("value", 0.0) / total).toFloat().coerceAtLeast(0.01f)
+                        Box(Modifier.weight(w).fillMaxHeight().background(if (i == 0) MaterialTheme.colorScheme.primary else if (i == 1) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.outlineVariant))
+                    }
+                }
+                if (bar.str("label").isNotEmpty()) Text(bar.str("label"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            sec.list("rows").filter { it.str("label").isNotEmpty() }.forEach { r ->
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    if (r.str("status").isNotEmpty()) {
+                        Box(Modifier.size(6.dp).clip(RoundedCornerShape(3.dp)).background(
+                            if (r.str("status") == "error") MaterialTheme.colorScheme.error
+                            else if (r.str("status") == "done") MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.outline
+                        ))
+                    }
+                    Text(r.str("label"), Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (!r.isNull("value")) Text(r.str("value"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 90.dp))
+                }
+            }
+            sec.list("links").forEach { r ->
+                val url = r.str("url")
+                Text(
+                    r.str("title").ifEmpty { url },
+                    Modifier.clickable(enabled = url.startsWith("http")) {
+                        runCatching { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))) }
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
         }
     }

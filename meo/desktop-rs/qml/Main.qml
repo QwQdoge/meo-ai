@@ -859,27 +859,72 @@ ApplicationWindow {
                                 MeoIconButton { type: "standard"; size: "xs"; icon.name: "close"; onClicked: window.act(inspectorCard.info.hide) }
                             }
                             Repeater {
-                                model: (inspectorCard.info.rows || []).filter(r => r.value !== null)
-                                RowLayout {
+                                model: inspectorCard.info.sections || []
+                                Column {
+                                    id: sec
                                     required property var modelData
+                                    property bool open: modelData.open !== false
                                     Layout.fillWidth: true
-                                    MeoText { text: modelData.label; typeRole: "label"; color: MeoTheme.onSurfaceVariant; Layout.fillWidth: true }
-                                    MeoText { text: String(modelData.value); typeRole: "label"; horizontalAlignment: Text.AlignRight; elide: Text.ElideRight; Layout.maximumWidth: 130 }
-                                }
-                            }
-                            Repeater {
-                                model: inspectorCard.info.resources || []
-                                MeoText {
-                                    required property var modelData
-                                    text: modelData.title || modelData.url || ""
-                                    typeRole: "label"
-                                    color: MeoTheme.primary
-                                    elide: Text.ElideRight
-                                    Layout.fillWidth: true
-                                    MouseArea {
-                                        anchors.fill: parent
-                                        cursorShape: Qt.PointingHandCursor
-                                        onClicked: if (/^https?:\/\//.test(modelData.url || "")) Qt.openUrlExternally(modelData.url)
+                                    spacing: 3
+                                    MeoButton {
+                                        text: (sec.open ? "▾ " : "▸ ") + (modelData.title || "")
+                                        type: "text"
+                                        size: "xs"
+                                        onClicked: sec.open = !sec.open
+                                    }
+                                    Row {
+                                        visible: sec.open && !!modelData.bar
+                                        width: parent.width
+                                        height: 6
+                                        spacing: 1
+                                        Repeater {
+                                            model: (modelData.bar || {}).segments || []
+                                            Rectangle {
+                                                required property var modelData
+                                                required property int index
+                                                readonly property real sum: Math.max(1, ((sec.modelData.bar || {}).segments || []).reduce((n, x) => n + x.value, 0))
+                                                width: Math.max(2, (sec.width - 3) * modelData.value / sum)
+                                                height: 6
+                                                radius: 3
+                                                color: index === 0 ? MeoTheme.primary : index === 1 ? MeoTheme.tertiary : MeoTheme.outlineVariant
+                                            }
+                                        }
+                                    }
+                                    MeoText {
+                                        visible: sec.open && !!(modelData.bar || {}).label
+                                        text: (modelData.bar || {}).label || ""
+                                        typeRole: "label"
+                                        color: MeoTheme.onSurfaceVariant
+                                    }
+                                    Repeater {
+                                        model: sec.open ? (modelData.rows || []).filter(r => r.label) : []
+                                        RowLayout {
+                                            required property var modelData
+                                            width: sec.width
+                                            Rectangle {
+                                                visible: !!modelData.status
+                                                width: 6; height: 6; radius: 3
+                                                color: modelData.status === "error" ? MeoTheme.error : modelData.status === "done" ? MeoTheme.primary : MeoTheme.outline
+                                            }
+                                            MeoText { text: modelData.label; typeRole: "label"; elide: Text.ElideRight; Layout.fillWidth: true }
+                                            MeoText { visible: modelData.value !== undefined && modelData.value !== null; text: String(modelData.value); typeRole: "label"; color: MeoTheme.onSurfaceVariant }
+                                        }
+                                    }
+                                    Repeater {
+                                        model: sec.open ? (modelData.links || []) : []
+                                        MeoText {
+                                            required property var modelData
+                                            width: sec.width
+                                            text: modelData.title || modelData.url || ""
+                                            typeRole: "label"
+                                            color: MeoTheme.primary
+                                            elide: Text.ElideRight
+                                            MouseArea {
+                                                anchors.fill: parent
+                                                cursorShape: Qt.PointingHandCursor
+                                                onClicked: if (/^https?:\/\//.test(modelData.url || "")) Qt.openUrlExternally(modelData.url)
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -894,6 +939,118 @@ ApplicationWindow {
                         size: "xs"
                         text: (window.page.inspector || {}).title || ""
                         onClicked: window.act(window.page.inspector.show)
+                    }
+
+
+                    Component {
+                        id: markdownBlock
+                        TextEdit {
+                            readOnly: true
+                            selectByMouse: true
+                            wrapMode: Text.Wrap
+                            textFormat: TextEdit.MarkdownText
+                            text: (block.text || "").replace(/:icon\[[^\]]*\]:/g, "") + (streaming ? " ▍" : "")
+                            color: MeoTheme.onSurface
+                            font.pixelSize: 15
+                        }
+                    }
+                    Component {
+                        id: calloutBlock
+                        Rectangle {
+                            readonly property color accent: block.kind === "warning" || block.kind === "caution" || block.kind === "important" ? MeoTheme.error : block.kind === "note" || block.kind === "info" ? MeoTheme.outline : MeoTheme.primary
+                            implicitHeight: calloutColumn.implicitHeight + 16
+                            radius: 10
+                            color: MeoTheme.surfaceContainer
+                            Rectangle { width: 3; height: parent.height - 12; y: 6; radius: 2; color: parent.accent }
+                            Column {
+                                id: calloutColumn
+                                x: 14
+                                y: 8
+                                width: parent.width - 24
+                                spacing: 2
+                                Text {
+                                    visible: !!block.title
+                                    text: block.title || ""
+                                    font.bold: true
+                                    font.pixelSize: 14
+                                    color: MeoTheme.onSurface
+                                }
+                                TextEdit {
+                                    width: parent.width
+                                    readOnly: true
+                                    selectByMouse: true
+                                    wrapMode: Text.Wrap
+                                    textFormat: TextEdit.MarkdownText
+                                    text: (block.text || "").replace(/:icon\[[^\]]*\]:/g, "")
+                                    color: MeoTheme.onSurface
+                                    font.pixelSize: 14
+                                }
+                            }
+                        }
+                    }
+                    Component {
+                        id: draftBlock
+                        Rectangle {
+                            id: draftCard
+                            property int pick: 0
+                            readonly property var variant: (block.variants || [])[pick] || ({})
+                            implicitHeight: draftColumn.implicitHeight + 20
+                            radius: 14
+                            color: MeoTheme.surfaceContainer
+                            border.color: MeoTheme.outlineVariant
+                            Column {
+                                id: draftColumn
+                                x: 12
+                                y: 10
+                                width: parent.width - 24
+                                spacing: 6
+                                Text { visible: !!block.title; text: block.title || ""; font.bold: true; font.pixelSize: 14; color: MeoTheme.onSurface }
+                                Row {
+                                    spacing: 4
+                                    visible: (block.variants || []).length > 1
+                                    Repeater {
+                                        model: block.variants || []
+                                        MeoButton {
+                                            required property var modelData
+                                            required property int index
+                                            text: modelData.label || String.fromCharCode(65 + index)
+                                            type: draftCard.pick === index ? "tonal" : "text"
+                                            size: "xs"
+                                            onClicked: draftCard.pick = index
+                                        }
+                                    }
+                                }
+                                Text {
+                                    visible: !!draftCard.variant.subject
+                                    width: parent.width
+                                    wrapMode: Text.Wrap
+                                    font.pixelSize: 13
+                                    color: MeoTheme.onSurfaceVariant
+                                    text: qsTr("Subject: ") + (draftCard.variant.subject || "")
+                                }
+                                Rectangle { width: parent.width; height: 1; color: MeoTheme.outlineVariant }
+                                TextEdit {
+                                    width: parent.width
+                                    readOnly: true
+                                    selectByMouse: true
+                                    wrapMode: Text.Wrap
+                                    text: draftCard.variant.body || ""
+                                    color: MeoTheme.onSurface
+                                    font.pixelSize: 14
+                                }
+                                MeoButton {
+                                    anchors.right: parent.right
+                                    text: (window.v.strings || {}).copy || qsTr("Copy")
+                                    type: "tonal"
+                                    size: "xs"
+                                    onClicked: {
+                                        clipboardHelper.text = draftCard.variant.body || ""
+                                        clipboardHelper.selectAll()
+                                        clipboardHelper.copy()
+                                    }
+                                }
+                            }
+                        }
                     }
 
                     ListView {
@@ -912,6 +1069,8 @@ ApplicationWindow {
                         onCountChanged: positionViewAtEnd()
                         onContentHeightChanged: if (atYEnd || window.page.composer.busy) positionViewAtEnd()
                         delegate: Item {
+                            id: messageItem
+                            readonly property bool streaming: !!modelData.streaming
                             width: ListView.view.width
                             implicitHeight: stepsBox.height + bubble.implicitHeight + pictures.height + (messageActions.visible ? messageActions.implicitHeight + 4 : 0)
                             readonly property bool mine: modelData.role === "user"
@@ -934,22 +1093,40 @@ ApplicationWindow {
                                 Repeater {
                                     model: stepsBox.open ? (modelData.steps || []) : []
                                     Column {
+                                        id: stepRow
                                         required property var modelData
+                                        property bool expanded: false
+                                        readonly property bool hasMore: !!modelData.detail || (modelData.items || []).length > 0
                                         x: 16
                                         width: stepsBox.width - 32
                                         Text {
                                             width: parent.width
-                                            wrapMode: Text.Wrap
+                                            elide: Text.ElideRight
                                             color: MeoTheme.onSurfaceVariant
                                             font.pixelSize: 13
-                                            text: (modelData.status === "done" ? "✓ " : modelData.status === "error" ? "✕ " : "… ") + modelData.title + (modelData.detail ? " — " + modelData.detail : "")
+                                            text: (stepRow.hasMore ? (stepRow.expanded ? "▾ " : "▸ ") : "   ") + (modelData.status === "done" ? "✓ " : modelData.status === "error" ? "✕ " : "… ") + modelData.title
+                                            MouseArea {
+                                                anchors.fill: parent
+                                                enabled: stepRow.hasMore
+                                                cursorShape: Qt.PointingHandCursor
+                                                onClicked: stepRow.expanded = !stepRow.expanded
+                                            }
+                                        }
+                                        Text {
+                                            visible: stepRow.expanded && !!modelData.detail
+                                            x: 32
+                                            width: parent.width - 32
+                                            wrapMode: Text.Wrap
+                                            color: MeoTheme.onSurfaceVariant
+                                            font.pixelSize: 12
+                                            text: modelData.detail || ""
                                         }
                                         Repeater {
-                                            model: modelData.items || []
+                                            model: stepRow.expanded ? (modelData.items || []) : []
                                             Text {
                                                 required property var modelData
-                                                x: 16
-                                                width: parent.width - 16
+                                                x: 32
+                                                width: parent.width - 32
                                                 elide: Text.ElideRight
                                                 color: MeoTheme.primary
                                                 font.pixelSize: 12
@@ -1016,22 +1193,30 @@ ApplicationWindow {
                                 id: bubble
                                 y: stepsBox.height
                                 anchors.right: parent.mine ? parent.right : undefined
-                                width: Math.min(parent.width * (parent.mine ? 0.75 : 1), body.implicitWidth + 32)
-                                implicitHeight: body.implicitHeight + 24
+                                width: parent.mine ? Math.min(parent.width * 0.75, blocksColumn.implicitWidth + 32) : parent.width
+                                implicitHeight: blocksColumn.implicitHeight + 24
                                 radius: 18
                                 color: parent.mine ? MeoTheme.secondaryContainer : "transparent"
-                                TextEdit {
-                                    id: body
+                                Column {
+                                    id: blocksColumn
                                     x: 16
                                     y: 12
-                                    width: Math.min(implicitWidth, messages.width - 32)
-                                    readOnly: true
-                                    selectByMouse: true
-                                    wrapMode: Text.Wrap
-                                    textFormat: TextEdit.MarkdownText
-                                    text: modelData.text + (modelData.streaming ? " ▍" : "")
-                                    color: MeoTheme.onSurface
-                                    font.pixelSize: 15
+                                    width: bubble.width - 32
+                                    spacing: 8
+                                    Repeater {
+                                        model: {
+                                            const own = modelData.role === "user" || !modelData.blocks
+                                            const list = own ? [{ type: "markdown", text: modelData.text }] : modelData.blocks
+                                            return list.map((x, i) => Object.assign({ last: i === list.length - 1 }, x))
+                                        }
+                                        Loader {
+                                            required property var modelData
+                                            width: blocksColumn.width
+                                            property var block: modelData
+                                            property bool streaming: !!messageItem.streaming && !!modelData.last
+                                            sourceComponent: block.type === "callout" ? calloutBlock : block.type === "draft" ? draftBlock : markdownBlock
+                                        }
+                                    }
                                 }
                             }
                         }
