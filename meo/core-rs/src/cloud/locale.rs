@@ -203,6 +203,17 @@ pub fn localize(view: &mut Value, locale: &str) {
             }
             if let Some(card) = page.get_mut("inspector").filter(|i| i.is_object()) {
                 field(c, card, "title");
+                for section in each(card, "sections") {
+                    field(c, section, "title");
+                    for row in each(section, "rows") {
+                        field(c, row, "label");
+                    }
+                    if let Some(bar) = section.get_mut("bar") {
+                        for seg in each(bar, "segments") {
+                            field(c, seg, "label");
+                        }
+                    }
+                }
                 for row in each(card, "rows") {
                     field(c, row, "label");
                     if row["value"] == "Cloud chat" {

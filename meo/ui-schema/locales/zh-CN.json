@@ -239,5 +239,10 @@
   "Could not decide — answering directly": "无法判断，直接回答",
   "This step failed; continuing without it": "这一步失败了，继续往下",
   "The judge did not return a score": "评审模型没有返回分数",
-  "Thinking levels above Low use several requests. Allow sending to the provider without asking each time to use them.": "高于「低」的思考等级会发送多次请求。请允许无需每次询问即发送给服务商后再使用。"
+  "Thinking levels above Low use several requests. Allow sending to the provider without asking each time to use them.": "高于「低」的思考等级会发送多次请求。请允许无需每次询问即发送给服务商后再使用。",
+  "Resources": "资源",
+  "Outputs": "产出",
+  "Messages": "消息",
+  "Work notes": "工作记录",
+  "No profile": "未使用方案"
 }

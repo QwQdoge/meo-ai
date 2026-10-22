@@ -27,7 +27,7 @@ use super::{
     auth::{self, OAuthConfig, PendingAuthorization, Session},
     locale,
     manifest::Manifest,
-    orchestration,
+    orchestration, richtext,
     router::{self, Choice, Router},
     storage::Storage,
 };
@@ -3740,14 +3740,88 @@ fn inspector(s: &State, messages: &[Value], active: Option<&String>) -> Value {
                 .map(|f| json!({ "title": f["name"], "url": null })),
         )
         .collect();
+    let compact = |n: usize| {
+        if n >= 1000 {
+            format!("{:.1}k", n as f64 / 1000.0)
+        } else {
+            n.to_string()
+        }
+    };
+    let model = steps
+        .iter()
+        .find(|x| x["id"] == "model")
+        .and_then(|x| x["detail"].as_str())
+        .map_or_else(|| using_label(s), str::to_owned);
+    let profile = profile_list(s)
+        .into_iter()
+        .find(|p| p["active"] == true)
+        .and_then(|p| p["name"].as_str().map(str::to_owned));
+    let level = s
+        .prefs
+        .get("chat.thinking")
+        .and_then(Value::as_str)
+        .unwrap_or("medium");
+    let message_tokens = chars / 4;
+    let note_tokens: usize = steps
+        .iter()
+        .filter(|x| x["id"].as_str().is_some_and(|i| i.starts_with('s')) && x["id"] != "search")
+        .map(|x| x["detail"].as_str().map_or(0, |d| d.chars().count()) / 4)
+        .sum();
+    let step_rows: Vec<Value> = steps
+        .iter()
+        .map(|x| json!({ "label": x["title"], "status": x["status"], "value": null }))
+        .collect();
+    let outputs: Vec<Value> = s
+        .generated
+        .values()
+        .flatten()
+        .enumerate()
+        .map(|(i, _)| json!({ "icon": "image", "label": format!("Image {}", i + 1) }))
+        .chain(
+            s.files
+                .iter()
+                .map(|f| json!({ "icon": "description", "label": f["name"] })),
+        )
+        .collect();
+    let mut sections = vec![
+        json!({ "id": "environment", "title": "Environment", "open": true, "rows": [
+            { "icon": "cloud", "label": "Cloud chat" },
+            { "icon": "deployed_code", "label": model },
+            { "icon": "tune", "label": profile.unwrap_or_else(|| "No profile".to_owned()) },
+            { "icon": "psychology", "label": format!("Thinking · {level}") },
+        ] }),
+        json!({ "id": "context", "title": "Context", "open": true,
+            "bar": { "label": format!("≈ {} tokens", compact(message_tokens + note_tokens)), "segments": [
+                { "label": "Messages", "value": message_tokens },
+                { "label": "Work notes", "value": note_tokens },
+            ] },
+            "rows": [
+                { "label": "Messages", "value": compact(message_tokens) },
+                { "label": "Work notes", "value": compact(note_tokens) },
+            ] }),
+    ];
+    if !step_rows.is_empty() {
+        sections.push(json!({ "id": "steps", "title": format!("Tools used · {tools}"), "open": true, "rows": step_rows }));
+    }
+    if !resources.is_empty() {
+        sections.push(
+            json!({ "id": "resources", "title": "Resources", "open": true, "links": resources }),
+        );
+    }
+    if !outputs.is_empty() {
+        sections
+            .push(json!({ "id": "outputs", "title": "Outputs", "open": true, "rows": outputs }));
+    }
     json!({
         "visible": visible,
         "title": "Details",
         "hide": toggle(false),
         "show": toggle(true),
+        "sections": sections,
+        // Older clients: the flat form.
         "rows": [
             { "label": "Tools used", "value": tools.to_string() },
-            { "label": "Context", "value": format!("≈ {} tokens", chars / 4) },
+            { "label": "Context", "value": format!("≈ {} tokens", compact(message_tokens)) },
             { "label": "Environment", "value": "Cloud chat" },
         ],
         "resources": resources,
@@ -4172,6 +4246,7 @@ fn conversation_page(s: &State) -> Value {
                     images.extend(s.generated.get(&m.id).into_iter().flatten().cloned());
                     json!({
                         "id": m.id, "role": m.role, "text": text, "streaming": false, "actions": actions,
+                        "blocks": if m.role == "assistant" { richtext::blocks(&text) } else { Vec::new() },
                         "images": images.into_iter().map(|u| json!({ "url": u })).collect::<Vec<_>>(),
                     })
                 })
@@ -4183,7 +4258,7 @@ fn conversation_page(s: &State) -> Value {
         .as_ref()
         .filter(|(id, _)| Some(id) == active.as_ref());
     if let Some((_, text)) = streaming {
-        messages.push(json!({ "role": "assistant", "text": text, "streaming": true }));
+        messages.push(json!({ "role": "assistant", "text": text, "streaming": true, "blocks": richtext::blocks(text) }));
     }
     // Steps of the current / last answer, collapsed under it.
     if let Some((_, steps)) = s

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, type ReactNode } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { Blocks } from "./rich";
+import { Icon } from "./icons";
 import { useCore, type Action, type View } from "./useCore";
 import "./core.css";
 
@@ -438,11 +438,56 @@ function RowMenu({ menu, act, label }: { menu: Spec[]; act: Act; label: string }
   );
 }
 
+/** One collapsible part of the details card: icon rows, a usage bar, step rows, links. */
+function InspectorSection({ sec }: { sec: Spec }) {
+  const [open, setOpen] = useState(sec.open !== false);
+  const total = Math.max(1, ...[(sec.bar?.segments ?? []).reduce((n: number, x: Spec) => n + x.value, 0)]);
+  return (
+    <section className="core-isec">
+      <button className="core-isec-head" aria-expanded={open} onClick={() => setOpen(!open)}>
+        <span>{sec.title}</span><Icon name={open ? "expand_more" : "chevron_right"} size={14} />
+      </button>
+      {open && (
+        <div className="core-isec-body">
+          {sec.bar && (
+            <>
+              <div className="core-bar" role="img" aria-label={sec.bar.label}>
+                {sec.bar.segments.map((x: Spec, i: number) => <i key={i} className={`seg${i}`} style={{ flexGrow: x.value / total }} title={`${x.label}: ${x.value}`} />)}
+              </div>
+              <div className="core-muted core-bar-label">{sec.bar.label}</div>
+            </>
+          )}
+          {(sec.rows ?? []).filter((r: Spec) => r.label).map((r: Spec, i: number) => (
+            <div key={i} className="core-irow">
+              {r.icon && <Icon name={r.icon} />}
+              {r.status && <span className={`dot ${r.status}`} aria-hidden />}
+              <span className="label">{r.label}</span>
+              {r.value != null && <span className="core-muted">{r.value}</span>}
+            </div>
+          ))}
+          {(sec.links ?? []).map((r: Spec, i: number) => (
+            <div key={i} className="core-irow">
+              {/^https?:\/\//.test(r.url ?? "") ? <a href={r.url} target="_blank" rel="noreferrer noopener">{r.title || r.url}</a> : <span className="label">{r.title}</span>}
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 /** Quiet one-line control under the composer (Claude style): text button, slider in a popover. */
 function ControlChip({ item, act }: { item: Spec; act: Act }) {
   const [open, setOpen] = useState(false);
   const options: Spec[] = item.options ?? [];
   const current = options.find((o) => o.value === item.value);
+  if (item.kind === "toggle" && item.icon) {
+    return (
+      <button className="core-chipbtn icon" aria-pressed={item.value === true} aria-label={item.label} title={item.label} onClick={() => act(setting(item, item.value !== true))}>
+        <Icon name={item.icon} size={16} />
+      </button>
+    );
+  }
   if (item.kind === "toggle") {
     return (
       <button className="core-chipbtn" aria-pressed={item.value === true} onClick={() => act(setting(item, item.value !== true))}>
@@ -529,18 +574,7 @@ function Conversation({ page, prefs, strings, act }: { page: Spec; prefs: Spec; 
           {inspector.visible && (
             <aside className="core-inspector" aria-label={inspector.title}>
               <header><strong>{inspector.title}</strong><button aria-label="Hide" onClick={() => act(inspector.hide)}>✕</button></header>
-              <dl>
-                {(inspector.rows ?? []).filter((r: Spec) => r.value !== null).map((r: Spec) => (
-                  <div key={r.label}><dt>{r.label}</dt><dd>{r.value}</dd></div>
-                ))}
-              </dl>
-              {(inspector.resources ?? []).length > 0 && (
-                <ul>
-                  {inspector.resources.map((r: Spec, i: number) => (
-                    <li key={i}>{/^https?:\/\//.test(r.url ?? "") ? <a href={r.url} target="_blank" rel="noreferrer noopener">{r.title || r.url}</a> : r.title}</li>
-                  ))}
-                </ul>
-              )}
+              {(inspector.sections ?? []).map((sec: Spec) => <InspectorSection key={sec.id} sec={sec} />)}
             </aside>
           )}
           {page.empty && (
@@ -563,26 +597,37 @@ function Conversation({ page, prefs, strings, act }: { page: Spec; prefs: Spec; 
                   {m.steps && (
                     <details className="core-steps" open={!!m.stepsOpen}>
                       <summary>{m.stepsLabel}</summary>
-                      <ul>
+                      <ol>
                         {m.steps.map((st: Spec) => (
                           <li key={st.id} className={`step-${st.status}`}>
-                            <span aria-hidden>{st.status === "done" ? "✓" : st.status === "error" ? "✕" : "…"}</span> <b>{st.title}</b>
-                            {st.detail ? <span className="core-muted"> — {st.detail}</span> : null}
-                            {(st.items ?? []).length > 0 && (
-                              <ul>
-                                {st.items.map((it: Spec, k: number) => (
-                                  <li key={k}>{/^https?:\/\//.test(it.url) ? <a href={it.url} target="_blank" rel="noreferrer noopener">{it.title || it.url}</a> : it.title}</li>
-                                ))}
-                              </ul>
-                            )}
+                            <details>
+                              <summary>
+                                <span className="core-step-mark" aria-hidden>
+                                  {st.status === "done" ? <Icon name="check_circle" size={14} /> : st.status === "error" ? <Icon name="error" size={14} /> : <Icon name="progress_activity" size={14} className="spin" />}
+                                </span>
+                                <b>{st.title}</b>
+                              </summary>
+                              {st.detail ? <p className="core-muted">{st.detail}</p> : null}
+                              {(st.items ?? []).length > 0 && (
+                                <ul>
+                                  {st.items.map((it: Spec, k: number) => (
+                                    <li key={k}>{/^https?:\/\//.test(it.url) ? <a href={it.url} target="_blank" rel="noreferrer noopener">{it.title || it.url}</a> : it.title}</li>
+                                  ))}
+                                </ul>
+                              )}
+                            </details>
                           </li>
                         ))}
-                      </ul>
+                      </ol>
                     </details>
                   )}
-                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ pre: (props) => <CodeBlock {...props} label={strings.copy ?? "Copy"} done={strings.copied ?? "Copied"} /> }}>
-                    {m.text + (m.streaming ? " ▍" : "")}
-                  </ReactMarkdown>
+                  <Blocks
+                    blocks={m.blocks?.length ? m.blocks : [{ type: "markdown", text: m.text }]}
+                    streaming={!!m.streaming}
+                    copy={strings.copy ?? "Copy"}
+                    copied={strings.copied ?? "Copied"}
+                    components={{ pre: (props: any) => <CodeBlock {...props} label={strings.copy ?? "Copy"} done={strings.copied ?? "Copied"} /> }}
+                  />
                   {(m.images ?? []).map((img: Spec, k: number) => (
                     <img key={k} className="core-image" src={img.url} alt="" loading="lazy" />
                   ))}
