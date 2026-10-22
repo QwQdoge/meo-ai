@@ -170,5 +170,12 @@
   "Low": "低",
   "Medium": "中",
   "High": "高",
-  "Max": "最高"
+  "Max": "最高",
+  "Profile": "方案",
+  "Use": "使用",
+  "In use": "使用中",
+  "Save profile": "保存方案",
+  "Save current models as a profile": "将当前模型保存为方案",
+  "Name the current set of models, e.g. “Claude only”.": "为当前这组模型命名，例如“仅 Claude”。",
+  "You can save up to 5 profiles.": "最多保存 5 个方案。"
 }

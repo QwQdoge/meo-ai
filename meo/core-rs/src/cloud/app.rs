@@ -38,6 +38,14 @@ pub const VIEW_SCHEMA: u32 = 1;
 pub enum Action {
     /// Assign a model to every route from what the connected providers offer.
     AutoConfigureRouter,
+    /// Asks for a name, then saves the current route models as a profile.
+    BeginSaveProfile,
+    SaveProfile {
+        text: String,
+    },
+    DeleteProfile {
+        id: String,
+    },
     AddCustomRoute,
     DeleteCustomRoute {
         id: String,
@@ -456,6 +464,53 @@ impl AppCore {
                     }
                     None => self.notice("info", "You can have up to 5 custom routes."),
                 }
+            }
+            Action::BeginSaveProfile => {
+                if self
+                    .state
+                    .lock()
+                    .unwrap()
+                    .router
+                    .next_profile_id()
+                    .is_none()
+                {
+                    return self.notice("info", "You can save up to 5 profiles.");
+                }
+                self.prompt(
+                    "Save profile",
+                    "Name the current set of models, e.g. “Claude only”.",
+                    "",
+                    false,
+                    input_button("Save", "primary", json!({ "type": "save_profile" })),
+                );
+            }
+            Action::SaveProfile { text } => {
+                self.update(|s| s.dialog = None);
+                let name: String = text.trim().chars().take(40).collect();
+                if name.is_empty() {
+                    return;
+                }
+                self.update(|s| {
+                    if let Some(id) = s.router.next_profile_id() {
+                        let slots = s.router.slots.clone();
+                        s.router.profiles.push(router::Profile {
+                            id: id.clone(),
+                            name,
+                            slots,
+                        });
+                        s.router.active_profile = id;
+                    }
+                });
+                self.persist_router().await;
+            }
+            Action::DeleteProfile { id } => {
+                self.update(|s| {
+                    s.router.profiles.retain(|p| p.id != id);
+                    if s.router.active_profile == id {
+                        s.router.active_profile.clear();
+                    }
+                });
+                self.persist_router().await;
             }
             Action::DeleteCustomRoute { id } => {
                 self.update(|s| s.router.custom.retain(|c| c.id != id));
@@ -2288,6 +2343,24 @@ impl AppCore {
         if binding.starts_with("project:") {
             return self.edit_project_field(&binding, value).await;
         }
+        if binding == "models.profile" {
+            let id = value.as_str().unwrap_or_default().to_owned();
+            let found = profiles(&self.state.lock().unwrap())
+                .into_iter()
+                .find(|(pid, ..)| *pid == id);
+            let Some((_, name, slots)) = found else {
+                return;
+            };
+            self.update(|s| {
+                // Only the routes the profile names change; the rest keep their model.
+                for (route, choice) in slots {
+                    s.router.slots.insert(route, choice);
+                }
+                s.router.active_profile = id;
+            });
+            self.persist_router().await;
+            return self.notice("info", format!("Profile: {name}"));
+        }
         if binding == "models.auto" {
             let on = value.as_bool().unwrap_or(true);
             self.update(|s| s.router.auto = on);
@@ -2873,6 +2946,20 @@ fn composer_controls(s: &State) -> Vec<Value> {
         model["align"] = json!("end");
         controls.push(model);
     }
+    let all = profiles(s);
+    if all.len() > 1 || (!all.is_empty() && !s.router.active_profile.is_empty()) {
+        let mut options: Vec<Value> = all
+            .iter()
+            .map(|(id, name, _)| json!({ "value": id, "label": name }))
+            .collect();
+        if !all.iter().any(|(id, ..)| *id == s.router.active_profile) {
+            options.insert(0, json!({ "value": "", "label": "Profile" }));
+        }
+        controls.push(json!({
+            "id": "profile", "label": "Profile", "kind": "select", "binding": "models.profile",
+            "value": s.router.active_profile, "options": options, "align": "end",
+        }));
+    }
     controls.push(slider(
         "thinking",
         "Thinking",
@@ -2965,6 +3052,36 @@ fn using_label(s: &State) -> String {
     }
 }
 
+/// Switchable profiles: the saved ones, then one per connected provider (generated from what it offers).
+fn profiles(s: &State) -> Vec<(String, String, HashMap<String, Choice>)> {
+    let mut out: Vec<_> = s
+        .router
+        .profiles
+        .iter()
+        .map(|p| (p.id.clone(), p.name.clone(), p.slots.clone()))
+        .collect();
+    if s.credentials.len() > 1 {
+        for credential in &s.credentials {
+            let models: Vec<(String, Model)> = s
+                .catalogue
+                .get(&credential.id)
+                .into_iter()
+                .flatten()
+                .map(|m| (credential.id.clone(), m.clone()))
+                .collect();
+            let slots = router::suggest(&models);
+            if !slots.is_empty() {
+                out.push((
+                    format!("family:{}", credential.id),
+                    credential.display_name.clone(),
+                    slots,
+                ));
+            }
+        }
+    }
+    out
+}
+
 /// Settings > Models: automatic choice, one model per route, custom routes.
 fn router_controls(s: &State) -> Vec<Value> {
     let models = all_models(s);
@@ -3004,10 +3121,41 @@ fn router_controls(s: &State) -> Vec<Value> {
         }
         json!({ "id": id, "label": label, "kind": "select", "binding": binding, "value": value, "options": options })
     };
-    let mut items = vec![
+    let mut items: Vec<Value> = Vec::new();
+    for (id, name, slots) in profiles(s) {
+        let saved = id.starts_with("profile");
+        let current = s.router.active_profile == id;
+        let mut buttons = vec![button(
+            if current { "In use" } else { "Use" },
+            "secondary",
+            json!({ "type": "set_setting", "binding": "models.profile", "value": id }),
+        )];
+        if saved {
+            buttons.push(button(
+                "Delete",
+                "danger",
+                json!({ "type": "delete_profile", "id": id }),
+            ));
+        }
+        let detail = format!(
+            "{} routes{}",
+            slots.len(),
+            if saved {
+                ""
+            } else {
+                " · generated from this connection"
+            }
+        );
+        items.push(item(format!("profile-{id}"), &name, &detail, buttons));
+    }
+    items.push(json!({
+        "id": "save_profile", "label": "Save current models as a profile", "kind": "button", "style": "secondary",
+        "action": { "type": "begin_save_profile" },
+    }));
+    items.extend([
         json!({ "id": "router_auto", "label": "Choose the model automatically", "kind": "toggle", "binding": "models.auto", "value": s.router.auto }),
         json!({ "id": "router_setup", "label": "Set up automatically", "kind": "button", "style": "secondary", "action": { "type": "auto_configure_router" } }),
-    ];
+    ]);
     for slot in &router::SLOTS {
         let needs_image = slot.id == "vision";
         items.push(select(
@@ -3723,6 +3871,46 @@ mod tests {
         };
         assert_eq!(find("permission")["value"], "ask");
         assert_eq!(find("thinking")["align"], "end");
+    }
+
+    #[test]
+    fn profiles_are_generated_per_provider_saved_by_name_and_applied_in_one_step() {
+        let c = signed_in_core();
+        seed_models(&c);
+        let options = |c: &AppCore| {
+            c.view()["page"]["composer"]["toolbar"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|x| x["id"] == "profile")
+                .map(|x| x["options"].as_array().unwrap().len())
+        };
+        assert_eq!(
+            options(&c),
+            Some(3),
+            "Profile placeholder plus one per provider"
+        );
+        futures_executor::block_on(c.dispatch(Action::SetSetting {
+            binding: "models.profile".into(),
+            value: json!("family:c1"),
+        }));
+        assert_eq!(c.state.lock().unwrap().router.active_profile, "family:c1");
+        assert_eq!(
+            c.state.lock().unwrap().router.slots["default"].1,
+            "gpt-5.1"
+        );
+        futures_executor::block_on(c.dispatch(Action::SaveProfile {
+            text: "Mine".into(),
+        }));
+        let saved = c.state.lock().unwrap().router.profiles.clone();
+        assert_eq!(
+            (saved[0].id.as_str(), saved[0].name.as_str()),
+            ("profile1", "Mine")
+        );
+        futures_executor::block_on(c.dispatch(Action::DeleteProfile {
+            id: "profile1".into(),
+        }));
+        assert!(c.state.lock().unwrap().router.profiles.is_empty());
     }
 
     #[test]

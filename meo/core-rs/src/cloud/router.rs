@@ -116,12 +116,48 @@ pub struct CustomRoute {
     pub choice: Option<Choice>,
 }
 
+pub const MAX_PROFILES: usize = 5;
+
+/// A named set of route models the user can switch to in one tap (`profile1` .. `profile5`).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Profile {
+    pub id: String,
+    pub name: String,
+    pub slots: HashMap<String, Choice>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Router {
     /// Pick the route per message instead of always using Everyday chat.
     pub auto: bool,
     pub slots: HashMap<String, Choice>,
     pub custom: Vec<CustomRoute>,
+    /// Saved profiles and the id of the one last applied (a saved `profileN` or `family:<credential>`).
+    pub profiles: Vec<Profile>,
+    pub active_profile: String,
+}
+
+/// `default=cred|model;fast=cred|model`
+fn format_slots(slots: &HashMap<String, Choice>) -> String {
+    let mut parts: Vec<String> = SLOTS
+        .iter()
+        .filter_map(|s| {
+            slots
+                .get(s.id)
+                .map(|c| format!("{}={}", s.id, format_choice(c)))
+        })
+        .collect();
+    parts.sort();
+    parts.join(";")
+}
+
+fn parse_slots(value: &str) -> HashMap<String, Choice> {
+    value
+        .split(';')
+        .filter_map(|part| part.split_once('='))
+        .filter(|(id, _)| slot(id).is_some())
+        .filter_map(|(id, c)| parse_choice(c).map(|c| (id.to_owned(), c)))
+        .collect()
 }
 
 fn parse_choice(value: &str) -> Option<Choice> {
@@ -147,6 +183,21 @@ impl Router {
                 router.slots.insert(slot.id.to_owned(), choice);
             }
         }
+        router.active_profile = group["activeProfile"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
+        for n in 1..=MAX_PROFILES {
+            let id = format!("profile{n}");
+            let name = group[id.as_str()].as_str().unwrap_or_default();
+            if !name.is_empty() {
+                router.profiles.push(Profile {
+                    slots: parse_slots(group[format!("{id}Slots")].as_str().unwrap_or_default()),
+                    name: name.to_owned(),
+                    id,
+                });
+            }
+        }
         for n in 1..=MAX_CUSTOM {
             let id = format!("custom{n}");
             let label = group[format!("{id}Label")]
@@ -169,6 +220,19 @@ impl Router {
             if let Some(choice) = self.slots.get(slot.id) {
                 group.insert(slot.key.into(), json!(format_choice(choice)));
             }
+        }
+        if !self.active_profile.is_empty() {
+            group.insert("activeProfile".into(), json!(self.active_profile));
+        }
+        for profile in &self.profiles {
+            group.insert(
+                profile.id.clone(),
+                json!(profile.name.chars().take(40).collect::<String>()),
+            );
+            group.insert(
+                format!("{}Slots", profile.id),
+                json!(format_slots(&profile.slots)),
+            );
         }
         for route in &self.custom {
             group.insert(
@@ -206,6 +270,13 @@ impl Router {
                 }
             }
         }
+    }
+
+    /// First free profile id, if there is room.
+    pub fn next_profile_id(&self) -> Option<String> {
+        (1..=MAX_PROFILES)
+            .map(|n| format!("profile{n}"))
+            .find(|id| self.profiles.iter().all(|p| &p.id != id))
     }
 
     /// First free custom id, if there is room.
@@ -695,6 +766,29 @@ mod tests {
         assert_eq!(s["default"].1, "some-chat-model");
         assert!(!s.contains_key("image") && !s.contains_key("video") && !s.contains_key("speech"));
         assert!(suggest(&[]).is_empty());
+    }
+
+    #[test]
+    fn profiles_round_trip_through_flat_account_preferences() {
+        let mut r = configured();
+        r.profiles.push(Profile {
+            id: "profile1".into(),
+            name: "Claude only".into(),
+            slots: HashMap::from([(
+                "default".to_owned(),
+                ("c1".to_owned(), "claude-x".to_owned()),
+            )]),
+        });
+        r.active_profile = "profile1".into();
+        let prefs = Value::Object(r.to_prefs());
+        assert!(prefs
+            .as_object()
+            .unwrap()
+            .values()
+            .all(|v| v.is_string() || v.is_boolean()));
+        assert_eq!(Router::from_prefs(&prefs).profiles, r.profiles);
+        assert_eq!(Router::from_prefs(&prefs).active_profile, "profile1");
+        assert_eq!(r.next_profile_id().as_deref(), Some("profile2"));
     }
 
     fn configured() -> Router {

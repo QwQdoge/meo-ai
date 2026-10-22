@@ -74,7 +74,7 @@ Behaviour wired: permission → provider consent (`chat.auto_consent`), thinking
 - [ ] Permission levels `low`/`smart`/`all` need real tool calls to differ from "auto"
 - [ ] Sub-agents: effect (prompt hints per thinking level, delegation)
 - [ ] Thinking High/Max: tool planning + review loop in the core
-- [ ] Model profiles (Meo Account) + Settings editor + AI-generated profiles
+- [x] Model profiles: saved (≤5, in account `uiPreferences.models`) + one generated per connected provider; composer select + Settings > Models list/save/delete. Still TODO: per-option editor, richer AI-generated sets (smartest/cheapest needs model metadata)
 - [ ] Composer: drag-to-resize, max half page; voice input once a speech model exists
 - [ ] Details card: tokens from provider usage, files changed, git status, environment
 - [ ] Right drawer: browser control, changed files, sub-agents; movable
