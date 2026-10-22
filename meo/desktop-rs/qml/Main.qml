@@ -140,6 +140,8 @@ ApplicationWindow {
                 return out
             }
             Layout.preferredWidth: collapsed ? 56 : 232
+            Layout.minimumWidth: Layout.preferredWidth
+            Layout.maximumWidth: Layout.preferredWidth
             Layout.fillHeight: true
             Layout.margins: 12
             spacing: 8
@@ -248,8 +250,9 @@ ApplicationWindow {
                             selected: !!(sideRow.modelData.data || {}).selected
                             onClicked: window.act(sideRow.modelData.data.action)
                         }
+                        HoverHandler { id: rowHover }
                         MeoIconButton {
-                            visible: ((sideRow.modelData.data || {}).menu || []).length > 0
+                            visible: ((sideRow.modelData.data || {}).menu || []).length > 0 && (rowHover.hovered || chatMenu.visible)
                             anchors.right: parent.right
                             anchors.verticalCenter: parent.verticalCenter
                             type: "standard"
@@ -290,6 +293,9 @@ ApplicationWindow {
         ColumnLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
+            // The page decides its own width; a wide child must never squeeze the sidebar.
+            Layout.minimumWidth: 0
+            Layout.preferredWidth: 0
             spacing: 0
 
             MeoBanner {
@@ -379,7 +385,7 @@ ApplicationWindow {
             RowLayout {
                 Layout.fillWidth: true
                 Layout.margins: 24
-                MeoText { text: window.page.title || ""; typeRole: "title"; typeSize: "big"; Layout.fillWidth: true }
+                MeoText { text: window.page.title || ""; typeRole: "title"; typeSize: "medium"; Layout.fillWidth: true }
                 Repeater { model: window.page.actions || []; ActionButton { spec: modelData } }
             }
             MeoLoadingIndicator { visible: !!window.page.loading; Layout.alignment: Qt.AlignHCenter }
@@ -466,7 +472,7 @@ ApplicationWindow {
                             spacing: 16
                             RowLayout {
                                 Layout.fillWidth: true
-                                MeoText { text: current.label || window.page.title || ""; typeRole: "title"; typeSize: "big"; Layout.fillWidth: true }
+                                MeoText { text: current.label || window.page.title || ""; typeRole: "title"; typeSize: "medium"; Layout.fillWidth: true }
                                 MeoIconButton { visible: !!window.page.close; type: "standard"; icon.name: "close"; onClicked: window.act(window.page.close) }
                             }
                             Repeater {
@@ -683,12 +689,36 @@ ApplicationWindow {
                 Layout.fillHeight: true
                 spacing: 0
 
-                MeoText {
-                    text: window.page.title || ""
-                    typeRole: "title"
-                    Layout.margins: 16
-                    elide: Text.ElideRight
+                RowLayout {
                     Layout.fillWidth: true
+                    Layout.margins: 16
+                    spacing: 4
+                    MeoText {
+                        text: window.page.title || ""
+                        typeRole: "title"
+                        typeSize: "small"
+                        elide: Text.ElideRight
+                        Layout.maximumWidth: parent.width - 80
+                    }
+                    MeoIconButton {
+                        visible: (window.page.menu || []).length > 0
+                        type: "standard"
+                        size: "xs"
+                        icon.name: "more_horiz"
+                        onClicked: pageMenu.popup()
+                        Menu {
+                            id: pageMenu
+                            Repeater {
+                                model: window.page.menu || []
+                                MenuItem {
+                                    required property var modelData
+                                    text: modelData.label
+                                    onTriggered: window.act(modelData.action)
+                                }
+                            }
+                        }
+                    }
+                    Item { Layout.fillWidth: true }
                 }
 
                 Item {
@@ -785,8 +815,14 @@ ApplicationWindow {
 
                     ListView {
                         id: messages
-                        anchors.fill: parent
-                        anchors.margins: 16
+                        // A centered reading column; the details card, when shown, sits to its right.
+                        readonly property real reserved: inspectorCard.visible ? 232 : 0
+                        anchors.top: parent.top
+                        anchors.bottom: parent.bottom
+                        anchors.topMargin: 8
+                        anchors.bottomMargin: 8
+                        width: Math.min(760, parent.width - reserved - 32)
+                        x: Math.max(16, (parent.width - reserved - width) / 2)
                         clip: true
                         spacing: 12
                         model: window.page.messages || []
@@ -946,6 +982,8 @@ ApplicationWindow {
 
                 Column {
                     id: commandList
+                    Layout.maximumWidth: 760
+                    Layout.alignment: Qt.AlignHCenter
                     readonly property var matches: /^\/\S*$/.test(input.text)
                         ? (window.page.composer.commands || []).filter(c => c.name.indexOf(input.text.toLowerCase()) === 0) : []
                     visible: matches.length > 0
@@ -971,6 +1009,8 @@ ApplicationWindow {
 
                 RowLayout {
                     Layout.fillWidth: true
+                    Layout.maximumWidth: 760
+                    Layout.alignment: Qt.AlignHCenter
                     Layout.margins: 16
                     spacing: 8
                     readonly property var composer: window.page.composer || ({})
@@ -986,7 +1026,9 @@ ApplicationWindow {
                     MeoTextArea {
                         id: input
                         Layout.fillWidth: true
-                        Layout.maximumHeight: 200
+                        // One line until the text needs more; up to half the window.
+                        implicitHeight: Math.max(56, contentHeight + topPadding + bottomPadding)
+                        Layout.maximumHeight: Math.max(120, window.height / 2)
                         placeholder: parent.composer.placeholder || ""
                         wrapMode: TextEdit.Wrap
                         Keys.onReturnPressed: event => {
@@ -1014,6 +1056,8 @@ ApplicationWindow {
 
                 RowLayout {
                     Layout.fillWidth: true
+                    Layout.maximumWidth: 760
+                    Layout.alignment: Qt.AlignHCenter
                     Layout.leftMargin: 16
                     Layout.rightMargin: 16
                     Layout.bottomMargin: 8

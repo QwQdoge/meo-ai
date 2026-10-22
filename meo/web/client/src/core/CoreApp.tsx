@@ -520,6 +520,7 @@ function Conversation({ page, prefs, strings, act }: { page: Spec; prefs: Spec; 
       <section className="core-thread">
         <header className="core-header">
           <h1>{page.title}</h1>
+          {(page.menu ?? []).length > 0 && <RowMenu menu={page.menu} act={act} label={strings.more ?? "More"} />}
           {inspector.title && !inspector.visible && (
             <button className="core-chip" onClick={() => act(inspector.show)}>{inspector.title}</button>
           )}

@@ -687,13 +687,17 @@ impl AppCore {
         if !force_refresh && !session.needs_refresh() {
             return Some(session.access_token);
         }
-        // Another call is already refreshing: wait for it and use the token it obtained.
-        while self.refreshing.swap(true, Ordering::SeqCst) {
-            futures_timer::Delay::new(std::time::Duration::from_millis(25)).await;
+        // One refresh at a time. A call that finds another already refreshing waits, then uses
+        // the token it obtained (refreshing again with the old refresh token would fail).
+        loop {
             let current = self.state.lock().unwrap().session.clone()?;
             if current.access_token != session.access_token {
                 return Some(current.access_token);
             }
+            if !self.refreshing.swap(true, Ordering::SeqCst) {
+                break;
+            }
+            futures_timer::Delay::new(std::time::Duration::from_millis(25)).await;
         }
         let refreshed = auth::refresh(&self.http, &self.oauth, &session).await;
         self.refreshing.store(false, Ordering::SeqCst);
@@ -2923,6 +2927,19 @@ impl AppCore {
                         }
                     }
                     "models" => {
+                        if s.credentials.is_empty() {
+                            items.push(json!({
+                                "id": "conn_none", "kind": "info", "label": "No connections",
+                                "value": "Add an AI provider in Meo Account to use Meo AI.",
+                            }));
+                        }
+                        for c in &s.credentials {
+                            let count = s.catalogue.get(&c.id).map_or(0, Vec::len);
+                            items.push(json!({
+                                "id": format!("conn_{}", c.id), "kind": "info", "label": c.display_name,
+                                "value": format!("{} · {count} models", c.provider),
+                            }));
+                        }
                         items.extend(router_controls(s));
                         items.push(json!({
                             "id": "auto_title", "label": "Write chat titles with the model",
@@ -3172,8 +3189,9 @@ fn shell_sidebar(s: &State) -> Value {
             { "id": "chat", "label": "Chat", "icon": "chat", "selected": !work, "action": { "type": "navigate", "route": "chat" } },
             { "id": "work", "label": "Work", "icon": "work", "selected": work, "action": { "type": "navigate", "route": "work" } },
         ],
-        "search": { "placeholder": "Search chats", "value": s.search, "action": { "type": "search" } },
-        "newChat": button("New chat", "primary", json!({ "type": "new_conversation" })),
+        // Work has no chats to search or start yet.
+        "search": (!work).then(|| json!({ "placeholder": "Search chats", "value": s.search, "action": { "type": "search" } })),
+        "newChat": (!work).then(|| button("New chat", "primary", json!({ "type": "new_conversation" }))),
         "sections": sections,
         "footer": [
             { "id": "settings", "label": "Settings", "icon": "settings", "selected": s.route == "settings",
@@ -3910,6 +3928,13 @@ fn conversation_page(s: &State) -> Value {
     json!({
         "kind": "conversation",
         "title": active.as_ref().and_then(|id| s.conversations.iter().find(|c| &c.id == id)).map(|c| c.title.clone()).unwrap_or_else(|| "New chat".into()),
+        // The open chat's own menu (title ⋯): the same actions as its row in the sidebar.
+        "menu": active.as_ref().map(|id| json!([
+            button("Rename", "secondary", json!({ "type": "begin_rename", "id": id })),
+            button(if s.show_archived { "Restore" } else { "Archive" }, "secondary",
+                json!({ "type": "archive_conversation", "id": id, "archived": !s.show_archived })),
+            button("Delete", "danger", json!({ "type": "begin_delete", "id": id })),
+        ])),
         "inspector": inspector(s, &messages, active.as_ref()),
         "messages": messages,
         "empty": messages.is_empty().then(|| json!({
@@ -4084,7 +4109,12 @@ fn list_page(
         None => json!({ "kind": "list", "title": title, "loading": true, "items": [] }),
         Some(Err(e)) => json!({
             "kind": "unavailable", "title": title,
-            "text": format!("{title} could not be loaded: {e}"),
+            // A server that has not enabled this yet answers 404/503: say so plainly.
+            "text": if ["404", "503", "unavailable", "not_found", "schema"].iter().any(|w| e.contains(w)) {
+                format!("{title} are not available on this server yet.")
+            } else {
+                format!("{title} could not be loaded: {e}")
+            },
             "actions": [button("Retry", "secondary", json!({ "type": "refresh" }))],
         }),
         Some(Ok(rows)) => json!({

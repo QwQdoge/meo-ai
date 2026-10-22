@@ -212,6 +212,7 @@ pub fn localize(view: &mut Value, locale: &str) {
                     field(c, remove, "label");
                 }
             }
+            buttons(c, page, "menu");
             if let Some(composer) = page.get_mut("composer") {
                 field(c, composer, "placeholder");
                 if let Some(attach) = composer.get_mut("attach") {

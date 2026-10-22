@@ -667,10 +667,25 @@ private fun ChatPane(page: JSONObject, prefs: JSONObject?, strings: JSONObject, 
             Text(
                 page.str("title"),
                 Modifier.padding(horizontal = 8.dp).weight(1f),
-                style = MaterialTheme.typography.titleLarge,
+                style = MaterialTheme.typography.titleMedium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+            val chatMenu = page.list("menu")
+            if (chatMenu.isNotEmpty()) {
+                var open by remember { mutableStateOf(false) }
+                Box {
+                    IconButton(onClick = { open = true }) { Icon(Icons.Rounded.MoreVert, contentDescription = "⋮") }
+                    DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                        chatMenu.forEach { entry ->
+                            DropdownMenuItem(
+                                text = { Text(entry.str("label"), color = if (entry.str("style") == "danger") MaterialTheme.colorScheme.error else androidx.compose.ui.graphics.Color.Unspecified) },
+                                onClick = { open = false; act.send(entry.obj("action")) },
+                            )
+                        }
+                    }
+                }
+            }
         }
         Box(Modifier.weight(1f).fillMaxWidth()) {
             val empty = page.obj("empty")

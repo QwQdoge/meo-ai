@@ -225,5 +225,7 @@
   "Profile ready, but some choices were not valid and were left out. Check each job below.": "方案已生成，但有些选择无效已被略去。请检查下面每项任务。",
   "The model did not answer in the expected format. Try again or pick another model for everyday chat.": "模型没有按要求的格式回答。请重试，或为日常聊天换一个模型。",
   "Choose a model for everyday chat in Settings first.": "请先在设置里为日常聊天选择模型。",
-  "No profiles yet. Create one in Settings > Model profiles.": "还没有方案。请在 设置 > 模型方案 中创建。"
+  "No profiles yet. Create one in Settings > Model profiles.": "还没有方案。请在 设置 > 模型方案 中创建。",
+  "No connections": "没有连接",
+  "Add an AI provider in Meo Account to use Meo AI.": "请先在 Meo Account 中添加 AI 服务商。"
 }
