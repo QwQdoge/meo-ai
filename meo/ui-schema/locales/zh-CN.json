@@ -208,5 +208,22 @@
   "Cheapest": "最便宜",
   "Balanced": "均衡",
   "Could not test the models. Try again later.": "无法测试模型，请稍后再试。",
-  "No profiles yet.": "还没有方案。"
+  "No profiles yet.": "还没有方案。",
+  "Generate a profile": "生成方案",
+  "Say what you want from the models, e.g. “balanced”, “as smart as possible” or “fast and cheap”. A model reads every available model and what each job needs, then drafts a profile you can edit.": "说说你想要模型怎么样，比如“均衡”“尽可能聪明”“又快又便宜”。会由一个模型阅读所有可用模型和每项任务的要求，起草一个你可以再编辑的方案。",
+  "Generate": "生成",
+  "Generate with AI": "用 AI 生成",
+  "Writing a profile…": "正在生成方案…",
+  "New profile from my current models": "用当前模型新建方案",
+  "All profiles": "全部方案",
+  "Use this profile": "使用此方案",
+  "Delete profile": "删除方案",
+  "Not available on this server yet.": "此服务器暂不支持。",
+  "No profiles yet": "还没有方案",
+  "A profile picks a model for every job: chat, thinking, pictures, speech, router, sub-agents, titles and more.": "方案会为每项任务选一个模型：聊天、思考、图片、语音、路由、子代理、标题等。",
+  "Profile ready. Check each job below, then use it.": "方案已生成。检查下面每项任务后即可使用。",
+  "Profile ready, but some choices were not valid and were left out. Check each job below.": "方案已生成，但有些选择无效已被略去。请检查下面每项任务。",
+  "The model did not answer in the expected format. Try again or pick another model for everyday chat.": "模型没有按要求的格式回答。请重试，或为日常聊天换一个模型。",
+  "Choose a model for everyday chat in Settings first.": "请先在设置里为日常聊天选择模型。",
+  "No profiles yet. Create one in Settings > Model profiles.": "还没有方案。请在 设置 > 模型方案 中创建。"
 }

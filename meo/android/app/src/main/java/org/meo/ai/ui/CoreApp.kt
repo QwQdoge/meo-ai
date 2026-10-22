@@ -400,6 +400,7 @@ private fun SettingControl(item: JSONObject, act: Act, modifier: Modifier = Modi
                 )
             }
         }
+        "hint" -> Text(item.str("text"), modifier, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         "stats" -> androidx.compose.material3.OutlinedCard(modifier) {
             Row(Modifier.fillMaxWidth().padding(vertical = 12.dp)) {
                 item.list("items").forEach { t ->

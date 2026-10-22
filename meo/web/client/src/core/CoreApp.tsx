@@ -325,6 +325,8 @@ function Control({ item, act }: { item: Spec; act: Act }) {
           )}
         </label>
       );
+    case "hint":
+      return <p className="core-hint core-muted">{item.text}</p>;
     case "stats":
       return (
         <div className="core-stats">

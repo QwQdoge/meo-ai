@@ -74,33 +74,6 @@ pub struct Model {
     pub input: Vec<String>,
     #[serde(default)]
     pub output: Vec<String>,
-    /// Ordering hint for chat models, from Meo API (absent from older servers and other tasks).
-    #[serde(default)]
-    pub rank: Option<Rank>,
-}
-
-/// Tier, generation and 0-100 scores (higher is better; `cost` is higher for cheaper models).
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-pub struct Rank {
-    #[serde(default)]
-    pub tier: String,
-    #[serde(default)]
-    pub generation: f64,
-    #[serde(default)]
-    pub intelligence: u32,
-    #[serde(default)]
-    pub speed: u32,
-    #[serde(default)]
-    pub cost: u32,
-    #[serde(default)]
-    pub balanced: u32,
-}
-
-/// Outcome of asking one model to answer a one-word prompt.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct Probe {
-    pub ok: bool,
-    pub latency_ms: u64,
 }
 
 fn chat_task() -> String {
@@ -381,40 +354,76 @@ impl MeoApi {
                     tasks,
                     input,
                     output: list(&row["outputModalities"]),
-                    rank: serde_json::from_value(row["rank"].clone()).ok(),
                 })
             })
             .collect())
     }
 
-    /// Asks up to 8 models of one connection to answer a fixed one-word prompt, side by side.
-    /// Returns `(model, ok, latency_ms)` per model.
-    pub async fn probe_models(
+    /// The account's model profiles and the roles they cover: `{roles: [...], profiles: [...]}`.
+    pub async fn model_profiles(&self, token: &str) -> Result<Value, ApiError> {
+        self.request(token, Method::GET, "/v1/ai/model-profiles", None)
+            .await
+    }
+
+    pub async fn create_model_profile(&self, token: &str, body: Value) -> Result<Value, ApiError> {
+        let r = self
+            .request(token, Method::POST, "/v1/ai/model-profiles", Some(body))
+            .await?;
+        Ok(r["profile"].clone())
+    }
+
+    pub async fn update_model_profile(
         &self,
         token: &str,
-        credential_id: &str,
-        models: &[String],
-    ) -> Result<Vec<(String, Probe)>, ApiError> {
-        let body = self
-            .broker(
+        id: &str,
+        patch: Value,
+    ) -> Result<(), ApiError> {
+        let path = format!("/v1/ai/model-profiles/{id}");
+        self.request(token, Method::PATCH, &path, Some(patch))
+            .await
+            .map(|_| ())
+    }
+
+    pub async fn delete_model_profile(&self, token: &str, id: &str) -> Result<(), ApiError> {
+        let path = format!("/v1/ai/model-profiles/{id}");
+        self.request(token, Method::DELETE, &path, None)
+            .await
+            .map(|_| ())
+    }
+
+    pub async fn activate_model_profile(&self, token: &str, id: &str) -> Result<(), ApiError> {
+        let path = format!("/v1/ai/model-profiles/{id}/activate");
+        self.request(token, Method::POST, &path, Some(json!({})))
+            .await
+            .map(|_| ())
+    }
+
+    /// The text a model needs to draft a profile (`{prompt, connections}`).
+    pub async fn profile_generation_prompt(
+        &self,
+        token: &str,
+        requirements: &str,
+    ) -> Result<Value, ApiError> {
+        self.request(
+            token,
+            Method::POST,
+            "/v1/ai/model-profiles/generation-prompt",
+            Some(json!({ "requirements": requirements })),
+        )
+        .await
+    }
+
+    /// Validates a model's reply into a profile draft (`{name, description, roles, warnings}`).
+    pub async fn draft_model_profile(&self, token: &str, text: &str) -> Result<Value, ApiError> {
+        let r = self
+            .request(
                 token,
-                json!({ "action": "probe_models", "credentialId": credential_id, "models": models }),
+                Method::POST,
+                "/v1/ai/model-profiles/draft",
+                Some(json!({ "text": text })),
             )
             .await?;
-        Ok(body["results"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(|r| {
-                Some((
-                    r["model"].as_str()?.to_owned(),
-                    Probe {
-                        ok: r["ok"].as_bool().unwrap_or(false),
-                        latency_ms: r["latencyMs"].as_u64().unwrap_or(0),
-                    },
-                ))
-            })
-            .collect())
+        Ok(r["draft"].clone())
     }
 
     /// Web search results (`[{title,url,snippet}]`) for a query; empty when nothing was found.

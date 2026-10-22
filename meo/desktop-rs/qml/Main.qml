@@ -581,6 +581,14 @@ ApplicationWindow {
             text: item.value || ""
             onEditingFinished: if (text !== (item.value || "")) window.act({ type: "set_setting", binding: item.binding, value: text })
         }
+        MeoText {
+            visible: item.kind === "hint"
+            Layout.fillWidth: true
+            text: item.text || ""
+            wrapMode: Text.Wrap
+            typeRole: "label"
+            color: MeoTheme.onSurfaceVariant
+        }
         Rectangle {
             visible: item.kind === "stats"
             Layout.fillWidth: true

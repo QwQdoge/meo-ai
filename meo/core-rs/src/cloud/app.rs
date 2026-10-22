@@ -21,13 +21,12 @@ use serde_json::{json, Map, Value};
 
 use super::{
     api::{
-        ApiError, ChatEvent, ChatMessage, ConversationSummary, Credential, MeoApi, Model, Probe,
+        ApiError, ChatEvent, ChatMessage, ConversationSummary, Credential, MeoApi, Model,
         RemoteEvent,
     },
     auth::{self, OAuthConfig, PendingAuthorization, Session},
     locale,
     manifest::Manifest,
-    profiles as model_profiles,
     router::{self, Choice, Router},
     storage::Storage,
 };
@@ -39,16 +38,23 @@ pub const VIEW_SCHEMA: u32 = 1;
 pub enum Action {
     /// Assign a model to every route from what the connected providers offer.
     AutoConfigureRouter,
-    /// Asks for a name, then saves the current route models as a profile.
     /// Opens a category of the settings card.
     SelectSettingsSection {
         id: String,
     },
-    /// Tests which models answer and how fast; profiles are then built from the result.
-    ProbeModels,
-    BeginSaveProfile,
-    SaveProfile {
+    /// Model profiles (Meo API): create from the current routes, generate with a model, edit, use, delete.
+    NewProfile,
+    BeginGenerateProfile,
+    GenerateProfile {
         text: String,
+    },
+    ApproveGenerate,
+    EditProfile {
+        id: String,
+    },
+    CloseProfile,
+    UseProfile {
+        id: String,
     },
     DeleteProfile {
         id: String,
@@ -259,9 +265,12 @@ struct State {
     active: Option<String>,
     messages: HashMap<String, Vec<ChatMessage>>,
     streaming: Option<(String, String)>,
-    /// Which models answered a test and how fast (`credential|model`).
-    probes: HashMap<String, Probe>,
-    probing: bool,
+    /// `{roles, profiles}` from Meo API; `Err` carries why they are unavailable.
+    profiles: Option<Result<Value, String>>,
+    editing_profile: Option<String>,
+    generating: bool,
+    /// A generation waiting for the user's approval to send: (generator, prompt).
+    pending_generation: Option<(Choice, String)>,
     /// `/v1/usage-dashboard` of the signed-in account (Settings > Usage).
     usage: Option<Value>,
     /// Steps of the current or last answer: (conversation id, steps) — shown collapsed on that answer.
@@ -326,7 +335,6 @@ const KEY_PREFS: &str = "prefs";
 const KEY_CONVERSATIONS: &str = "conversations";
 const KEY_CREDENTIALS: &str = "credentials";
 const KEY_MODELS: &str = "models";
-const KEY_PROBES: &str = "probes";
 /// Survives the app process being killed while the browser sign-in is open.
 const KEY_PENDING_AUTH: &str = "pending_auth";
 
@@ -484,55 +492,27 @@ impl AppCore {
                     None => self.notice("info", "You can have up to 5 custom routes."),
                 }
             }
-            Action::ProbeModels => self.probe_models().await,
             Action::SelectSettingsSection { id } => self.update(|s| s.settings_section = id),
-            Action::BeginSaveProfile => {
-                if self
-                    .state
-                    .lock()
-                    .unwrap()
-                    .router
-                    .next_profile_id()
-                    .is_none()
-                {
-                    return self.notice("info", "You can save up to 5 profiles.");
-                }
-                self.prompt(
-                    "Save profile",
-                    "Name the current set of models, e.g. “Claude only”.",
-                    "",
-                    false,
-                    input_button("Save", "primary", json!({ "type": "save_profile" })),
-                );
-            }
-            Action::SaveProfile { text } => {
+            Action::NewProfile => self.new_profile().await,
+            Action::BeginGenerateProfile => self.prompt(
+                "Generate a profile",
+                "Say what you want from the models, e.g. “balanced”, “as smart as possible” or “fast and cheap”. A model reads every available model and what each job needs, then drafts a profile you can edit.",
+                "",
+                true,
+                input_button("Generate", "primary", json!({ "type": "generate_profile" })),
+            ),
+            Action::GenerateProfile { text } => self.generate_profile(text).await,
+            Action::ApproveGenerate => {
+                let pending = self.state.lock().unwrap().pending_generation.take();
                 self.update(|s| s.dialog = None);
-                let name: String = text.trim().chars().take(40).collect();
-                if name.is_empty() {
-                    return;
+                if let Some((generator, prompt)) = pending {
+                    self.run_generation(generator, prompt).await;
                 }
-                self.update(|s| {
-                    if let Some(id) = s.router.next_profile_id() {
-                        let slots = s.router.slots.clone();
-                        s.router.profiles.push(router::Profile {
-                            id: id.clone(),
-                            name,
-                            slots,
-                        });
-                        s.router.active_profile = id;
-                    }
-                });
-                self.persist_router().await;
             }
-            Action::DeleteProfile { id } => {
-                self.update(|s| {
-                    s.router.profiles.retain(|p| p.id != id);
-                    if s.router.active_profile == id {
-                        s.router.active_profile.clear();
-                    }
-                });
-                self.persist_router().await;
-            }
+            Action::EditProfile { id } => self.update(|s| s.editing_profile = Some(id)),
+            Action::CloseProfile => self.update(|s| s.editing_profile = None),
+            Action::UseProfile { id } => self.use_profile(id).await,
+            Action::DeleteProfile { id } => self.delete_profile(id).await,
             Action::DeleteCustomRoute { id } => {
                 self.update(|s| s.router.custom.retain(|c| c.id != id));
                 self.persist_router().await;
@@ -610,7 +590,6 @@ impl AppCore {
             self.load_json(KEY_CONVERSATIONS).unwrap_or_default();
         let credentials: Vec<Credential> = self.load_json(KEY_CREDENTIALS).unwrap_or_default();
         let catalogue: HashMap<String, Vec<Model>> = self.load_json(KEY_MODELS).unwrap_or_default();
-        let probes: HashMap<String, Probe> = self.load_json(KEY_PROBES).unwrap_or_default();
         let selected = prefs
             .get("model.selected")
             .and_then(Value::as_str)
@@ -628,7 +607,6 @@ impl AppCore {
             s.conversations = conversations;
             s.credentials = credentials;
             s.catalogue = catalogue;
-            s.probes = probes;
             s.selected = selected;
         });
         if signed_in {
@@ -797,11 +775,13 @@ impl AppCore {
                 s.selected = selected.clone();
             });
         }
-        let (_, settings, projects) = futures_util::join!(
+        let (_, settings, projects, profiles) = futures_util::join!(
             self.load_catalogue(),
             self.call(|api, t| async move { api.get_settings(&t).await }),
             self.call(|api, t| async move { api.list_projects(&t).await }),
+            self.call(|api, t| async move { api.model_profiles(&t).await }),
         );
+        self.update(|s| s.profiles = Some(profiles.map_err(|e| e.to_string())));
         if let Ok(settings) = settings {
             self.set_cloud_settings(settings);
         }
@@ -812,67 +792,263 @@ impl AppCore {
         self.load_route(&route).await;
     }
 
-    /// Asks the best candidates of every connection to answer a one-word prompt, all at once, and
-    /// remembers which ones work and how fast. Profiles generated by requirement use the result.
-    async fn probe_models(&self) {
-        if self.state.lock().unwrap().probing {
-            return;
-        }
-        let plan: Vec<(String, Vec<String>)> = {
+    // ---- model profiles --------------------------------------------------
+
+    async fn refresh_profiles(&self) {
+        let r = self
+            .call(|api, t| async move { api.model_profiles(&t).await })
+            .await;
+        self.update(|s| s.profiles = Some(r.map_err(|e| e.to_string())));
+    }
+
+    /// A new profile holding the models of the current routes, ready to edit.
+    async fn new_profile(&self) {
+        let (roles, count) = {
             let s = self.state.lock().unwrap();
-            s.credentials
-                .iter()
-                .filter_map(|c| {
-                    let models = s.catalogue.get(&c.id)?;
-                    let ids = model_profiles::candidates_to_probe(models);
-                    (!ids.is_empty()).then(|| (c.id.clone(), ids))
-                })
-                .collect()
+            let mut roles = Map::new();
+            for slot in &router::SLOTS {
+                if let Some((c, m)) = s.router.choice(slot.id) {
+                    roles.insert(slot.id.to_owned(), json!({ "credentialId": c, "model": m }));
+                }
+            }
+            (roles, profile_list(&s).len())
         };
-        if plan.is_empty() {
-            return self.notice("info", "Connect an AI provider to your Meo Account first.");
-        }
-        self.update(|s| s.probing = true);
-        self.notice("info", "Testing models…");
-        let mut pending: futures_util::stream::FuturesUnordered<_> = plan
-            .into_iter()
-            .map(|(credential, ids)| async move {
-                let result = self
-                    .call(|api, t| {
-                        let (credential, ids) = (credential.clone(), ids.clone());
-                        async move { api.probe_models(&t, &credential, &ids).await }
-                    })
-                    .await;
-                (credential, result)
+        let body = json!({ "name": format!("My profile {}", count + 1), "roles": roles });
+        match self
+            .call(|api, t| {
+                let body = body.clone();
+                async move { api.create_model_profile(&t, body).await }
             })
-            .collect();
-        let (mut tested, mut working) = (0usize, 0usize);
-        while let Some((credential, result)) = pending.next().await {
-            if let Ok(results) = result {
-                tested += results.len();
-                working += results.iter().filter(|(_, p)| p.ok).count();
+            .await
+        {
+            Ok(profile) => {
+                self.refresh_profiles().await;
+                self.update(|s| s.editing_profile = profile["id"].as_str().map(str::to_owned));
+            }
+            Err(e) => self.notice("error", e.to_string()),
+        }
+    }
+
+    /// Edits one profile; when it is the one in use, its model choices apply at once.
+    async fn change_profile(&self, id: &str, patch: Value) {
+        let res = self
+            .call(|api, t| {
+                let (id, patch) = (id.to_owned(), patch.clone());
+                async move { api.update_model_profile(&t, &id, patch).await }
+            })
+            .await;
+        if let Err(e) = res {
+            return self.notice("error", e.to_string());
+        }
+        self.refresh_profiles().await;
+        let active_roles = profile_list(&self.state.lock().unwrap())
+            .into_iter()
+            .find(|p| p["id"] == id && p["active"] == true)
+            .map(|p| p["roles"].clone());
+        if let Some(roles) = active_roles {
+            self.apply_roles(&roles).await;
+        }
+    }
+
+    /// Makes a profile the account's active one and points the routes at its models.
+    async fn use_profile(&self, id: String) {
+        let res = self
+            .call(|api, t| {
+                let id = id.clone();
+                async move { api.activate_model_profile(&t, &id).await }
+            })
+            .await;
+        if let Err(e) = res {
+            return self.notice("error", e.to_string());
+        }
+        self.refresh_profiles().await;
+        let found = profile_list(&self.state.lock().unwrap())
+            .into_iter()
+            .find(|p| p["id"] == id.as_str());
+        if let Some(p) = found {
+            self.apply_roles(&p["roles"]).await;
+            self.notice(
+                "info",
+                format!("Profile: {}", p["name"].as_str().unwrap_or_default()),
+            );
+        }
+    }
+
+    /// Copies the roles that are chat routes into the router; roles the profile leaves out keep their model.
+    async fn apply_roles(&self, roles: &Value) {
+        self.update(|s| {
+            for slot in &router::SLOTS {
+                if let (Some(c), Some(m)) = (
+                    roles[slot.id]["credentialId"].as_str(),
+                    roles[slot.id]["model"].as_str(),
+                ) {
+                    s.router
+                        .slots
+                        .insert(slot.id.to_owned(), (c.to_owned(), m.to_owned()));
+                }
+            }
+        });
+        self.persist_router().await;
+    }
+
+    async fn delete_profile(&self, id: String) {
+        let res = self
+            .call(|api, t| {
+                let id = id.clone();
+                async move { api.delete_model_profile(&t, &id).await }
+            })
+            .await;
+        match res {
+            Ok(()) => {
                 self.update(|s| {
-                    for (model, probe) in results {
-                        s.probes
-                            .insert(model_profiles::probe_key(&credential, &model), probe);
+                    if s.editing_profile.as_deref() == Some(id.as_str()) {
+                        s.editing_profile = None;
                     }
                 });
+                self.refresh_profiles().await;
             }
+            Err(e) => self.notice("error", e.to_string()),
         }
-        let probes = {
-            let mut s = self.state.lock().unwrap();
-            s.probing = false;
-            s.probes.clone()
+    }
+
+    /// Has a model draft a profile from the user's wishes. The API supplies the prompt (every role
+    /// with how much it matters, every available model) and checks the reply; this only sends it.
+    async fn generate_profile(&self, text: String) {
+        self.update(|s| s.dialog = None);
+        if self.state.lock().unwrap().generating {
+            return;
+        }
+        let requirements = text.trim().to_owned();
+        let prompt = match self
+            .call(|api, t| {
+                let requirements = requirements.clone();
+                async move { api.profile_generation_prompt(&t, &requirements).await }
+            })
+            .await
+        {
+            Ok(v) => v,
+            Err(e) => return self.notice("error", e.to_string()),
         };
-        self.save_json(KEY_PROBES, &probes);
-        self.notice(
-            "info",
-            if tested == 0 {
-                "Could not test the models. Try again later.".to_owned()
-            } else {
-                format!("Tested {tested} models: {working} answered.")
-            },
-        );
+        let Some(text) = prompt["prompt"].as_str().map(str::to_owned) else {
+            return self.notice("error", "The server returned no prompt.");
+        };
+        // The model that writes it: the one for everyday chat, else a connection's own default.
+        let generator = {
+            let s = self.state.lock().unwrap();
+            router::resolve(&s.router, "default", s.selected.as_ref())
+                .cloned()
+                .filter(|(_, m)| !m.is_empty())
+                .or_else(|| {
+                    prompt["connections"].as_array().and_then(|list| {
+                        list.iter().find_map(|c| {
+                            let m = c["defaultModel"].as_str().filter(|m| !m.is_empty())?;
+                            Some((c["credentialId"].as_str()?.to_owned(), m.to_owned()))
+                        })
+                    })
+                })
+        };
+        let Some(generator) = generator else {
+            return self.notice(
+                "error",
+                "Choose a model for everyday chat in Settings first.",
+            );
+        };
+        let auto = pref_bool(&self.state.lock().unwrap(), "chat.auto_consent", true);
+        if auto {
+            self.run_generation(generator, text).await;
+        } else {
+            let name = connection_name(&self.state.lock().unwrap(), &generator.0);
+            self.update(|s| s.pending_generation = Some((generator.clone(), text)));
+            self.confirm(
+                "Send to AI provider?",
+                &format!("{name} · {}: your wishes and the list of available models, to draft a profile.", generator.1),
+                button("Send", "primary", json!({ "type": "approve_generate" })),
+            );
+        }
+    }
+
+    async fn run_generation(&self, generator: Choice, prompt: String) {
+        self.update(|s| s.generating = true);
+        self.notice("info", "Writing a profile…");
+        let reply = self.ask_model(&generator, &prompt).await;
+        let outcome = match reply {
+            Some(text) => {
+                let draft = self
+                    .call(|api, t| {
+                        let text = text.clone();
+                        async move { api.draft_model_profile(&t, &text).await }
+                    })
+                    .await;
+                match draft {
+                    Ok(draft) => {
+                        let warnings = draft["warnings"].as_array().map_or(0, |w| w.len());
+                        let body = json!({ "name": draft["name"], "description": draft["description"], "roles": draft["roles"] });
+                        self.call(|api, t| {
+                            let body = body.clone();
+                            async move { api.create_model_profile(&t, body).await }
+                        })
+                        .await
+                        .map(|p| (p, warnings))
+                    }
+                    Err(e) => Err(e),
+                }
+            }
+            None => Err(ApiError::Status {
+                status: 502,
+                code: "no_reply".into(),
+            }),
+        };
+        self.update(|s| s.generating = false);
+        match outcome {
+            Ok((profile, warnings)) => {
+                self.refresh_profiles().await;
+                self.update(|s| s.editing_profile = profile["id"].as_str().map(str::to_owned));
+                self.notice(
+                    "info",
+                    if warnings == 0 {
+                        "Profile ready. Check each job below, then use it."
+                    } else {
+                        "Profile ready, but some choices were not valid and were left out. Check each job below."
+                    },
+                );
+            }
+            Err(ApiError::Status { code, .. })
+                if code == "no_reply" || code == "profile_reply_unreadable" =>
+            {
+                self.notice("error", "The model did not answer in the expected format. Try again or pick another model for everyday chat.");
+            }
+            Err(e) => self.notice("error", e.to_string()),
+        }
+    }
+
+    /// One consented question to one model, answered in full (no conversation involved).
+    async fn ask_model(&self, (credential, model): &Choice, prompt: &str) -> Option<String> {
+        let request = json!({ "credentialId": credential, "model": model, "prompt": prompt });
+        let consent = self
+            .call(|api, t| {
+                let request = request.clone();
+                async move { api.chat_prepare(&t, &request).await }
+            })
+            .await
+            .ok()?;
+        let mut body = request;
+        body["consent"] = json!({
+            "requestId": consent["requestId"],
+            "payloadSha256": consent["payloadSha256"],
+            "confirmationVersion": 1,
+        });
+        let mut events = self
+            .call(|api, t| {
+                let body = body.clone();
+                async move { api.chat_stream(&t, &body).await.map(Box::pin) }
+            })
+            .await
+            .ok()?;
+        let mut text = String::new();
+        while let Some(Ok(ChatEvent::Delta(piece))) = events.next().await {
+            text.push_str(&piece);
+        }
+        (!text.is_empty()).then_some(text)
     }
 
     /// Loads the models of every connected provider (a failing provider keeps its cached list).
@@ -999,6 +1175,7 @@ impl AppCore {
     async fn load_route(&self, route: &str) {
         match route {
             "settings" => {
+                self.refresh_profiles().await;
                 self.refresh_memories().await;
                 if let Ok(usage) = self
                     .call(|api, t| async move { api.usage_dashboard(&t, 365).await })
@@ -1691,27 +1868,25 @@ impl AppCore {
                     .join("\n");
                 self.notice("info", list);
             }
-            "probe" => self.probe_models().await,
             "profile" => {
                 let wanted = arg.to_lowercase();
-                let all = profiles(&self.state.lock().unwrap());
-                let found = all.iter().find(|(id, name, _)| {
-                    !wanted.is_empty() && (*id == wanted || name.to_lowercase().contains(&wanted))
-                });
+                let all = profile_list(&self.state.lock().unwrap());
+                let name = |p: &Value| p["name"].as_str().unwrap_or_default().to_owned();
+                let found = all
+                    .iter()
+                    .find(|p| !wanted.is_empty() && name(p).to_lowercase().contains(&wanted));
                 match found {
-                    Some((id, ..)) => {
-                        self.set_setting("models.profile".into(), json!(id)).await;
+                    Some(p) => {
+                        self.use_profile(p["id"].as_str().unwrap_or_default().to_owned())
+                            .await
                     }
                     None => {
-                        let names = all
-                            .iter()
-                            .map(|(_, n, _)| n.clone())
-                            .collect::<Vec<_>>()
-                            .join(", ");
+                        let names = all.iter().map(name).collect::<Vec<_>>().join(", ");
                         self.notice(
                             "info",
                             if names.is_empty() {
-                                "No profiles yet.".to_owned()
+                                "No profiles yet. Create one in Settings > Model profiles."
+                                    .to_owned()
                             } else {
                                 format!("Choose one of: {names}")
                             },
@@ -2424,9 +2599,18 @@ impl AppCore {
     async fn auto_title(&self, id: &str, user: &str, reply: &str) {
         let (choice, enabled) = {
             let s = self.state.lock().unwrap();
-            // Titles are a small job: use the lightweight route when there is one.
+            // Titles are a small job: the active profile's title model, else the lightweight route.
+            let titled = profile_list(&s)
+                .into_iter()
+                .find(|p| p["active"] == true)
+                .and_then(|p| {
+                    Some((
+                        p["roles"]["title"]["credentialId"].as_str()?.to_owned(),
+                        p["roles"]["title"]["model"].as_str()?.to_owned(),
+                    ))
+                });
             (
-                router::resolve(&s.router, "fast", s.selected.as_ref()).cloned(),
+                titled.or_else(|| router::resolve(&s.router, "fast", s.selected.as_ref()).cloned()),
                 s.prefs
                     .get("chat.auto_title")
                     .and_then(Value::as_bool)
@@ -2485,44 +2669,37 @@ impl AppCore {
         if binding.starts_with("project:") {
             return self.edit_project_field(&binding, value).await;
         }
-        if let Some(id) = binding.strip_prefix("profile_main:") {
-            let Some(choice) = value
-                .as_str()
-                .and_then(|v| v.split_once('|'))
-                .filter(|(c, m)| !c.is_empty() && !m.is_empty())
-                .map(|(c, m)| (c.to_owned(), m.to_owned()))
-            else {
-                return;
-            };
-            let id = id.to_owned();
-            self.update(|s| {
-                let active = s.router.active_profile == id;
-                if let Some(p) = s.router.profiles.iter_mut().find(|p| p.id == id) {
-                    p.slots.insert("default".into(), choice.clone());
-                    if active {
-                        s.router.slots.insert("default".into(), choice);
-                    }
-                }
-            });
-            return self.persist_router().await;
+        if let Some(rest) = binding.strip_prefix("pr:") {
+            // pr:<profile id>:<role> — one role of a profile; an empty value clears it.
+            if let Some((id, role)) = rest.split_once(':') {
+                let choice = value
+                    .as_str()
+                    .and_then(|v| v.split_once('|'))
+                    .filter(|(c, m)| !c.is_empty() && !m.is_empty())
+                    .map(|(c, m)| json!({ "credentialId": c, "model": m }));
+                let patch = json!({ "roles": { role: choice.clone().unwrap_or(Value::Null) } });
+                return self.change_profile(id, patch).await;
+            }
+        }
+        if let Some(id) = binding.strip_prefix("profile_name:") {
+            let name = value.as_str().unwrap_or_default().trim().to_owned();
+            if !name.is_empty() {
+                return self.change_profile(id, json!({ "name": name })).await;
+            }
+            return;
+        }
+        if let Some(id) = binding.strip_prefix("profile_desc:") {
+            let text = value.as_str().unwrap_or_default().to_owned();
+            return self
+                .change_profile(id, json!({ "description": text }))
+                .await;
         }
         if binding == "models.profile" {
             let id = value.as_str().unwrap_or_default().to_owned();
-            let found = profiles(&self.state.lock().unwrap())
-                .into_iter()
-                .find(|(pid, ..)| *pid == id);
-            let Some((_, name, slots)) = found else {
-                return;
-            };
-            self.update(|s| {
-                // Only the routes the profile names change; the rest keep their model.
-                for (route, choice) in slots {
-                    s.router.slots.insert(route, choice);
-                }
-                s.router.active_profile = id;
-            });
-            self.persist_router().await;
-            return self.notice("info", format!("Profile: {name}"));
+            if !id.is_empty() {
+                return self.use_profile(id).await;
+            }
+            return;
         }
         if binding == "models.auto" {
             let on = value.as_bool().unwrap_or(true);
@@ -2789,24 +2966,18 @@ impl AppCore {
                 .as_array()
                 .cloned()
                 .unwrap_or_default();
-            let (mut routes, mut profs, mut rest) = (vec![], vec![], vec![]);
+            let (mut routes, mut rest) = (vec![], vec![]);
             for it in all {
                 let id = it["id"].as_str().unwrap_or_default().to_owned();
                 if id.starts_with("route_") || id == "router_add" || id.starts_with("custom") {
                     routes.push(it);
-                } else if id.starts_with("profile-")
-                    || id == "save_profile"
-                    || id.starts_with("probe_")
-                    || id.starts_with("ranked_")
-                {
-                    profs.push(it);
                 } else {
                     rest.push(it);
                 }
             }
             sections[pos]["items"] = Value::Array(rest);
             let extra = [
-                ("profiles", "Model profiles", profs),
+                ("profiles", "Model profiles", profile_items(s)),
                 ("routes", "Model routes", routes),
             ];
             for (n, (id, label, items)) in extra.into_iter().enumerate() {
@@ -3021,7 +3192,6 @@ const COMMANDS: &[(&str, &str, &str)] = &[
     ("/model", "route", "Choose the model"),
     ("/search", "on|off", "Turn web search on or off"),
     ("/profile", "name", "Switch the model profile"),
-    ("/probe", "", "Test which models work"),
     ("/retry", "", "Ask the last question again"),
     ("/rename", "title", "Rename this chat"),
     ("/archive", "", "Archive this chat"),
@@ -3181,18 +3351,23 @@ fn composer_controls(s: &State) -> Vec<Value> {
         model["align"] = json!("end");
         controls.push(model);
     }
-    let all = profiles(s);
-    if all.len() > 1 || (!all.is_empty() && !s.router.active_profile.is_empty()) {
-        let mut options: Vec<Value> = all
+    let list = profile_list(s);
+    if !list.is_empty() {
+        let active = list
             .iter()
-            .map(|(id, name, _)| json!({ "value": id, "label": name }))
+            .find(|p| p["active"] == true)
+            .and_then(|p| p["id"].as_str())
+            .unwrap_or_default();
+        let mut options: Vec<Value> = list
+            .iter()
+            .map(|p| json!({ "value": p["id"], "label": p["name"] }))
             .collect();
-        if !all.iter().any(|(id, ..)| *id == s.router.active_profile) {
+        if active.is_empty() {
             options.insert(0, json!({ "value": "", "label": "Profile" }));
         }
         controls.push(json!({
             "id": "profile", "label": "Profile", "kind": "select", "binding": "models.profile",
-            "value": s.router.active_profile, "options": options, "align": "end",
+            "value": active, "options": options, "align": "end",
         }));
     }
     controls.push(slider(
@@ -3393,39 +3568,170 @@ fn usage_items(s: &State) -> Vec<Value> {
     items
 }
 
-/// Switchable profiles: the saved ones, the four generated by requirement (smartest, fastest,
-/// cheapest, balanced — from the models' ranking and probe results), then one per connection.
-fn profiles(s: &State) -> Vec<(String, String, HashMap<String, Choice>)> {
-    let mut out: Vec<_> = s
-        .router
-        .profiles
-        .iter()
-        .map(|p| (p.id.clone(), p.name.clone(), p.slots.clone()))
+fn profile_list(s: &State) -> Vec<Value> {
+    s.profiles
+        .as_ref()
+        .and_then(|r| r.as_ref().ok())
+        .and_then(|d| d["profiles"].as_array().cloned())
+        .unwrap_or_default()
+}
+
+fn role_list(s: &State) -> Vec<Value> {
+    s.profiles
+        .as_ref()
+        .and_then(|r| r.as_ref().ok())
+        .and_then(|d| d["roles"].as_array().cloned())
+        .unwrap_or_default()
+}
+
+/// Models that can do a role's job (its task, and image input when it needs pictures).
+fn models_for_role(s: &State, role: &Value) -> Vec<Value> {
+    let task = role["task"].as_str().unwrap_or("chat");
+    let needs_image = role["input"]
+        .as_array()
+        .is_some_and(|i| i.iter().any(|x| x == "image"))
+        && task == "chat";
+    let mut rows: Vec<(String, String, String)> = all_models(s)
+        .into_iter()
+        .filter(|(_, m)| {
+            (m.task == task || m.tasks.iter().any(|t| t == task))
+                && (!needs_image || m.input.iter().any(|i| i == "image"))
+        })
+        .map(|(c, m)| (format!("{} · {}", connection_name(s, &c), m.name), c, m.id))
         .collect();
-    out.extend(model_profiles::requirement_profiles(
-        &all_models(s),
-        &s.probes,
-    ));
-    if s.credentials.len() > 1 {
-        for credential in &s.credentials {
-            let models: Vec<(String, Model)> = s
-                .catalogue
-                .get(&credential.id)
-                .into_iter()
-                .flatten()
-                .map(|m| (credential.id.clone(), m.clone()))
-                .collect();
-            let slots = router::suggest(&models);
-            if !slots.is_empty() {
-                out.push((
-                    format!("family:{}", credential.id),
-                    credential.display_name.clone(),
-                    slots,
-                ));
-            }
+    rows.sort_by_key(|(label, ..)| label.to_lowercase());
+    rows.into_iter()
+        .map(|(label, c, m)| json!({ "value": format!("{c}|{m}"), "label": label }))
+        .collect()
+}
+
+/// How much a role matters, in one line: "Accuracy high · Impact high · Speed critical · Runs often".
+fn role_weight(role: &Value) -> String {
+    let word = |key: &str| role[key].as_str().unwrap_or_default().to_owned();
+    let speed = match word("latency").as_str() {
+        "critical" => "Speed critical",
+        "important" => "Speed matters",
+        _ => "Speed relaxed",
+    };
+    let volume = match word("volume").as_str() {
+        "high" => "runs often",
+        "low" => "runs rarely",
+        _ => "runs sometimes",
+    };
+    format!(
+        "Accuracy {} · Impact {} · {speed} · {volume}",
+        word("accuracy"),
+        word("impact")
+    )
+}
+
+/// Settings > Model profiles: the list, or the editor of one profile.
+fn profile_items(s: &State) -> Vec<Value> {
+    let doc = match &s.profiles {
+        None => {
+            return vec![
+                json!({ "id": "pf_loading", "kind": "info", "label": "Loading…", "value": "" }),
+            ]
         }
+        Some(Err(_)) => {
+            return vec![json!({
+                "id": "pf_unavailable", "kind": "info", "label": "Model profiles",
+                "value": "Not available on this server yet.",
+            })]
+        }
+        Some(Ok(d)) => d,
+    };
+    let profiles = doc["profiles"].as_array().cloned().unwrap_or_default();
+    if let Some(profile) = s
+        .editing_profile
+        .as_ref()
+        .and_then(|id| profiles.iter().find(|p| p["id"] == id.as_str()))
+    {
+        let id = profile["id"].as_str().unwrap_or_default();
+        let mut items = vec![
+            json!({ "id": "pf_back", "kind": "button", "label": "All profiles", "style": "secondary", "action": { "type": "close_profile" } }),
+            json!({ "id": "pf_name", "label": "Name", "kind": "text", "single_line": true,
+                    "binding": format!("profile_name:{id}"), "value": profile["name"] }),
+            json!({ "id": "pf_desc", "label": "Description", "kind": "text", "single_line": true,
+                    "binding": format!("profile_desc:{id}"), "value": profile["description"] }),
+        ];
+        for role in role_list(s) {
+            let rid = role["id"].as_str().unwrap_or_default();
+            let current = &profile["roles"][rid];
+            let value = match (current["credentialId"].as_str(), current["model"].as_str()) {
+                (Some(c), Some(m)) => format!("{c}|{m}"),
+                _ => String::new(),
+            };
+            let mut options = models_for_role(s, &role);
+            options.insert(0, json!({ "value": "", "label": "Not set" }));
+            // A saved model the provider no longer lists stays selectable.
+            if !value.is_empty() && !options.iter().any(|o| o["value"] == value.as_str()) {
+                options.push(json!({ "value": value, "label": current["model"] }));
+            }
+            items.push(json!({
+                "id": format!("pf_role_{rid}"), "label": role["label"], "kind": "select",
+                "binding": format!("pr:{id}:{rid}"), "value": value, "options": options,
+            }));
+            items.push(json!({
+                "id": format!("pf_hint_{rid}"), "kind": "hint",
+                "text": format!("{} {}", role["description"].as_str().unwrap_or_default(), role_weight(&role)),
+            }));
+        }
+        let active = profile["active"] == true;
+        items.push(json!({
+            "id": "pf_use", "kind": "button", "style": "primary",
+            "label": if active { "In use" } else { "Use this profile" },
+            "action": { "type": "use_profile", "id": id },
+        }));
+        items.push(json!({
+            "id": "pf_delete", "kind": "button", "style": "danger", "label": "Delete profile",
+            "action": { "type": "delete_profile", "id": id },
+        }));
+        return items;
     }
-    out
+    let mut items = vec![
+        json!({ "id": "pf_generate", "kind": "button", "style": "primary",
+                "label": if s.generating { "Writing a profile…" } else { "Generate with AI" },
+                "action": { "type": "begin_generate_profile" } }),
+        json!({ "id": "pf_new", "kind": "button", "style": "secondary", "label": "New profile from my current models",
+                "action": { "type": "new_profile" } }),
+    ];
+    if profiles.is_empty() {
+        items.push(json!({
+            "id": "pf_empty", "kind": "info", "label": "No profiles yet",
+            "value": "A profile picks a model for every job: chat, thinking, pictures, speech, router, sub-agents, titles and more.",
+        }));
+    }
+    for p in &profiles {
+        let id = p["id"].as_str().unwrap_or_default();
+        let set = p["roles"].as_object().map_or(0, |r| r.len());
+        let active = p["active"] == true;
+        items.push(item(
+            format!("pf_{id}"),
+            p["name"].as_str().unwrap_or_default(),
+            &format!(
+                "{set} jobs set{}",
+                p["description"]
+                    .as_str()
+                    .filter(|d| !d.is_empty())
+                    .map(|d| format!(" · {d}"))
+                    .unwrap_or_default()
+            ),
+            vec![
+                button(
+                    "Edit",
+                    "secondary",
+                    json!({ "type": "edit_profile", "id": id }),
+                ),
+                button(
+                    if active { "In use" } else { "Use" },
+                    "secondary",
+                    json!({ "type": "use_profile", "id": id }),
+                ),
+            ],
+        ));
+    }
+    items
 }
 
 /// Settings > Models: automatic choice, one model per route, custom routes.
@@ -3468,83 +3774,6 @@ fn router_controls(s: &State) -> Vec<Value> {
         json!({ "id": id, "label": label, "kind": "select", "binding": binding, "value": value, "options": options })
     };
     let mut items: Vec<Value> = Vec::new();
-    // Model profiles page: test, requirement/connection/saved profiles with their main model, ranking.
-    let probed = s.probes.len();
-    items.push(json!({
-        "id": "probe_models", "kind": "button", "style": "primary", "action": { "type": "probe_models" },
-        "label": if s.probing { "Testing models…" } else { "Test which models work" },
-    }));
-    items.push(json!({
-        "id": "probe_status", "kind": "info", "label": "Tested models",
-        "value": if probed == 0 { "Not tested yet — profiles use each model's ranking".to_owned() } else { format!("{probed}") },
-    }));
-    for (id, name, slots) in profiles(s) {
-        let saved = id.starts_with("profile");
-        let current = s.router.active_profile == id;
-        let mut buttons = vec![button(
-            if current { "In use" } else { "Use" },
-            "secondary",
-            json!({ "type": "set_setting", "binding": "models.profile", "value": id }),
-        )];
-        if saved {
-            buttons.push(button(
-                "Delete",
-                "danger",
-                json!({ "type": "delete_profile", "id": id }),
-            ));
-        }
-        let main = slots
-            .get("default")
-            .map(|c| format!("{} · {}", model_name(s, c), connection_name(s, &c.0)))
-            .unwrap_or_default();
-        let detail = format!(
-            "Main model: {main} · {} routes{}",
-            slots.len(),
-            if id.starts_with("family:") {
-                " · from this connection"
-            } else if id.starts_with("req:") {
-                " · picked from ranking and tests"
-            } else {
-                ""
-            }
-        );
-        items.push(item(format!("profile-{id}"), &name, &detail, buttons));
-        if saved {
-            items.push(select(
-                format!("profile-main-{id}"),
-                "Main model",
-                format!("profile_main:{id}"),
-                slots.get("default"),
-                options_for("chat", false),
-                false,
-            ));
-        }
-    }
-    items.push(json!({
-        "id": "save_profile", "label": "Save current models as a profile", "kind": "button", "style": "secondary",
-        "action": { "type": "begin_save_profile" },
-    }));
-    for (i, (credential, model, probe)) in model_profiles::ranked(&all_models(s), &s.probes)
-        .into_iter()
-        .take(12)
-        .enumerate()
-    {
-        let state = match probe {
-            Some(p) if p.ok => format!("✓ {:.1} s", p.latency_ms as f64 / 1000.0),
-            Some(_) => "✗ did not answer".to_owned(),
-            None => "not tested".to_owned(),
-        };
-        let tier = model
-            .rank
-            .as_ref()
-            .map(|r| r.tier.clone())
-            .unwrap_or_default();
-        items.push(json!({
-            "id": format!("ranked_{i}"), "kind": "info",
-            "label": format!("{}. {}", i + 1, model.name),
-            "value": format!("{} · {tier} · {state}", connection_name(s, &credential)),
-        }));
-    }
     items.extend([
         json!({ "id": "router_auto", "label": "Choose the model automatically", "kind": "toggle", "binding": "models.auto", "value": s.router.auto }),
         json!({ "id": "router_setup", "label": "Set up automatically", "kind": "button", "style": "secondary", "action": { "type": "auto_configure_router" } }),
@@ -4267,43 +4496,6 @@ mod tests {
     }
 
     #[test]
-    fn profiles_are_generated_per_provider_saved_by_name_and_applied_in_one_step() {
-        let c = signed_in_core();
-        seed_models(&c);
-        let options = |c: &AppCore| {
-            c.view()["page"]["composer"]["toolbar"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .find(|x| x["id"] == "profile")
-                .map(|x| x["options"].as_array().unwrap().len())
-        };
-        assert_eq!(
-            options(&c),
-            Some(1 + 4 + 2),
-            "placeholder, four by requirement, one per provider"
-        );
-        futures_executor::block_on(c.dispatch(Action::SetSetting {
-            binding: "models.profile".into(),
-            value: json!("family:c1"),
-        }));
-        assert_eq!(c.state.lock().unwrap().router.active_profile, "family:c1");
-        assert_eq!(c.state.lock().unwrap().router.slots["default"].1, "gpt-5.1");
-        futures_executor::block_on(c.dispatch(Action::SaveProfile {
-            text: "Mine".into(),
-        }));
-        let saved = c.state.lock().unwrap().router.profiles.clone();
-        assert_eq!(
-            (saved[0].id.as_str(), saved[0].name.as_str()),
-            ("profile1", "Mine")
-        );
-        futures_executor::block_on(c.dispatch(Action::DeleteProfile {
-            id: "profile1".into(),
-        }));
-        assert!(c.state.lock().unwrap().router.profiles.is_empty());
-    }
-
-    #[test]
     fn settings_usage_shows_stats_bars_and_models_from_the_account_dashboard() {
         let c = signed_in_core();
         c.update(|s| {
@@ -4388,54 +4580,164 @@ mod tests {
             .any(|i| i["id"] == "route_default"));
     }
 
+    fn seed_profiles(c: &AppCore) {
+        let roles = json!([
+            { "id": "default", "label": "Everyday chat", "task": "chat", "input": ["text"], "description": "Main model.", "accuracy": "high", "impact": "high", "latency": "important", "volume": "medium" },
+            { "id": "vision", "label": "Image understanding", "task": "chat", "input": ["text", "image"], "description": "Pictures.", "accuracy": "high", "impact": "medium", "latency": "important", "volume": "low" },
+            { "id": "title", "label": "Chat titles", "task": "chat", "input": ["text"], "description": "Titles.", "accuracy": "low", "impact": "low", "latency": "critical", "volume": "high" },
+        ]);
+        c.update(|s| {
+            s.profiles = Some(Ok(json!({
+                "roles": roles,
+                "profiles": [
+                    { "id": "p1", "name": "Balanced", "description": "Good all round", "active": true,
+                      "roles": { "default": { "credentialId": "c1", "model": "gpt-5.1" } } },
+                    { "id": "p2", "name": "Fast", "description": "", "active": false, "roles": {} },
+                ],
+            })));
+        });
+    }
+
     #[test]
-    fn the_profiles_page_lists_requirement_profiles_main_models_and_the_ranking() {
+    fn the_profiles_page_lists_profiles_and_edits_every_role_with_what_it_is_for() {
         let c = signed_in_core();
         seed_models(&c);
-        c.update(|s| s.route = "settings".into());
-        futures_executor::block_on(c.dispatch(Action::SaveProfile {
-            text: "Mine".into(),
-        }));
-        futures_executor::block_on(c.dispatch(Action::SelectSettingsSection {
-            id: "profiles".into(),
-        }));
+        seed_profiles(&c);
+        c.update(|s| {
+            s.route = "settings".into();
+            s.settings_section = "profiles".into();
+        });
         let page = c.view()["page"].clone();
-        let section = page["sections"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|x| x["id"] == "profiles")
-            .unwrap()
-            .clone();
-        let ids: Vec<&str> = section["items"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|i| i["id"].as_str().unwrap())
-            .collect();
-        for expected in [
-            "probe_models",
-            "profile-req:smartest",
-            "profile-req:fastest",
-            "profile-profile1",
-            "profile-main-profile1",
-            "ranked_0",
-        ] {
+        let items = |c: &AppCore| -> Vec<Value> {
+            c.view()["page"]["sections"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|x| x["id"] == "profiles")
+                .unwrap()["items"]
+                .as_array()
+                .unwrap()
+                .clone()
+        };
+        assert_eq!(page["selected"], "profiles");
+        let list = items(&c);
+        let ids: Vec<&str> = list.iter().map(|i| i["id"].as_str().unwrap()).collect();
+        for expected in ["pf_generate", "pf_new", "pf_p1", "pf_p2"] {
             assert!(ids.contains(&expected), "{expected} in {ids:?}");
         }
-        // /profile switches by name, and a saved profile's main model can be changed.
-        futures_executor::block_on(c.dispatch(Action::Send {
-            text: "/profile fastest".into(),
-        }));
-        assert_eq!(c.state.lock().unwrap().router.active_profile, "req:fastest");
-        futures_executor::block_on(c.dispatch(Action::SetSetting {
-            binding: "profile_main:profile1".into(),
-            value: json!("c1|llama-3-70b"),
-        }));
         assert_eq!(
-            c.state.lock().unwrap().router.profiles[0].slots["default"].1,
-            "llama-3-70b"
+            list.iter().find(|i| i["id"] == "pf_p1").unwrap()["buttons"][1]["label"],
+            "In use"
         );
+
+        futures_executor::block_on(c.dispatch(Action::EditProfile { id: "p1".into() }));
+        let editor = items(&c);
+        let find = |id: &str| {
+            editor
+                .iter()
+                .find(|i| i["id"] == id)
+                .cloned()
+                .unwrap_or_else(|| panic!("{id}"))
+        };
+        assert_eq!(find("pf_name")["binding"], "profile_name:p1");
+        let main = find("pf_role_default");
+        assert_eq!(
+            (main["binding"].as_str(), main["value"].as_str()),
+            (Some("pr:p1:default"), Some("c1|gpt-5.1"))
+        );
+        assert_eq!(main["options"][0]["label"], "Not set");
+        // Only models that take pictures are offered for image understanding.
+        let vision: Vec<&str> = find("pf_role_vision")["options"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|o| o["value"].as_str().unwrap())
+            .filter(|v| !v.is_empty())
+            .map(|v| v.split('|').nth(1).unwrap())
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|v| {
+                if v == "llama-3-70b" {
+                    "TEXT-ONLY"
+                } else {
+                    "ok"
+                }
+            })
+            .collect();
+        assert!(!vision.contains(&"TEXT-ONLY") && !vision.is_empty());
+        // Each role explains itself and how much it matters.
+        assert_eq!(
+            find("pf_hint_title")["text"],
+            "Titles. Accuracy low · Impact low · Speed critical · runs often"
+        );
+        assert_eq!(find("pf_use")["label"], "In use");
+
+        futures_executor::block_on(c.dispatch(Action::CloseProfile));
+        assert!(items(&c).iter().any(|i| i["id"] == "pf_p2"));
+    }
+
+    #[test]
+    fn the_composer_switches_profile_and_slash_profile_finds_it_by_name() {
+        let c = signed_in_core();
+        seed_profiles(&c);
+        let toolbar = c.view()["page"]["composer"]["toolbar"].clone();
+        let select = toolbar
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|x| x["id"] == "profile")
+            .unwrap()
+            .clone();
+        assert_eq!(
+            (select["binding"].as_str(), select["value"].as_str()),
+            (Some("models.profile"), Some("p1"))
+        );
+        assert_eq!(select["options"].as_array().unwrap().len(), 2);
+        // A server without profiles shows no switch.
+        c.update(|s| s.profiles = Some(Err("not found".into())));
+        assert!(c.view()["page"]["composer"]["toolbar"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|x| x["id"] != "profile"));
+        c.update(|s| s.profiles = Some(Ok(json!({ "roles": [], "profiles": [] }))));
+        assert!(c.view()["page"]["composer"]["toolbar"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|x| x["id"] != "profile"));
+    }
+
+    #[test]
+    fn using_a_profile_points_the_routes_at_its_models_and_leaves_the_others() {
+        let c = signed_in_core();
+        c.update(|s| {
+            s.router
+                .slots
+                .insert("fast".into(), ("c1".into(), "keep-me".into()));
+        });
+        let roles = json!({ "default": { "credentialId": "c2", "model": "new-main" }, "title": { "credentialId": "c2", "model": "t" } });
+        futures_executor::block_on(c.apply_roles(&roles));
+        let s = c.state.lock().unwrap();
+        assert_eq!(
+            s.router.slots["default"],
+            ("c2".to_owned(), "new-main".to_owned())
+        );
+        assert_eq!(s.router.slots["fast"].1, "keep-me");
+        assert!(
+            !s.router.slots.contains_key("title"),
+            "title is a profile role, not a chat route"
+        );
+    }
+
+    #[test]
+    fn a_profile_generation_dialog_asks_for_wishes() {
+        let c = signed_in_core();
+        futures_executor::block_on(c.dispatch(Action::BeginGenerateProfile));
+        let dialog = c.view()["dialog"].clone();
+        assert_eq!(dialog["kind"], "prompt");
+        assert_eq!(dialog["actions"][0]["action"]["type"], "generate_profile");
+        assert_eq!(dialog["actions"][0]["withInput"], true);
     }
 
     #[test]
@@ -4639,7 +4941,6 @@ mod tests {
                 vec!["text".into()]
             },
             output: vec![],
-            rank: None,
         };
         c.update(|s| {
             s.credentials = vec![
