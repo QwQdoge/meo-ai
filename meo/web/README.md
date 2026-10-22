@@ -29,3 +29,20 @@ repository and owns the production authentication/persistence boundary. Its
 existing Worker is TypeScript; preserving it while moving new AI domain behavior
 to Rust is deliberate. No Rust cloud rewrite, deployment or data migration is
 implied by this import.
+
+## Deployment (2026-10-22)
+
+`chat.meoarch.org` (Cloudflare Pages project `meo-ai-web`) now serves this client. Cloudflare's own
+Git build cannot compile the WASM core (no Rust toolchain there), so the site is built by the
+`Meo Web client` workflow, which keeps it as the `meo-web-site` artifact (`site/` + `functions/`);
+deploy it from an empty directory:
+
+```bash
+gh run download <run-id> -R QwQdoge/meo-ai -n meo-web-site -D <empty-dir>
+cd <empty-dir> && wrangler pages deploy site --project-name meo-ai-web --branch main
+```
+
+Rollback: promote the previous production deployment `24c8d716-875b-4fe0-94ce-9711c5a7cd0b`
+(commit `cb54729`, the old LibreChat-based client) in the Pages dashboard. The first Sign in after a
+deploy may show Cloudflare error 1102 from `account.meoarch.org` (the documented OAuth CPU limit of
+the Meo API Worker); retrying succeeds.
