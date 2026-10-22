@@ -56,3 +56,14 @@ jobs:
           MEO_OUTPUT_ROOT: ${{ runner.temp }}
           MEO_UI_ROOT: ${{ github.workspace }}/dependencies/MeoUI
         run: npm run build
+      - name: Stage the built site and the Pages functions for deployment
+        run: |
+          mkdir -p stage
+          cp -r "${{ runner.temp }}/meo-ai/build/web" stage/site
+          cp -r meo/web/client/functions stage/functions
+      - name: Keep the staged site
+        uses: actions/upload-artifact@v4
+        with:
+          name: meo-web-site
+          path: stage
+          retention-days: 14
