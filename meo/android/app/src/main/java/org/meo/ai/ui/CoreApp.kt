@@ -10,6 +10,15 @@ import androidx.compose.ui.layout.ContentScale
 import coil3.compose.AsyncImage
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.material.icons.rounded.AccountTree
+import androidx.compose.material.icons.rounded.Language
+import androidx.compose.material.icons.rounded.Psychology
+import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -639,15 +648,25 @@ private fun SearchField(search: JSONObject, act: Act) {
             search.obj("action")?.let { act(it.withField("text", text)) }
         }
     }
-    OutlinedTextField(
-        value = text,
-        onValueChange = { text = it },
-        modifier = Modifier.fillMaxWidth(),
-        singleLine = true,
-        leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
-        placeholder = { Text(search.str("placeholder")) },
-        shape = RoundedCornerShape(24.dp),
-    )
+    Row(
+        Modifier.fillMaxWidth().heightIn(min = 40.dp).background(MaterialTheme.colorScheme.surfaceContainerHigh, androidx.compose.foundation.shape.CircleShape).padding(horizontal = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Icon(Icons.Rounded.Search, contentDescription = null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        BasicTextField(
+            value = text,
+            onValueChange = { text = it },
+            modifier = Modifier.weight(1f),
+            singleLine = true,
+            textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
+            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+            decorationBox = { inner ->
+                if (text.isEmpty()) Text(search.str("placeholder"), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                inner()
+            },
+        )
+    }
 }
 
 @Composable
@@ -688,11 +707,23 @@ private fun ChatPane(page: JSONObject, prefs: JSONObject?, strings: JSONObject, 
                 }
             }
         }
-        Box(Modifier.weight(1f).fillMaxWidth()) {
+        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
             val empty = page.obj("empty")
+            val fresh = empty != null
+            val density = androidx.compose.ui.platform.LocalDensity.current
+            var composerPx by remember { androidx.compose.runtime.mutableIntStateOf(0) }
+            val areaPx = with(density) { maxHeight.toPx() }
+            val margin = with(density) { 8.dp.toPx() }
+            // A new chat keeps the composer in the middle; it glides down (fast ease-out) once there is a conversation.
+            val lift by androidx.compose.animation.core.animateFloatAsState(
+                if (fresh) 1f else 0f,
+                androidx.compose.animation.core.tween(240, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+                label = "composerLift",
+            )
+            val composerDp = with(density) { composerPx.toDp() }
             if (empty != null) {
                 Column(
-                    Modifier.align(Alignment.Center).padding(32.dp),
+                    Modifier.align(Alignment.Center).offset(y = -(composerDp / 2 + 64.dp)).padding(horizontal = 32.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
@@ -703,11 +734,6 @@ private fun ChatPane(page: JSONObject, prefs: JSONObject?, strings: JSONObject, 
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center,
                     )
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)) {
-                        empty.list("suggestions").forEach { s ->
-                            androidx.compose.material3.AssistChip(onClick = { act.send(s.obj("action")) }, label = { Text(s.str("label")) })
-                        }
-                    }
                 }
             }
             val inspector = page.obj("inspector")
@@ -750,24 +776,38 @@ private fun ChatPane(page: JSONObject, prefs: JSONObject?, strings: JSONObject, 
             LazyColumn(
                 Modifier.fillMaxSize(),
                 state = listState,
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                contentPadding = PaddingValues(start = 16.dp, top = 8.dp, end = 16.dp, bottom = if (fresh) 8.dp else composerDp + 8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 items(messages) { MessageBubble(it, strings, act) }
             }
-        }
-        if (consent != null) {
-            Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(consent.str("title"), style = MaterialTheme.typography.titleMedium)
-                    Text(consent.str("text"), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        consent.list("actions").forEach { ActionButton(it, act) }
+            Column(
+                Modifier.align(Alignment.BottomCenter)
+                    .widthIn(max = 720.dp)
+                    .onSizeChanged { composerPx = it.height }
+                    .offset { IntOffset(0, -(lift * maxOf(0f, areaPx / 2f - composerPx / 2f - margin)).toInt()) },
+            ) {
+                if (consent != null) {
+                    Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
+                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(consent.str("title"), style = MaterialTheme.typography.titleMedium)
+                            Text(consent.str("text"), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                consent.list("actions").forEach { ActionButton(it, act) }
+                            }
+                        }
+                    }
+                }
+                Composer(composer, page.list("files"), prefs, strings, act)
+                if (fresh) {
+                    FlowRow(Modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        empty?.list("suggestions")?.forEach { s ->
+                            androidx.compose.material3.AssistChip(onClick = { act.send(s.obj("action")) }, label = { Text(s.str("label"), style = MaterialTheme.typography.labelMedium) })
+                        }
                     }
                 }
             }
         }
-        Composer(composer, page.list("files"), prefs, strings, act)
     }
 }
 
@@ -822,13 +862,28 @@ private fun ControlChip(item: JSONObject, act: Act) {
     val options = item.list("options")
     val index = options.indexOfFirst { it.str("value") == item.str("value") }.coerceAtLeast(0)
     val kind = item.str("kind")
+    val symbol = when (item.str("icon")) {
+        "language" -> Icons.Rounded.Language
+        "account_tree" -> Icons.Rounded.AccountTree
+        "shield" -> Icons.Rounded.Shield
+        "psychology" -> Icons.Rounded.Psychology
+        else -> null
+    }
+    // Toggles with an icon are icon-only; the name is the accessibility label.
+    if (kind == "toggle" && symbol != null) {
+        androidx.compose.material3.IconToggleButton(checked = item.optBoolean("value"), onCheckedChange = { act(setting(item, it)) }) {
+            Icon(symbol, contentDescription = item.str("label"))
+        }
+        return
+    }
     Box {
         TextButton(
             onClick = { if (kind == "toggle") act(setting(item, !item.optBoolean("value"))) else open = true },
             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
         ) {
+            if (symbol != null) Icon(symbol, contentDescription = null, modifier = Modifier.size(16.dp).padding(end = 0.dp))
             Text(
-                if (kind == "toggle") (if (item.optBoolean("value")) "● " else "○ ") + item.str("label")
+                (if (symbol != null) " " else "") + if (kind == "toggle") (if (item.optBoolean("value")) "● " else "○ ") + item.str("label")
                 else (options.getOrNull(index)?.str("label") ?: item.str("label")) + " ▾",
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -974,29 +1029,39 @@ private fun Composer(composer: JSONObject, files: List<JSONObject>, prefs: JSONO
                 }
             }
         }
-        Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainerHigh, RoundedCornerShape(24.dp)).padding(start = 4.dp, end = 6.dp, top = 4.dp, bottom = 4.dp),
+            verticalAlignment = Alignment.Bottom,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
             if (attach != null) {
-                IconButton(onClick = { picker.launch(arrayOf("image/*", "text/*", "application/json", "application/xml", "application/x-sh", "application/octet-stream")) }) {
+                IconButton(onClick = { picker.launch(arrayOf("image/*", "text/*", "application/json", "application/xml", "application/x-sh", "application/octet-stream")) }, Modifier.size(40.dp)) {
                     Icon(Icons.Rounded.AttachFile, contentDescription = attach.str("label"))
                 }
             }
-            OutlinedTextField(
-                value = input,
-                onValueChange = { input = it },
-                modifier = Modifier.weight(1f).onPreviewKeyEvent { event ->
-                    // Hardware keyboards: Enter sends (Shift+Enter newline), or the reverse.
-                    if (event.type == KeyEventType.KeyDown && event.key == Key.Enter && enterSends != event.isShiftPressed) {
-                        send()
-                        true
-                    } else {
-                        false
-                    }
-                },
-                placeholder = { Text(composer.str("placeholder")) },
-                maxLines = 6,
-                shape = RoundedCornerShape(24.dp),
-            )
-            FilledIconButton(onClick = { if (busy) act.send(composer.obj("stopAction")) else send() }) {
+            Box(Modifier.weight(1f).heightIn(min = 40.dp).padding(vertical = 10.dp), contentAlignment = Alignment.CenterStart) {
+                BasicTextField(
+                    value = input,
+                    onValueChange = { input = it },
+                    modifier = Modifier.fillMaxWidth().onPreviewKeyEvent { event ->
+                        // Hardware keyboards: Enter sends (Shift+Enter newline), or the reverse.
+                        if (event.type == KeyEventType.KeyDown && event.key == Key.Enter && enterSends != event.isShiftPressed) {
+                            send()
+                            true
+                        } else {
+                            false
+                        }
+                    },
+                    textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
+                    maxLines = 6,
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                    decorationBox = { inner ->
+                        if (input.isEmpty()) Text(composer.str("placeholder"), style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        inner()
+                    },
+                )
+            }
+            FilledIconButton(onClick = { if (busy) act.send(composer.obj("stopAction")) else send() }, Modifier.size(36.dp)) {
                 Icon(if (busy) Icons.Rounded.Stop else Icons.AutoMirrored.Rounded.Send, contentDescription = if (busy) strings.str("stop").ifEmpty { "Stop" } else strings.str("send").ifEmpty { "Send" })
             }
         }
