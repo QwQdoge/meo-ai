@@ -162,7 +162,7 @@ fun CoreApp(view: JSONObject, act: (JSONObject) -> Unit) {
                     Banner(
                         text = notice.str("text"),
                         error = notice.str("kind") == "error",
-                        actionLabel = strings.str("dismiss").ifEmpty { "Dismiss" },
+                        actionLabel = notice.str("actionLabel").ifEmpty { strings.str("dismiss").ifEmpty { "Dismiss" } },
                         onAction = { act.send(notice.obj("action")) },
                     )
                 }

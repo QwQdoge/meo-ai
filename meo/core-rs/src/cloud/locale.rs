@@ -105,6 +105,7 @@ pub fn localize(view: &mut Value, locale: &str) {
     let Some(c) = catalog(locale) else { return };
     if let Some(notice) = view.get_mut("notice").filter(|n| n.is_object()) {
         field(c, notice, "text");
+        field(c, notice, "actionLabel");
     }
     for item in each(view, "navigation") {
         field(c, item, "label");

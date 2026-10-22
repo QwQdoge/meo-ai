@@ -44,7 +44,7 @@ export default function CoreApp() {
       {view.dialog && <Dialog dialog={view.dialog} act={act} />}
       <div className="core-main">
         {view.notice && (
-          <Banner error={view.notice.kind === "error"} action={strings.dismiss ?? "Dismiss"} onAction={() => act(view.notice.action)}>
+          <Banner error={view.notice.kind === "error"} action={view.notice.actionLabel ?? strings.dismiss ?? "Dismiss"} onAction={() => act(view.notice.action)}>
             {view.notice.text}
           </Banner>
         )}

@@ -389,7 +389,7 @@ ApplicationWindow {
                 Layout.margins: 12
                 tone: window.v.notice && window.v.notice.kind === "error" ? "error" : "tonal"
                 text: window.v.notice ? window.v.notice.text : ""
-                confirmText: (window.v.strings || {}).dismiss || qsTr("Dismiss")
+                confirmText: (window.v.notice && window.v.notice.actionLabel) || (window.v.strings || {}).dismiss || qsTr("Dismiss")
                 onConfirmed: window.act(window.v.notice.action)
             }
 

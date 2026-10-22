@@ -270,6 +270,8 @@ struct State {
     route: String,
     online: bool,
     notice: Option<(String, String)>,
+    /// A button for the notice with exactly this text (label, action); ignored once the text changes.
+    notice_action: Option<(String, String, Value)>,
     conversations: Vec<ConversationSummary>,
     active: Option<String>,
     messages: HashMap<String, Vec<ChatMessage>>,
@@ -390,6 +392,11 @@ impl AppCore {
     fn update(&self, f: impl FnOnce(&mut State)) {
         f(&mut self.state.lock().unwrap());
         self.hooks.changed();
+    }
+
+    fn notice_with_action(&self, text: &str, label: &str, action: Value) {
+        self.notice("info", text);
+        self.update(|s| s.notice_action = Some((text.to_owned(), label.to_owned(), action)));
     }
 
     fn notice(&self, kind: &str, text: impl Into<String>) {
@@ -916,6 +923,14 @@ impl AppCore {
             format!(" — {}", decision.reason)
         };
         self.step("router", "Router", &format!("{label}{why}"), "done", vec![]);
+        // A job this big is better in Work: say so once, with a button.
+        if decision.steps.len() >= 3 {
+            self.notice_with_action(
+                "This looks like a big task. Work mode is better for it.",
+                "Open Work",
+                json!({ "type": "navigate", "route": "work" }),
+            );
+        }
 
         let mut notes: Vec<(String, String)> = Vec::new();
         let total = decision.steps.len();
@@ -3160,11 +3175,15 @@ impl AppCore {
                 "input": (d.kind == "prompt").then(|| json!({ "value": d.value, "placeholder": if d.multiline { "Message" } else { "Title" }, "multiline": d.multiline })),
                 "actions": d.actions,
             })),
-            "notice": s.notice.as_ref().map(|(kind, text)| json!({
-                "kind": kind,
-                "text": text,
-                "action": { "type": "dismiss_notice" },
-            })),
+            "notice": s.notice.as_ref().map(|(kind, text)| {
+                let extra = s.notice_action.as_ref().filter(|(t, _, _)| t == text);
+                json!({
+                    "kind": kind,
+                    "text": text,
+                    "action": extra.map_or(json!({ "type": "dismiss_notice" }), |(_, _, a)| a.clone()),
+                    "actionLabel": extra.map(|(_, l, _)| l.clone()),
+                })
+            }),
             "prefs": s.prefs,
         });
         locale::localize(&mut view, locale);
