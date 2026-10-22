@@ -71,7 +71,7 @@ Behaviour wired: permission → provider consent (`chat.auto_consent`), thinking
 
 ## TODO
 
-- [ ] Work mode: real sessions/targets (local desktop executor, remote devices); no plain chats
+- [x] Work mode (cloud): a Work task is a conversation marked as Work (ids kept on the device, `move_to_work` / `move_to_chat` / `new_task`). Work page = the conversation page with its own sidebar list "Tasks" and starters. Every Work message is routed and planned (steps: low 1, medium 3, high 6, max 10), judged from medium up, and the model gets the Work guide. Prompts for both workspaces live in meo-api `src/ai-prompts.mjs` (samples in `docs/ai-prompts.md`). TODO: local desktop executor / remote devices, Work tasks synced across devices (today the marker is per device), sub-agent execution
 - [ ] Permission levels `low`/`smart`/`all` need real tool calls to differ from "auto"
 - [ ] Sub-agents: effect (prompt hints per thinking level, delegation)
 - [ ] Thinking High/Max: tool planning + review loop in the core. Multi-call chain by level is in (router, planned steps, judge); the full design below is deferred.

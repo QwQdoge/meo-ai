@@ -246,5 +246,16 @@
   "Outputs": "产出",
   "Messages": "消息",
   "Work notes": "工作记录",
-  "No profile": "未使用方案"
+  "No profile": "未使用方案",
+  "Tasks": "任务",
+  "New task": "新任务",
+  "Move to Work": "转到 Work",
+  "Move to Chat": "转回 Chat",
+  "What should Meo work on?": "要让 Meo 处理什么任务？",
+  "Research a topic": "调研一个主题",
+  "Plan a project": "规划一个项目",
+  "Work through a hard problem": "攻克一个难题",
+  "Research this topic across several sources and give me a sourced summary with a recommendation. The topic: ": "请从多个来源调研这个主题，给我一份带来源的总结和建议。主题：",
+  "Break this goal into a plan with milestones, risks and a first week of tasks. The goal: ": "请把这个目标拆成带里程碑、风险和第一周任务的计划。目标：",
+  "Work through this carefully, check your own result, and tell me how sure you are. The problem: ": "请认真求解，检查自己的结果，并告诉我你有多确定。问题："
 }

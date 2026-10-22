@@ -78,6 +78,17 @@ pub enum Action {
         route: String,
     },
     NewConversation,
+    /// A fresh Work task.
+    NewTask,
+    /// Turns a chat into a Work task (the active one when `id` is absent), or back.
+    MoveToWork {
+        #[serde(default)]
+        id: Option<String>,
+    },
+    MoveToChat {
+        #[serde(default)]
+        id: Option<String>,
+    },
     SelectConversation {
         id: String,
     },
@@ -268,6 +279,7 @@ struct State {
     session: Option<Session>,
     pending_auth: Option<PendingAuthorization>,
     route: String,
+    work_ids: Vec<String>,
     online: bool,
     notice: Option<(String, String)>,
     /// A button for the notice with exactly this text (label, action); ignored once the text changes.
@@ -344,6 +356,8 @@ pub struct AppCore {
 const KEY_SESSION: &str = "session";
 const KEY_PREFS: &str = "prefs";
 const KEY_CONVERSATIONS: &str = "conversations";
+/// Ids of the conversations that are Work tasks (kept on this device).
+const KEY_WORK: &str = "work-sessions";
 const KEY_CREDENTIALS: &str = "credentials";
 const KEY_MODELS: &str = "models";
 /// Survives the app process being killed while the browser sign-in is open.
@@ -437,6 +451,14 @@ impl AppCore {
                 s.active = None;
                 s.route = "chat".into();
             }),
+            Action::NewTask => self.update(|s| {
+                s.files.clear();
+                s.new_chat_project = None;
+                s.active = None;
+                s.route = "work".into();
+            }),
+            Action::MoveToWork { id } => self.set_work(id, true),
+            Action::MoveToChat { id } => self.set_work(id, false),
             Action::SelectConversation { id } => self.select_conversation(id).await,
             Action::Send { text } => self.send(text).await,
             Action::Stop => self.cancel.store(true, Ordering::SeqCst),
@@ -604,6 +626,7 @@ impl AppCore {
         let prefs: Map<String, Value> = self.load_json(KEY_PREFS).unwrap_or_default();
         let conversations: Vec<ConversationSummary> =
             self.load_json(KEY_CONVERSATIONS).unwrap_or_default();
+        let work_ids: Vec<String> = self.load_json(KEY_WORK).unwrap_or_default();
         let credentials: Vec<Credential> = self.load_json(KEY_CREDENTIALS).unwrap_or_default();
         let catalogue: HashMap<String, Vec<Model>> = self.load_json(KEY_MODELS).unwrap_or_default();
         let selected = prefs
@@ -621,6 +644,7 @@ impl AppCore {
             };
             s.prefs = prefs;
             s.conversations = conversations;
+            s.work_ids = work_ids;
             s.credentials = credentials;
             s.catalogue = catalogue;
             s.selected = selected;
@@ -827,7 +851,7 @@ impl AppCore {
     // ---- multi-call answers ----------------------------------------------
 
     /// Where and how the model is running, for its system prompt (the API words it).
-    fn environment(&self, route: &str, level: &str, search: bool) -> Value {
+    fn environment(&self, route: &str, level: &str, search: bool, work: bool) -> Value {
         let s = self.state.lock().unwrap();
         let client = match self
             .oauth
@@ -854,6 +878,7 @@ impl AppCore {
         json!({
             "client": client, "os": os, "locale": s.host_locale, "role": route, "thinking": level,
             "webSearch": search, "subagents": pref_bool(&s, "chat.subagents", false), "location": "cloud",
+            "workspace": if work { "work" } else { "chat" },
         })
     }
 
@@ -896,13 +921,13 @@ impl AppCore {
 
     /// Router, then (thinking level high or max) the planned steps. Each stage is a step of the
     /// answer; a stage that fails is shown as failed and the answer carries on without it.
-    async fn orchestrate(&self, text: &str, level: &str, search: bool) -> Orchestration {
+    async fn orchestrate(&self, text: &str, level: &str, search: bool, work: bool) -> Orchestration {
         let subagents = pref_bool(&self.state.lock().unwrap(), "chat.subagents", false);
         self.step("router", "Router", "Choosing the model…", "running", vec![]);
         let reply = self
             .run_stage(
                 "router",
-                json!({ "stage": "router", "message": text, "thinking": level, "webSearch": search, "subagents": subagents, "mode": "chat" }),
+                json!({ "stage": "router", "message": text, "thinking": level, "webSearch": search, "subagents": subagents, "mode": if work { "work" } else { "chat" } }),
             )
             .await;
         let Some(reply) = reply else {
@@ -915,7 +940,7 @@ impl AppCore {
             );
             return Orchestration::default();
         };
-        let decision = orchestration::parse_route(&reply, orchestration::max_steps(level, false));
+        let decision = orchestration::parse_route(&reply, orchestration::max_steps(level, work));
         let label = router::slot(&decision.route).map_or("Everyday chat", |x| x.label);
         let why = if decision.reason.is_empty() {
             String::new()
@@ -924,11 +949,11 @@ impl AppCore {
         };
         self.step("router", "Router", &format!("{label}{why}"), "done", vec![]);
         // A job this big is better in Work: say so once, with a button.
-        if decision.steps.len() >= 3 {
+        if !work && decision.steps.len() >= 3 {
             self.notice_with_action(
                 "This looks like a big task. Work mode is better for it.",
-                "Open Work",
-                json!({ "type": "navigate", "route": "work" }),
+                "Move to Work",
+                json!({ "type": "move_to_work" }),
             );
         }
 
@@ -992,7 +1017,7 @@ impl AppCore {
                 ),
             }
         }
-        let judge = (level == "max" || (level == "high" && self.has_profile_role("judge")))
+        let judge = (level == "max" || (work && level != "low") || (level == "high" && self.has_profile_role("judge")))
             .then(|| self.role_model("judge"))
             .flatten();
         Orchestration {
@@ -1011,10 +1036,11 @@ impl AppCore {
     /// Scores the finished answer with the judge model (a `jev` model reads the same text).
     async fn run_judge(&self, question: &str, answer: &str, _judge: Choice) {
         self.step("check", "Check", "Scoring the answer…", "running", vec![]);
+        let mode = if self.state.lock().unwrap().route == "work" { "work" } else { "chat" };
         let reply = self
             .run_stage(
                 "judge",
-                json!({ "stage": "judge", "message": question, "answer": answer }),
+                json!({ "stage": "judge", "message": question, "answer": answer, "mode": mode }),
             )
             .await;
         match reply.as_deref().and_then(orchestration::parse_judgement) {
@@ -1450,10 +1476,27 @@ impl AppCore {
         }
     }
 
+    /// Moves a conversation (the open one by default) between Chat and Work; the view follows it.
+    fn set_work(&self, id: Option<String>, work: bool) {
+        let mut s = self.state.lock().unwrap();
+        let Some(id) = id.or_else(|| s.active.clone()) else { return };
+        s.work_ids.retain(|w| *w != id);
+        if work {
+            s.work_ids.push(id.clone());
+        }
+        s.active = Some(id);
+        s.route = if work { "work" } else { "chat" }.into();
+        s.notice = None;
+        let ids = s.work_ids.clone();
+        drop(s);
+        self.save_json(KEY_WORK, &ids);
+        self.hooks.changed();
+    }
+
     async fn select_conversation(&self, id: String) {
         self.update(|s| {
             s.active = Some(id.clone());
-            s.route = "chat".into();
+            s.route = if s.work_ids.contains(&id) { "work" } else { "chat" }.into();
             s.new_chat_project = None;
         });
         let key = format!("messages-{id}");
@@ -1565,11 +1608,18 @@ impl AppCore {
                 {
                     Ok(conversation) => {
                         let id = conversation.id.clone();
+                        let task = self.state.lock().unwrap().route == "work";
                         self.update(|s| {
                             s.conversations.insert(0, conversation);
                             s.active = Some(id.clone());
                             s.new_chat_project = None;
+                            if task {
+                                s.work_ids.push(id.clone());
+                            }
                         });
+                        if task {
+                            self.save_json(KEY_WORK, &self.state.lock().unwrap().work_ids.clone());
+                        }
                         id
                     }
                     Err(e) => return self.notice("error", e.to_string()),
@@ -2390,9 +2440,11 @@ impl AppCore {
         let auto_consent = pref_bool(&self.state.lock().unwrap(), "chat.auto_consent", true);
         let mut notes: Vec<(String, String)> = Vec::new();
         let mut judge: Option<Choice> = None;
-        if mode == "auto" && level != "low" && !has_pictures {
+        let work = self.state.lock().unwrap().route == "work";
+        // A Work task is always planned (even at Low: one step), a chat only above Low.
+        if mode == "auto" && (level != "low" || work) && !has_pictures {
             if auto_consent {
-                let o = self.orchestrate(&text, &level, search).await;
+                let o = self.orchestrate(&text, &level, search, work).await;
                 if let Some(chosen) = o.route {
                     let found =
                         router::resolve(&self.state.lock().unwrap().router, &chosen, None).cloned();
@@ -2417,7 +2469,7 @@ impl AppCore {
             }
         }
         let mut request = json!({ "credentialId": credential, "model": model, "prompt": text, "conversationId": conversation_id });
-        request["environment"] = self.environment(&route, &level, search);
+        request["environment"] = self.environment(&route, &level, search, work);
         if !notes.is_empty() {
             let work = notes
                 .iter()
@@ -3097,7 +3149,7 @@ impl AppCore {
             sign_in_page(&s)
         } else {
             match self.manifest.renderer(&s.route).unwrap_or("conversation") {
-                "conversation" => conversation_page(&s),
+                "conversation" | "work" => conversation_page(&s),
                 "projects" => match &s.open_project {
                     Some(id) => project_page(&s, id),
                     None => {
@@ -3437,13 +3489,18 @@ fn shell_sidebar(s: &State) -> Value {
             "id": c.id,
             "title": if c.title.is_empty() { "New chat".to_owned() } else { c.title.clone() },
             "subtitle": c.updated_at.get(..10).unwrap_or_default(),
-            "selected": Some(&c.id) == active && s.route == "chat",
+            "selected": Some(&c.id) == active && (s.route == "chat" || s.route == "work"),
             "action": { "type": "select_conversation", "id": c.id },
             "menu": [
                 button("Rename", "secondary", json!({ "type": "begin_rename", "id": c.id })),
                 button(if s.show_archived { "Restore" } else { "Archive" }, "secondary",
                     json!({ "type": "archive_conversation", "id": c.id, "archived": !s.show_archived })),
                 button("Delete", "danger", json!({ "type": "begin_delete", "id": c.id })),
+                if s.work_ids.contains(&c.id) {
+                    button("Move to Chat", "secondary", json!({ "type": "move_to_chat", "id": c.id }))
+                } else {
+                    button("Move to Work", "secondary", json!({ "type": "move_to_work", "id": c.id }))
+                },
             ],
         })
     };
@@ -3461,7 +3518,7 @@ fn shell_sidebar(s: &State) -> Value {
                         "selected": s.open_project.as_deref() == Some(id) && s.route == "projects",
                         "action": { "type": "open_project", "id": id },
                         "children": if work { vec![] } else {
-                            s.conversations.iter().filter(|c| c.project_id.as_deref() == Some(id)).map(&chat_item).collect::<Vec<_>>()
+                            s.conversations.iter().filter(|c| c.project_id.as_deref() == Some(id) && !s.work_ids.contains(&c.id)).map(&chat_item).collect::<Vec<_>>()
                         },
                     })
                 })
@@ -3471,8 +3528,14 @@ fn shell_sidebar(s: &State) -> Value {
     let plain: Vec<Value> = s
         .conversations
         .iter()
-        .filter(|c| c.project_id.is_none())
-        .map(chat_item)
+        .filter(|c| c.project_id.is_none() && !s.work_ids.contains(&c.id))
+        .map(&chat_item)
+        .collect();
+    let tasks: Vec<Value> = s
+        .conversations
+        .iter()
+        .filter(|c| s.work_ids.contains(&c.id))
+        .map(&chat_item)
         .collect();
     let mut sections = vec![
         json!({ "id": "plugins", "kind": "link", "label": "Plugins", "icon": "skills", "selected": s.route == "skills",
@@ -3480,7 +3543,9 @@ fn shell_sidebar(s: &State) -> Value {
         json!({ "id": "projects", "kind": "tree", "label": "Projects", "icon": "projects", "selected": s.route == "projects" && s.open_project.is_none(),
             "action": { "type": "navigate", "route": "projects" }, "items": projects }),
     ];
-    if !work {
+    if work {
+        sections.push(json!({ "id": "tasks", "kind": "list", "label": "Tasks", "icon": "work", "items": tasks }));
+    } else {
         sections.push(json!({
             "id": "chats", "kind": "list", "label": if s.show_archived { "Archived" } else { "Chats" }, "icon": "chat",
             "tabs": [
@@ -3500,7 +3565,7 @@ fn shell_sidebar(s: &State) -> Value {
         ],
         // Work has no chats to search or start yet.
         "search": (!work).then(|| json!({ "placeholder": "Search chats", "value": s.search, "action": { "type": "search" } })),
-        "newChat": (!work).then(|| button("New chat", "primary", json!({ "type": "new_conversation" }))),
+        "newChat": Some(if work { button("New task", "primary", json!({ "type": "new_task" })) } else { button("New chat", "primary", json!({ "type": "new_conversation" })) }),
         "sections": sections,
         // One glance: is the app online and is live sync connected.
         "status": if !s.online {
@@ -3535,6 +3600,21 @@ const COMMANDS: &[(&str, &str, &str)] = &[
 ];
 
 /// Starter prompts of an empty chat: (label, prompt).
+const WORK_STARTERS: &[(&str, &str)] = &[
+    (
+        "Research a topic",
+        "Research this topic across several sources and give me a sourced summary with a recommendation. The topic: ",
+    ),
+    (
+        "Plan a project",
+        "Break this goal into a plan with milestones, risks and a first week of tasks. The goal: ",
+    ),
+    (
+        "Work through a hard problem",
+        "Work through this carefully, check your own result, and tell me how sure you are. The problem: ",
+    ),
+];
+
 const STARTERS: &[(&str, &str)] = &[
     (
         "Explain something simply",
@@ -4329,12 +4409,19 @@ fn conversation_page(s: &State) -> Value {
             button(if s.show_archived { "Restore" } else { "Archive" }, "secondary",
                 json!({ "type": "archive_conversation", "id": id, "archived": !s.show_archived })),
             button("Delete", "danger", json!({ "type": "begin_delete", "id": id })),
+            if s.work_ids.contains(id) {
+                button("Move to Chat", "secondary", json!({ "type": "move_to_chat", "id": id }))
+            } else {
+                button("Move to Work", "secondary", json!({ "type": "move_to_work", "id": id }))
+            }
         ])),
         "inspector": inspector(s, &messages, active.as_ref()),
         "messages": messages,
         "empty": messages.is_empty().then(|| json!({
-            "title": "How can Meo help?", "text": format!("Using {using}"),
-            "suggestions": STARTERS.iter().map(|(label, prompt)| json!({ "label": label, "action": { "type": "send", "text": prompt } })).collect::<Vec<_>>(),
+            "title": if s.route == "work" { "What should Meo work on?" } else { "How can Meo help?" },
+            "text": format!("Using {using}"),
+            "suggestions": (if s.route == "work" { WORK_STARTERS } else { STARTERS })
+                .iter().map(|(label, prompt)| json!({ "label": label, "action": { "type": "send", "text": prompt } })).collect::<Vec<_>>(),
         })),
         "files": s.files.iter().map(|f| json!({
             "id": f["id"],
@@ -5158,7 +5245,7 @@ mod tests {
     #[test]
     fn the_model_is_told_where_it_runs_and_roles_fall_back_sensibly() {
         let c = signed_in_core();
-        let env = c.environment("thinking", "high", true);
+        let env = c.environment("thinking", "high", true, false);
         assert_eq!(env["client"], "desktop");
         assert_eq!(env["role"], "thinking");
         assert_eq!(env["thinking"], "high");
@@ -5196,6 +5283,33 @@ mod tests {
             "jev-router",
             "a profile role wins"
         );
+    }
+
+    #[test]
+    fn a_chat_moves_to_work_and_back() {
+        let c = signed_in_core();
+        c.update(|s| {
+            s.conversations = vec![conversation("c1", "Big job"), conversation("c2", "Hello")];
+            s.active = Some("c1".into());
+            s.route = "chat".into();
+        });
+        futures_executor::block_on(c.dispatch(Action::MoveToWork { id: None }));
+        let view = c.view();
+        assert_eq!(view["route"], "work");
+        assert_eq!(view["page"]["kind"], "conversation");
+        let tasks = view["sidebar"]["sections"].as_array().unwrap().iter().find(|x| x["id"] == "tasks").unwrap().clone();
+        assert_eq!(tasks["items"].as_array().unwrap().len(), 1);
+        assert_eq!(tasks["items"][0]["id"], "c1");
+        assert_eq!(view["sidebar"]["newChat"]["label"], "New task");
+        // Back in Chat the task is gone from the chats and the other chat is still there.
+        c.update(|s| s.route = "chat".into());
+        let view = c.view();
+        let chats = view["sidebar"]["sections"].as_array().unwrap().iter().find(|x| x["id"] == "chats").unwrap().clone();
+        assert_eq!(chats["items"].as_array().unwrap().len(), 1);
+        assert_eq!(chats["items"][0]["id"], "c2");
+        futures_executor::block_on(c.dispatch(Action::MoveToChat { id: Some("c1".into()) }));
+        assert_eq!(c.view()["route"], "chat");
+        assert!(c.state.lock().unwrap().work_ids.is_empty());
     }
 
     #[test]
