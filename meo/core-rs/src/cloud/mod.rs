@@ -10,6 +10,7 @@ pub mod app;
 pub mod auth;
 pub mod locale;
 pub mod manifest;
+pub mod orchestration;
 pub mod router;
 pub mod storage;
 #[cfg(all(feature = "wasm", target_arch = "wasm32"))]

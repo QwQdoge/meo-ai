@@ -230,5 +230,14 @@
   "Add an AI provider in Meo Account to use Meo AI.": "请先在 Meo Account 中添加 AI 服务商。",
   "Offline": "离线",
   "Live": "已连接",
-  "Connecting": "连接中"
+  "Connecting": "连接中",
+  "Router": "路由",
+  "Check": "检查",
+  "Choosing the model…": "正在选择模型…",
+  "Scoring the answer…": "正在给回答打分…",
+  "Done": "完成",
+  "Could not decide — answering directly": "无法判断，直接回答",
+  "This step failed; continuing without it": "这一步失败了，继续往下",
+  "The judge did not return a score": "评审模型没有返回分数",
+  "Thinking levels above Low use several requests. Allow sending to the provider without asking each time to use them.": "高于「低」的思考等级会发送多次请求。请允许无需每次询问即发送给服务商后再使用。"
 }

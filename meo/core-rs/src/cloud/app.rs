@@ -27,6 +27,7 @@ use super::{
     auth::{self, OAuthConfig, PendingAuthorization, Session},
     locale,
     manifest::Manifest,
+    orchestration,
     router::{self, Choice, Router},
     storage::Storage,
 };
@@ -222,7 +223,13 @@ struct AttachedImage {
     data: String,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
+struct Orchestration {
+    route: Option<String>,
+    notes: Vec<(String, String)>,
+    judge: Option<Choice>,
+}
+
 struct PendingSend {
     /// Create an image instead of a chat answer.
     image: bool,
@@ -232,6 +239,8 @@ struct PendingSend {
     prompt: String,
     request: Value,
     consent: Value,
+    /// Model that scores the finished answer (thinking level max, or a judge in the active profile).
+    judge: Option<Choice>,
 }
 
 /// A modal question the client renders (`prompt` with a text field, or `confirm`).
@@ -806,6 +815,216 @@ impl AppCore {
         self.bootstrap_router().await;
         let route = self.state.lock().unwrap().route.clone();
         self.load_route(&route).await;
+    }
+
+    // ---- multi-call answers ----------------------------------------------
+
+    /// Where and how the model is running, for its system prompt (the API words it).
+    fn environment(&self, route: &str, level: &str, search: bool) -> Value {
+        let s = self.state.lock().unwrap();
+        let client = match self
+            .oauth
+            .redirect_uri
+            .split(':')
+            .next()
+            .unwrap_or_default()
+        {
+            "https" | "http" => "web",
+            "meoai" => "desktop",
+            _ => "android",
+        };
+        let os = if cfg!(target_arch = "wasm32") {
+            "web browser".to_owned()
+        } else {
+            match std::env::consts::OS {
+                "linux" => "Linux".to_owned(),
+                "android" => "Android".to_owned(),
+                "macos" => "macOS".to_owned(),
+                "windows" => "Windows".to_owned(),
+                other => other.to_owned(),
+            }
+        };
+        json!({
+            "client": client, "os": os, "locale": s.host_locale, "role": route, "thinking": level,
+            "webSearch": search, "subagents": pref_bool(&s, "chat.subagents", false), "location": "cloud",
+        })
+    }
+
+    /// The model for a role: the active profile's, else the route of that name, else a fallback.
+    fn role_model(&self, role: &str) -> Option<Choice> {
+        let s = self.state.lock().unwrap();
+        let from_profile = profile_list(&s)
+            .into_iter()
+            .find(|p| p["active"] == true)
+            .and_then(|p| {
+                Some((
+                    p["roles"][role]["credentialId"].as_str()?.to_owned(),
+                    p["roles"][role]["model"].as_str()?.to_owned(),
+                ))
+            });
+        let fallback = match role {
+            "router" | "title" => "fast",
+            "judge" => "thinking",
+            other => other,
+        };
+        from_profile
+            .or_else(|| router::resolve(&s.router, fallback, None).cloned())
+            .or_else(|| router::resolve(&s.router, "default", s.selected.as_ref()).cloned())
+            .filter(|(_, m)| !m.is_empty())
+    }
+
+    /// One stage's reply: the API words the prompt for `stage`, the stage's model answers.
+    async fn run_stage(&self, role: &str, body: Value) -> Option<String> {
+        let choice = self.role_model(role)?;
+        let prompt = self
+            .call(|api, t| {
+                let body = body.clone();
+                async move { api.orchestration_prompt(&t, body).await }
+            })
+            .await
+            .ok()
+            .filter(|p| !p.is_empty())?;
+        self.ask_model(&choice, &prompt).await
+    }
+
+    /// Router, then (thinking level high or max) the planned steps. Each stage is a step of the
+    /// answer; a stage that fails is shown as failed and the answer carries on without it.
+    async fn orchestrate(&self, text: &str, level: &str, search: bool) -> Orchestration {
+        let subagents = pref_bool(&self.state.lock().unwrap(), "chat.subagents", false);
+        self.step("router", "Router", "Choosing the model…", "running", vec![]);
+        let reply = self
+            .run_stage(
+                "router",
+                json!({ "stage": "router", "message": text, "thinking": level, "webSearch": search, "subagents": subagents, "mode": "chat" }),
+            )
+            .await;
+        let Some(reply) = reply else {
+            self.step(
+                "router",
+                "Router",
+                "Could not decide — answering directly",
+                "error",
+                vec![],
+            );
+            return Orchestration::default();
+        };
+        let decision = orchestration::parse_route(&reply, orchestration::max_steps(level, false));
+        let label = router::slot(&decision.route).map_or("Everyday chat", |x| x.label);
+        let why = if decision.reason.is_empty() {
+            String::new()
+        } else {
+            format!(" — {}", decision.reason)
+        };
+        self.step("router", "Router", &format!("{label}{why}"), "done", vec![]);
+
+        let mut notes: Vec<(String, String)> = Vec::new();
+        let total = decision.steps.len();
+        for (i, step) in decision.steps.iter().enumerate() {
+            let id = format!("s{}", i + 1);
+            let title = format!("{}. {}", i + 1, step.title);
+            self.step(&id, &title, "", "running", vec![]);
+            let (mut found, mut items) = (String::new(), Vec::new());
+            if !step.search.is_empty() {
+                let query = step.search.clone();
+                if let Ok(results) = self
+                    .call(|api, t| {
+                        let query = query.clone();
+                        async move { api.web_search(&t, &query).await }
+                    })
+                    .await
+                {
+                    for r in results.iter().take(5) {
+                        found.push_str(&format!(
+                            "- {} ({}): {}\n",
+                            r["title"].as_str().unwrap_or_default(),
+                            r["url"].as_str().unwrap_or_default(),
+                            r["snippet"].as_str().unwrap_or_default()
+                        ));
+                        items.push(
+                            json!({ "title": r["title"], "url": r["url"], "subtitle": r["url"] }),
+                        );
+                    }
+                }
+            }
+            let notes_json: Vec<Value> = notes
+                .iter()
+                .map(|(t, r)| json!({ "title": t, "result": r }))
+                .collect();
+            let reply = self
+                .run_stage(
+                    &step.role,
+                    json!({ "stage": "step", "message": text, "step": step.title, "index": i + 1, "total": total, "notes": notes_json, "search": found }),
+                )
+                .await;
+            match reply {
+                Some(reply) => {
+                    let (did, result) = orchestration::parse_report(&reply);
+                    self.step(
+                        &id,
+                        &title,
+                        if did.is_empty() { "Done" } else { &did },
+                        "done",
+                        items,
+                    );
+                    notes.push((step.title.clone(), result));
+                }
+                None => self.step(
+                    &id,
+                    &title,
+                    "This step failed; continuing without it",
+                    "error",
+                    items,
+                ),
+            }
+        }
+        let judge = (level == "max" || (level == "high" && self.has_profile_role("judge")))
+            .then(|| self.role_model("judge"))
+            .flatten();
+        Orchestration {
+            route: Some(decision.route),
+            notes,
+            judge,
+        }
+    }
+
+    fn has_profile_role(&self, role: &str) -> bool {
+        profile_list(&self.state.lock().unwrap())
+            .iter()
+            .any(|p| p["active"] == true && p["roles"][role]["model"].is_string())
+    }
+
+    /// Scores the finished answer with the judge model (a `jev` model reads the same text).
+    async fn run_judge(&self, question: &str, answer: &str, _judge: Choice) {
+        self.step("check", "Check", "Scoring the answer…", "running", vec![]);
+        let reply = self
+            .run_stage(
+                "judge",
+                json!({ "stage": "judge", "message": question, "answer": answer }),
+            )
+            .await;
+        match reply.as_deref().and_then(orchestration::parse_judgement) {
+            Some(j) => {
+                let tail = if j.suggestion.is_empty() {
+                    String::new()
+                } else {
+                    format!(" — {}", j.suggestion)
+                };
+                self.step(
+                    "check",
+                    "Check",
+                    &format!("{}/100 · {}{tail}", j.score, j.verdict),
+                    "done",
+                    vec![],
+                );
+            }
+            None => self.step(
+                "check",
+                "Check",
+                "The judge did not return a score",
+                "error",
+                vec![],
+            ),
+        }
     }
 
     // ---- model profiles --------------------------------------------------
@@ -2086,7 +2305,7 @@ impl AppCore {
             }
             route = "default".into();
         }
-        let Some((credential, model)) = router::resolve(&router, &route, legacy.as_ref())
+        let Some((mut credential, mut model)) = router::resolve(&router, &route, legacy.as_ref())
             .cloned()
             .filter(|(_, m)| !m.is_empty())
         else {
@@ -2132,17 +2351,16 @@ impl AppCore {
                 .image_flow(conversation_id, text, credential, model, save_prompt)
                 .await;
         }
-        let mut request = json!({ "credentialId": credential, "model": model, "prompt": text, "conversationId": conversation_id });
         self.begin_activity(&conversation_id);
-        let route_label =
-            router::slot(&route).map_or_else(|| "Custom".to_owned(), |x| x.label.to_owned());
-        self.step(
-            "model",
-            "Model",
-            &format!("{route_label} · {model}"),
-            "done",
-            vec![],
-        );
+        let level = self
+            .state
+            .lock()
+            .unwrap()
+            .prefs
+            .get("chat.thinking")
+            .and_then(Value::as_str)
+            .unwrap_or("medium")
+            .to_owned();
         let search = self
             .state
             .lock()
@@ -2152,6 +2370,59 @@ impl AppCore {
             .and_then(Value::as_bool)
             .unwrap_or(false)
             || (mode == "auto" && router::wants_search(&text));
+        // Above "low" the answer may take several model calls (router, steps, a check). Each call is
+        // a separate request, so it only runs when sending without asking each time is allowed.
+        let auto_consent = pref_bool(&self.state.lock().unwrap(), "chat.auto_consent", true);
+        let mut notes: Vec<(String, String)> = Vec::new();
+        let mut judge: Option<Choice> = None;
+        if mode == "auto" && level != "low" && !has_pictures {
+            if auto_consent {
+                let o = self.orchestrate(&text, &level, search).await;
+                if let Some(chosen) = o.route {
+                    let found =
+                        router::resolve(&self.state.lock().unwrap().router, &chosen, None).cloned();
+                    if let Some((c, m)) = found.filter(|(_, m)| !m.is_empty()) {
+                        if router::slot(&chosen).is_some_and(|x| x.task == "image_generation") {
+                            return self
+                                .image_flow(conversation_id, text, c, m, save_prompt)
+                                .await;
+                        }
+                        if router::slot(&chosen).is_none_or(|x| x.task == "chat") {
+                            (credential, model, route) = (c, m, chosen);
+                        }
+                    }
+                }
+                notes = o.notes;
+                judge = o.judge;
+            } else if level != "medium" {
+                self.notice(
+                    "info",
+                    "Thinking levels above Low use several requests. Allow sending to the provider without asking each time to use them.",
+                );
+            }
+        }
+        let mut request = json!({ "credentialId": credential, "model": model, "prompt": text, "conversationId": conversation_id });
+        request["environment"] = self.environment(&route, &level, search);
+        if !notes.is_empty() {
+            let work = notes
+                .iter()
+                .enumerate()
+                .map(|(i, (title, result))| format!("{}. {title}: {result}", i + 1))
+                .collect::<Vec<_>>()
+                .join("\n");
+            request["prompt"] = json!(format!(
+                "{text}\n\nWork notes (done by Meo AI for this request before you answer; build on them, do not repeat them step by step):\n{work}"
+            ));
+        }
+        let route_label =
+            router::slot(&route).map_or_else(|| "Custom".to_owned(), |x| x.label.to_owned());
+        self.step(
+            "model",
+            "Model",
+            &format!("{route_label} · {model}"),
+            "done",
+            vec![],
+        );
         let pictures = std::mem::take(&mut self.state.lock().unwrap().images);
         if !pictures.is_empty() {
             request["images"] = pictures
@@ -2199,6 +2470,7 @@ impl AppCore {
             prompt: text,
             request,
             consent,
+            judge,
         };
         let auto = self
             .state
@@ -2242,6 +2514,7 @@ impl AppCore {
             prompt,
             request,
             consent,
+            judge: None,
         };
         let auto = self
             .state
@@ -2557,6 +2830,11 @@ impl AppCore {
                 .await;
             // Pick up server ids so the new messages can be edited or regenerated.
             self.refresh_messages(&id).await;
+        }
+        if failure.is_none() && !reply.is_empty() {
+            if let Some(judge) = pending.judge.clone() {
+                self.run_judge(&pending.prompt, &reply, judge).await;
+            }
         }
         match failure {
             Some(e) => self.notice("error", e),
@@ -4780,6 +5058,49 @@ mod tests {
         assert!(
             !s.router.slots.contains_key("title"),
             "title is a profile role, not a chat route"
+        );
+    }
+
+    #[test]
+    fn the_model_is_told_where_it_runs_and_roles_fall_back_sensibly() {
+        let c = signed_in_core();
+        let env = c.environment("thinking", "high", true);
+        assert_eq!(env["client"], "desktop");
+        assert_eq!(env["role"], "thinking");
+        assert_eq!(env["thinking"], "high");
+        assert_eq!(env["webSearch"], true);
+        assert_eq!(env["location"], "cloud");
+        assert!(env["os"].as_str().is_some_and(|o| !o.is_empty()));
+        assert!(c.role_model("router").is_none(), "nothing configured yet");
+        c.update(|s| {
+            s.router
+                .slots
+                .insert("fast".into(), ("c1".into(), "small".into()));
+            s.router
+                .slots
+                .insert("thinking".into(), ("c1".into(), "big".into()));
+        });
+        assert_eq!(
+            c.role_model("router").unwrap().1,
+            "small",
+            "the router uses the lightweight route"
+        );
+        assert_eq!(
+            c.role_model("judge").unwrap().1,
+            "big",
+            "the judge uses the thinking route"
+        );
+        seed_profiles(&c);
+        c.update(|s| {
+            if let Some(Ok(doc)) = s.profiles.as_mut() {
+                doc["profiles"][0]["roles"]["router"] =
+                    json!({ "credentialId": "c9", "model": "jev-router" });
+            }
+        });
+        assert_eq!(
+            c.role_model("router").unwrap().1,
+            "jev-router",
+            "a profile role wins"
         );
     }
 

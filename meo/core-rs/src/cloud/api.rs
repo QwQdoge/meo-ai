@@ -359,6 +359,14 @@ impl MeoApi {
             .collect())
     }
 
+    /// The text for one stage of a multi-call answer (`router`, `plan`, `step`, `judge`).
+    pub async fn orchestration_prompt(&self, token: &str, body: Value) -> Result<String, ApiError> {
+        let r = self
+            .request(token, Method::POST, "/v1/ai/orchestration", Some(body))
+            .await?;
+        Ok(r["prompt"].as_str().unwrap_or_default().to_owned())
+    }
+
     /// The account's model profiles and the roles they cover: `{roles: [...], profiles: [...]}`.
     pub async fn model_profiles(&self, token: &str) -> Result<Value, ApiError> {
         self.request(token, Method::GET, "/v1/ai/model-profiles", None)
