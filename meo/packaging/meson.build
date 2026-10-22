@@ -80,6 +80,7 @@ install_data(
 install_data(
   '../service/backend_adapter.py',
   '../service/content_blocks.py',
+  '../service/context_engine.py',
   '../service/controls.py',
   '../service/conversation_digest.py',
   '../service/coordinator.py',
@@ -93,8 +94,10 @@ install_data(
   '../service/resources.py',
   '../service/response_meta.py',
   '../service/search_trace.py',
+  '../service/subagent_scheduler.py',
   '../service/sync_contract.py',
   '../service/tool_decision.py',
+  '../service/tool_output.py',
   '../service/verification.py',
   install_dir: join_paths(meo_moduledir, 'service')
 )
