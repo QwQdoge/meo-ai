@@ -54,6 +54,7 @@ lists only what has a value.
   device / local device / plain chat), git state, resources used (searched sites, files read).
 - **Right drawer** (movable): full detail view; opens only for built-in-browser control,
   changed files or sub-agents; closable.
+- **Settings** is one large card: categories on the left in groups (Preferences: General, Personalization & memory · AI: Models, Model profiles, Model routes, Connectors · Account: Usage, Account & security), one page on the right, close button top right. On phones the categories become a row of chips. The core owns the grouping (`page.nav`, `page.selected`, action `select_settings_section`).
 - **Settings** also gets a token-usage summary (optionally merging Codex and Claude usage,
   `meo/usage`), laid out like the Codex profile screenshot.
 - Chat area for now: text, Markdown, code formatting only.

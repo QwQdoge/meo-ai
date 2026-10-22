@@ -191,5 +191,10 @@
   "Cached input": "缓存输入",
   "Output": "输出",
   "Reasoning": "推理",
-  "Estimated cost": "估算费用"
+  "Estimated cost": "估算费用",
+  "Preferences": "偏好",
+  "AI": "AI",
+  "Model profiles": "模型方案",
+  "Model routes": "模型路线",
+  "Account": "账户"
 }

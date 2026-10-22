@@ -360,16 +360,19 @@ private fun ListPage(page: JSONObject, act: Act) {
 
 @Composable
 private fun SettingsPage(page: JSONObject, act: Act) {
-    Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
-        verticalArrangement = Arrangement.spacedBy(24.dp),
-    ) {
-        Text(page.str("title"), style = MaterialTheme.typography.headlineMedium)
-        page.list("sections").forEach { section ->
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(section.str("label"), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
-                section.list("items").forEach { SettingControl(it, act) }
+    val sections = page.list("sections")
+    val current = sections.firstOrNull { it.str("id") == page.str("selected") } ?: sections.firstOrNull()
+    val entries = page.list("nav").flatMap { it.list("items") }
+    Column(Modifier.fillMaxSize().padding(8.dp)) {
+        // Categories: one scrolling row of chips (a card with a side list does not fit a phone).
+        androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(horizontal = 8.dp)) {
+            items(entries) { e ->
+                FilterChip(selected = e.optBoolean("selected"), onClick = { act.send(e.obj("action")) }, label = { Text(e.str("label")) })
             }
+        }
+        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(current?.str("label") ?: page.str("title"), style = MaterialTheme.typography.headlineSmall)
+            current?.list("items")?.forEach { SettingControl(it, act) }
         }
     }
 }

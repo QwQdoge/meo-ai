@@ -407,29 +407,72 @@ ApplicationWindow {
         }
     }
 
+    // Settings: one large card, categories on the left, one page on the right.
     Component {
         id: settingsPage
-        Flickable {
-            contentHeight: settingsColumn.implicitHeight + 48
-            clip: true
-            ColumnLayout {
-                id: settingsColumn
-                x: 24
-                y: 24
-                width: Math.min(parent.width - 48, 720)
-                spacing: 24
-                MeoText { text: window.page.title || ""; typeRole: "title"; typeSize: "big" }
-                Repeater {
-                    model: window.page.sections || []
-                    ColumnLayout {
-                        id: section
-                        required property var modelData
+        Item {
+            readonly property var sections: window.page.sections || []
+            readonly property var current: sections.find(x => x.id === window.page.selected) || sections[0] || ({ items: [] })
+            readonly property var navRows: {
+                const out = []
+                for (const g of (window.page.nav || [])) {
+                    out.push({ header: g.label })
+                    for (const e of g.items) out.push({ entry: e })
+                }
+                return out
+            }
+            Rectangle {
+                anchors.fill: parent
+                anchors.margins: 16
+                radius: 22
+                color: MeoTheme.surface
+                border.color: MeoTheme.outlineVariant
+                RowLayout {
+                    anchors.fill: parent
+                    spacing: 0
+                    ListView {
+                        Layout.preferredWidth: 210
+                        Layout.fillHeight: true
+                        Layout.margins: 8
+                        clip: true
+                        spacing: 2
+                        model: navRows
+                        delegate: Item {
+                            required property var modelData
+                            width: ListView.view.width
+                            height: modelData.header ? 28 : 36
+                            MeoText { visible: !!modelData.header; text: modelData.header || ""; typeRole: "label"; color: MeoTheme.onSurfaceVariant; anchors.bottom: parent.bottom; x: 10 }
+                            MeoListItem {
+                                visible: !!modelData.entry
+                                anchors.fill: parent
+                                isDense: true
+                                headline: modelData.entry ? modelData.entry.label : ""
+                                selected: modelData.entry ? !!modelData.entry.selected : false
+                                onClicked: window.act(modelData.entry.action)
+                            }
+                        }
+                    }
+                    Rectangle { Layout.fillHeight: true; width: 1; color: MeoTheme.outlineVariant }
+                    Flickable {
                         Layout.fillWidth: true
-                        spacing: 8
-                        MeoText { text: section.modelData.label; typeRole: "title"; typeSize: "small"; color: MeoTheme.primary }
-                        Repeater {
-                            model: section.modelData.items
-                            SettingControl { required property var modelData; item: modelData; Layout.fillWidth: true }
+                        Layout.fillHeight: true
+                        contentHeight: settingsColumn.implicitHeight + 48
+                        clip: true
+                        ColumnLayout {
+                            id: settingsColumn
+                            x: 28
+                            y: 20
+                            width: Math.min(parent.width - 56, 680)
+                            spacing: 16
+                            RowLayout {
+                                Layout.fillWidth: true
+                                MeoText { text: current.label || window.page.title || ""; typeRole: "title"; typeSize: "big"; Layout.fillWidth: true }
+                                MeoIconButton { visible: !!window.page.close; type: "standard"; icon.name: "close"; onClicked: window.act(window.page.close) }
+                            }
+                            Repeater {
+                                model: current.items || []
+                                SettingControl { required property var modelData; item: modelData; Layout.fillWidth: true }
+                            }
                         }
                     }
                 }
@@ -437,7 +480,6 @@ ApplicationWindow {
         }
     }
 
-    // Quiet text control under the composer (Claude style): slider/select open a small popup.
     component ControlChip: Item {
         id: chipRoot
         property var item: ({})

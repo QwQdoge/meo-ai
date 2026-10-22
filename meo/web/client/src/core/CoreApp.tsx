@@ -246,15 +246,31 @@ function ListPage({ page, act }: { page: Spec; act: Act }) {
 }
 
 function SettingsPage({ page, act }: { page: Spec; act: Act }) {
+  const sections: Spec[] = page.sections ?? [];
+  const current = sections.find((x) => x.id === page.selected) ?? sections[0];
   return (
-    <main className="core-page narrow">
-      <header className="core-header"><h1>{page.title}</h1></header>
-      {(page.sections ?? []).map((section: Spec) => (
-        <section key={section.id} className="core-section">
-          <h2>{section.label}</h2>
-          {(section.items ?? []).map((item: Spec) => <Control key={item.id} item={item} act={act} />)}
-        </section>
-      ))}
+    <main className="core-settings">
+      <div className="core-settings-card">
+        <nav className="core-settings-nav" aria-label={page.title}>
+          {(page.nav ?? []).map((group: Spec) => (
+            <div key={group.label}>
+              <h3>{group.label}</h3>
+              {(group.items ?? []).map((entry: Spec) => (
+                <button key={entry.id} aria-current={entry.selected ? "page" : undefined} onClick={() => act(entry.action)}>{entry.label}</button>
+              ))}
+            </div>
+          ))}
+        </nav>
+        <div className="core-settings-body">
+          <header className="core-header">
+            <h1>{current?.label ?? page.title}</h1>
+            {page.close && <button className="core-close" aria-label="Close" onClick={() => act(page.close)}>✕</button>}
+          </header>
+          <div className="core-section">
+            {(current?.items ?? []).map((item: Spec) => <Control key={item.id} item={item} act={act} />)}
+          </div>
+        </div>
+      </div>
     </main>
   );
 }

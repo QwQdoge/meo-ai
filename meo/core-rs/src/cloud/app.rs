@@ -39,6 +39,10 @@ pub enum Action {
     /// Assign a model to every route from what the connected providers offer.
     AutoConfigureRouter,
     /// Asks for a name, then saves the current route models as a profile.
+    /// Opens a category of the settings card.
+    SelectSettingsSection {
+        id: String,
+    },
     BeginSaveProfile,
     SaveProfile {
         text: String,
@@ -259,6 +263,8 @@ struct State {
     remote_run: Option<RemoteRun>,
     search: String,
     show_archived: bool,
+    /// Open category of the settings card.
+    settings_section: String,
     /// Realtime stream state: connected, and how many of the user's devices are live.
     sync_live: bool,
     foreground: bool,
@@ -467,6 +473,7 @@ impl AppCore {
                     None => self.notice("info", "You can have up to 5 custom routes."),
                 }
             }
+            Action::SelectSettingsSection { id } => self.update(|s| s.settings_section = id),
             Action::BeginSaveProfile => {
                 if self
                     .state
@@ -2634,7 +2641,72 @@ impl AppCore {
                 (!items.is_empty()).then(|| json!({ "id": section.id, "label": section.label, "items": items }))
             })
             .collect();
-        json!({ "kind": "settings", "title": "Settings", "sections": sections })
+        let mut sections = sections;
+        // Models is too long for one page: profiles and routes get their own.
+        if let Some(pos) = sections.iter().position(|x| x["id"] == "models") {
+            let all = sections[pos]["items"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            let (mut routes, mut profs, mut rest) = (vec![], vec![], vec![]);
+            for it in all {
+                let id = it["id"].as_str().unwrap_or_default().to_owned();
+                if id.starts_with("route_") || id == "router_add" || id.starts_with("custom") {
+                    routes.push(it);
+                } else if id.starts_with("profile-") || id == "save_profile" {
+                    profs.push(it);
+                } else {
+                    rest.push(it);
+                }
+            }
+            sections[pos]["items"] = Value::Array(rest);
+            let extra = [
+                ("profiles", "Model profiles", profs),
+                ("routes", "Model routes", routes),
+            ];
+            for (n, (id, label, items)) in extra.into_iter().enumerate() {
+                if !items.is_empty() {
+                    sections.insert(
+                        pos + 1 + n,
+                        json!({ "id": id, "label": label, "items": items }),
+                    );
+                }
+            }
+        }
+        let group_of = |id: &str| match id {
+            "general" | "personalization" => "Preferences",
+            "models" | "profiles" | "routes" | "connectors" => "AI",
+            _ => "Account",
+        };
+        let selected = if sections
+            .iter()
+            .any(|x| x["id"] == s.settings_section.as_str())
+        {
+            s.settings_section.clone()
+        } else {
+            sections
+                .first()
+                .and_then(|x| x["id"].as_str())
+                .unwrap_or("general")
+                .to_owned()
+        };
+        let mut nav: Vec<Value> = Vec::new();
+        for section in &sections {
+            let id = section["id"].as_str().unwrap_or_default();
+            let group = group_of(id);
+            let entry = json!({
+                "id": id, "label": section["label"], "selected": id == selected,
+                "action": { "type": "select_settings_section", "id": id },
+            });
+            match nav.iter_mut().find(|g| g["label"] == group) {
+                Some(g) => g["items"].as_array_mut().unwrap().push(entry),
+                None => nav.push(json!({ "label": group, "items": [entry] })),
+            }
+        }
+        json!({
+            "kind": "settings", "title": "Settings", "sections": sections, "nav": nav, "selected": selected,
+            "close": { "type": "navigate", "route": "chat" },
+        })
     }
 }
 
@@ -4078,6 +4150,46 @@ mod tests {
     }
 
     #[test]
+    fn settings_are_grouped_into_pages_and_one_is_selected() {
+        let c = signed_in_core();
+        seed_models(&c);
+        c.update(|s| s.route = "settings".into());
+        let page = c.view()["page"].clone();
+        assert_eq!(page["selected"], "general");
+        let groups: Vec<&str> = page["nav"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|g| g["label"].as_str().unwrap())
+            .collect();
+        assert_eq!(groups, ["Preferences", "AI", "Account"]);
+        let ids: Vec<&str> = page["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|x| x["id"].as_str().unwrap())
+            .collect();
+        assert!(ids.contains(&"routes") && ids.contains(&"profiles") && ids.contains(&"models"));
+        futures_executor::block_on(c.dispatch(Action::SelectSettingsSection {
+            id: "routes".into(),
+        }));
+        let page = c.view()["page"].clone();
+        assert_eq!(page["selected"], "routes");
+        let routes = page["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|x| x["id"] == "routes")
+            .unwrap()
+            .clone();
+        assert!(routes["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["id"] == "route_default"));
+    }
+
+    #[test]
     fn a_project_page_edits_through_generic_controls() {
         let c = signed_in_core();
         c.update(|s| {
@@ -4382,13 +4494,13 @@ mod tests {
                 .set("default", Some(("c1".into(), "gpt-5.1".into())));
         });
         let view = c.view();
-        let section = view["page"]["sections"]
+        let items: Vec<Value> = view["page"]["sections"]
             .as_array()
             .unwrap()
             .iter()
-            .find(|s| s["id"] == "models")
-            .unwrap();
-        let items = section["items"].as_array().unwrap();
+            .filter(|s| ["models", "routes"].contains(&s["id"].as_str().unwrap()))
+            .flat_map(|s| s["items"].as_array().unwrap().clone())
+            .collect();
         let control = |id: &str| {
             items
                 .iter()

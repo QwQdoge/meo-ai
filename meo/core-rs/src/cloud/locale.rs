@@ -225,6 +225,12 @@ pub fn localize(view: &mut Value, locale: &str) {
         }
         "settings" => {
             field(c, page, "title");
+            for group in each(page, "nav") {
+                field(c, group, "label");
+                for entry in each(group, "items") {
+                    field(c, entry, "label");
+                }
+            }
             for section in each(page, "sections") {
                 field(c, section, "label");
                 for item in each(section, "items") {
