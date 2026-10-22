@@ -397,6 +397,30 @@ private fun SettingControl(item: JSONObject, act: Act, modifier: Modifier = Modi
                 )
             }
         }
+        "stats" -> androidx.compose.material3.OutlinedCard(modifier) {
+            Row(Modifier.fillMaxWidth().padding(vertical = 12.dp)) {
+                item.list("items").forEach { t ->
+                    Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(t.str("value"), style = MaterialTheme.typography.titleSmall)
+                        Text(t.str("label"), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+            }
+        }
+        "bars" -> Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(item.str("label"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            val bars = item.list("items")
+            val peak = bars.maxOfOrNull { it.optDouble("value") }?.coerceAtLeast(1.0) ?: 1.0
+            Row(Modifier.fillMaxWidth().height(72.dp), horizontalArrangement = Arrangement.spacedBy(3.dp), verticalAlignment = Alignment.Bottom) {
+                bars.forEach { b ->
+                    Box(
+                        Modifier.weight(1f).fillMaxHeight((b.optDouble("value") / peak).toFloat().coerceIn(0.04f, 1f))
+                            .clip(RoundedCornerShape(topStart = 3.dp, topEnd = 3.dp))
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.75f)),
+                    )
+                }
+            }
+        }
         "select" -> SelectControl(item, act, modifier)
         "text" -> TextControl(item, act, modifier)
         "info" -> Row(modifier, verticalAlignment = Alignment.CenterVertically) {

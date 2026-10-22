@@ -621,6 +621,17 @@ impl MeoApi {
         Ok(serde_json::from_value(body["conversations"].clone()).unwrap_or_default())
     }
 
+    /// The account's token usage across devices and tools (Meo AI, Codex, Claude).
+    pub async fn usage_dashboard(&self, token: &str, days: u32) -> Result<Value, ApiError> {
+        self.request(
+            token,
+            Method::GET,
+            &format!("/v1/usage-dashboard?days={days}"),
+            None,
+        )
+        .await
+    }
+
     pub async fn list_memories(&self, token: &str) -> Result<Vec<Value>, ApiError> {
         let body = self
             .request(token, Method::GET, "/v1/ai/memories", None)

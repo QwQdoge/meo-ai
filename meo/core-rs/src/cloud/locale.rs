@@ -67,6 +67,17 @@ fn control(c: &HashMap<String, String>, item: &mut Value) {
     }
     field(c, item, "label");
     field(c, item, "placeholder");
+    // Tiles and bars carry their own labels.
+    for entry in each(item, "items") {
+        field(c, entry, "label");
+        if let Some(n) = entry["value"]
+            .as_str()
+            .and_then(|v| v.strip_suffix(" days"))
+            .map(str::to_owned)
+        {
+            entry["value"] = Value::String(format!("{n} 天"));
+        }
+    }
     for option in each(item, "options") {
         field(c, option, "label");
         // "Lightweight · gpt-5-mini": translate the route name, keep the model name.

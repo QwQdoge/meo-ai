@@ -539,6 +539,57 @@ ApplicationWindow {
             text: item.value || ""
             onEditingFinished: if (text !== (item.value || "")) window.act({ type: "set_setting", binding: item.binding, value: text })
         }
+        Rectangle {
+            visible: item.kind === "stats"
+            Layout.fillWidth: true
+            implicitHeight: 64
+            radius: 18
+            color: "transparent"
+            border.color: MeoTheme.outlineVariant
+            RowLayout {
+                anchors.fill: parent
+                spacing: 0
+                Repeater {
+                    model: item.kind === "stats" ? (item.items || []) : []
+                    ColumnLayout {
+                        required property var modelData
+                        Layout.fillWidth: true
+                        Layout.alignment: Qt.AlignVCenter
+                        spacing: 0
+                        MeoText { text: modelData.value; typeRole: "title"; typeSize: "small"; Layout.alignment: Qt.AlignHCenter }
+                        MeoText { text: modelData.label; typeRole: "label"; color: MeoTheme.onSurfaceVariant; Layout.alignment: Qt.AlignHCenter }
+                    }
+                }
+            }
+        }
+        ColumnLayout {
+            visible: item.kind === "bars"
+            Layout.fillWidth: true
+            spacing: 6
+            readonly property real peak: Math.max(1, ...((item.items || []).map(b => b.value)))
+            MeoText { text: item.label || ""; typeRole: "label"; color: MeoTheme.onSurfaceVariant }
+            Row {
+                Layout.fillWidth: true
+                height: 72
+                spacing: 3
+                Repeater {
+                    model: item.kind === "bars" ? (item.items || []) : []
+                    Item {
+                        required property var modelData
+                        width: Math.max(3, (parent.width - 3 * ((item.items || []).length - 1)) / Math.max(1, (item.items || []).length))
+                        height: 72
+                        Rectangle {
+                            anchors.bottom: parent.bottom
+                            width: parent.width
+                            height: Math.max(3, parent.height * modelData.value / parent.parent.parent.peak)
+                            radius: 3
+                            color: MeoTheme.primary
+                            opacity: 0.75
+                        }
+                    }
+                }
+            }
+        }
         RowLayout {
             visible: item.kind === "info"
             Layout.fillWidth: true

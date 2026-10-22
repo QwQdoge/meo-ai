@@ -309,6 +309,27 @@ function Control({ item, act }: { item: Spec; act: Act }) {
           )}
         </label>
       );
+    case "stats":
+      return (
+        <div className="core-stats">
+          {(item.items ?? []).map((t: Spec) => (
+            <div key={t.label}><strong>{t.value}</strong><span className="core-muted">{t.label}</span></div>
+          ))}
+        </div>
+      );
+    case "bars": {
+      const peak = Math.max(1, ...(item.items ?? []).map((b: Spec) => b.value));
+      return (
+        <div className="core-bars-wrap">
+          <span className="core-muted">{item.label}</span>
+          <div className="core-bars" role="img" aria-label={item.label}>
+            {(item.items ?? []).map((b: Spec) => (
+              <i key={b.label} title={`${b.label}: ${Math.round(b.value).toLocaleString()}`} style={{ height: `${Math.max(3, (b.value / peak) * 100)}%` }} />
+            ))}
+          </div>
+        </div>
+      );
+    }
     case "info":
       return (
         <div className="core-row"><span>{item.label}</span><span className="core-muted">{String(item.value ?? "")}</span></div>

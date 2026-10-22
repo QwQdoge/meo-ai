@@ -252,6 +252,8 @@ struct State {
     active: Option<String>,
     messages: HashMap<String, Vec<ChatMessage>>,
     streaming: Option<(String, String)>,
+    /// `/v1/usage-dashboard` of the signed-in account (Settings > Usage).
+    usage: Option<Value>,
     /// Steps of the current or last answer: (conversation id, steps) — shown collapsed on that answer.
     activity: Option<(String, Vec<Value>)>,
     remote_run: Option<RemoteRun>,
@@ -773,6 +775,11 @@ impl AppCore {
             self.set_cloud_settings(settings);
         }
         self.bootstrap_router().await;
+        // The sidebar's Projects tree needs the list on every page.
+        let projects = self
+            .call(|api, t| async move { api.list_projects(&t).await })
+            .await;
+        self.update(|s| s.projects = Some(projects.map_err(|e| e.to_string())));
         let route = self.state.lock().unwrap().route.clone();
         self.load_route(&route).await;
     }
@@ -892,7 +899,15 @@ impl AppCore {
 
     async fn load_route(&self, route: &str) {
         match route {
-            "settings" => self.refresh_memories().await,
+            "settings" => {
+                self.refresh_memories().await;
+                if let Ok(usage) = self
+                    .call(|api, t| async move { api.usage_dashboard(&t, 365).await })
+                    .await
+                {
+                    self.update(|s| s.usage = Some(usage));
+                }
+            }
             "projects" => {
                 let r = self
                     .call(|api, t| async move { api.list_projects(&t).await })
@@ -2595,6 +2610,7 @@ impl AppCore {
                             "value": s.prefs.get("chat.auto_consent").cloned().unwrap_or(json!(true)),
                         }));
                     }
+                    "usage" => items.extend(usage_items(s)),
                     "account" => {
                         items.push(json!({
                             "id": "sync", "label": "Live sync", "kind": "info",
@@ -3050,6 +3066,112 @@ fn using_label(s: &State) -> String {
         }
         _ => "no model yet — connect a provider in Meo Account".to_owned(),
     }
+}
+
+/// 12345 → "12K", 1_200_000 → "1.2M".
+fn compact(n: f64) -> String {
+    let (value, unit) = match n {
+        n if n >= 1e9 => (n / 1e9, "B"),
+        n if n >= 1e6 => (n / 1e6, "M"),
+        n if n >= 1e3 => (n / 1e3, "K"),
+        n => return format!("{}", n as u64),
+    };
+    if value >= 100.0 || value.fract() < 0.05 {
+        format!("{value:.0}{unit}")
+    } else {
+        format!("{value:.1}{unit}")
+    }
+}
+
+fn duration(ms: f64) -> String {
+    let minutes = (ms / 60_000.0) as u64;
+    match (minutes / 60, minutes % 60) {
+        (0, m) => format!("{m}m"),
+        (h, m) => format!("{h}h {m}m"),
+    }
+}
+
+/// Settings > Usage: the account's token totals, last 30 days, breakdown, models and sources.
+fn usage_items(s: &State) -> Vec<Value> {
+    let Some(usage) = &s.usage else {
+        return vec![
+            json!({ "id": "usage_loading", "label": "Loading…", "kind": "info", "value": "" }),
+        ];
+    };
+    let num = |v: &Value| v.as_f64().unwrap_or(0.0);
+    let summary = &usage["summary"];
+    if num(&summary["lifetime_tokens"]) == 0.0 {
+        return vec![json!({
+            "id": "usage_empty", "kind": "info", "label": "No usage yet",
+            "value": "Meo AI, Codex and Claude activity shows up here once it is synced to your account.",
+        })];
+    }
+    let days = |key: &str| format!("{} days", num(&summary[key]) as u64);
+    let mut items = vec![json!({ "id": "usage_stats", "kind": "stats", "items": [
+            { "label": "Lifetime tokens", "value": compact(num(&summary["lifetime_tokens"])) },
+            { "label": "Peak tokens", "value": compact(num(&summary["peak_day_tokens"])) },
+            { "label": "Longest task", "value": duration(num(&summary["longest_session_ms"])) },
+            { "label": "Longest streak", "value": days("longest_streak") },
+            { "label": "Current streak", "value": days("current_streak") },
+        ] })];
+    let daily: Vec<&Value> = usage["daily"]
+        .as_array()
+        .map(|d| d.iter().rev().take(30).rev().collect())
+        .unwrap_or_default();
+    if !daily.is_empty() {
+        items.push(json!({
+            "id": "usage_daily", "kind": "bars", "label": "Last 30 days",
+            "items": daily.iter().map(|d| json!({
+                "label": d["date"].as_str().unwrap_or_default().get(5..).unwrap_or_default(),
+                "value": num(&d["tokens"]),
+            })).collect::<Vec<_>>(),
+        }));
+    }
+    let breakdown = &usage["token_breakdown"];
+    for (key, label) in [
+        ("input", "Input"),
+        ("cached_input", "Cached input"),
+        ("output", "Output"),
+        ("reasoning", "Reasoning"),
+    ] {
+        if num(&breakdown[key]) > 0.0 {
+            items.push(json!({ "id": format!("usage_{key}"), "kind": "info", "label": label, "value": compact(num(&breakdown[key])) }));
+        }
+    }
+    let cost = num(&summary["estimated_cost_microusd"]) / 1e6;
+    if cost > 0.0 {
+        items.push(json!({ "id": "usage_cost", "kind": "info", "label": "Estimated cost", "value": format!("${cost:.2}") }));
+    }
+    for (i, m) in usage["models"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .take(5)
+        .enumerate()
+    {
+        items.push(item(
+            format!("usage_model_{i}"),
+            m["name"].as_str().unwrap_or_default(),
+            &format!(
+                "{} · {} tokens",
+                m["provider"].as_str().unwrap_or_default(),
+                compact(num(&m["tokens"]))
+            ),
+            vec![],
+        ));
+    }
+    for (i, src) in usage["sources"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .enumerate()
+    {
+        items.push(json!({
+            "id": format!("usage_source_{i}"), "kind": "info",
+            "label": src["source"].as_str().unwrap_or_default(), "value": format!("{} tokens", compact(num(&src["tokens"]))),
+        }));
+    }
+    items
 }
 
 /// Switchable profiles: the saved ones, then one per connected provider (generated from what it offers).
@@ -3895,10 +4017,7 @@ mod tests {
             value: json!("family:c1"),
         }));
         assert_eq!(c.state.lock().unwrap().router.active_profile, "family:c1");
-        assert_eq!(
-            c.state.lock().unwrap().router.slots["default"].1,
-            "gpt-5.1"
-        );
+        assert_eq!(c.state.lock().unwrap().router.slots["default"].1, "gpt-5.1");
         futures_executor::block_on(c.dispatch(Action::SaveProfile {
             text: "Mine".into(),
         }));
@@ -3911,6 +4030,51 @@ mod tests {
             id: "profile1".into(),
         }));
         assert!(c.state.lock().unwrap().router.profiles.is_empty());
+    }
+
+    #[test]
+    fn settings_usage_shows_stats_bars_and_models_from_the_account_dashboard() {
+        let c = signed_in_core();
+        c.update(|s| {
+            s.route = "settings".into();
+            s.usage = Some(json!({
+                "summary": { "lifetime_tokens": 1_200_000_000u64, "peak_day_tokens": 5_000_000, "longest_session_ms": 30_600_000u64,
+                             "longest_streak": 31, "current_streak": 23, "estimated_cost_microusd": 2_500_000 },
+                "token_breakdown": { "input": 1000, "cached_input": 0, "cache_write": 0, "output": 500, "reasoning": 0 },
+                "daily": [{ "date": "2026-10-20", "tokens": 10 }, { "date": "2026-10-21", "tokens": 20 }],
+                "models": [{ "name": "gpt-5", "provider": "openai", "tokens": 900, "events": 3 }],
+                "sources": [{ "source": "codex", "tokens": 1200, "events": 4 }],
+            }));
+        });
+        let view = c.view();
+        let section = view["page"]["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|x| x["id"] == "usage")
+            .unwrap()
+            .clone();
+        let items = section["items"].as_array().unwrap();
+        let stats = &items[0]["items"];
+        assert_eq!(stats[0]["value"], "1.2B");
+        assert_eq!(stats[2]["value"], "8h 30m");
+        assert_eq!(stats[4]["value"], "23 days");
+        assert_eq!(items[1]["kind"], "bars");
+        assert_eq!(items[1]["items"][1]["label"], "10-21");
+        assert!(items.iter().any(|i| i["label"] == "gpt-5"));
+        assert!(items
+            .iter()
+            .any(|i| i["id"] == "usage_cost" && i["value"] == "$2.50"));
+        c.update(|s| s.usage = Some(json!({ "summary": { "lifetime_tokens": 0 } })));
+        assert_eq!(
+            c.view()["page"]["sections"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|x| x["id"] == "usage")
+                .unwrap()["items"][0]["id"],
+            "usage_empty"
+        );
     }
 
     #[test]

@@ -177,5 +177,19 @@
   "Save profile": "保存方案",
   "Save current models as a profile": "将当前模型保存为方案",
   "Name the current set of models, e.g. “Claude only”.": "为当前这组模型命名，例如“仅 Claude”。",
-  "You can save up to 5 profiles.": "最多保存 5 个方案。"
+  "You can save up to 5 profiles.": "最多保存 5 个方案。",
+  "Loading…": "加载中…",
+  "No usage yet": "还没有用量",
+  "Meo AI, Codex and Claude activity shows up here once it is synced to your account.": "Meo AI、Codex 和 Claude 的使用记录同步到账号后会显示在这里。",
+  "Lifetime tokens": "累计 tokens",
+  "Peak tokens": "单日峰值",
+  "Longest task": "最长任务",
+  "Longest streak": "最长连续",
+  "Current streak": "当前连续",
+  "Last 30 days": "近 30 天",
+  "Input": "输入",
+  "Cached input": "缓存输入",
+  "Output": "输出",
+  "Reasoning": "推理",
+  "Estimated cost": "估算费用"
 }

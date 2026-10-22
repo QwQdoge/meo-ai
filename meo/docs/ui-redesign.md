@@ -78,6 +78,6 @@ Behaviour wired: permission → provider consent (`chat.auto_consent`), thinking
 - [ ] Composer: drag-to-resize, max half page; voice input once a speech model exists
 - [ ] Details card: tokens from provider usage, files changed, git status, environment
 - [ ] Right drawer: browser control, changed files, sub-agents; movable
-- [ ] Settings: token usage summary incl. Codex/Claude import (`meo/usage`)
+- [x] Settings > Usage: reads `GET /v1/usage-dashboard` (totals, 30-day bars, breakdown, models, sources). Codex/Claude rows appear once their local logs are synced to the account (`python -m meo.usage.cli sync` / Account broker); the core does not read local logs. TODO: in-app import trigger on desktop
 - [ ] Code block highlighting polish
 - [ ] Sidebar tree drag/drop categories
