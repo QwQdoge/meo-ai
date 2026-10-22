@@ -1,10 +1,13 @@
 #include "accountaibackend.h"
+#include "liverecoverybackend.h"
 #include "cloudpersonalizationbackend.h"
 #include "draftpersistence.h"
 #include "nativeagentclient.h"
 #include "projectstore.h"
 #include "usagebackend.h"
 #include <QCoreApplication>
+#include <QFileInfo>
+#include <QLocale>
 #include <QDBusConnection>
 #include <QDBusInterface>
 #include <QDBusObjectPath>
@@ -162,6 +165,12 @@ int main(int argc, char **argv) {
         return 0;
     }
 
+    // Accept the recovery flag only in ArchISO (or side-effect-free UI demo).
+    // A random desktop caller must not impersonate a Live recovery session.
+    const bool liveRecovery = app.arguments().contains(QStringLiteral("--live-recovery"))
+        && (QFileInfo::exists(QStringLiteral("/run/archiso"))
+            || app.arguments().contains(QStringLiteral("--ui-demo")));
+    LiveRecoveryBackend recoveryBackend(liveRecovery);
     UsageBackend usageBackend;
     AccountAiBackend accountAiBackend;
     CloudPersonalizationBackend cloudPersonalization;
@@ -178,6 +187,8 @@ int main(int argc, char **argv) {
     QQmlApplicationEngine engine;
     engine.addImportPath(QStringLiteral(MEOUI_IMPORT_PATH));
     engine.rootContext()->setContextProperty("agent", &client);
+    engine.rootContext()->setContextProperty("liveRecovery", liveRecovery);
+    engine.rootContext()->setContextProperty("liveRecoveryBackend", &recoveryBackend);
     engine.rootContext()->setContextProperty("usage", &usageBackend);
     engine.rootContext()->setContextProperty("accountAI", &accountAiBackend);
     engine.rootContext()->setContextProperty("cloudPersonalization", &cloudPersonalization);
@@ -191,6 +202,8 @@ int main(int argc, char **argv) {
     const QSize requestedSize = requestedWindowSize(app.arguments());
     if (window && requestedSize.isValid())
         window->resize(requestedSize);
+    else if (window && liveRecovery)
+        window->showFullScreen();
 
     DraftPersistence draftPersistence;
     if (!isSideEffectFreePreview(app.arguments())) {
