@@ -786,6 +786,18 @@ impl AppCore {
             self.call(|api, t| async move { api.model_profiles(&t).await }),
         );
         self.update(|s| s.profiles = Some(profiles.map_err(|e| e.to_string())));
+        // The settings carry the model routes: without them nothing is chosen, so a failed read
+        // (a dropped connection among the parallel requests) is retried before giving up.
+        let mut settings = settings;
+        for pause in [400u64, 1500] {
+            if settings.is_ok() {
+                break;
+            }
+            futures_timer::Delay::new(std::time::Duration::from_millis(pause)).await;
+            settings = self
+                .call(|api, t| async move { api.get_settings(&t).await })
+                .await;
+        }
         if let Ok(settings) = settings {
             self.set_cloud_settings(settings);
         }
@@ -3193,6 +3205,14 @@ fn shell_sidebar(s: &State) -> Value {
         "search": (!work).then(|| json!({ "placeholder": "Search chats", "value": s.search, "action": { "type": "search" } })),
         "newChat": (!work).then(|| button("New chat", "primary", json!({ "type": "new_conversation" }))),
         "sections": sections,
+        // One glance: is the app online and is live sync connected.
+        "status": if !s.online {
+            json!({ "kind": "offline", "label": "Offline" })
+        } else if s.sync_live {
+            json!({ "kind": "live", "label": "Live" })
+        } else {
+            json!({ "kind": "syncing", "label": "Connecting" })
+        },
         "footer": [
             { "id": "settings", "label": "Settings", "icon": "settings", "selected": s.route == "settings",
               "action": { "type": "navigate", "route": "settings" } },
@@ -3307,6 +3327,7 @@ fn slider(
 ) -> Value {
     json!({
         "id": id, "label": label, "kind": "slider", "binding": binding, "value": value,
+        "icon": if id == "permission" { "shield" } else { "psychology" },
         "options": options.iter().map(|(v, l)| json!({ "value": v, "label": l })).collect::<Vec<_>>(),
         "align": if end { "end" } else { "start" },
     })
@@ -3362,6 +3383,7 @@ fn composer_controls(s: &State) -> Vec<Value> {
         ),
         json!({
             "id": "web_search", "label": "Search the web", "kind": "toggle", "binding": "chat.web_search",
+            "icon": "language", "iconOnly": true,
             "value": s.prefs.get("chat.web_search").cloned().unwrap_or(json!(false)), "align": "start",
         }),
     ];
@@ -3398,6 +3420,7 @@ fn composer_controls(s: &State) -> Vec<Value> {
     ));
     controls.push(json!({
         "id": "subagents", "label": "Sub-agents", "kind": "toggle", "binding": "chat.subagents",
+        "icon": "account_tree", "iconOnly": true,
         "value": pref_bool(s, "chat.subagents", false), "align": "end",
     }));
     controls
@@ -3954,7 +3977,7 @@ fn conversation_page(s: &State) -> Value {
         }))).collect::<Vec<_>>(),
         "composer": {
             "attach": { "label": "Attach file", "action": "attach_text", "extensions": ["txt", "md", "markdown", "csv", "json", "py", "rs", "js", "ts", "tsx", "jsx", "java", "kt", "c", "h", "cpp", "go", "sh", "toml", "yaml", "yml", "html", "css", "sql", "log", "png", "jpg", "jpeg", "webp", "gif"] },
-            "placeholder": "Message Meo — type / for commands",
+            "placeholder": "Message Meo",
             "commands": COMMANDS.iter().map(|(name, hint, about)| json!({ "name": name, "hint": hint, "label": about })).collect::<Vec<_>>(),
             "busy": busy,
             "sendAction": { "type": "send" },

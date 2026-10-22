@@ -134,6 +134,9 @@ pub fn localize(view: &mut Value, locale: &str) {
         if let Some(new_chat) = sidebar.get_mut("newChat") {
             field(c, new_chat, "label");
         }
+        if let Some(status) = sidebar.get_mut("status").filter(|v| v.is_object()) {
+            field(c, status, "label");
+        }
         for item in each(sidebar, "footer") {
             field(c, item, "label");
         }

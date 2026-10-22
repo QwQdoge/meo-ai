@@ -106,6 +106,47 @@ ApplicationWindow {
         onAccepted: window.act({ type: "attach_path", path: selectedFile.toString() })
     }
 
+    // Wallpaper-derived Material colors and light/dark mode from the Meo desktop, when present.
+    Loader { source: "DynamicColors.qml" }
+
+    // One sidebar row (Plugins, Projects, Settings): the icon and the label share one vertical centre.
+    component SideLink: Rectangle {
+        id: link
+        property string symbol: ""
+        property string label: ""
+        property bool selected: false
+        property bool compact: false
+        signal clicked()
+        implicitHeight: 36
+        radius: 10
+        color: selected ? MeoTheme.secondaryContainer
+                        : (linkHover.hovered ? MeoTheme.surfaceContainerHigh : "transparent")
+        RowLayout {
+            anchors.fill: parent
+            anchors.leftMargin: 10
+            anchors.rightMargin: 10
+            spacing: 12
+            MeoIcon {
+                icon: link.symbol
+                size: 20
+                color: link.selected ? MeoTheme.contentOnSecondaryContainer : MeoTheme.onSurfaceVariant
+                Layout.alignment: Qt.AlignVCenter
+                verticalAlignment: Text.AlignVCenter
+            }
+            MeoText {
+                visible: !link.compact
+                text: link.label
+                elide: Text.ElideRight
+                font.weight: link.selected ? Font.DemiBold : Font.Normal
+                verticalAlignment: Text.AlignVCenter
+                Layout.fillWidth: true
+                Layout.alignment: Qt.AlignVCenter
+            }
+        }
+        HoverHandler { id: linkHover }
+        TapHandler { onTapped: link.clicked() }
+    }
+
     // QML has no direct clipboard API: select and copy from an invisible field.
     TextEdit { id: clipboardHelper; visible: false }
 
@@ -139,12 +180,12 @@ ApplicationWindow {
                 }
                 return out
             }
-            Layout.preferredWidth: collapsed ? 56 : 232
+            Layout.preferredWidth: collapsed ? 52 : 224
             Layout.minimumWidth: Layout.preferredWidth
             Layout.maximumWidth: Layout.preferredWidth
             Layout.fillHeight: true
-            Layout.margins: 12
-            spacing: 8
+            Layout.margins: 8
+            spacing: 4
 
             RowLayout {
                 Layout.fillWidth: true
@@ -172,18 +213,45 @@ ApplicationWindow {
                     onClicked: window.act(modelData.action)
                 }
             }
-            MeoTextField {
-                id: searchField
+            Rectangle {
+                id: searchPill
                 visible: !sidebar.collapsed && !!sidebar.sb.search
                 Layout.fillWidth: true
-                placeholder: (sidebar.sb.search || {}).placeholder || ""
-                leadingIcon: "search"
-                // Typed text wins; the core echoes it back as the saved value.
-                onTextChanged: if (text !== (sidebar.sb.search || {}).value) searchTimer.restart()
-                Timer {
-                    id: searchTimer
-                    interval: 300
-                    onTriggered: window.act(window.withFields(sidebar.sb.search.action, { text: searchField.text }))
+                implicitHeight: 34
+                radius: height / 2
+                color: MeoTheme.surfaceContainerHigh
+                border.width: 1
+                border.color: searchField.activeFocus ? MeoTheme.primary : "transparent"
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: 12
+                    anchors.rightMargin: 12
+                    spacing: 8
+                    MeoIcon { icon: "search"; size: 18; color: MeoTheme.onSurfaceVariant }
+                    TextInput {
+                        id: searchField
+                        Layout.fillWidth: true
+                        Layout.alignment: Qt.AlignVCenter
+                        clip: true
+                        font.pixelSize: 14
+                        color: MeoTheme.onSurface
+                        selectByMouse: true
+                        text: ""
+                        // Typed text wins; the core echoes it back as the saved value.
+                        onTextChanged: if (text !== (sidebar.sb.search || {}).value) searchTimer.restart()
+                        Text {
+                            visible: !parent.text && !parent.activeFocus
+                            text: (sidebar.sb.search || {}).placeholder || ""
+                            color: MeoTheme.onSurfaceVariant
+                            font.pixelSize: 14
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                        Timer {
+                            id: searchTimer
+                            interval: 300
+                            onTriggered: window.act(window.withFields(sidebar.sb.search.action, { text: searchField.text }))
+                        }
+                    }
                 }
             }
             MeoButton {
@@ -198,7 +266,7 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 clip: true
-                spacing: 2
+                spacing: 0
                 model: sidebar.rows
                 delegate: Item {
                     id: sideRow
@@ -206,13 +274,13 @@ ApplicationWindow {
                     width: ListView.view.width
                     implicitHeight: modelData.kind === "item" ? itemRow.implicitHeight : modelData.kind === "header" ? headerCol.implicitHeight : linkButton.implicitHeight
                     height: implicitHeight
-                    MeoListItem {
+                    SideLink {
                         id: linkButton
                         visible: sideRow.modelData.kind === "link"
                         width: parent.width
-                        isDense: true
-                        headline: sidebar.collapsed ? "" : (sideRow.modelData.label || "")
-                        leadingIcon: sideRow.modelData.symbol || ""
+                        symbol: sideRow.modelData.symbol || ""
+                        label: sideRow.modelData.label || ""
+                        compact: sidebar.collapsed
                         selected: !!sideRow.modelData.selected
                         onClicked: window.act(sideRow.modelData.action)
                     }
@@ -274,16 +342,33 @@ ApplicationWindow {
                     }
                 }
             }
-            Repeater {
-                model: sidebar.sb.footer || []
-                MeoListItem {
-                    required property var modelData
-                    Layout.fillWidth: true
-                    isDense: true
-                    headline: sidebar.collapsed ? "" : modelData.label
-                    leadingIcon: "settings"
-                    selected: !!modelData.selected
-                    onClicked: window.act(modelData.action)
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 4
+                Repeater {
+                    model: sidebar.sb.footer || []
+                    SideLink {
+                        required property var modelData
+                        Layout.fillWidth: true
+                        symbol: "settings"
+                        label: modelData.label
+                        compact: sidebar.collapsed
+                        selected: !!modelData.selected
+                        onClicked: window.act(modelData.action)
+                    }
+                }
+                // Online / live-sync state at a glance.
+                Rectangle {
+                    visible: !!sidebar.sb.status
+                    Layout.preferredWidth: 10
+                    Layout.preferredHeight: 10
+                    Layout.rightMargin: 8
+                    radius: 5
+                    color: (sidebar.sb.status || {}).kind === "live" ? MeoTheme.success
+                         : (sidebar.sb.status || {}).kind === "offline" ? MeoTheme.error : MeoTheme.outline
+                    ToolTip.visible: statusHover.hovered
+                    ToolTip.text: (sidebar.sb.status || {}).label || ""
+                    HoverHandler { id: statusHover }
                 }
             }
         }
@@ -491,13 +576,26 @@ ApplicationWindow {
         property var item: ({})
         readonly property var options: item.options || []
         readonly property int index: Math.max(0, options.findIndex(o => o.value === item.value))
-        implicitWidth: chip.implicitWidth
-        implicitHeight: chip.implicitHeight
+        implicitWidth: iconChip.visible ? iconChip.implicitWidth : chip.implicitWidth
+        implicitHeight: iconChip.visible ? iconChip.implicitHeight : chip.implicitHeight
         function choose(value) { window.act({ type: "set_setting", binding: item.binding, value: value }) }
+        // Toggles with an icon are icon-only (tooltip carries the name); the rest keep a short text.
+        MeoIconButton {
+            id: iconChip
+            visible: item.kind === "toggle" && !!item.icon
+            type: item.value === true ? "tonal" : "standard"
+            size: "xs"
+            icon.name: item.icon || ""
+            ToolTip.visible: hovered
+            ToolTip.text: item.label || ""
+            onClicked: chipRoot.choose(item.value !== true)
+        }
         MeoButton {
             id: chip
+            visible: !iconChip.visible
             type: "text"
             size: "xs"
+            icon.name: (item.kind !== "toggle" && item.icon) ? item.icon : ""
             text: item.kind === "toggle" ? ((item.value === true ? "● " : "○ ") + (item.label || ""))
                                           : (((options[index] || {}).label || item.label || "") + " ▾")
             onClicked: item.kind === "toggle" ? chipRoot.choose(item.value !== true)
@@ -685,13 +783,14 @@ ApplicationWindow {
             spacing: 0
 
             ColumnLayout {
+                id: chatColumn
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 spacing: 0
 
                 RowLayout {
                     Layout.fillWidth: true
-                    Layout.margins: 16
+                    Layout.margins: 10
                     spacing: 4
                     MeoText {
                         text: window.page.title || ""
@@ -727,28 +826,12 @@ ApplicationWindow {
 
                     MeoEmptyState {
                         visible: !!window.page.empty
-                        anchors.centerIn: parent
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.verticalCenterOffset: -110
                         icon: "chat"
                         title: window.page.empty ? window.page.empty.title : ""
                         description: window.page.empty ? window.page.empty.text : ""
-                    }
-
-                    Flow {
-                        visible: !!window.page.empty && commandList.matches.length === 0
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        anchors.top: parent.verticalCenter
-                        anchors.topMargin: 90
-                        width: Math.min(parent.width - 64, 560)
-                        spacing: 8
-                        Repeater {
-                            model: window.page.empty ? (window.page.empty.suggestions || []) : []
-                            MeoButton {
-                                required property var modelData
-                                text: modelData.label
-                                type: "tonal"
-                                onClicked: window.act(modelData.action)
-                            }
-                        }
                     }
 
                     Rectangle {
@@ -824,7 +907,7 @@ ApplicationWindow {
                         width: Math.min(760, parent.width - reserved - 32)
                         x: Math.max(16, (parent.width - reserved - width) / 2)
                         clip: true
-                        spacing: 12
+                        spacing: 8
                         model: window.page.messages || []
                         onCountChanged: positionViewAtEnd()
                         onContentHeightChanged: if (atYEnd || window.page.composer.busy) positionViewAtEnd()
@@ -903,10 +986,12 @@ ApplicationWindow {
                                 y: stepsBox.height + bubble.implicitHeight + pictures.height + 4
                                 anchors.right: parent.mine ? parent.right : undefined
                                 spacing: 4
-                                MeoButton {
-                                    text: (window.v.strings || {}).copy || qsTr("Copy")
-                                    type: "text"
+                                MeoIconButton {
+                                    type: "standard"
                                     size: "xs"
+                                    icon.name: "content_copy"
+                                    ToolTip.visible: hovered
+                                    ToolTip.text: (window.v.strings || {}).copy || qsTr("Copy")
                                     onClicked: {
                                         clipboardHelper.text = modelData.text
                                         clipboardHelper.selectAll()
@@ -915,11 +1000,14 @@ ApplicationWindow {
                                 }
                                 Repeater {
                                     model: modelData.actions || []
-                                    MeoButton {
+                                    MeoIconButton {
                                         required property var modelData
-                                        text: modelData.label
-                                        type: "text"
+                                        type: "standard"
                                         size: "xs"
+                                        // Edit / retry / regenerate: an icon each, the name in the tooltip.
+                                        icon.name: modelData.action.type === "begin_edit" ? "edit" : "refresh"
+                                        ToolTip.visible: hovered
+                                        ToolTip.text: modelData.label
                                         onClicked: window.act(modelData.action)
                                     }
                                 }
@@ -950,127 +1038,171 @@ ApplicationWindow {
                     }
                 }
 
-                MeoBanner {
-                    visible: !!window.page.consent
+                // Everything under the messages. In a new chat it sits in the middle of the page
+                // and glides down (fast ease-out) once the conversation starts.
+                ColumnLayout {
+                    id: composerBox
                     Layout.fillWidth: true
-                    Layout.margins: 12
-                    title: window.page.consent ? window.page.consent.title : ""
-                    text: window.page.consent ? window.page.consent.text : ""
-                    confirmText: window.page.consent ? window.page.consent.actions[0].label : ""
-                    cancelText: window.page.consent ? window.page.consent.actions[1].label : ""
-                    onConfirmed: window.act(window.page.consent.actions[0].action)
-                    onCancelled: window.act(window.page.consent.actions[1].action)
-                }
+                    Layout.maximumWidth: 720
+                    Layout.alignment: Qt.AlignHCenter
+                    Layout.leftMargin: 12
+                    Layout.rightMargin: 12
+                    Layout.bottomMargin: 8
+                    spacing: 4
+                    readonly property var composer: window.page.composer || ({})
+                    readonly property bool fresh: !!window.page.empty
+                    readonly property real lift: Math.max(0, chatColumn.height - height / 2 - 8 - chatColumn.height * 0.5)
+                    transform: Translate {
+                        y: composerBox.fresh ? -composerBox.lift : 0
+                        Behavior on y { NumberAnimation { duration: MeoTheme.reduceMotion ? 0 : 240; easing.type: Easing.OutQuart } }
+                    }
 
-                Flow {
-                    visible: (window.page.files || []).length > 0
-                    Layout.fillWidth: true
-                    Layout.leftMargin: 16
-                    Layout.rightMargin: 16
-                    spacing: 6
-                    Repeater {
-                        model: window.page.files || []
-                        MeoButton {
-                            required property var modelData
-                            text: modelData.name + "  ✕"
-                            type: "tonal"
-                            size: "xs"
-                            onClicked: window.act(modelData.remove.action)
+                    MeoBanner {
+                        visible: !!window.page.consent
+                        Layout.fillWidth: true
+                        title: window.page.consent ? window.page.consent.title : ""
+                        text: window.page.consent ? window.page.consent.text : ""
+                        confirmText: window.page.consent ? window.page.consent.actions[0].label : ""
+                        cancelText: window.page.consent ? window.page.consent.actions[1].label : ""
+                        onConfirmed: window.act(window.page.consent.actions[0].action)
+                        onCancelled: window.act(window.page.consent.actions[1].action)
+                    }
+
+                    Flow {
+                        visible: (window.page.files || []).length > 0
+                        Layout.fillWidth: true
+                        spacing: 6
+                        Repeater {
+                            model: window.page.files || []
+                            MeoButton {
+                                required property var modelData
+                                text: modelData.name + "  ✕"
+                                type: "tonal"
+                                size: "xs"
+                                onClicked: window.act(modelData.remove.action)
+                            }
                         }
                     }
-                }
 
-                Column {
-                    id: commandList
-                    Layout.maximumWidth: 760
-                    Layout.alignment: Qt.AlignHCenter
-                    readonly property var matches: /^\/\S*$/.test(input.text)
-                        ? (window.page.composer.commands || []).filter(c => c.name.indexOf(input.text.toLowerCase()) === 0) : []
-                    visible: matches.length > 0
-                    Layout.leftMargin: 16
-                    Layout.rightMargin: 16
-                    Repeater {
-                        model: commandList.matches
-                        MeoButton {
-                            required property var modelData
-                            text: modelData.name + (modelData.hint ? " " + modelData.hint : "") + " — " + modelData.label
-                            type: "text"
-                            size: "xs"
-                            onClicked: {
-                                if (modelData.hint) { input.text = modelData.name + " "; input.forceActiveFocus() }
-                                else if (!window.page.composer.busy) {
-                                    window.act(window.withFields(window.page.composer.sendAction, { text: modelData.name }))
-                                    input.text = ""
+                    Column {
+                        id: commandList
+                        Layout.fillWidth: true
+                        readonly property var matches: /^\/\S*$/.test(input.text)
+                            ? (window.page.composer.commands || []).filter(c => c.name.indexOf(input.text.toLowerCase()) === 0) : []
+                        visible: matches.length > 0
+                        Repeater {
+                            model: commandList.matches
+                            MeoButton {
+                                required property var modelData
+                                text: modelData.name + (modelData.hint ? " " + modelData.hint : "") + " — " + modelData.label
+                                type: "text"
+                                size: "xs"
+                                onClicked: {
+                                    if (modelData.hint) { input.text = modelData.name + " "; input.forceActiveFocus() }
+                                    else if (!window.page.composer.busy) {
+                                        window.act(window.withFields(window.page.composer.sendAction, { text: modelData.name }))
+                                        input.text = ""
+                                    }
                                 }
                             }
                         }
                     }
-                }
 
-                RowLayout {
-                    Layout.fillWidth: true
-                    Layout.maximumWidth: 760
-                    Layout.alignment: Qt.AlignHCenter
-                    Layout.margins: 16
-                    spacing: 8
-                    readonly property var composer: window.page.composer || ({})
-
-                    MeoIconButton {
-                        visible: !!parent.composer.attach
-                        Layout.alignment: Qt.AlignBottom
-                        type: "standard"
-                        icon.name: "attach_file"
-                        onClicked: attachDialog.open()
-                    }
-
-                    MeoTextArea {
-                        id: input
+                    // A thin pill that grows with the text, up to half the window.
+                    Rectangle {
+                        id: inputPill
                         Layout.fillWidth: true
-                        // One line until the text needs more; up to half the window.
-                        implicitHeight: Math.max(56, contentHeight + topPadding + bottomPadding)
-                        Layout.maximumHeight: Math.max(120, window.height / 2)
-                        placeholder: parent.composer.placeholder || ""
-                        wrapMode: TextEdit.Wrap
-                        Keys.onReturnPressed: event => {
-                            const enterSends = window.prefs["general.enter_to_send"] !== false
-                            if (enterSends !== !!(event.modifiers & Qt.ShiftModifier)) {
-                                send()
-                                event.accepted = true
-                            } else {
-                                event.accepted = false
+                        implicitHeight: Math.min(Math.max(window.height / 2, 120), Math.max(40, inputScroll.textHeight + 14))
+                        radius: Math.min(height / 2, 20)
+                        color: MeoTheme.surfaceContainerHigh
+                        border.width: 1
+                        border.color: input.activeFocus ? MeoTheme.primary : MeoTheme.outlineVariant
+                        Behavior on implicitHeight { NumberAnimation { duration: MeoTheme.reduceMotion ? 0 : 120; easing.type: Easing.OutCubic } }
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: 4
+                            anchors.rightMargin: 5
+                            spacing: 2
+                            MeoIconButton {
+                                visible: !!composerBox.composer.attach
+                                Layout.alignment: Qt.AlignBottom
+                                type: "standard"
+                                size: "xs"
+                                icon.name: "attach_file"
+                                onClicked: attachDialog.open()
+                            }
+                            ScrollView {
+                                id: inputScroll
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+                                readonly property real textHeight: input.contentHeight
+                                TextArea {
+                                    id: input
+                                    background: null
+                                    placeholderText: composerBox.composer.placeholder || ""
+                                    wrapMode: TextEdit.Wrap
+                                    color: MeoTheme.onSurface
+                                    placeholderTextColor: MeoTheme.onSurfaceVariant
+                                    font.pixelSize: 15
+                                    topPadding: 7
+                                    bottomPadding: 7
+                                    Keys.onReturnPressed: event => {
+                                        const enterSends = window.prefs["general.enter_to_send"] !== false
+                                        if (enterSends !== !!(event.modifiers & Qt.ShiftModifier)) {
+                                            send()
+                                            event.accepted = true
+                                        } else {
+                                            event.accepted = false
+                                        }
+                                    }
+                                    function send() {
+                                        if (!text.trim().length || composerBox.composer.busy)
+                                            return
+                                        window.act(window.withFields(composerBox.composer.sendAction, { text: text }))
+                                        text = ""
+                                    }
+                                }
+                            }
+                            MeoIconButton {
+                                Layout.alignment: Qt.AlignBottom
+                                size: "xs"
+                                icon.name: composerBox.composer.busy ? "stop" : "arrow_upward"
+                                onClicked: composerBox.composer.busy ? window.act(composerBox.composer.stopAction) : input.send()
                             }
                         }
-                        function send() {
-                            if (!text.trim().length || parent.composer.busy)
-                                return
-                            window.act(window.withFields(parent.composer.sendAction, { text: text }))
-                            text = ""
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 2
+                        readonly property var items: composerBox.composer.toolbar || []
+                        Repeater {
+                            model: parent.items.filter(i => i.align !== "end")
+                            ControlChip { required property var modelData; item: modelData }
+                        }
+                        Item { Layout.fillWidth: true }
+                        Repeater {
+                            model: parent.items.filter(i => i.align === "end")
+                            ControlChip { required property var modelData; item: modelData }
                         }
                     }
 
-                    MeoIconButton {
-                        icon.name: parent.composer.busy ? "stop" : "arrow_upward"
-                        onClicked: parent.composer.busy ? window.act(parent.composer.stopAction) : input.send()
-                    }
-                }
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    Layout.maximumWidth: 760
-                    Layout.alignment: Qt.AlignHCenter
-                    Layout.leftMargin: 16
-                    Layout.rightMargin: 16
-                    Layout.bottomMargin: 8
-                    spacing: 4
-                    readonly property var items: (window.page.composer || {}).toolbar || []
-                    Repeater {
-                        model: parent.items.filter(i => i.align !== "end")
-                        ControlChip { required property var modelData; item: modelData }
-                    }
-                    Item { Layout.fillWidth: true }
-                    Repeater {
-                        model: parent.items.filter(i => i.align === "end")
-                        ControlChip { required property var modelData; item: modelData }
+                    // Starter prompts of a new chat, tucked under the box.
+                    Flow {
+                        visible: composerBox.fresh && commandList.matches.length === 0
+                        Layout.fillWidth: true
+                        Layout.topMargin: 6
+                        spacing: 6
+                        Repeater {
+                            model: window.page.empty ? (window.page.empty.suggestions || []) : []
+                            MeoButton {
+                                required property var modelData
+                                text: modelData.label
+                                type: "outlined"
+                                size: "xs"
+                                onClicked: window.act(modelData.action)
+                            }
+                        }
                     }
                 }
             }

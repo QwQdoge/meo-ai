@@ -227,5 +227,8 @@
   "Choose a model for everyday chat in Settings first.": "请先在设置里为日常聊天选择模型。",
   "No profiles yet. Create one in Settings > Model profiles.": "还没有方案。请在 设置 > 模型方案 中创建。",
   "No connections": "没有连接",
-  "Add an AI provider in Meo Account to use Meo AI.": "请先在 Meo Account 中添加 AI 服务商。"
+  "Add an AI provider in Meo Account to use Meo AI.": "请先在 Meo Account 中添加 AI 服务商。",
+  "Offline": "离线",
+  "Live": "已连接",
+  "Connecting": "连接中"
 }
