@@ -177,9 +177,16 @@ impl PlatformHooks for DesktopHooks {
     }
 }
 
+/// The QML: `MEO_AI_QML_DIR`, else the installed copy (`<prefix>/share/meo-ai-desktop/qml` next to
+/// `<prefix>/bin`), else the source tree (development builds).
 fn qml_root() -> PathBuf {
-    env::var_os("MEO_AI_QML_DIR")
-        .map(PathBuf::from)
+    if let Some(dir) = env::var_os("MEO_AI_QML_DIR") {
+        return PathBuf::from(dir);
+    }
+    env::current_exe()
+        .ok()
+        .and_then(|exe| Some(exe.parent()?.parent()?.join("share/meo-ai-desktop/qml")))
+        .filter(|dir| dir.join("Main.qml").is_file())
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("qml"))
 }
 

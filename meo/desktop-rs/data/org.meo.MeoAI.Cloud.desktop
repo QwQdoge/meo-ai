@@ -1,9 +1,9 @@
 [Desktop Entry]
 Type=Application
-Name=Meo AI
+Name=Meo AI Cloud
 Comment=Cloud-first Meo AI assistant
 Exec=meo-ai-desktop %u
-Icon=org.meo.AI
+Icon=meo-ai
 Terminal=false
 Categories=Utility;
 MimeType=x-scheme-handler/meoai;
