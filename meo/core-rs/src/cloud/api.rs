@@ -40,6 +40,9 @@ pub struct ConversationSummary {
     pub updated_at: String,
     #[serde(default)]
     pub project_id: Option<String>,
+    /// "chat" or "work", the same on every device; `None` from a server that does not store it yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]

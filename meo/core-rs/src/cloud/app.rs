@@ -356,8 +356,11 @@ pub struct AppCore {
 const KEY_SESSION: &str = "session";
 const KEY_PREFS: &str = "prefs";
 const KEY_CONVERSATIONS: &str = "conversations";
-/// Ids of the conversations that are Work tasks (kept on this device).
+/// Ids of the conversations that are Work tasks (a cache of the server's `mode`; older apps kept
+/// them only on the device).
 const KEY_WORK: &str = "work-sessions";
+/// Set once this device's older, device-only Work markers have been copied to the server.
+const KEY_WORK_SYNCED: &str = "work-sessions-synced";
 const KEY_CREDENTIALS: &str = "credentials";
 const KEY_MODELS: &str = "models";
 /// Survives the app process being killed while the browser sign-in is open.
@@ -457,8 +460,8 @@ impl AppCore {
                 s.active = None;
                 s.route = "work".into();
             }),
-            Action::MoveToWork { id } => self.set_work(id, true),
-            Action::MoveToChat { id } => self.set_work(id, false),
+            Action::MoveToWork { id } => self.set_work(id, true).await,
+            Action::MoveToChat { id } => self.set_work(id, false).await,
             Action::SelectConversation { id } => self.select_conversation(id).await,
             Action::Send { text } => self.send(text).await,
             Action::Stop => self.cancel.store(true, Ordering::SeqCst),
@@ -1476,21 +1479,70 @@ impl AppCore {
         }
     }
 
-    /// Moves a conversation (the open one by default) between Chat and Work; the view follows it.
-    fn set_work(&self, id: Option<String>, work: bool) {
-        let mut s = self.state.lock().unwrap();
-        let Some(id) = id.or_else(|| s.active.clone()) else { return };
-        s.work_ids.retain(|w| *w != id);
-        if work {
-            s.work_ids.push(id.clone());
-        }
-        s.active = Some(id);
-        s.route = if work { "work" } else { "chat" }.into();
-        s.notice = None;
-        let ids = s.work_ids.clone();
-        drop(s);
+    /// Moves a conversation (the open one by default) between Chat and Work; the view follows it,
+    /// and so do the user's other devices.
+    async fn set_work(&self, id: Option<String>, work: bool) {
+        let Some(id) = id.or_else(|| self.state.lock().unwrap().active.clone()) else {
+            return;
+        };
+        self.mark_work(&id, work);
+        self.update(|s| {
+            s.active = Some(id.clone());
+            s.route = if work { "work" } else { "chat" }.into();
+            s.notice = None;
+        });
+        self.store_mode(&id, work).await;
+    }
+
+    /// Files a conversation under Work or Chat on this device.
+    fn mark_work(&self, id: &str, work: bool) {
+        let ids = {
+            let mut s = self.state.lock().unwrap();
+            s.work_ids.retain(|w| w != id);
+            if work {
+                s.work_ids.push(id.to_owned());
+            }
+            if let Some(c) = s.conversations.iter_mut().find(|c| c.id == id) {
+                c.mode = Some(if work { "work" } else { "chat" }.into());
+            }
+            s.work_ids.clone()
+        };
         self.save_json(KEY_WORK, &ids);
         self.hooks.changed();
+    }
+
+    /// Stores Work / Chat on the server. A server without the field refuses it; the device keeps
+    /// its own marker then, as before.
+    async fn store_mode(&self, id: &str, work: bool) {
+        let patch = json!({ "mode": if work { "work" } else { "chat" } });
+        let _ = self
+            .call(|api, t| {
+                let (id, patch) = (id.to_owned(), patch.clone());
+                async move { api.patch_conversation(&t, &id, patch).await }
+            })
+            .await;
+    }
+
+    /// Takes Work / Chat from the server's list. The first time, Work markers this device kept on
+    /// its own (older apps) are copied up instead of being overwritten.
+    async fn apply_modes(&self, list: &[ConversationSummary]) {
+        if list.iter().all(|c| c.mode.is_none()) {
+            return;
+        }
+        let synced = self.load_json::<bool>(KEY_WORK_SYNCED).unwrap_or(false);
+        let local: Vec<String> = self.state.lock().unwrap().work_ids.clone();
+        for c in list {
+            let local_work = local.contains(&c.id);
+            match c.mode.as_deref() {
+                Some("work") if !local_work => self.mark_work(&c.id, true),
+                Some("chat") if local_work && synced => self.mark_work(&c.id, false),
+                Some("chat") if local_work => self.store_mode(&c.id, true).await,
+                _ => {}
+            }
+        }
+        if !synced {
+            self.save_json(KEY_WORK_SYNCED, &true);
+        }
     }
 
     async fn select_conversation(&self, id: String) {
@@ -1539,8 +1591,11 @@ impl AppCore {
             // Only the plain list is a cache of "my chats"; filtered views are transient.
             if query.is_empty() && !archived {
                 self.save_json(KEY_CONVERSATIONS, &list);
+                self.update(|s| s.conversations = list.clone());
+                self.apply_modes(&list).await;
+            } else {
+                self.update(|s| s.conversations = list);
             }
-            self.update(|s| s.conversations = list);
         }
     }
 
@@ -1613,12 +1668,10 @@ impl AppCore {
                             s.conversations.insert(0, conversation);
                             s.active = Some(id.clone());
                             s.new_chat_project = None;
-                            if task {
-                                s.work_ids.push(id.clone());
-                            }
                         });
                         if task {
-                            self.save_json(KEY_WORK, &self.state.lock().unwrap().work_ids.clone());
+                            self.mark_work(&id, true);
+                            self.store_mode(&id, true).await;
                         }
                         id
                     }
@@ -2409,11 +2462,16 @@ impl AppCore {
                 {
                     Ok(conversation) => {
                         let id = conversation.id.clone();
+                        let task = self.state.lock().unwrap().route == "work";
                         self.update(|s| {
                             s.conversations.insert(0, conversation);
                             s.active = Some(id.clone());
                             s.new_chat_project = None;
                         });
+                        if task {
+                            self.mark_work(&id, true);
+                            self.store_mode(&id, true).await;
+                        }
                         id
                     }
                     Err(e) => return self.notice("error", e.to_string()),
@@ -5009,6 +5067,30 @@ mod tests {
         assert_eq!(messages[0]["stepsLabel"], "2 steps");
         assert_eq!(messages[0]["stepsOpen"], false);
         assert_eq!(messages[0]["steps"][0]["items"][0]["url"], "https://a");
+    }
+
+    #[test]
+    fn work_follows_the_server_mode_after_old_device_markers_are_kept_once() {
+        let c = signed_in_core();
+        let with_mode = |id: &str, mode: &str| {
+            let mut x = conversation(id, id);
+            x.mode = Some(mode.into());
+            x
+        };
+        // An older server without the field changes nothing.
+        c.update(|s| s.work_ids = vec!["old".into()]);
+        futures_executor::block_on(c.apply_modes(&[conversation("old", "Old")]));
+        assert_eq!(c.state.lock().unwrap().work_ids, ["old"]);
+        // First list with modes: Work from another device is taken; this device's own Work marker
+        // is kept (and copied up), not overwritten by the server's default "chat".
+        let list = [with_mode("old", "chat"), with_mode("w2", "work"), with_mode("c3", "chat")];
+        futures_executor::block_on(c.apply_modes(&list));
+        let mut ids = c.state.lock().unwrap().work_ids.clone();
+        ids.sort();
+        assert_eq!(ids, ["old", "w2"]);
+        // From then on the server decides: a task moved back to Chat elsewhere leaves Work here too.
+        futures_executor::block_on(c.apply_modes(&[with_mode("old", "chat"), with_mode("w2", "work")]));
+        assert_eq!(c.state.lock().unwrap().work_ids, ["w2"]);
     }
 
     #[test]
