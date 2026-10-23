@@ -2300,6 +2300,18 @@ impl AppCore {
         }
     }
 
+    /// The steps recorded for the current answer in `conversation_id`.
+    fn activity_steps(&self, conversation_id: &str) -> Vec<Value> {
+        self.state
+            .lock()
+            .unwrap()
+            .activity
+            .as_ref()
+            .filter(|(c, _)| c == conversation_id)
+            .map(|(_, steps)| steps.clone())
+            .unwrap_or_default()
+    }
+
     /// Adds or updates a step (`status`: running / done / error) of the current answer.
     fn step(&self, id: &str, title: &str, detail: &str, status: &str, items: Vec<Value>) {
         self.update(|s| {
@@ -2806,9 +2818,9 @@ impl AppCore {
             let mut s = self.state.lock().unwrap();
             let list = s.messages.entry(conversation_id.to_owned()).or_default();
             list.push(ChatMessage {
-                id: String::new(),
                 role: role.to_owned(),
                 text: text.to_owned(),
+                ..Default::default()
             });
             list.clone()
         };
@@ -2889,19 +2901,21 @@ impl AppCore {
         );
         if !reply.is_empty() {
             self.push_message(&id, "assistant", &reply);
+            if failure.is_none() {
+                if let Some(judge) = pending.judge.clone() {
+                    self.run_judge(&pending.prompt, &reply, judge).await;
+                }
+            }
+            // Stored with its steps (after the check), so every device shows the same answer.
+            let steps = self.activity_steps(&id);
             let _ = self
                 .call(|api, t| {
-                    let (id, reply) = (id.clone(), reply.clone());
-                    async move { api.append_message(&t, &id, "assistant", &reply).await }
+                    let (id, reply, steps) = (id.clone(), reply.clone(), steps.clone());
+                    async move { api.append_answer(&t, &id, &reply, &steps).await }
                 })
                 .await;
             // Pick up server ids so the new messages can be edited or regenerated.
             self.refresh_messages(&id).await;
-        }
-        if failure.is_none() && !reply.is_empty() {
-            if let Some(judge) = pending.judge.clone() {
-                self.run_judge(&pending.prompt, &reply, judge).await;
-            }
         }
         match failure {
             Some(e) => self.notice("error", e),
@@ -3582,6 +3596,14 @@ fn shell_sidebar(s: &State) -> Value {
     })
 }
 
+fn steps_label(count: usize) -> String {
+    if count == 1 {
+        "1 step".to_owned()
+    } else {
+        format!("{count} steps")
+    }
+}
+
 fn steps_empty(activity: &Option<(String, Vec<Value>)>) -> bool {
     activity.as_ref().is_none_or(|(_, steps)| steps.is_empty())
 }
@@ -3815,11 +3837,17 @@ fn inspector(s: &State, messages: &[Value], active: Option<&String>) -> Value {
     if !started {
         return Value::Null;
     }
+    // The live steps, else (after a reload or on another device) those stored with the last answer.
     let steps: Vec<&Value> = s
         .activity
         .as_ref()
         .filter(|(c, _)| Some(c) == active)
         .map(|(_, steps)| steps.iter().collect())
+        .or_else(|| {
+            let list = s.messages.get(active?)?;
+            let last = list.iter().rev().find(|m| m.role == "assistant")?;
+            Some(last.steps.iter().collect())
+        })
         .unwrap_or_default();
     let tools = steps
         .iter()
@@ -4343,11 +4371,18 @@ fn conversation_page(s: &State) -> Value {
                     }
                     let (text, mut images) = extract_images(&m.text);
                     images.extend(s.generated.get(&m.id).into_iter().flatten().cloned());
-                    json!({
+                    let mut message = json!({
                         "id": m.id, "role": m.role, "text": text, "streaming": false, "actions": actions,
                         "blocks": if m.role == "assistant" { richtext::blocks(&text) } else { Vec::new() },
                         "images": images.into_iter().map(|u| json!({ "url": u })).collect::<Vec<_>>(),
-                    })
+                    });
+                    // Steps stored with the answer; the live steps below replace them while working.
+                    if !m.steps.is_empty() {
+                        message["steps"] = Value::Array(m.steps.clone());
+                        message["stepsLabel"] = json!(steps_label(m.steps.len()));
+                        message["stepsOpen"] = json!(false);
+                    }
+                    message
                 })
                 .collect()
         })
@@ -4372,7 +4407,7 @@ fn conversation_page(s: &State) -> Value {
         let label = if running {
             "Working…".to_owned()
         } else {
-            format!("{} steps", steps.len())
+            steps_label(steps.len())
         };
         if let Some(target) = messages.iter_mut().rev().find(|m| m["role"] == "assistant") {
             // After a finished answer only its latest message carries the steps.
@@ -4803,6 +4838,7 @@ mod tests {
             id: id.into(),
             role: role.into(),
             text: text.into(),
+            ..Default::default()
         }
     }
 
@@ -4938,19 +4974,49 @@ mod tests {
         );
         c.step("answer", "Answer", "", "done", vec![]);
         c.update(|s| {
-            s.messages.insert(
-                "c1".into(),
-                vec![ChatMessage {
-                    id: "m".into(),
-                    role: "assistant".into(),
-                    text: "hi".into(),
-                }],
-            );
+            s.messages
+                .insert("c1".into(), vec![message("m", "assistant", "hi")]);
         });
         let messages = c.view()["page"]["messages"].clone();
         assert_eq!(messages[0]["stepsLabel"], "2 steps");
         assert_eq!(messages[0]["stepsOpen"], false);
         assert_eq!(messages[0]["steps"][0]["items"][0]["url"], "https://a");
+    }
+
+    #[test]
+    fn steps_stored_with_answers_show_after_a_reload() {
+        let c = signed_in_core();
+        let mut first = message("a1", "assistant", "one");
+        first.steps = vec![
+            json!({ "id": "router", "title": "Router", "detail": "Reasoning", "status": "done", "items": [] }),
+        ];
+        let mut second = message("a2", "assistant", "two");
+        second.steps = vec![
+            json!({ "id": "s1", "title": "1. Search", "detail": "", "status": "done", "items": [{ "title": "t", "url": "https://a" }] }),
+            json!({ "id": "check", "title": "Check", "detail": "91/100 · pass", "status": "done", "items": [] }),
+        ];
+        c.update(|s| {
+            s.active = Some("c1".into());
+            s.messages.insert(
+                "c1".into(),
+                vec![
+                    message("u1", "user", "q"),
+                    first,
+                    message("u2", "user", "q2"),
+                    second,
+                ],
+            );
+        });
+        let view = c.view();
+        let messages = &view["page"]["messages"];
+        assert_eq!(messages[1]["stepsLabel"], "1 step");
+        assert_eq!(messages[3]["steps"][1]["detail"], "91/100 · pass");
+        assert_eq!(messages[3]["stepsOpen"], false);
+        assert!(messages[0]["steps"].is_null(), "prompts carry no steps");
+        assert!(
+            view.to_string().contains("https://a"),
+            "the details panel lists the stored links"
+        );
     }
 
     #[test]
@@ -5754,11 +5820,11 @@ mod tests {
         c.update(|s| {
             s.messages.insert(
                 "c1".into(),
-                vec![ChatMessage {
-                    id: "m9".into(),
-                    role: "assistant".into(),
-                    text: "Created.\n\n![i](https://cdn.example/p.png)".into(),
-                }],
+                vec![message(
+                    "m9",
+                    "assistant",
+                    "Created.\n\n![i](https://cdn.example/p.png)",
+                )],
             );
             s.generated
                 .insert("m9".into(), vec!["data:image/png;base64,QUJD".into()]);

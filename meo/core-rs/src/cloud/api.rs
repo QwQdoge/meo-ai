@@ -42,13 +42,16 @@ pub struct ConversationSummary {
     pub project_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct ChatMessage {
     /// Server message id; empty for a message not yet synced (older caches too).
     #[serde(default)]
     pub id: String,
     pub role: String,
     pub text: String,
+    /// Steps of an answer (router, planned steps, check) as stored with it on the server.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub steps: Vec<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -238,6 +241,7 @@ impl MeoApi {
                     id: row["id"].as_str().unwrap_or_default().to_owned(),
                     role: role.to_owned(),
                     text,
+                    steps: steps_from_blocks(&row["content"]),
                 })
             })
             .collect())
@@ -256,6 +260,25 @@ impl MeoApi {
             Method::POST,
             &path,
             Some(json!({ "role": role, "content": content })),
+        )
+        .await
+        .map(|_| ())
+    }
+
+    /// Stores an answer with its steps, so a reload or another device shows the same steps.
+    pub async fn append_answer(
+        &self,
+        token: &str,
+        conversation_id: &str,
+        text: &str,
+        steps: &[Value],
+    ) -> Result<(), ApiError> {
+        let path = format!("/v1/conversations/{conversation_id}/messages");
+        self.request(
+            token,
+            Method::POST,
+            &path,
+            Some(json!({ "role": "assistant", "content": answer_blocks(text, steps) })),
         )
         .await
         .map(|_| ())
@@ -788,6 +811,77 @@ pub fn content_text(content: &Value) -> String {
     }
 }
 
+/// An answer as content blocks: its text, then each step as a `tool_activity` block and the
+/// step's links as a `source_group` (the API's shared block types; no plain text is added).
+pub fn answer_blocks(text: &str, steps: &[Value]) -> Value {
+    let clip = |v: &Value, max: usize| {
+        v.as_str()
+            .unwrap_or_default()
+            .chars()
+            .take(max)
+            .collect::<String>()
+    };
+    let mut blocks =
+        vec![json!({ "type": "text", "block_id": "text:answer", "text": text.trim() })];
+    for step in steps {
+        let id: String = clip(&step["id"], 40)
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+            .collect();
+        let title = clip(&step["title"], 300);
+        if id.is_empty() || title.trim().is_empty() {
+            continue;
+        }
+        let state = match step["status"].as_str() {
+            Some("done") => "completed",
+            Some("error") => "failed",
+            _ => "running",
+        };
+        blocks.push(json!({
+            "type": "tool_activity", "block_id": format!("step:{id}"), "activity_id": id,
+            "title": title.trim(), "state": state, "detail": clip(&step["detail"], 8000),
+        }));
+        let links: Vec<Value> = step["items"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|i| i["url"].as_str().is_some_and(|u| u.starts_with("https://")))
+            .take(20)
+            .map(|i| json!({ "title": clip(&i["title"], 300), "url": clip(&i["url"], 2000) }))
+            .collect();
+        if !links.is_empty() {
+            blocks.push(json!({ "type": "source_group", "block_id": format!("links:{id}"), "title": title.trim(), "sources": links }));
+        }
+    }
+    Value::Array(blocks)
+}
+
+/// The steps stored with an answer by [`answer_blocks`], in the core's step shape.
+pub fn steps_from_blocks(content: &Value) -> Vec<Value> {
+    let blocks = content.as_array().map(Vec::as_slice).unwrap_or_default();
+    blocks
+        .iter()
+        .filter(|b| b["type"] == "tool_activity")
+        .map(|b| {
+            let id = b["activity_id"].as_str().unwrap_or_default();
+            let status = match b["state"].as_str() {
+                Some("completed") => "done",
+                Some("failed" | "cancelled") => "error",
+                _ => "running",
+            };
+            let items: Vec<Value> = blocks
+                .iter()
+                .find(|g| g["type"] == "source_group" && g["block_id"] == format!("links:{id}"))
+                .and_then(|g| g["sources"].as_array())
+                .into_iter()
+                .flatten()
+                .map(|i| json!({ "title": i["title"], "url": i["url"], "subtitle": i["url"] }))
+                .collect();
+            json!({ "id": id, "title": b["title"], "detail": b["detail"].as_str().unwrap_or_default(), "status": status, "items": items })
+        })
+        .collect()
+}
+
 // The browser's fetch stream is not `Send`; wasm runs on one thread.
 #[cfg(not(target_arch = "wasm32"))]
 type ByteStream =
@@ -926,5 +1020,35 @@ mod tests {
             ),
             "a\n\nb"
         );
+    }
+
+    #[test]
+    fn answer_steps_round_trip_through_content_blocks() {
+        let steps = vec![
+            json!({ "id": "router", "title": "Router", "detail": "Reasoning", "status": "done", "items": [] }),
+            json!({ "id": "s1", "title": "1. Look it up", "detail": "Found two", "status": "done",
+                    "items": [{ "title": "A", "url": "https://a.example/" }, { "title": "B", "url": "http://insecure/" }] }),
+            json!({ "id": "check", "title": "Check", "detail": "87/100 · pass", "status": "error", "items": [] }),
+            json!({ "id": "", "title": "nameless", "status": "done" }),
+        ];
+        let blocks = answer_blocks(" Hello ", &steps);
+        assert_eq!(
+            content_text(&blocks),
+            "Hello",
+            "steps add no text to the answer"
+        );
+        assert_eq!(blocks[0]["block_id"], "text:answer");
+        let back = steps_from_blocks(&blocks);
+        assert_eq!(back.len(), 3, "a step without an id is not stored");
+        assert_eq!(back[0]["id"], "router");
+        assert_eq!(
+            back[1]["items"].as_array().unwrap().len(),
+            1,
+            "only https links"
+        );
+        assert_eq!(back[1]["items"][0]["url"], "https://a.example/");
+        assert_eq!(back[2]["status"], "error");
+        assert_eq!(back[2]["detail"], "87/100 · pass");
+        assert!(steps_from_blocks(&json!("plain text")).is_empty());
     }
 }
