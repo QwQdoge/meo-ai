@@ -3927,6 +3927,34 @@ fn inspector(s: &State, messages: &[Value], active: Option<&String>) -> Value {
                 { "label": "Work notes", "value": compact(note_tokens) },
             ] }),
     ];
+    // A Work task's list: the newest one an answer wrote (the one streaming now first).
+    let task_list = s
+        .streaming
+        .as_ref()
+        .filter(|(c, _)| Some(c) == active)
+        .and_then(|(_, text)| richtext::tasks(text))
+        .or_else(|| {
+            let list = s.messages.get(active?)?;
+            list.iter()
+                .rev()
+                .filter(|m| m.role == "assistant")
+                .find_map(|m| richtext::tasks(&m.text))
+        });
+    if let Some(list) = task_list {
+        let done = list.iter().filter(|t| t["state"] == "done").count();
+        let rows: Vec<Value> = list
+            .iter()
+            .map(|t| {
+                let (icon, status) = match t["state"].as_str() {
+                    Some("done") => ("check_circle", "done"),
+                    Some("doing") => ("progress_activity", "running"),
+                    _ => ("radio_button_unchecked", ""),
+                };
+                json!({ "icon": icon, "label": t["title"], "status": status, "value": null })
+            })
+            .collect();
+        sections.push(json!({ "id": "tasks", "title": format!("Tasks · {done}/{}", list.len()), "open": true, "rows": rows }));
+    }
     if !step_rows.is_empty() {
         sections.push(json!({ "id": "steps", "title": format!("Tools used · {tools}"), "open": true, "rows": step_rows }));
     }
@@ -4981,6 +5009,33 @@ mod tests {
         assert_eq!(messages[0]["stepsLabel"], "2 steps");
         assert_eq!(messages[0]["stepsOpen"], false);
         assert_eq!(messages[0]["steps"][0]["items"][0]["url"], "https://a");
+    }
+
+    #[test]
+    fn the_newest_task_list_of_a_work_answer_is_listed_in_details() {
+        let c = signed_in_core();
+        c.update(|s| {
+            s.active = Some("c1".into());
+            s.messages.insert(
+                "c1".into(),
+                vec![
+                    message("u1", "user", "plan the trip"),
+                    message("a1", "assistant", "Started.\n\n```meo-tasks\n[>] Book flights\n[ ] Book hotel\n```"),
+                    message("u2", "user", "flights booked"),
+                    message("a2", "assistant", "Noted.\n\n```meo-tasks\n[x] Book flights\n[>] Book hotel\n[ ] Pack\n```"),
+                    message("u3", "user", "thanks"),
+                    message("a3", "assistant", "You're welcome."),
+                ],
+            );
+        });
+        let view = c.view();
+        let sections = view["page"]["inspector"]["sections"].as_array().unwrap().clone();
+        let tasks = sections.iter().find(|x| x["id"] == "tasks").unwrap();
+        assert_eq!(tasks["title"], "Tasks · 1/3");
+        assert_eq!(tasks["rows"][0]["status"], "done");
+        assert_eq!(tasks["rows"][1]["label"], "Book hotel");
+        assert_eq!(tasks["rows"][1]["status"], "running");
+        assert_eq!(tasks["rows"][2]["icon"], "radio_button_unchecked");
     }
 
     #[test]

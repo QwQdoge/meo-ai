@@ -1,5 +1,6 @@
 //! Splits an assistant message into blocks the clients draw richly: plain Markdown, callouts
-//! (`> [!NOTE]`) and ready-to-use drafts (a fenced `meo-draft` block holding JSON). Everything else
+//! (`> [!NOTE]`), ready-to-use drafts (a fenced `meo-draft` block holding JSON) and a Work task's
+//! list (a fenced `meo-tasks` block, shown as a Markdown task list). Everything else
 //! stays Markdown, so a client that only knows `markdown` still shows the whole message. Fenced code
 //! is never searched for callouts, and a draft that is not valid JSON stays an ordinary code block.
 
@@ -43,6 +44,63 @@ fn draft(body: &str) -> Option<Value> {
     })
 }
 
+/// One line of a `meo-tasks` block: `[x]` done, `[>]` in progress, `[ ]` to do (a leading `- ` is fine).
+fn task(line: &str) -> Option<Value> {
+    let line = line.trim();
+    let line = line.strip_prefix("- ").or_else(|| line.strip_prefix("* ")).unwrap_or(line);
+    let rest = line.strip_prefix('[')?;
+    let (mark, title) = rest.split_once(']')?;
+    let state = match mark.trim() {
+        "x" | "X" => "done",
+        ">" | "~" | "-" | "/" => "doing",
+        "" => "todo",
+        _ => return None,
+    };
+    let title: String = title.trim().chars().take(200).collect();
+    (!title.is_empty()).then(|| json!({ "title": title, "state": state }))
+}
+
+fn task_list(body: &[&str]) -> Vec<Value> {
+    body.iter().filter_map(|l| task(l)).take(20).collect()
+}
+
+/// The task list a Work answer ends with (its last `meo-tasks` block), if it has one.
+pub fn tasks(text: &str) -> Option<Vec<Value>> {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut found = None;
+    let mut i = 0;
+    while i < lines.len() {
+        if let Some(info) = lines[i].trim_start().strip_prefix("```") {
+            let end = (i + 1..lines.len()).find(|&j| lines[j].trim_start().starts_with("```"));
+            let stop = end.unwrap_or(lines.len());
+            if info.trim() == "meo-tasks" {
+                let list = task_list(&lines[i + 1..stop]);
+                if !list.is_empty() {
+                    found = Some(list);
+                }
+            }
+            i = stop + 1;
+            continue;
+        }
+        i += 1;
+    }
+    found
+}
+
+/// A task list as Markdown every client already draws.
+fn tasks_markdown(list: &[Value]) -> String {
+    let mut text = String::from("**Tasks**\n");
+    for t in list {
+        let title = t["title"].as_str().unwrap_or_default();
+        text.push_str(&match t["state"].as_str() {
+            Some("done") => format!("\n- [x] {title}"),
+            Some("doing") => format!("\n- [ ] {title} *(in progress)*"),
+            _ => format!("\n- [ ] {title}"),
+        });
+    }
+    text
+}
+
 pub fn blocks(text: &str) -> Vec<Value> {
     let lines: Vec<&str> = text.lines().collect();
     let mut out = Vec::new();
@@ -63,6 +121,16 @@ pub fn blocks(text: &str) -> Vec<Value> {
                         i = end + 1;
                         continue;
                     }
+                }
+            }
+            if info == "meo-tasks" {
+                let stop = end.unwrap_or(lines.len());
+                let list = task_list(&lines[i + 1..stop]);
+                if !list.is_empty() {
+                    flush(&mut markdown, &mut out);
+                    out.push(json!({ "type": "markdown", "text": tasks_markdown(&list) }));
+                    i = stop + 1;
+                    continue;
                 }
             }
             let stop = end.unwrap_or(lines.len() - 1);
@@ -154,5 +222,31 @@ mod tests {
         let b = blocks("> [!tip]\n> Use `cargo test`");
         assert_eq!(b[0]["title"], "Tip");
         assert_eq!(b[0]["icon"], "lightbulb");
+    }
+
+    #[test]
+    fn a_work_task_list_is_read_and_drawn_as_a_markdown_task_list() {
+        let text = "Done.\n\n```meo-tasks\n[x] Gather prices\n- [>] Compare plans\n[ ] Draft the email\nnot a task\n[?] odd\n```";
+        let list = tasks(text).unwrap();
+        let states: Vec<&str> = list.iter().map(|t| t["state"].as_str().unwrap()).collect();
+        assert_eq!(states, ["done", "doing", "todo"]);
+        assert_eq!(list[1]["title"], "Compare plans");
+        let b = blocks(text);
+        assert_eq!(b.len(), 2);
+        let drawn = b[1]["text"].as_str().unwrap();
+        assert!(drawn.contains("- [x] Gather prices"));
+        assert!(drawn.contains("- [ ] Compare plans *(in progress)*"));
+        assert!(!drawn.contains("not a task"));
+    }
+
+    #[test]
+    fn the_last_task_list_wins_and_other_fences_are_not_task_lists() {
+        let text = "```meo-tasks\n[ ] One\n```\n\n```text\n[x] fake\n```\n\n```meo-tasks\n[x] One\n[ ] Two\n```";
+        let list = tasks(text).unwrap();
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0]["state"], "done");
+        assert!(tasks("no list\n[x] here").is_none());
+        assert!(tasks("```meo-tasks\nnothing\n```").is_none());
+        assert_eq!(blocks("```meo-tasks\nnothing\n```")[0]["text"], "```meo-tasks\nnothing\n```");
     }
 }
