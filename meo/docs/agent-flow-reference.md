@@ -39,11 +39,17 @@ Each slice is small, testable without a provider and ends in a visible change on
 
 1. **Persist the plan with the answer** (have most pieces). Store the router decision, steps (DID/RESULT) and judge score on the assistant message (server `metadata`) so a reload or another device shows the same steps. Add a task list kind (`todo`: pending / doing / done) the model updates via a structured block, shown in the Work details card. *Codex: rollout items; Claude Code: TodoWrite.*
 2. **Context budget in the core.** Estimate tokens per request, drop/clear old tool outputs and search results first, then summarise the oldest turns with the `summary` role model when over ~70% of the model's window; keep instructions and the last turns; show "Context" bar (already in Details) from real numbers; `/compact` command. Raise `maxOutputTokens` per model/role. *Codex auto-compact; Claude Code compaction.*
-3. **Permission modes that mean something.** Define for the broker: `read` (no writes), `edits` (writes to the open workspace after approval), `auto` (classifier/policy approves, ask on scope escalation), `all`. The mode is evaluated by the API/device, shown in the composer chip, and the model only sees refusals. *Claude Code modes, Codex approval policy.*
+3. **Permission modes that mean something.** Define for the broker: `read` (no writes), `edits` (writes to the open workspace after approval), `auto` (an approver model decides, ask the user on scope escalation or low confidence), `all`. The mode is evaluated by the API/device, shown in the composer chip, and the acting model only sees refusals. **Default for Chat and Work: `auto`** (owner decision 2026-10-23). *Claude Code modes, Codex approval policy.*
+   - "The model confirms" means a **separate approver call** (the `fast`/`router` role), not the acting model approving itself. It sees the proposed action, the workspace root and the user's request, never raw tool output or file contents (injection surface).
+   - Deterministic rules run first and the approver cannot override them: deny list, path outside the resolved workspace root, destructive or irreversible actions, anything that leaves the device, credentials. These always go to the user.
+   - Approver reply is `allow` / `ask` / `deny` plus a one-line reason; anything unparsable or failing is `ask`. Show the decision and reason in the step details so it can be audited.
 4. **Tool loop for connected tools.** Let the model request a tool mid-turn (web search, MCP read tools, later file read) through the broker: request → gate → run → result back → continue, with a step cap and the same step UI. Web search first (read-only, no gate). *Codex tool router.*
 5. **Structured local edits on desktop.** Over the existing AgentService: `read_file`, `search_replace` (exact, must match once, else error returned to the model) and `apply_patch` (envelope), always with a diff card and approve/reject, a per-prompt checkpoint (copy-on-write snapshot) and a "rewind" action; path checks resolved against the workspace root (the Codex "parent directory" bug is the cautionary tale: check the real resolved target of every path). Web/Android only show and approve; they do not execute.
 6. **Subagents.** A subagent = a stage call with its own role model, tool allowlist, step cap and a fresh context (task + notes only); parent receives its final report as a step result. Read-only by default.
-7. **Verification loop for Work.** The plan's last step may be a check with a command the device can run (tests/build) or a rubric for the judge; the answer says whether it passed. A `jev` model can take the judge slot once its I/O format is known.
+7. **Verification loop for Work.** The plan's last step may be a check with a command the device can run (tests/build) or a rubric for the judge; the answer says whether it passed.
+   - **Judge output is a percentage (0-100)** (owner decision 2026-10-23). The core already reads `{"score": 87}`, `score: 87`, `87/100` and `0.87` (`parse_judgement` in `core-rs/src/cloud/orchestration.rs`), so a `jev` model can fill the judge slot without a format change. Keep the verdict thresholds (>= 80 pass, 50-79 revise, < 50 fail) and show the percentage in the card.
+   - Research (web, 2026-10): "JEV" appears as a small decision-only judge (JEV-as-a-Judge, arXiv 2609.26550, [summary](https://www.opentrain.ai/papers/jev-as-a-judge-accept-when-confident-escalate-when-unsure--arxiv-2609.26550/)) and as a hosted calibrated-probability judge ([OpenRouter write-up](https://openrouter.ai/blog/tutorials/jev-vs-llm-as-a-judge/)). Both reports say the same: close to a large LLM judge on closed factual checks at a small fraction of the cost, clearly worse on reasoning-heavy or long open-ended rubrics. These are secondary write-ups; confirm which JEV we call and read the primary source before relying on the numbers.
+   - So use a **cascade**: JEV percentage first; accept when it is far from the threshold (for example >= 90 or <= 30); otherwise escalate to the LLM judge role. Verbalized percentages are usually over-confident, so calibrate the cut-offs on our own labelled runs (ECE / Brier) before trusting them, and keep the percentage as a number the UI shows, not as a probability claim.
 
 ## Safety rules carried over
 
@@ -52,8 +58,14 @@ Each slice is small, testable without a provider and ends in a visible change on
 - Writes are idempotent per step id; a resumed run never repeats a completed write.
 - No unrestricted shell in the cloud. Local commands run only through the device's own AgentService with its policy.
 
+## Decisions (owner, 2026-10-23)
+
+- **Permission default for Chat and Work: `auto`**, decided by an approver model with deterministic hard rules ahead of it (slice 3).
+- **Judge / `jev` output: percentage** (slice 7); cascade to the LLM judge when unsure.
+- **Work works across devices.** Work tasks, the task list and the stored plan/steps/judge score live on the server (slice 1), so a task started on one device continues on another. Execution stays with the device that holds the workspace: other devices see progress and approve, but local edits and commands run only on the owning device through its AgentService (slice 5).
+
 ## Open questions for the owner
 
-- Which permission default for Work (`edits` is the Claude Code / Codex default)?
-- jev input/output format (for slice 7).
-- Whether Work tasks should sync across devices through the server (needed by slice 1).
+- Which JEV model exactly (provider/id) and does it return only the percentage or also a reason?
+- Cross-device handoff: may a second device take over *execution* of a Work task (needs the workspace there too), or only continue the conversation and approvals?
+- Approver model: which role (`fast` or `router`), and should `auto` ever auto-allow writes outside the open workspace (proposal: never)?
