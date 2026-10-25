@@ -924,7 +924,13 @@ impl AppCore {
 
     /// Router, then (thinking level high or max) the planned steps. Each stage is a step of the
     /// answer; a stage that fails is shown as failed and the answer carries on without it.
-    async fn orchestrate(&self, text: &str, level: &str, search: bool, work: bool) -> Orchestration {
+    async fn orchestrate(
+        &self,
+        text: &str,
+        level: &str,
+        search: bool,
+        work: bool,
+    ) -> Orchestration {
         let subagents = pref_bool(&self.state.lock().unwrap(), "chat.subagents", false);
         self.step("router", "Router", "Choosing the model…", "running", vec![]);
         let reply = self
@@ -1020,9 +1026,11 @@ impl AppCore {
                 ),
             }
         }
-        let judge = (level == "max" || (work && level != "low") || (level == "high" && self.has_profile_role("judge")))
-            .then(|| self.role_model("judge"))
-            .flatten();
+        let judge = (level == "max"
+            || (work && level != "low")
+            || (level == "high" && self.has_profile_role("judge")))
+        .then(|| self.role_model("judge"))
+        .flatten();
         Orchestration {
             route: Some(decision.route),
             notes,
@@ -1039,7 +1047,11 @@ impl AppCore {
     /// Scores the finished answer with the judge model (a `jev` model reads the same text).
     async fn run_judge(&self, question: &str, answer: &str, _judge: Choice) {
         self.step("check", "Check", "Scoring the answer…", "running", vec![]);
-        let mode = if self.state.lock().unwrap().route == "work" { "work" } else { "chat" };
+        let mode = if self.state.lock().unwrap().route == "work" {
+            "work"
+        } else {
+            "chat"
+        };
         let reply = self
             .run_stage(
                 "judge",
@@ -1548,7 +1560,12 @@ impl AppCore {
     async fn select_conversation(&self, id: String) {
         self.update(|s| {
             s.active = Some(id.clone());
-            s.route = if s.work_ids.contains(&id) { "work" } else { "chat" }.into();
+            s.route = if s.work_ids.contains(&id) {
+                "work"
+            } else {
+                "chat"
+            }
+            .into();
             s.new_chat_project = None;
         });
         let key = format!("messages-{id}");
@@ -5083,13 +5100,19 @@ mod tests {
         assert_eq!(c.state.lock().unwrap().work_ids, ["old"]);
         // First list with modes: Work from another device is taken; this device's own Work marker
         // is kept (and copied up), not overwritten by the server's default "chat".
-        let list = [with_mode("old", "chat"), with_mode("w2", "work"), with_mode("c3", "chat")];
+        let list = [
+            with_mode("old", "chat"),
+            with_mode("w2", "work"),
+            with_mode("c3", "chat"),
+        ];
         futures_executor::block_on(c.apply_modes(&list));
         let mut ids = c.state.lock().unwrap().work_ids.clone();
         ids.sort();
         assert_eq!(ids, ["old", "w2"]);
         // From then on the server decides: a task moved back to Chat elsewhere leaves Work here too.
-        futures_executor::block_on(c.apply_modes(&[with_mode("old", "chat"), with_mode("w2", "work")]));
+        futures_executor::block_on(
+            c.apply_modes(&[with_mode("old", "chat"), with_mode("w2", "work")]),
+        );
         assert_eq!(c.state.lock().unwrap().work_ids, ["w2"]);
     }
 
@@ -5102,16 +5125,27 @@ mod tests {
                 "c1".into(),
                 vec![
                     message("u1", "user", "plan the trip"),
-                    message("a1", "assistant", "Started.\n\n```meo-tasks\n[>] Book flights\n[ ] Book hotel\n```"),
+                    message(
+                        "a1",
+                        "assistant",
+                        "Started.\n\n```meo-tasks\n[>] Book flights\n[ ] Book hotel\n```",
+                    ),
                     message("u2", "user", "flights booked"),
-                    message("a2", "assistant", "Noted.\n\n```meo-tasks\n[x] Book flights\n[>] Book hotel\n[ ] Pack\n```"),
+                    message(
+                        "a2",
+                        "assistant",
+                        "Noted.\n\n```meo-tasks\n[x] Book flights\n[>] Book hotel\n[ ] Pack\n```",
+                    ),
                     message("u3", "user", "thanks"),
                     message("a3", "assistant", "You're welcome."),
                 ],
             );
         });
         let view = c.view();
-        let sections = view["page"]["inspector"]["sections"].as_array().unwrap().clone();
+        let sections = view["page"]["inspector"]["sections"]
+            .as_array()
+            .unwrap()
+            .clone();
         let tasks = sections.iter().find(|x| x["id"] == "tasks").unwrap();
         assert_eq!(tasks["title"], "Tasks · 1/3");
         assert_eq!(tasks["rows"][0]["status"], "done");
@@ -5500,17 +5534,31 @@ mod tests {
         let view = c.view();
         assert_eq!(view["route"], "work");
         assert_eq!(view["page"]["kind"], "conversation");
-        let tasks = view["sidebar"]["sections"].as_array().unwrap().iter().find(|x| x["id"] == "tasks").unwrap().clone();
+        let tasks = view["sidebar"]["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|x| x["id"] == "tasks")
+            .unwrap()
+            .clone();
         assert_eq!(tasks["items"].as_array().unwrap().len(), 1);
         assert_eq!(tasks["items"][0]["id"], "c1");
         assert_eq!(view["sidebar"]["newChat"]["label"], "New task");
         // Back in Chat the task is gone from the chats and the other chat is still there.
         c.update(|s| s.route = "chat".into());
         let view = c.view();
-        let chats = view["sidebar"]["sections"].as_array().unwrap().iter().find(|x| x["id"] == "chats").unwrap().clone();
+        let chats = view["sidebar"]["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|x| x["id"] == "chats")
+            .unwrap()
+            .clone();
         assert_eq!(chats["items"].as_array().unwrap().len(), 1);
         assert_eq!(chats["items"][0]["id"], "c2");
-        futures_executor::block_on(c.dispatch(Action::MoveToChat { id: Some("c1".into()) }));
+        futures_executor::block_on(c.dispatch(Action::MoveToChat {
+            id: Some("c1".into()),
+        }));
         assert_eq!(c.view()["route"], "chat");
         assert!(c.state.lock().unwrap().work_ids.is_empty());
     }
