@@ -47,7 +47,10 @@ fn draft(body: &str) -> Option<Value> {
 /// One line of a `meo-tasks` block: `[x]` done, `[>]` in progress, `[ ]` to do (a leading `- ` is fine).
 fn task(line: &str) -> Option<Value> {
     let line = line.trim();
-    let line = line.strip_prefix("- ").or_else(|| line.strip_prefix("* ")).unwrap_or(line);
+    let line = line
+        .strip_prefix("- ")
+        .or_else(|| line.strip_prefix("* "))
+        .unwrap_or(line);
     let rest = line.strip_prefix('[')?;
     let (mark, title) = rest.split_once(']')?;
     let state = match mark.trim() {
@@ -247,6 +250,9 @@ mod tests {
         assert_eq!(list[0]["state"], "done");
         assert!(tasks("no list\n[x] here").is_none());
         assert!(tasks("```meo-tasks\nnothing\n```").is_none());
-        assert_eq!(blocks("```meo-tasks\nnothing\n```")[0]["text"], "```meo-tasks\nnothing\n```");
+        assert_eq!(
+            blocks("```meo-tasks\nnothing\n```")[0]["text"],
+            "```meo-tasks\nnothing\n```"
+        );
     }
 }
