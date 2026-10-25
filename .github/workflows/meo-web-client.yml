@@ -36,12 +36,6 @@ jobs:
           node-version: '24'
           cache: npm
           cache-dependency-path: meo/web/client/package-lock.json
-      - name: Resolve TypeScript 7 lockfile (temporary)
-        working-directory: meo/web/client
-        run: |
-          npm update typescript --package-lock-only --ignore-scripts
-          git diff -- package-lock.json
-
       - name: Install reproducible dependencies
         working-directory: meo/web/client
         run: npm ci
