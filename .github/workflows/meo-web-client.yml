@@ -36,11 +36,6 @@ jobs:
           node-version: '24'
           cache: npm
           cache-dependency-path: meo/web/client/package-lock.json
-      - name: Emit temporary resolved npm lock diff
-        working-directory: meo/web/client
-        run: |
-          npm install --package-lock-only --ignore-scripts
-          git diff -- package-lock.json
       - name: Install reproducible dependencies
         working-directory: meo/web/client
         run: npm ci
