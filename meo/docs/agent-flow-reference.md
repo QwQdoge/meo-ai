@@ -50,6 +50,25 @@ Still open: a per-model context window and `maxOutputTokens`, web search as a mi
 tool loop that ran on another device only after it finishes, and an approver calibrated on labelled runs.
 
 
+### Also implemented 2026-10-26 (full access, Chat tools, remote control)
+
+- **Full access** (`chat.permission` = `all`) has no hard rules: shell, `sudo`, git, anything in the
+  folder. The only thing the assistant cannot do is know a password.
+- **Passwords are the user's.** `sudo`, `git` and `ssh` ask through `SUDO_ASKPASS` / `GIT_ASKPASS` /
+  `SSH_ASKPASS` that point at the app itself (`meo-ai-desktop --askpass`). The core shows a dialog
+  with `input.secret: true` (masked on desktop, Android and web), the answer goes only to the command,
+  and anything typed is scrubbed from every output the model reads.
+- **Chat uses the same tool loop** (web search, and tools when a folder is open); Work adds the folder,
+  checkpoints, verify and sub-agents.
+- **Remote control, on by default** (`remote.enabled`, Settings > Account). Devices of one account
+  announce themselves over the realtime hub (`remote.hello`; the API relay is `POST
+  /v1/realtime/send`, stateless, `remote.*` types only). A "Run on" selector appears in the Work
+  composer when another device can host; the task runs there with the host's folder and permission
+  level, its approvals come back as the normal approval card (`remote.approval` / `remote.decision`),
+  Stop is relayed (`remote.stop`), and the finished conversation opens on the controller. Passwords
+  are never relayed: a command that asks for one is answered on the device that runs it. Protocol:
+  `core-rs/src/cloud/remote.rs`.
+
 ## Sources and what we do not use
 
 Used: the Codex CLI project (open source, Apache-2.0) and write-ups of its Rust core; Anthropic's public Claude Code documentation (glossary, permission modes, compaction, subagents, checkpoints, hooks); open-source agents (OpenCode, Cline, Aider) for edit formats and loops; the academic taxonomy of 13 open-source coding agents (arXiv 2608.10934).

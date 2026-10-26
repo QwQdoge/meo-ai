@@ -161,6 +161,8 @@ function Dialog({ dialog, act }: { dialog: Spec; act: Act }) {
           dialog.input && (
             <input
               autoFocus
+              type={dialog.input.secret ? "password" : "text"}
+              autoComplete="off"
               value={value}
               placeholder={dialog.input.placeholder}
               onChange={(e) => setValue(e.target.value)}

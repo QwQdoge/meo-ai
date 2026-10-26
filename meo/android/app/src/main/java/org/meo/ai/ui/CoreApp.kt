@@ -121,6 +121,9 @@ import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 import org.meo.ai.R
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.KeyboardType
 
 // Generic renderer for the Meo AI core view (meo_ai_core::cloud::app, contract in
 // meo/docs/cloud-core-view.md). It knows component kinds only, never product
@@ -244,6 +247,8 @@ private fun CoreDialog(dialog: JSONObject, act: Act) {
                         singleLine = !input.optBoolean("multiline"),
                         minLines = if (input.optBoolean("multiline")) 4 else 1,
                         placeholder = { Text(input.str("placeholder")) },
+                        visualTransformation = if (input.optBoolean("secret")) PasswordVisualTransformation() else VisualTransformation.None,
+                        keyboardOptions = if (input.optBoolean("secret")) KeyboardOptions(keyboardType = KeyboardType.Password) else KeyboardOptions.Default,
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }

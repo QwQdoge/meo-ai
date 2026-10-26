@@ -80,6 +80,7 @@ ApplicationWindow {
         MeoTextField {
             width: 320
             placeholder: appDialog.spec && appDialog.spec.input ? appDialog.spec.input.placeholder : ""
+            echoMode: appDialog.spec && appDialog.spec.input && appDialog.spec.input.secret ? TextInput.Password : TextInput.Normal
             text: appDialog.inputValue
             onTextChanged: appDialog.inputValue = text
             Component.onCompleted: forceActiveFocus()
