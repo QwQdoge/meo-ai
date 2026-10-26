@@ -40,9 +40,6 @@ class NeonPostgresStore:
                     )
 
                 ssl_context = ssl.create_default_context()
-                # asyncpg 0.32 requires the PostgreSQL ALPN protocol when a
-                # caller supplies its own SSL context.
-                ssl_context.set_alpn_protocols(["postgresql"])
                 self._pool = await asyncpg.create_pool(
                     dsn=self._database_url,
                     ssl=ssl_context,
