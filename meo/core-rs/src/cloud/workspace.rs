@@ -199,6 +199,16 @@ impl Workspace {
 
     /// Runs one tool. Writes are recorded in `checkpoint` before they happen.
     pub fn run(&self, tool: &Tool, checkpoint: &mut Checkpoint) -> Outcome {
+        self.run_with_env(tool, checkpoint, &[])
+    }
+
+    /// Like [`Workspace::run`], with extra environment for a command (the askpass variables).
+    pub fn run_with_env(
+        &self,
+        tool: &Tool,
+        checkpoint: &mut Checkpoint,
+        env: &[(String, String)],
+    ) -> Outcome {
         match tool {
             Tool::ReadFile { path, start, end } => self.read_file(path, *start, *end),
             Tool::ListDir { path } => self.list_dir(path),
@@ -210,8 +220,10 @@ impl Workspace {
             Tool::Run {
                 command,
                 timeout_secs,
-            } => self.command(command, *timeout_secs),
-            Tool::Subagent { .. } => fail("a sub-agent is started by the app, not by the folder"),
+            } => self.command(command, *timeout_secs, env),
+            Tool::Subagent { .. } | Tool::WebSearch { .. } => {
+                fail("this tool is run by the app, not by the folder")
+            }
         }
     }
 
@@ -473,15 +485,30 @@ impl Workspace {
         done(report.join("\n"))
     }
 
-    fn command(&self, command: &str, timeout_secs: Option<u64>) -> Outcome {
+    fn command(
+        &self,
+        command: &str,
+        timeout_secs: Option<u64>,
+        env: &[(String, String)],
+    ) -> Outcome {
         let limit = Duration::from_secs(
             timeout_secs
                 .unwrap_or(DEFAULT_TIMEOUT)
                 .clamp(1, MAX_TIMEOUT),
         );
+        // With a password channel, `sudo` asks through the askpass helper (`-A`) instead of a terminal
+        // the model does not have; the user types the password, the model never sees it.
+        let wrapped;
+        let command = if env.iter().any(|(k, _)| k == "SUDO_ASKPASS") {
+            wrapped = format!("sudo() {{ command sudo -A \"$@\"; }}; {command}");
+            wrapped.as_str()
+        } else {
+            command
+        };
         let mut child = match Command::new("sh")
             .arg("-c")
             .arg(command)
+            .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
             .current_dir(&self.root)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())

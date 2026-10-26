@@ -191,6 +191,12 @@ fn qml_root() -> PathBuf {
 }
 
 fn main() {
+    // `sudo`, `git` and `ssh` started by a Work command call this binary to ask for a password: it
+    // only talks to the running app over the private socket and exits, it never opens a window.
+    let args: Vec<String> = env::args().collect();
+    if let Some(code) = meo_ai_core::cloud::host::askpass_main(&args) {
+        std::process::exit(code);
+    }
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()

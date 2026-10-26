@@ -26,6 +26,144 @@ mod native {
     pub struct Host {
         inner: Arc<Mutex<Inner>>,
         root: String,
+        passwords: Option<Arc<Passwords>>,
+    }
+
+    /// Where the user's answer to a password question goes.
+    type Answer = std::sync::mpsc::Sender<Option<String>>;
+
+    /// Passwords are typed by the user, never produced by the model: a command that needs one starts
+    /// the askpass helper, which asks this broker over a private socket; the broker waits for the user
+    /// (the app shows a password dialog) and hands the answer back to that helper only. Everything a
+    /// command prints is scrubbed of what was typed.
+    pub(super) struct Passwords {
+        dir: PathBuf,
+        socket: PathBuf,
+        script: PathBuf,
+        pending: Mutex<Option<(String, Answer)>>,
+        secrets: Mutex<Vec<String>>,
+        notify: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
+    }
+
+    impl Passwords {
+        #[cfg(unix)]
+        fn start() -> Option<Arc<Self>> {
+            use std::os::unix::fs::PermissionsExt;
+            use std::os::unix::net::UnixListener;
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_nanos());
+            let base = std::env::var_os("XDG_RUNTIME_DIR")
+                .map(PathBuf::from)
+                .unwrap_or_else(std::env::temp_dir);
+            let dir = base.join(format!("meo-ai-askpass-{}-{nanos}", std::process::id()));
+            std::fs::create_dir_all(&dir).ok()?;
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).ok()?;
+            let socket = dir.join("askpass.sock");
+            let program = std::env::var_os("MEO_ASKPASS_PROGRAM")
+                .map(PathBuf::from)
+                .or_else(|| std::env::current_exe().ok())?;
+            let script = dir.join("askpass.sh");
+            std::fs::write(
+                &script,
+                format!("#!/bin/sh\nexec '{}' --askpass \"$@\"\n", program.display()),
+            )
+            .ok()?;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).ok()?;
+            let listener = UnixListener::bind(&socket).ok()?;
+            let broker = Arc::new(Self {
+                dir,
+                socket,
+                script,
+                pending: Mutex::new(None),
+                secrets: Mutex::new(Vec::new()),
+                notify: Mutex::new(None),
+            });
+            let weak = Arc::downgrade(&broker);
+            std::thread::spawn(move || {
+                for stream in listener.incoming().flatten() {
+                    let Some(broker) = weak.upgrade() else { return };
+                    std::thread::spawn(move || broker.serve(stream));
+                }
+            });
+            Some(broker)
+        }
+
+        #[cfg(not(unix))]
+        fn start() -> Option<Arc<Self>> {
+            None
+        }
+
+        #[cfg(unix)]
+        fn serve(&self, mut stream: std::os::unix::net::UnixStream) {
+            use std::io::{BufRead, BufReader, Write};
+            let mut prompt = String::new();
+            if BufReader::new(&stream).read_line(&mut prompt).is_err() {
+                return;
+            }
+            let prompt = prompt.trim().to_owned();
+            let (tx, rx) = std::sync::mpsc::channel();
+            // One question at a time: a second command waits for the first answer.
+            loop {
+                {
+                    let mut pending = self.pending.lock().unwrap();
+                    if pending.is_none() {
+                        *pending = Some((prompt.clone(), tx));
+                        break;
+                    }
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            self.changed();
+            // The user has ten minutes to type it.
+            match rx.recv_timeout(Duration::from_secs(600)) {
+                Ok(Some(password)) => {
+                    if !password.is_empty() {
+                        self.secrets.lock().unwrap().push(password.clone());
+                    }
+                    let _ = writeln!(stream, "{password}");
+                }
+                _ => {
+                    *self.pending.lock().unwrap() = None;
+                }
+            }
+            self.changed();
+        }
+
+        fn changed(&self) {
+            let notify = self.notify.lock().unwrap().clone();
+            if let Some(notify) = notify {
+                notify();
+            }
+        }
+
+        fn environment(&self) -> Vec<(String, String)> {
+            let script = self.script.display().to_string();
+            vec![
+                ("SUDO_ASKPASS".into(), script.clone()),
+                ("GIT_ASKPASS".into(), script.clone()),
+                ("SSH_ASKPASS".into(), script),
+                ("SSH_ASKPASS_REQUIRE".into(), "force".into()),
+                ("MEO_ASKPASS_SOCK".into(), self.socket.display().to_string()),
+            ]
+        }
+
+        /// What was typed for any command is replaced in text that goes back to the model.
+        fn scrub(&self, text: &str) -> String {
+            let mut out = text.to_owned();
+            for secret in self.secrets.lock().unwrap().iter() {
+                if secret.len() >= 3 {
+                    out = out.replace(secret.as_str(), "••••");
+                }
+            }
+            out
+        }
+    }
+
+    impl Drop for Passwords {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
     }
 
     /// Checkpoints of every folder: `<data dir>/meo-ai/checkpoints/<hash of the folder>`.
@@ -88,6 +226,7 @@ mod native {
                     store,
                 })),
                 root,
+                passwords: Passwords::start(),
             })
         }
 
@@ -99,14 +238,22 @@ mod native {
         pub async fn run(&self, tool: Tool) -> Outcome {
             let slot: Arc<Mutex<Option<Outcome>>> = Arc::new(Mutex::new(None));
             let (inner, out) = (self.inner.clone(), slot.clone());
+            let passwords = self.passwords.clone();
             std::thread::spawn(move || {
-                let outcome = match inner.lock() {
+                let env = passwords
+                    .as_ref()
+                    .map(|p| p.environment())
+                    .unwrap_or_default();
+                let mut outcome = match inner.lock() {
                     Ok(mut guard) => {
                         let Inner { ws, checkpoint, .. } = &mut *guard;
-                        ws.run(&tool, checkpoint)
+                        ws.run_with_env(&tool, checkpoint, &env)
                     }
                     Err(_) => Outcome::fail("the workspace is unavailable"),
                 };
+                if let Some(passwords) = &passwords {
+                    outcome.text = passwords.scrub(&outcome.text);
+                }
                 if let Ok(mut slot) = out.lock() {
                     *slot = Some(outcome);
                 }
@@ -139,6 +286,29 @@ mod native {
             }
         }
 
+        /// Called whenever a command starts or finishes waiting for a password.
+        pub fn set_notifier(&self, notify: Arc<dyn Fn() + Send + Sync>) {
+            if let Some(p) = &self.passwords {
+                *p.notify.lock().unwrap() = Some(notify);
+            }
+        }
+
+        /// The question of a command that is waiting for a password the user has to type.
+        pub fn pending_password(&self) -> Option<String> {
+            let p = self.passwords.as_ref()?;
+            let pending = p.pending.lock().unwrap();
+            pending.as_ref().map(|(prompt, _)| prompt.clone())
+        }
+
+        /// The user's answer (`None`: cancelled). It goes only to the command that asked.
+        pub fn answer_password(&self, value: Option<String>) {
+            let Some(p) = &self.passwords else { return };
+            let waiting = p.pending.lock().unwrap().take();
+            if let Some((_, answer)) = waiting {
+                let _ = answer.send(value);
+            }
+        }
+
         /// The diff a write would make, without making it.
         pub fn preview(&self, tool: &Tool) -> Option<String> {
             self.inner.lock().ok().and_then(|g| g.ws.preview(tool))
@@ -158,6 +328,36 @@ mod native {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::Host;
+
+/// The askpass helper: `meo-ai-desktop --askpass "<prompt>"`. `sudo`, `git` and `ssh` start it when
+/// they need a password; it asks the running app over the private socket and prints the answer for
+/// the caller only. `Some(exit code)` when the arguments were an askpass call (the embedding binary
+/// then exits with it); `None` for a normal start.
+#[cfg(all(unix, not(target_arch = "wasm32")))]
+pub fn askpass_main(args: &[String]) -> Option<i32> {
+    use std::io::{BufRead, BufReader, Write};
+    let at = args.iter().position(|a| a == "--askpass")?;
+    let prompt = args.get(at + 1).cloned().unwrap_or_default();
+    let Some(socket) = std::env::var_os("MEO_ASKPASS_SOCK") else {
+        eprintln!("meo askpass: the password channel is not available");
+        return Some(1);
+    };
+    let Ok(mut stream) = std::os::unix::net::UnixStream::connect(socket) else {
+        eprintln!("meo askpass: cannot reach Meo AI");
+        return Some(1);
+    };
+    if writeln!(stream, "{}", prompt.replace('\n', " ")).is_err() {
+        return Some(1);
+    }
+    let mut answer = String::new();
+    match BufReader::new(stream).read_line(&mut answer) {
+        Ok(n) if n > 0 => {
+            println!("{}", answer.trim_end_matches(['\n', '\r']));
+            Some(0)
+        }
+        _ => Some(1),
+    }
+}
 
 #[cfg(target_arch = "wasm32")]
 #[derive(Clone)]
@@ -179,6 +379,14 @@ impl Host {
 
     pub fn new_checkpoint(&self) {}
 
+    pub fn set_notifier(&self, _notify: std::sync::Arc<dyn Fn() + Send + Sync>) {}
+
+    pub fn pending_password(&self) -> Option<String> {
+        None
+    }
+
+    pub fn answer_password(&self, _value: Option<String>) {}
+
     pub fn preview(&self, _tool: &Tool) -> Option<String> {
         None
     }
@@ -195,6 +403,7 @@ impl Host {
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     #[test]
     fn a_new_host_still_rewinds_what_the_last_message_changed() {
@@ -258,5 +467,143 @@ mod tests {
             native::KEEP_CHECKPOINTS
         );
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    fn temp_host(name: &str) -> (Host, PathBuf) {
+        testing::use_test_askpass();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let base =
+            std::env::temp_dir().join(format!("meo-pw-{name}-{}-{nanos}", std::process::id()));
+        let folder = base.join("work");
+        std::fs::create_dir_all(&folder).unwrap();
+        (
+            Host::open_with_store(folder.to_str().unwrap(), base.join("store")).unwrap(),
+            base,
+        )
+    }
+
+    /// Answers the next password question with `answer` as soon as it is asked.
+    fn answer_when_asked(
+        host: &Host,
+        answer: Option<&'static str>,
+    ) -> std::thread::JoinHandle<String> {
+        let host = host.clone();
+        std::thread::spawn(move || {
+            // A test whose command never asks fails after 20 seconds instead of hanging.
+            for _ in 0..2000 {
+                if let Some(prompt) = host.pending_password() {
+                    host.answer_password(answer.map(str::to_owned));
+                    return prompt;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            "never asked".to_owned()
+        })
+    }
+
+    #[test]
+    fn a_password_is_typed_by_the_user_reaches_only_the_asking_command_and_never_the_output() {
+        let (host, base) = temp_host("typed");
+        let asked = answer_when_asked(&host, Some("hunter2"));
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        // The command prints what the askpass helper returned, like a careless script would.
+        let outcome = rt.block_on(host.run(Tool::Run {
+            command: "p=$(\"$SUDO_ASKPASS\" '[sudo] password for me:'); echo \"got: $p\"".into(),
+            timeout_secs: Some(30),
+        }));
+        assert_eq!(asked.join().unwrap(), "[sudo] password for me:");
+        assert!(outcome.ok, "{}", outcome.text);
+        assert!(
+            !outcome.text.contains("hunter2"),
+            "the typed password must not reach the model: {}",
+            outcome.text
+        );
+        assert!(outcome.text.contains("got: ••••"), "{}", outcome.text);
+        assert!(host.pending_password().is_none());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn cancelling_the_question_fails_the_command_without_a_password() {
+        let (host, base) = temp_host("cancel");
+        let asked = answer_when_asked(&host, None);
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let outcome = rt.block_on(host.run(Tool::Run {
+            command: "\"$SUDO_ASKPASS\" 'Password:' >/dev/null || echo no-password".into(),
+            timeout_secs: Some(30),
+        }));
+        asked.join().unwrap();
+        assert!(outcome.text.contains("no-password"), "{}", outcome.text);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn sudo_in_a_command_asks_through_the_helper_instead_of_a_terminal() {
+        let (host, base) = temp_host("sudo");
+        // A stand-in `sudo` that shows how it was called and what the helper returned.
+        let bin = base.join("work/bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::write(
+            bin.join("sudo"),
+            "#!/bin/sh\necho \"sudo args: $*\"\necho \"password: $($SUDO_ASKPASS 'pw?')\"\n",
+        )
+        .unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(bin.join("sudo"), std::fs::Permissions::from_mode(0o755))
+                .unwrap();
+        }
+        let asked = answer_when_asked(&host, Some("s3cret-pass"));
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let outcome = rt.block_on(host.run(Tool::Run {
+            command: "export PATH=\"$PWD/bin:$PATH\"; sudo pacman -S foo".into(),
+            timeout_secs: Some(30),
+        }));
+        asked.join().unwrap();
+        assert!(
+            outcome.text.contains("sudo args: -A pacman -S foo"),
+            "{}",
+            outcome.text
+        );
+        assert!(
+            outcome.text.contains("password: ••••") && !outcome.text.contains("s3cret-pass"),
+            "{}",
+            outcome.text
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn the_askpass_entry_point_only_acts_on_its_own_flag() {
+        assert_eq!(askpass_main(&["meo-ai-desktop".into()]), None);
+        assert_eq!(askpass_main(&["x".into(), "--other".into()]), None);
+    }
+}
+
+/// Shared by the tests of the host and of the app: an askpass program that talks to the broker.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) mod testing {
+    /// An askpass program for the tests (the real one is the app binary itself).
+    pub fn use_test_askpass() -> &'static str {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        static PATH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+        ONCE.call_once(|| {
+            use std::os::unix::fs::PermissionsExt;
+            let dir = std::env::temp_dir().join(format!("meo-askpass-test-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let program = dir.join("askpass.py");
+            std::fs::write(
+                &program,
+                "#!/usr/bin/env python3\nimport os, socket, sys\nargs = sys.argv[1:]\nprompt = args[args.index('--askpass') + 1] if '--askpass' in args else ''\ns = socket.socket(socket.AF_UNIX)\ns.connect(os.environ['MEO_ASKPASS_SOCK'])\ns.sendall((prompt + '\\n').encode())\nline = s.makefile().readline()\nif not line:\n    sys.exit(1)\nprint(line.strip())\n",
+            )
+            .unwrap();
+            std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+            PATH.set(program.display().to_string()).unwrap();
+            std::env::set_var("MEO_ASKPASS_PROGRAM", &program);
+        });
+        PATH.get().unwrap()
     }
 }

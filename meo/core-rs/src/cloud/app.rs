@@ -105,6 +105,13 @@ pub enum Action {
     ApproveTool,
     /// Refuse it; the model is told and adapts.
     DenyTool,
+    /// The password the user typed for a command that asked (`sudo`, `git`, `ssh`). It goes only to
+    /// that command, never to the model.
+    SubmitPassword {
+        text: String,
+    },
+    /// The user does not want to give the password.
+    CancelPassword,
     SetSetting {
         binding: String,
         value: Value,
@@ -523,6 +530,20 @@ impl AppCore {
                     self.hooks.changed();
                     self.agent_execute(&p.conversation_id, p.call).await;
                 }
+            }
+            Action::SubmitPassword { text } => {
+                let host = self.state.lock().unwrap().agent.host.clone();
+                if let Some(host) = host {
+                    host.answer_password(Some(text));
+                }
+                self.hooks.changed();
+            }
+            Action::CancelPassword => {
+                let host = self.state.lock().unwrap().agent.host.clone();
+                if let Some(host) = host {
+                    host.answer_password(None);
+                }
+                self.hooks.changed();
             }
             Action::DenyTool => {
                 let pending = self.state.lock().unwrap().agent.pending.take();
@@ -2643,22 +2664,22 @@ impl AppCore {
                 "{text}\n\nWork notes (done by Meo AI for this request before you answer; build on them, do not repeat them step by step):\n{work}"
             ));
         }
-        // Work with an open folder: tell the model how to ask for tools (every round, the saved
-        // history does not carry these instructions).
-        let tools_root = {
+        // Chat and Work alike: tell the model how to ask for tools (every round, the saved history
+        // does not carry these instructions). An open folder gives the file and command tools, the
+        // search switch gives web search, which works on every device.
+        let (tools_root, web, subagents) = {
             let s = self.state.lock().unwrap();
-            if s.route == "work" {
-                s.agent.host.as_ref().map(|h| h.root().to_owned())
-            } else {
-                None
-            }
+            (
+                s.agent.host.as_ref().map(|h| h.root().to_owned()),
+                pref_bool(&s, "chat.web_search", false),
+                pref_bool(&s, "chat.subagents", false),
+            )
         };
-        if let Some(root) = tools_root {
+        if tools_root.is_some() || web {
             let current = request["prompt"].as_str().unwrap_or_default().to_owned();
-            let subagents = pref_bool(&self.state.lock().unwrap(), "chat.subagents", false);
             request["prompt"] = json!(format!(
                 "{}\n\n{current}",
-                agent::tool_instructions(&root, subagents)
+                agent::tool_instructions(tools_root.as_deref(), subagents, web)
             ));
         }
         let route_label =
@@ -3143,6 +3164,37 @@ impl AppCore {
         }
     }
 
+    // ---- web search as a tool -----------------------------------------------------------------
+
+    /// A search through the Meo API; the model gets titles, links and snippets as data.
+    async fn run_web_search(&self, query: &str) -> agent::Outcome {
+        let found = self
+            .call(|api, t| {
+                let query = query.to_owned();
+                async move { api.web_search(&t, &query).await }
+            })
+            .await;
+        match found {
+            Ok(results) if !results.is_empty() => agent::Outcome::done(
+                results
+                    .iter()
+                    .take(6)
+                    .map(|r| {
+                        format!(
+                            "- {} ({}): {}",
+                            r["title"].as_str().unwrap_or_default(),
+                            r["url"].as_str().unwrap_or_default(),
+                            r["snippet"].as_str().unwrap_or_default()
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            ),
+            Ok(_) => agent::Outcome::done("no results"),
+            Err(e) => agent::Outcome::fail(format!("the search failed: {e}")),
+        }
+    }
+
     // ---- sub-agents ---------------------------------------------------------------------------
 
     /// A read-only helper with a fresh context: its own prompt and notes, its own round cap, the
@@ -3351,7 +3403,7 @@ impl AppCore {
                 {
                     Some(h)
                 }
-                _ => Host::open(&path).ok(),
+                _ => Host::open(&path).ok().map(|h| self.adopt_host(h)),
             }
         });
         if let Some(h) = &host {
@@ -3369,8 +3421,7 @@ impl AppCore {
     /// The reply asks for a tool and this device can run it (Work, an open folder, under the cap).
     fn agent_wants(&self, reply: &str) -> bool {
         let s = self.state.lock().unwrap();
-        s.route == "work"
-            && s.agent.host.is_some()
+        (s.agent.host.is_some() || pref_bool(&s, "chat.web_search", false))
             && s.agent.round < MAX_TOOL_ROUNDS
             && !agent::parse_tool_calls(reply).is_empty()
     }
@@ -3509,15 +3560,20 @@ impl AppCore {
             let s = self.state.lock().unwrap();
             (s.agent.host.clone(), s.agent.round)
         };
-        let Some(host) = host else {
-            return self.agent_refuse(id, call, "no folder is open").await;
-        };
+        let needs_folder = !matches!(call.tool, agent::Tool::WebSearch { .. });
+        if needs_folder && host.is_none() {
+            return self
+                .agent_refuse(id, call, "no folder is open on this device")
+                .await;
+        }
         let step_id = format!("tool{round}");
         let title = call.tool.summary();
         self.step(&step_id, &title, "Running…", "running", vec![]);
-        let outcome = match &call.tool {
-            agent::Tool::Subagent { task } => self.run_subagent(&host, task).await,
-            tool => host.run(tool.clone()).await,
+        let outcome = match (&call.tool, host) {
+            (agent::Tool::WebSearch { query }, _) => self.run_web_search(query).await,
+            (agent::Tool::Subagent { task }, Some(host)) => self.run_subagent(&host, task).await,
+            (tool, Some(host)) => host.run(tool.clone()).await,
+            (_, None) => agent::Outcome::fail("no folder is open on this device"),
         };
         let first_line: String = outcome
             .text
@@ -3571,6 +3627,13 @@ impl AppCore {
         }
     }
 
+    /// A newly opened folder tells the app when a command waits for a password.
+    fn adopt_host(&self, host: Host) -> Host {
+        let hooks = self.hooks.clone();
+        host.set_notifier(Arc::new(move || hooks.changed()));
+        host
+    }
+
     /// The open folder; after a restart it is opened again from the saved setting (which also brings
     /// back the last checkpoint, so `/rewind` works).
     fn ensure_host(&self) -> Option<Host> {
@@ -3585,7 +3648,7 @@ impl AppCore {
             .get("work.workspace")
             .and_then(Value::as_str)
             .map(str::to_owned)?;
-        let host = Host::open(&path).ok()?;
+        let host = self.adopt_host(Host::open(&path).ok()?);
         self.update(|s| s.agent.host = Some(host.clone()));
         Some(host)
     }
@@ -3603,7 +3666,7 @@ impl AppCore {
                 },
             );
         }
-        match Host::open(path) {
+        match Host::open(path).map(|h| self.adopt_host(h)) {
             Ok(host) => {
                 let root = host.root().to_owned();
                 self.update(|s| s.agent.host = Some(host));
@@ -3658,8 +3721,7 @@ impl AppCore {
     /// The message changed files and there is a check to run (and tries left).
     fn agent_should_verify(&self) -> bool {
         let s = self.state.lock().unwrap();
-        s.route == "work"
-            && s.agent.verifies < MAX_VERIFY_TRIES
+        s.agent.verifies < MAX_VERIFY_TRIES
             && s.agent.host.as_ref().is_some_and(|h| h.changed() > 0)
             && has_verify_command(&s)
     }
@@ -4021,7 +4083,7 @@ impl AppCore {
                 "text": d.text,
                 "input": (d.kind == "prompt").then(|| json!({ "value": d.value, "placeholder": if d.multiline { "Message" } else { "Title" }, "multiline": d.multiline })),
                 "actions": d.actions,
-            })),
+            })).or_else(|| password_dialog(&s)),
             "notice": s.notice.as_ref().map(|(kind, text)| {
                 let extra = s.notice_action.as_ref().filter(|(t, _, _)| t == text);
                 json!({
@@ -4573,7 +4635,7 @@ const PERMISSIONS: &[(&str, &str)] = &[
     ("ask", "Ask every time"),
     ("low", "Allow low risk"),
     ("smart", "Auto choose"),
-    ("all", "Allow all"),
+    ("all", "Full access"),
 ];
 const THINKING: &[(&str, &str)] = &[
     ("low", "Low"),
@@ -5360,6 +5422,21 @@ fn conversation_page(s: &State) -> Value {
             ],
         }))),
     })
+}
+
+/// The dialog of a command that waits for a password: a masked field, answered by the user only.
+fn password_dialog(s: &State) -> Option<Value> {
+    let prompt = s.agent.host.as_ref()?.pending_password()?;
+    Some(json!({
+        "kind": "prompt",
+        "title": "Password needed",
+        "text": format!("{}\nWhat you type goes only to the command that asked for it. The assistant never sees it.", if prompt.is_empty() { "A command asks for your password." } else { &prompt }),
+        "input": { "value": "", "placeholder": "Password", "multiline": false, "secret": true },
+        "actions": [
+            input_button("Continue", "primary", json!({ "type": "submit_password" })),
+            button("Cancel", "secondary", json!({ "type": "cancel_password" })),
+        ],
+    }))
 }
 
 /// What the approval card says: the action, why it asks, and the diff of a write.
@@ -7048,6 +7125,12 @@ mod tests {
                             json!({ "text": reply })
                         );
                         (200, "text/event-stream", frame)
+                    } else if path == "/v1/search/web" {
+                        (
+                            200,
+                            "application/json",
+                            json!({ "results": [{ "title": "Rust 1.99", "url": "https://example.test/rust", "snippet": "Released in October." }] }).to_string(),
+                        )
                     } else if path.ends_with("/context") {
                         let kept = kept.lock().unwrap();
                         let through = saved.lock().unwrap().last().cloned();
@@ -7288,11 +7371,14 @@ mod tests {
     }
 
     #[test]
-    fn hard_rules_stop_a_command_even_at_allow_all() {
+    fn hard_rules_stop_a_destructive_command_below_full_access_and_full_access_runs_it() {
         let folder = temp_folder("hard");
+        std::fs::create_dir_all(folder.join("victim")).unwrap();
+        std::fs::write(folder.join("victim/x.txt"), "x").unwrap();
+        // Below full access the wipe of the root is refused outright.
         let rm = "```meo-tool\n{\"tool\":\"run\",\"args\":{\"command\":\"rm -rf /\"}}\n```";
         let api = fake_api(vec![rm, "Understood."]);
-        let c = work_core(&api, &folder, "all");
+        let c = work_core(&api, &folder, "low");
         run(
             &c,
             Action::Send {
@@ -7305,11 +7391,23 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("refused: that command can destroy the machine"));
+        // Full access has no limits: an `rm -rf` (which lower levels ask about) just runs.
+        let del = "```meo-tool\n{\"tool\":\"run\",\"args\":{\"command\":\"rm -rf victim\"}}\n```";
+        let api = fake_api(vec![del, "Deleted."]);
+        let c = work_core(&api, &folder, "all");
+        run(
+            &c,
+            Action::Send {
+                text: "remove victim".into(),
+            },
+        );
+        assert!(!folder.join("victim").exists());
+        assert!(c.view()["page"]["consent"].is_null());
         let _ = std::fs::remove_dir_all(&folder);
     }
 
     #[test]
-    fn the_loop_stops_at_the_round_cap_and_chat_never_runs_tools() {
+    fn the_loop_stops_at_the_round_cap_and_chat_runs_the_same_tools() {
         let folder = temp_folder("cap");
         std::fs::write(folder.join("notes.txt"), "x\n").unwrap();
         let api = fake_api(vec![READ; 40]);
@@ -7324,10 +7422,34 @@ mod tests {
         assert_eq!(api.streams.lock().unwrap().len(), MAX_TOOL_ROUNDS + 2);
         assert_eq!(api.compacts.lock().unwrap().len(), 1);
 
-        // In a chat (not Work) a tool block is only text.
-        let api = fake_api(vec![READ]);
+        // Chat uses the same tools: with a folder open a tool block in a chat answer runs too.
+        let api = fake_api(vec![READ, FINISH]);
         let c = work_core(&api, &folder, "all");
         c.update(|s| s.route = "chat".into());
+        run(
+            &c,
+            Action::Send {
+                text: "what is in notes.txt".into(),
+            },
+        );
+        let streams = api.streams.lock().unwrap().clone();
+        assert!(streams.len() >= 2);
+        assert!(streams[0]["prompt"]
+            .as_str()
+            .unwrap()
+            .contains("You can use tools"));
+        assert!(streams[1]["prompt"]
+            .as_str()
+            .unwrap()
+            .contains("Tool result for t1 (read_file)"));
+        // Without a folder and without the search switch there are no tools to offer.
+        let api = fake_api(vec![READ]);
+        let c = work_core(&api, &folder, "all");
+        c.update(|s| {
+            s.route = "chat".into();
+            s.agent.host = None;
+            s.prefs.remove("work.workspace");
+        });
         run(
             &c,
             Action::Send {
@@ -7335,11 +7457,10 @@ mod tests {
             },
         );
         let streams = api.streams.lock().unwrap().clone();
-        assert!(!streams.is_empty());
-        assert!(streams.iter().all(|b| {
-            let p = b["prompt"].as_str().unwrap_or_default();
-            !p.contains("Tool result for") && !p.contains("You can work in the folder")
-        }));
+        assert!(streams.iter().all(|b| !b["prompt"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("You can use tools")));
         let _ = std::fs::remove_dir_all(&folder);
     }
 
@@ -7799,6 +7920,143 @@ mod tests {
             std::fs::read_to_string(folder.join("notes.txt")).unwrap(),
             "todo\n"
         );
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    const SEARCH: &str =
+        "```meo-tool\n{\"tool\":\"web_search\",\"args\":{\"query\":\"rust 1.99 release\"}}\n```";
+
+    #[test]
+    fn chat_searches_the_web_as_a_tool_without_any_folder() {
+        let folder = temp_folder("web");
+        let api = fake_api(vec![SEARCH, "Rust 1.99 came out in October."]);
+        let c = work_core(&api, &folder, "smart");
+        c.update(|s| {
+            s.route = "chat".into();
+            s.agent.host = None;
+            s.prefs.remove("work.workspace");
+            s.prefs.insert("chat.web_search".into(), json!(true));
+        });
+        run(
+            &c,
+            Action::Send {
+                text: "when did rust 1.99 come out".into(),
+            },
+        );
+        let streams = api.streams.lock().unwrap().clone();
+        assert!(streams.len() >= 2);
+        let first = streams[0]["prompt"].as_str().unwrap();
+        assert!(
+            first.contains("web_search {query}") && !first.contains("read_file"),
+            "{first}"
+        );
+        let second = streams[1]["prompt"].as_str().unwrap();
+        assert!(
+            second.contains("Tool result for t1 (web_search)")
+                && second.contains("Rust 1.99 (https://example.test/rust)"),
+            "{second}"
+        );
+        assert_eq!(texts(&c).last().unwrap(), "Rust 1.99 came out in October.");
+        // A file tool on a device without a folder is refused, not run.
+        let api = fake_api(vec![READ, "No folder here."]);
+        let c = work_core(&api, &folder, "smart");
+        c.update(|s| {
+            s.agent.host = None;
+            s.prefs.remove("work.workspace");
+            s.prefs.insert("chat.web_search".into(), json!(true));
+        });
+        run(
+            &c,
+            Action::Send {
+                text: "read notes.txt".into(),
+            },
+        );
+        let streams = api.streams.lock().unwrap().clone();
+        assert!(streams[1]["prompt"]
+            .as_str()
+            .unwrap()
+            .contains("refused: no folder is open on this device"));
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    const ASK: &str = "```meo-tool\n{\"tool\":\"run\",\"args\":{\"command\":\"p=$(\\\"$SUDO_ASKPASS\\\" 'Password for me:'); echo \\\"typed: $p\\\"\"}}\n```";
+
+    /// Waits for the password dialog of the view, then answers it like the user would.
+    fn answer_dialog(
+        c: &AppCore,
+        action: fn(String) -> Action,
+        text: &str,
+    ) -> std::thread::JoinHandle<Value> {
+        let (core, text) = (c.clone(), text.to_owned());
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            for _ in 0..2000 {
+                let dialog = core.view()["dialog"].clone();
+                if dialog["title"] == "Password needed" {
+                    rt.block_on(core.dispatch(action(text)));
+                    return dialog;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            Value::Null
+        })
+    }
+
+    #[test]
+    fn a_command_that_needs_a_password_asks_the_user_in_a_masked_dialog_and_the_model_never_sees_it(
+    ) {
+        crate::cloud::host::testing::use_test_askpass();
+        let folder = temp_folder("password");
+        let api = fake_api(vec![ASK, "Done."]);
+        let c = work_core(&api, &folder, "all");
+        let user = answer_dialog(&c, |text| Action::SubmitPassword { text }, "correct horse");
+        run(
+            &c,
+            Action::Send {
+                text: "update the system".into(),
+            },
+        );
+        let dialog = user.join().unwrap();
+        // The user saw a password field with the command's own question.
+        assert_eq!(dialog["input"]["secret"], true);
+        assert!(dialog["text"]
+            .as_str()
+            .unwrap()
+            .contains("Password for me:"));
+        assert_eq!(dialog["actions"][0]["action"]["type"], "submit_password");
+        assert_eq!(dialog["actions"][0]["withInput"], true);
+        // The command got it, the model only ever saw it scrubbed.
+        let streams = api.streams.lock().unwrap().clone();
+        let result = streams[1]["prompt"].as_str().unwrap();
+        assert!(result.contains("typed: ••••"), "{result}");
+        assert!(!result.contains("correct horse"));
+        assert!(streams
+            .iter()
+            .all(|b| !b.to_string().contains("correct horse")));
+        assert!(c.view()["dialog"].is_null());
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn cancelling_the_password_dialog_tells_the_command_no() {
+        crate::cloud::host::testing::use_test_askpass();
+        let folder = temp_folder("password2");
+        let ask = "```meo-tool\n{\"tool\":\"run\",\"args\":{\"command\":\"\\\"$SUDO_ASKPASS\\\" 'Password:' >/dev/null && echo got-it || echo refused-by-user\"}}\n```";
+        let api = fake_api(vec![ask, "Understood, no password."]);
+        let c = work_core(&api, &folder, "all");
+        let user = answer_dialog(&c, |_| Action::CancelPassword, "");
+        run(
+            &c,
+            Action::Send {
+                text: "do the thing".into(),
+            },
+        );
+        user.join().unwrap();
+        let streams = api.streams.lock().unwrap().clone();
+        assert!(streams[1]["prompt"]
+            .as_str()
+            .unwrap()
+            .contains("refused-by-user"));
         let _ = std::fs::remove_dir_all(&folder);
     }
 }
