@@ -2678,6 +2678,23 @@ impl AppCore {
                 Err(_) => self.step("search", "Web search", &query, "error", vec![]),
             }
         }
+        // The server leaves the saved prompt out of the transcript only when it equals the request's
+        // prompt. A reworded prompt (work notes, tool instructions) must already be saved when consent
+        // is prepared, or prepare and stream would see different transcripts and the hash would not match.
+        let mut save_prompt = save_prompt;
+        if save_prompt && request["prompt"].as_str() != Some(text.as_str()) {
+            let (id, user) = (conversation_id.clone(), text.clone());
+            let saved = self
+                .call(|api, t| {
+                    let (id, user) = (id.clone(), user.clone());
+                    async move { api.append_message(&t, &id, "user", &user).await }
+                })
+                .await;
+            if let Err(e) = saved {
+                return self.notice("error", e.to_string());
+            }
+            save_prompt = false;
+        }
         let consent = match self
             .call(|api, t| {
                 let request = request.clone();
@@ -6572,8 +6589,50 @@ mod tests {
                         .next()
                         .unwrap_or_default()
                         .to_owned();
+                    // Like the real API: the consent covers the stored transcript plus the request's prompt,
+                    // and the saved prompt is dropped from the transcript only when it equals the request's.
+                    let payload_hash = |kept: &Vec<Value>, prompt: &str| {
+                        use std::hash::{Hash, Hasher};
+                        let mut lines: Vec<String> = kept
+                            .iter()
+                            .map(|m| {
+                                format!(
+                                    "{}: {}",
+                                    m["role"].as_str().unwrap_or_default(),
+                                    crate::cloud::api::content_text(&m["content"])
+                                )
+                            })
+                            .collect();
+                        if lines.last().map(String::as_str)
+                            == Some(&format!("user: {}", prompt.trim()))
+                        {
+                            lines.pop();
+                        }
+                        let mut h = std::collections::hash_map::DefaultHasher::new();
+                        (lines, prompt).hash(&mut h);
+                        format!("{:x}", h.finish())
+                    };
                     let (status, content_type, payload) = if path == "/v1/chat/prepare" {
-                        (200, "application/json", json!({ "consent": { "requestId": "r", "payloadSha256": "x", "provider": "fake", "model": "m" } }).to_string())
+                        let hash = payload_hash(
+                            &kept.lock().unwrap(),
+                            body["prompt"].as_str().unwrap_or_default(),
+                        );
+                        (200, "application/json", json!({ "consent": { "requestId": "r", "payloadSha256": hash, "provider": "fake", "model": "m" } }).to_string())
+                    } else if path == "/v1/chat/stream"
+                        && body["consent"]["payloadSha256"].as_str()
+                            != Some(
+                                payload_hash(
+                                    &kept.lock().unwrap(),
+                                    body["prompt"].as_str().unwrap_or_default(),
+                                )
+                                .as_str(),
+                            )
+                    {
+                        (
+                            409,
+                            "application/json",
+                            json!({ "error": "consent_request_mismatch" }).to_string(),
+                        )
                     } else if path == "/v1/chat/stream" {
                         let mut seen = seen.lock().unwrap();
                         let reply = replies
