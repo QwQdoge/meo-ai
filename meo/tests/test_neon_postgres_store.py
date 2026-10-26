@@ -1,3 +1,4 @@
+import asyncio
 import unittest
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
@@ -11,6 +12,7 @@ class FakePool:
         self.row = row
         self.value = value
         self.calls = []
+        self.close_calls = 0
 
     async def fetchrow(self, query, *args):
         self.calls.append(("fetchrow", query, args))
@@ -36,8 +38,62 @@ class FakePool:
         self.calls.append(("execute", query, args))
         return "INSERT 0 1"
 
+    async def close(self):
+        self.close_calls += 1
+
 
 class NeonPostgresStoreTests(unittest.IsolatedAsyncioTestCase):
+    async def test_concurrent_pool_initialization_creates_one_pool(self):
+        calls = 0
+        started = asyncio.Event()
+        release = asyncio.Event()
+        pool = FakePool()
+
+        async def create_pool(**kwargs):
+            nonlocal calls
+            calls += 1
+            started.set()
+            await release.wait()
+            return pool
+
+        fake_asyncpg = SimpleNamespace(create_pool=create_pool)
+        with patch.dict("sys.modules", {"asyncpg": fake_asyncpg}):
+            store = NeonPostgresStore("postgresql://local/test")
+            first = asyncio.create_task(store._get_pool())
+            await started.wait()
+            second = asyncio.create_task(store._get_pool())
+            await asyncio.sleep(0)
+            release.set()
+            results = await asyncio.gather(first, second)
+
+        self.assertEqual(calls, 1)
+        self.assertIs(results[0], pool)
+        self.assertIs(results[1], pool)
+
+    async def test_close_waits_for_pool_initialization(self):
+        started = asyncio.Event()
+        release = asyncio.Event()
+        pool = FakePool()
+
+        async def create_pool(**kwargs):
+            started.set()
+            await release.wait()
+            return pool
+
+        fake_asyncpg = SimpleNamespace(create_pool=create_pool)
+        with patch.dict("sys.modules", {"asyncpg": fake_asyncpg}):
+            store = NeonPostgresStore("postgresql://local/test")
+            initializing = asyncio.create_task(store._get_pool())
+            await started.wait()
+            closing = asyncio.create_task(store.close())
+            await asyncio.sleep(0)
+            release.set()
+            await initializing
+            await closing
+
+        self.assertEqual(pool.close_calls, 1)
+        self.assertIsNone(store._pool)
+
     async def test_pool_initial_size_remains_one_with_asyncpg_032(self):
         captured = {}
 
