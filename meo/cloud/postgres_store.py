@@ -39,13 +39,18 @@ class NeonPostgresStore:
                         "jsonb", schema="pg_catalog", encoder=json.dumps, decoder=json.loads,
                     )
 
+                ssl_context = ssl.create_default_context()
+                # asyncpg 0.32 requires the PostgreSQL ALPN protocol when a
+                # caller supplies its own SSL context.
+                ssl_context.set_alpn_protocols(["postgresql"])
                 self._pool = await asyncpg.create_pool(
                     dsn=self._database_url,
-                    ssl=ssl.create_default_context(),
+                    ssl=ssl_context,
                     server_settings={"role": "meo_ai_limited"},
-                    # asyncpg 0.32 separates initial pool size from its minimum floor.
+                    # Preserve the old behavior: one startup connection, but no
+                    # permanently maintained idle connection floor.
                     init_size=1,
-                    min_size=1,
+                    min_size=0,
                     max_size=10,
                     command_timeout=15,
                     init=initialize,
