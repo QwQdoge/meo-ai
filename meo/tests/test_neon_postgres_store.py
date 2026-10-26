@@ -2,7 +2,7 @@ import asyncio
 import unittest
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from meo.cloud.postgres_store import NeonPostgresStore
 
@@ -143,20 +143,25 @@ class NeonPostgresStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(pool.close_calls, 2)
         self.assertIsNone(store._pool)
 
-    async def test_pool_initial_size_remains_one_with_asyncpg_032(self):
+    async def test_pool_settings_preserve_asyncpg_031_behavior_and_tls_alpn(self):
         captured = {}
+        ssl_context = Mock()
 
         async def create_pool(**kwargs):
             captured.update(kwargs)
             return FakePool()
 
         fake_asyncpg = SimpleNamespace(create_pool=create_pool)
-        with patch.dict("sys.modules", {"asyncpg": fake_asyncpg}):
-            store = NeonPostgresStore("postgresql://local/test")
-            await store._get_pool()
+        with patch("meo.cloud.postgres_store.ssl.create_default_context", return_value=ssl_context) as create_ssl:
+            with patch.dict("sys.modules", {"asyncpg": fake_asyncpg}):
+                store = NeonPostgresStore("postgresql://local/test")
+                await store._get_pool()
 
+        create_ssl.assert_called_once_with()
+        ssl_context.set_alpn_protocols.assert_called_once_with(["postgresql"])
+        self.assertIs(captured["ssl"], ssl_context)
         self.assertEqual(captured["init_size"], 1)
-        self.assertEqual(captured["min_size"], 1)
+        self.assertEqual(captured["min_size"], 0)
         self.assertEqual(captured["max_size"], 10)
 
     def test_connection_requires_a_postgres_url(self):
