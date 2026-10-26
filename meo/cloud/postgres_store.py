@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import ssl
 from datetime import datetime, timezone
@@ -14,32 +15,47 @@ class NeonPostgresStore:
             raise ValueError("MEO_DATABASE_URL must be a PostgreSQL connection URL")
         self._database_url = database_url
         self._pool = pool
+        self._pool_lock = asyncio.Lock()
+        self._closing = False
+        self._closed = False
 
     async def _get_pool(self):
-        if self._pool is None:
-            try:
-                import asyncpg
-            except ImportError as exc:
-                raise RuntimeError("Neon persistence requires asyncpg") from exc
+        # Always check and return the pool under the same lock used by close().
+        # A fast path outside the lock could hand out a pool while shutdown starts.
+        async with self._pool_lock:
+            if self._closed or self._closing:
+                raise RuntimeError("Neon PostgreSQL store is closing or closed")
+            if self._pool is None:
+                try:
+                    import asyncpg
+                except ImportError as exc:
+                    raise RuntimeError("Neon persistence requires asyncpg") from exc
 
-            async def initialize(connection):
-                await connection.set_type_codec(
-                    "json", schema="pg_catalog", encoder=json.dumps, decoder=json.loads,
-                )
-                await connection.set_type_codec(
-                    "jsonb", schema="pg_catalog", encoder=json.dumps, decoder=json.loads,
-                )
+                async def initialize(connection):
+                    await connection.set_type_codec(
+                        "json", schema="pg_catalog", encoder=json.dumps, decoder=json.loads,
+                    )
+                    await connection.set_type_codec(
+                        "jsonb", schema="pg_catalog", encoder=json.dumps, decoder=json.loads,
+                    )
 
-            self._pool = await asyncpg.create_pool(
-                dsn=self._database_url,
-                ssl=ssl.create_default_context(),
-                server_settings={"role": "meo_ai_limited"},
-                min_size=1,
-                max_size=10,
-                command_timeout=15,
-                init=initialize,
-            )
-        return self._pool
+                ssl_context = ssl.create_default_context()
+                # asyncpg 0.32 requires PostgreSQL ALPN when a caller supplies
+                # an SSL context for direct TLS connections.
+                ssl_context.set_alpn_protocols(["postgresql"])
+                self._pool = await asyncpg.create_pool(
+                    dsn=self._database_url,
+                    ssl=ssl_context,
+                    server_settings={"role": "meo_ai_limited"},
+                    # Preserve the old behavior: one startup connection, but no
+                    # permanently maintained idle connection floor.
+                    init_size=1,
+                    min_size=0,
+                    max_size=10,
+                    command_timeout=15,
+                    init=initialize,
+                )
+            return self._pool
 
     @staticmethod
     def _rows(records) -> tuple[dict, ...]:
@@ -321,9 +337,17 @@ class NeonPostgresStore:
         return False
 
     async def close(self) -> None:
-        if self._pool is not None:
-            await self._pool.close()
+        async with self._pool_lock:
+            if self._closed:
+                return
+            # Keep the store unavailable if close is cancelled or fails. A later
+            # close() call can retry, but new requests cannot reuse a closing pool.
+            self._closing = True
+            if self._pool is not None:
+                await self._pool.close()
             self._pool = None
+            self._closed = True
+            self._closing = False
 
     @staticmethod
     def _sha256_hex(value: str) -> None:

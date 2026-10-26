@@ -1,5 +1,8 @@
+import asyncio
 import unittest
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 from meo.cloud.postgres_store import NeonPostgresStore
 
@@ -9,6 +12,7 @@ class FakePool:
         self.row = row
         self.value = value
         self.calls = []
+        self.close_calls = 0
 
     async def fetchrow(self, query, *args):
         self.calls.append(("fetchrow", query, args))
@@ -34,8 +38,132 @@ class FakePool:
         self.calls.append(("execute", query, args))
         return "INSERT 0 1"
 
+    async def close(self):
+        self.close_calls += 1
+
 
 class NeonPostgresStoreTests(unittest.IsolatedAsyncioTestCase):
+    async def test_concurrent_pool_initialization_creates_one_pool(self):
+        calls = 0
+        started = asyncio.Event()
+        release = asyncio.Event()
+        pool = FakePool()
+
+        async def create_pool(**kwargs):
+            nonlocal calls
+            calls += 1
+            started.set()
+            await release.wait()
+            return pool
+
+        fake_asyncpg = SimpleNamespace(create_pool=create_pool)
+        with patch.dict("sys.modules", {"asyncpg": fake_asyncpg}):
+            store = NeonPostgresStore("postgresql://local/test")
+            first = asyncio.create_task(store._get_pool())
+            await started.wait()
+            second = asyncio.create_task(store._get_pool())
+            await asyncio.sleep(0)
+            release.set()
+            results = await asyncio.gather(first, second)
+
+        self.assertEqual(calls, 1)
+        self.assertIs(results[0], pool)
+        self.assertIs(results[1], pool)
+
+    async def test_close_waits_for_pool_initialization(self):
+        started = asyncio.Event()
+        release = asyncio.Event()
+        pool = FakePool()
+
+        async def create_pool(**kwargs):
+            started.set()
+            await release.wait()
+            return pool
+
+        fake_asyncpg = SimpleNamespace(create_pool=create_pool)
+        with patch.dict("sys.modules", {"asyncpg": fake_asyncpg}):
+            store = NeonPostgresStore("postgresql://local/test")
+            initializing = asyncio.create_task(store._get_pool())
+            await started.wait()
+            closing = asyncio.create_task(store.close())
+            await asyncio.sleep(0)
+            release.set()
+            await initializing
+            await closing
+
+        self.assertEqual(pool.close_calls, 1)
+        self.assertIsNone(store._pool)
+
+    async def test_new_pool_requests_wait_for_close_and_then_fail(self):
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        class BlockingClosePool(FakePool):
+            async def close(self):
+                self.close_calls += 1
+                started.set()
+                await release.wait()
+
+        pool = BlockingClosePool()
+        store = NeonPostgresStore("postgresql://local/test", pool=pool)
+        closing = asyncio.create_task(store.close())
+        await started.wait()
+        request = asyncio.create_task(store._get_pool())
+        await asyncio.sleep(0)
+        self.assertFalse(request.done())
+
+        release.set()
+        await closing
+        with self.assertRaisesRegex(RuntimeError, "closed"):
+            await request
+
+    async def test_cancelled_close_blocks_reuse_and_can_be_retried(self):
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        class BlockingClosePool(FakePool):
+            async def close(self):
+                self.close_calls += 1
+                started.set()
+                await release.wait()
+
+        pool = BlockingClosePool()
+        store = NeonPostgresStore("postgresql://local/test", pool=pool)
+        closing = asyncio.create_task(store.close())
+        await started.wait()
+        closing.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await closing
+
+        with self.assertRaisesRegex(RuntimeError, "closing or closed"):
+            await store._get_pool()
+
+        release.set()
+        await store.close()
+        self.assertEqual(pool.close_calls, 2)
+        self.assertIsNone(store._pool)
+
+    async def test_pool_settings_preserve_asyncpg_031_behavior(self):
+        captured = {}
+        ssl_context = Mock()
+
+        async def create_pool(**kwargs):
+            captured.update(kwargs)
+            return FakePool()
+
+        fake_asyncpg = SimpleNamespace(create_pool=create_pool)
+        with patch("meo.cloud.postgres_store.ssl.create_default_context", return_value=ssl_context) as create_ssl:
+            with patch.dict("sys.modules", {"asyncpg": fake_asyncpg}):
+                store = NeonPostgresStore("postgresql://local/test")
+                await store._get_pool()
+
+        create_ssl.assert_called_once_with()
+        ssl_context.set_alpn_protocols.assert_called_once_with(["postgresql"])
+        self.assertIs(captured["ssl"], ssl_context)
+        self.assertEqual(captured["init_size"], 1)
+        self.assertEqual(captured["min_size"], 0)
+        self.assertEqual(captured["max_size"], 10)
+
     def test_connection_requires_a_postgres_url(self):
         with self.assertRaisesRegex(ValueError, "PostgreSQL"):
             NeonPostgresStore("https://database.example")
