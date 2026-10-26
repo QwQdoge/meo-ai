@@ -158,6 +158,7 @@ class NeonPostgresStoreTests(unittest.IsolatedAsyncioTestCase):
                 await store._get_pool()
 
         create_ssl.assert_called_once_with()
+        ssl_context.set_alpn_protocols.assert_called_once_with(["postgresql"])
         self.assertIs(captured["ssl"], ssl_context)
         self.assertEqual(captured["init_size"], 1)
         self.assertEqual(captured["min_size"], 0)
