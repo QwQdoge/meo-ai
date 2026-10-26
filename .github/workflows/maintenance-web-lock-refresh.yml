@@ -1,4 +1,4 @@
-name: Temporary web client lock refresh
+name: Temporary web client lock refresh v2
 on:
   push:
     branches:
