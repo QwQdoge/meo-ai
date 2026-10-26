@@ -2,6 +2,33 @@
 
 Status: research + adoption plan (2026-10-23). Nothing here is implemented yet unless marked **have**.
 
+## Implemented 2026-10-26 (Work tool loop, desktop)
+
+Work can now work in a folder on the device, Codex-style: the model answers, may end the answer with one
+```` ```meo-tool ```` block, the harness gates it, runs it on the device, and sends the result back as the next
+message until an answer has no tool block (cap: 12 calls per user message). Code: `core-rs/src/cloud/agent.rs`
+(protocol, permission gate, approver, patch parsing), `workspace.rs` (running the tools, checkpoint),
+`host.rs` (non-blocking run, wasm stub), and the loop in `app.rs` (`agent_*`).
+
+- **Folder:** `/workspace <folder>` (desktop only; the web build has no folder). `/rewind` restores the files the
+  current message changed (in-memory checkpoint per user message).
+- **Tools:** `read_file`, `list_dir`, `search`, `search_replace` (exact, must match once), `apply_patch` (Codex
+  envelope; all-or-nothing), `run` (shell in the folder, timeout, bounded output). Paths must stay inside the folder,
+  symlinks included.
+- **Permission (slice 3):** the composer's four levels now govern tools. `ask`: every call asks; `low`: reads run,
+  writes/commands ask; `smart` (**default**): reads run, writes/commands go to a separate approver call (the router
+  role; allow / ask / deny + reason, unparsable = ask; it never sees tool output); `all`: everything runs. Hard rules
+  run first and cannot be overridden: catastrophic commands are denied; `sudo`, network fetches, `git push`,
+  `rm -rf`, paths outside the folder and credential paths always ask the user. A held call is shown on the consent
+  card with Allow / Don't allow; a refusal is a tool result, so the model adapts.
+- **Tool loop (slice 4), local tools only:** web search is still planner-driven, not a mid-turn tool.
+- **Checks:** tool results are marked as data, never instructions; the judge scores only the final answer.
+
+Not done yet: context budget / `/compact` (slice 2), subagents (6), an enforced verification step (7: the model can
+run tests with `run`, the judge scores the answer, but nothing requires a passing check), a diff view before an edit,
+disk-persisted checkpoints, and showing tool steps for answers loaded from another device's loop.
+
+
 ## Sources and what we do not use
 
 Used: the Codex CLI project (open source, Apache-2.0) and write-ups of its Rust core; Anthropic's public Claude Code documentation (glossary, permission modes, compaction, subagents, checkpoints, hooks); open-source agents (OpenCode, Cline, Aider) for edit formats and loops; the academic taxonomy of 13 open-source coding agents (arXiv 2608.10934).

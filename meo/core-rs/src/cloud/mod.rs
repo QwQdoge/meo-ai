@@ -5,9 +5,11 @@
 //! access, local caching, navigation hierarchy and page content are decided
 //! here, so a change in the core reaches every client without UI edits.
 
+pub mod agent;
 pub mod api;
 pub mod app;
 pub mod auth;
+pub mod host;
 pub mod locale;
 pub mod manifest;
 pub mod orchestration;
@@ -16,6 +18,8 @@ pub mod router;
 pub mod storage;
 #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
 pub mod web;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod workspace;
 
 pub use app::{Action, AppCore, PlatformHooks};
 pub use auth::{OAuthConfig, Session};
