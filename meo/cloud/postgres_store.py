@@ -16,13 +16,15 @@ class NeonPostgresStore:
         self._database_url = database_url
         self._pool = pool
         self._pool_lock = asyncio.Lock()
+        self._closing = False
+        self._closed = False
 
     async def _get_pool(self):
-        if self._pool is not None:
-            return self._pool
+        # Always check and return the pool under the same lock used by close().
+        # A fast path outside the lock could hand out a pool while shutdown starts.
         async with self._pool_lock:
-            # Recheck under the same lock as registration so concurrent first
-            # requests cannot create and leak multiple connection pools.
+            if self._closed or self._closing:
+                raise RuntimeError("Neon PostgreSQL store is closing or closed")
             if self._pool is None:
                 try:
                     import asyncpg
@@ -331,9 +333,16 @@ class NeonPostgresStore:
 
     async def close(self) -> None:
         async with self._pool_lock:
+            if self._closed:
+                return
+            # Keep the store unavailable if close is cancelled or fails. A later
+            # close() call can retry, but new requests cannot reuse a closing pool.
+            self._closing = True
             if self._pool is not None:
                 await self._pool.close()
-                self._pool = None
+            self._pool = None
+            self._closed = True
+            self._closing = False
 
     @staticmethod
     def _sha256_hex(value: str) -> None:
