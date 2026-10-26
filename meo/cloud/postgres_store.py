@@ -34,6 +34,8 @@ class NeonPostgresStore:
                 dsn=self._database_url,
                 ssl=ssl.create_default_context(),
                 server_settings={"role": "meo_ai_limited"},
+                # asyncpg 0.32 separates initial pool size from its minimum floor.
+                init_size=1,
                 min_size=1,
                 max_size=10,
                 command_timeout=15,
