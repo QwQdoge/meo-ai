@@ -5,7 +5,7 @@
 //! so a turn can be rewound (Claude Code "checkpoints", Codex undo). Errors are returned as text
 //! for the model, never as panics: the model decides how to recover.
 
-use super::agent::{apply_hunks, parse_patch, replace_once, FileOp, Outcome, Tool};
+use super::agent::{apply_hunks, parse_patch, replace_once, unified_diff, FileOp, Outcome, Tool};
 use std::fs;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
@@ -29,18 +29,85 @@ fn done(text: impl Into<String>) -> Outcome {
     Outcome::done(text)
 }
 
-/// The files a turn has changed, as they were before the first change.
+/// The files a turn has changed, as they were before the first change. With a directory, the
+/// before-images are also kept on disk (created on the first change) so a rewind survives a restart.
 #[derive(Debug, Default)]
 pub struct Checkpoint {
     files: Vec<(PathBuf, Option<Vec<u8>>)>,
+    dir: Option<PathBuf>,
 }
 
 impl Checkpoint {
+    /// A checkpoint that saves itself into `dir` as files change.
+    pub fn on_disk(dir: PathBuf) -> Self {
+        Self {
+            files: Vec::new(),
+            dir: Some(dir),
+        }
+    }
+
+    /// Reads a checkpoint saved by [`Checkpoint::on_disk`]; a missing or damaged one is empty.
+    pub fn load(dir: &Path) -> Self {
+        let mut checkpoint = Self {
+            files: Vec::new(),
+            dir: Some(dir.to_owned()),
+        };
+        let Some(index) = fs::read_to_string(dir.join("index.json"))
+            .ok()
+            .and_then(|t| serde_json::from_str::<Vec<serde_json::Value>>(&t).ok())
+        else {
+            return checkpoint;
+        };
+        for entry in index {
+            let Some(path) = entry["path"].as_str() else {
+                continue;
+            };
+            let before = match entry["blob"].as_str() {
+                Some(blob) => match fs::read(dir.join(blob)) {
+                    Ok(bytes) => Some(bytes),
+                    Err(_) => continue,
+                },
+                None => None,
+            };
+            checkpoint.files.push((PathBuf::from(path), before));
+        }
+        checkpoint
+    }
+
+    /// The saved index of `dir` lists at least one file.
+    pub fn has_saved_files(dir: &Path) -> bool {
+        !Self::load(dir).is_empty()
+    }
+
     fn record(&mut self, path: &Path) {
         if self.files.iter().any(|(p, _)| p == path) {
             return;
         }
         self.files.push((path.to_owned(), fs::read(path).ok()));
+        self.save();
+    }
+
+    fn save(&self) {
+        let Some(dir) = &self.dir else { return };
+        if fs::create_dir_all(dir).is_err() {
+            return;
+        }
+        let mut index = Vec::new();
+        for (n, (path, before)) in self.files.iter().enumerate() {
+            let blob = before.as_ref().map(|bytes| {
+                let name = format!("{n}.bin");
+                let target = dir.join(&name);
+                if !target.exists() {
+                    let _ = fs::write(&target, bytes);
+                }
+                name
+            });
+            index.push(serde_json::json!({ "path": path.display().to_string(), "blob": blob }));
+        }
+        let _ = fs::write(
+            dir.join("index.json"),
+            serde_json::Value::Array(index).to_string(),
+        );
     }
 
     pub fn is_empty(&self) -> bool {
@@ -51,7 +118,7 @@ impl Checkpoint {
         self.files.iter().map(|(p, _)| p.as_path()).collect()
     }
 
-    /// Puts every recorded file back; returns how many were restored.
+    /// Puts every recorded file back (and forgets the saved copy); returns how many were restored.
     pub fn rewind(&mut self) -> usize {
         let mut restored = 0;
         for (path, before) in self.files.drain(..).rev() {
@@ -65,6 +132,9 @@ impl Checkpoint {
                 None => !path.exists() || fs::remove_file(&path).is_ok(),
             };
             restored += usize::from(ok);
+        }
+        if let Some(dir) = &self.dir {
+            let _ = fs::remove_dir_all(dir);
         }
         restored
     }
@@ -141,6 +211,44 @@ impl Workspace {
                 command,
                 timeout_secs,
             } => self.command(command, *timeout_secs),
+        }
+    }
+
+    /// What a write would change, as a diff, without changing anything. `None` for tools that
+    /// do not write, or when the change cannot be worked out (the real run explains why).
+    pub fn preview(&self, tool: &Tool) -> Option<String> {
+        match tool {
+            Tool::SearchReplace { path, old, new } => {
+                let file = self.resolve(path).ok()?;
+                let text = fs::read_to_string(&file).ok()?;
+                let updated = replace_once(&text, old, new).ok()?;
+                Some(unified_diff(path, &text, &updated))
+            }
+            Tool::ApplyPatch { patch } => {
+                let mut parts = Vec::new();
+                for op in parse_patch(patch).ok()? {
+                    match op {
+                        FileOp::Add { path, content } => {
+                            parts.push(unified_diff(&path, "", &content))
+                        }
+                        FileOp::Delete { path } => {
+                            let text =
+                                fs::read_to_string(self.resolve(&path).ok()?).unwrap_or_default();
+                            parts.push(unified_diff(&path, &text, ""));
+                        }
+                        FileOp::Update { path, hunks } => {
+                            let text = fs::read_to_string(self.resolve(&path).ok()?).ok()?;
+                            parts.push(unified_diff(
+                                &path,
+                                &text,
+                                &apply_hunks(&text, &hunks).ok()?,
+                            ));
+                        }
+                    }
+                }
+                Some(parts.join("\n\n"))
+            }
+            _ => None,
         }
     }
 
@@ -587,6 +695,82 @@ mod tests {
         assert_eq!(fs::read_to_string(t.0.join("a.txt")).unwrap(), "one\ntwo\n");
         assert!(!t.0.join("new/b.txt").exists());
         assert!(cp.is_empty());
+    }
+
+    #[test]
+    fn a_checkpoint_saved_on_disk_still_rewinds_after_a_restart() {
+        let t = Tmp::new();
+        let saved = Tmp::new();
+        t.write("a.txt", "one\n");
+        let ws = t.ws();
+        let dir = saved.0.join("cp");
+        let mut cp = Checkpoint::on_disk(dir.clone());
+        assert!(!dir.exists(), "nothing is written before the first change");
+        let edit = ws.run(
+            &Tool::SearchReplace {
+                path: "a.txt".into(),
+                old: "one".into(),
+                new: "1".into(),
+            },
+            &mut cp,
+        );
+        let add = ws.run(
+            &Tool::ApplyPatch {
+                patch: "*** Begin Patch\n*** Add File: b.txt\n+hi\n*** End Patch".into(),
+            },
+            &mut cp,
+        );
+        assert!(edit.ok && add.ok);
+        drop(cp);
+        // A new process: the checkpoint comes back from the disk.
+        assert!(Checkpoint::has_saved_files(&dir));
+        let mut again = Checkpoint::load(&dir);
+        assert_eq!(again.paths().len(), 2);
+        assert_eq!(again.rewind(), 2);
+        assert_eq!(fs::read_to_string(t.0.join("a.txt")).unwrap(), "one\n");
+        assert!(!t.0.join("b.txt").exists());
+        assert!(!dir.exists(), "a used checkpoint is gone");
+        assert!(Checkpoint::load(&dir).is_empty());
+    }
+
+    #[test]
+    fn a_preview_shows_the_diff_without_touching_the_files() {
+        let t = Tmp::new();
+        t.write("a.txt", "one\ntwo\n");
+        let ws = t.ws();
+        let edit = ws
+            .preview(&Tool::SearchReplace {
+                path: "a.txt".into(),
+                old: "two".into(),
+                new: "2".into(),
+            })
+            .unwrap();
+        assert_eq!(edit, "--- a.txt\n one\n-two\n+2");
+        let patch = ws
+            .preview(&Tool::ApplyPatch {
+                patch: "*** Begin Patch\n*** Update File: a.txt\n-one\n+1\n*** Add File: b.txt\n+hi\n*** End Patch".into(),
+            })
+            .unwrap();
+        assert!(
+            patch.contains("-one\n+1") && patch.contains("--- b.txt\n+hi"),
+            "{patch}"
+        );
+        assert_eq!(fs::read_to_string(t.0.join("a.txt")).unwrap(), "one\ntwo\n");
+        assert!(!t.0.join("b.txt").exists());
+        assert!(ws
+            .preview(&Tool::ReadFile {
+                path: "a.txt".into(),
+                start: None,
+                end: None
+            })
+            .is_none());
+        assert!(ws
+            .preview(&Tool::SearchReplace {
+                path: "a.txt".into(),
+                old: "zzz".into(),
+                new: "y".into()
+            })
+            .is_none());
     }
 
     #[test]

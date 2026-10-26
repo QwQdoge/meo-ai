@@ -606,6 +606,98 @@ impl Outcome {
     }
 }
 
+// ---- diff ----------------------------------------------------------------------------------------
+
+const DIFF_CONTEXT: usize = 2;
+const DIFF_MAX_LINES: usize = 400;
+
+/// A unified-style diff of one file (`-` removed, `+` added, two lines of context). Large files
+/// are summarised instead of compared line by line.
+pub fn unified_diff(path: &str, old: &str, new: &str) -> String {
+    let a: Vec<&str> = old.lines().collect();
+    let b: Vec<&str> = new.lines().collect();
+    if a == b {
+        return format!("{path}: no changes");
+    }
+    if a.len() > DIFF_MAX_LINES * 5 || b.len() > DIFF_MAX_LINES * 5 {
+        return format!(
+            "{path}: large change ({} lines before, {} after)",
+            a.len(),
+            b.len()
+        );
+    }
+    // Trim the common start and end, then compare the middle with a longest-common-subsequence table.
+    let prefix = a.iter().zip(&b).take_while(|(x, y)| x == y).count();
+    let suffix = a[prefix..]
+        .iter()
+        .rev()
+        .zip(b[prefix..].iter().rev())
+        .take_while(|(x, y)| x == y)
+        .count();
+    let (ma, mb) = (&a[prefix..a.len() - suffix], &b[prefix..b.len() - suffix]);
+    if ma.len() > DIFF_MAX_LINES || mb.len() > DIFF_MAX_LINES {
+        return format!(
+            "{path}: large change ({} lines removed, {} added)",
+            ma.len(),
+            mb.len()
+        );
+    }
+    let mut table = vec![vec![0u32; mb.len() + 1]; ma.len() + 1];
+    for i in (0..ma.len()).rev() {
+        for j in (0..mb.len()).rev() {
+            table[i][j] = if ma[i] == mb[j] {
+                table[i + 1][j + 1] + 1
+            } else {
+                table[i + 1][j].max(table[i][j + 1])
+            };
+        }
+    }
+    // The edit script: ' ' kept, '-' removed, '+' added.
+    let mut script: Vec<(char, &str)> = a[..prefix].iter().map(|l| (' ', *l)).collect();
+    let (mut i, mut j) = (0, 0);
+    while i < ma.len() || j < mb.len() {
+        if i < ma.len() && j < mb.len() && ma[i] == mb[j] {
+            script.push((' ', ma[i]));
+            i += 1;
+            j += 1;
+        } else if i < ma.len() && (j == mb.len() || table[i + 1][j] >= table[i][j + 1]) {
+            // Removals come before the additions that replace them.
+            script.push(('-', ma[i]));
+            i += 1;
+        } else {
+            script.push(('+', mb[j]));
+            j += 1;
+        }
+    }
+    script.extend(a[a.len() - suffix..].iter().map(|l| (' ', *l)));
+    // Keep each change with its context and join regions that touch.
+    let changed: Vec<usize> = script
+        .iter()
+        .enumerate()
+        .filter(|(_, (k, _))| *k != ' ')
+        .map(|(n, _)| n)
+        .collect();
+    let mut shown = vec![false; script.len()];
+    for n in &changed {
+        let from = n.saturating_sub(DIFF_CONTEXT);
+        let to = (n + DIFF_CONTEXT + 1).min(script.len());
+        shown[from..to].iter_mut().for_each(|s| *s = true);
+    }
+    let mut out = vec![format!("--- {path}")];
+    let mut previous = None;
+    for (n, (kind, line)) in script.iter().enumerate() {
+        if !shown[n] {
+            continue;
+        }
+        if previous.is_some_and(|p| p + 1 != n) {
+            out.push("@@".to_owned());
+        }
+        out.push(format!("{kind}{line}"));
+        previous = Some(n);
+    }
+    out.join("\n")
+}
+
 // ---- prompt and observation ----------------------------------------------------------------------
 
 /// What the model is told about the tools (appended to the Work instructions of a turn).
@@ -833,6 +925,26 @@ mod tests {
             .unwrap_err()
             .contains("not found"));
         assert!(replace_once("a", "", "x").is_err());
+    }
+
+    #[test]
+    fn a_diff_shows_only_the_changes_with_context() {
+        let old = "a\nb\nc\nd\ne\nf\ng\nh\n";
+        let new = "a\nb\nC\nd\ne\nf\ng\nh\ni\n";
+        let d = unified_diff("x.txt", old, new);
+        assert_eq!(d, "--- x.txt\n a\n b\n-c\n+C\n d\n e\n@@\n g\n h\n+i");
+        assert_eq!(unified_diff("x", "same\n", "same\n"), "x: no changes");
+        assert_eq!(unified_diff("n", "", "one\ntwo\n"), "--- n\n+one\n+two");
+        assert_eq!(unified_diff("n", "gone\n", ""), "--- n\n-gone");
+        let big_old = (0..3000)
+            .map(|n| n.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let big_new = (0..3000)
+            .map(|n| (n + 1).to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(unified_diff("big", &big_old, &big_new).contains("large change"));
     }
 
     #[test]

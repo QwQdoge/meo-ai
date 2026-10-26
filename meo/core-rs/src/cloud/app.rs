@@ -4971,13 +4971,25 @@ fn conversation_page(s: &State) -> Value {
             ],
         })).or_else(|| s.agent.pending.as_ref().map(|p| json!({
             "title": "Allow this action?",
-            "text": format!("{}\nWhy you are asked: {}", p.call.tool.summary(), p.reason),
+            "text": approval_text(s, p),
             "actions": [
                 button("Allow", "primary", json!({ "type": "approve_tool" })),
                 button("Don't allow", "secondary", json!({ "type": "deny_tool" })),
             ],
         }))),
     })
+}
+
+/// What the approval card says: the action, why it asks, and the diff of a write.
+fn approval_text(s: &State, p: &PendingTool) -> String {
+    let mut text = format!("{}\nWhy you are asked: {}", p.call.tool.summary(), p.reason);
+    if let Some(diff) = s.agent.host.as_ref().and_then(|h| h.preview(&p.call.tool)) {
+        text.push_str(&format!(
+            "\n\n{}",
+            diff.lines().take(60).collect::<Vec<_>>().join("\n")
+        ));
+    }
+    text
 }
 
 /// A user message that only carries a tool result back to the model.
@@ -6801,10 +6813,13 @@ mod tests {
         );
         let view = c.view();
         assert_eq!(view["page"]["consent"]["title"], "Allow this action?");
-        assert!(view["page"]["consent"]["text"]
-            .as_str()
-            .unwrap()
-            .contains("Edit notes.txt"));
+        let card = view["page"]["consent"]["text"].as_str().unwrap();
+        assert!(card.contains("Edit notes.txt"));
+        // The card shows what the edit would change before anything is written.
+        assert!(
+            card.contains("--- notes.txt") && card.contains("-todo") && card.contains("+done"),
+            "{card}"
+        );
         assert_eq!(
             view["page"]["consent"]["actions"][0]["action"]["type"],
             "approve_tool"
