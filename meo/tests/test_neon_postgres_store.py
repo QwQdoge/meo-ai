@@ -94,6 +94,55 @@ class NeonPostgresStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(pool.close_calls, 1)
         self.assertIsNone(store._pool)
 
+    async def test_new_pool_requests_wait_for_close_and_then_fail(self):
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        class BlockingClosePool(FakePool):
+            async def close(self):
+                self.close_calls += 1
+                started.set()
+                await release.wait()
+
+        pool = BlockingClosePool()
+        store = NeonPostgresStore("postgresql://local/test", pool=pool)
+        closing = asyncio.create_task(store.close())
+        await started.wait()
+        request = asyncio.create_task(store._get_pool())
+        await asyncio.sleep(0)
+        self.assertFalse(request.done())
+
+        release.set()
+        await closing
+        with self.assertRaisesRegex(RuntimeError, "closed"):
+            await request
+
+    async def test_cancelled_close_blocks_reuse_and_can_be_retried(self):
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        class BlockingClosePool(FakePool):
+            async def close(self):
+                self.close_calls += 1
+                started.set()
+                await release.wait()
+
+        pool = BlockingClosePool()
+        store = NeonPostgresStore("postgresql://local/test", pool=pool)
+        closing = asyncio.create_task(store.close())
+        await started.wait()
+        closing.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await closing
+
+        with self.assertRaisesRegex(RuntimeError, "closing or closed"):
+            await store._get_pool()
+
+        release.set()
+        await store.close()
+        self.assertEqual(pool.close_calls, 2)
+        self.assertIsNone(store._pool)
+
     async def test_pool_initial_size_remains_one_with_asyncpg_032(self):
         captured = {}
 
