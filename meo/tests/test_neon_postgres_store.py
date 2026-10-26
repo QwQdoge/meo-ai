@@ -1,5 +1,7 @@
 import unittest
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from meo.cloud.postgres_store import NeonPostgresStore
 
@@ -36,6 +38,22 @@ class FakePool:
 
 
 class NeonPostgresStoreTests(unittest.IsolatedAsyncioTestCase):
+    async def test_pool_initial_size_remains_one_with_asyncpg_032(self):
+        captured = {}
+
+        async def create_pool(**kwargs):
+            captured.update(kwargs)
+            return FakePool()
+
+        fake_asyncpg = SimpleNamespace(create_pool=create_pool)
+        with patch.dict("sys.modules", {"asyncpg": fake_asyncpg}):
+            store = NeonPostgresStore("postgresql://local/test")
+            await store._get_pool()
+
+        self.assertEqual(captured["init_size"], 1)
+        self.assertEqual(captured["min_size"], 1)
+        self.assertEqual(captured["max_size"], 10)
+
     def test_connection_requires_a_postgres_url(self):
         with self.assertRaisesRegex(ValueError, "PostgreSQL"):
             NeonPostgresStore("https://database.example")
