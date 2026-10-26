@@ -38,12 +38,6 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: meo/core-rs
-      - name: Resolve latest stable Rust lockfile for review
-        run: |
-          cargo update
-          printf 'LOCKFILE_BEGIN\\n'
-          sed 's/^/FILECONTENT:/' Cargo.lock
-          printf 'LOCKFILE_END\\n'
       - run: cargo check --locked --all-features
       - run: cargo clippy --locked --all-features --all-targets -- -D warnings
       - run: cargo test --locked --all-features
