@@ -211,6 +211,7 @@ impl Workspace {
                 command,
                 timeout_secs,
             } => self.command(command, *timeout_secs),
+            Tool::Subagent { .. } => fail("a sub-agent is started by the app, not by the folder"),
         }
     }
 

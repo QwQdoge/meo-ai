@@ -9,6 +9,7 @@ pub mod agent;
 pub mod api;
 pub mod app;
 pub mod auth;
+pub mod compaction;
 pub mod host;
 pub mod locale;
 pub mod manifest;

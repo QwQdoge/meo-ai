@@ -24,9 +24,30 @@ message until an answer has no tool block (cap: 12 calls per user message). Code
 - **Tool loop (slice 4), local tools only:** web search is still planner-driven, not a mid-turn tool.
 - **Checks:** tool results are marked as data, never instructions; the judge scores only the final answer.
 
-Not done yet: context budget / `/compact` (slice 2), subagents (6), an enforced verification step (7: the model can
-run tests with `run`, the judge scores the answer, but nothing requires a passing check), a diff view before an edit,
-disk-persisted checkpoints, and showing tool steps for answers loaded from another device's loop.
+### Also implemented 2026-10-26 (second round)
+
+- **Checkpoints on disk (slice 5):** the before-images of a message's edits are saved under
+  `<data dir>/meo-ai/checkpoints/<folder hash>/<timestamp>/` as files change (the newest ten per folder are kept,
+  empty ones are dropped). After a restart the folder is reopened from the saved `/workspace` setting and
+  `/rewind` still works.
+- **Diff before an edit (slice 5):** the approval card shows a unified diff of what a `search_replace` or an
+  `apply_patch` would change, computed without touching the files (`Workspace::preview`).
+- **Context budget (slice 2):** the Meo API already stores a conversation summary (`/v1/conversations/{id}/context`
+  and `/compact`). The core summarises everything except the newest 6 messages with the `summary` role model
+  (`/compact`, or automatically before the next request once a chat has more than 24 messages and the API
+  recommends it), carries an earlier summary forward, and Details > Context shows the real numbers (summary instead of
+  the replaced messages, plus "Summarised earlier messages"). Not done: a per-model token window (the API's size
+  metrics decide when), `maxOutputTokens` per model.
+- **Sub-agents (slice 6):** with the composer's sub-agents switch on, the model may call `subagent {task}`. It runs up
+  to 6 rounds of its own (`read_file`, `list_dir`, `search` only, fresh context: its task and its own notes, never the
+  conversation), under the same hard rules, and only its final report goes back to the main task. Off by default.
+- **Enforced check (slice 7):** `/verify <command>` (for example `cargo test`) sets the check; when a message changed
+  files, its final answer is not final until the device runs the command and it passes. A failure goes back to the model
+  with the output (up to 3 tries, then it says so and stops; `/rewind` undoes). The judge still scores the final answer.
+  `/workspace` and `/verify` are saved settings.
+
+Still open: a per-model context window and `maxOutputTokens`, web search as a mid-turn tool, showing the steps of a
+tool loop that ran on another device only after it finishes, and an approver calibrated on labelled runs.
 
 
 ## Sources and what we do not use

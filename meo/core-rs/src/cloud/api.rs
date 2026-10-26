@@ -300,6 +300,41 @@ impl MeoApi {
             .map(|_| ())
     }
 
+    /// The conversation as the model will see it: the stored summary, the messages after it, and the
+    /// size metrics (`metrics.compaction_recommended`).
+    pub async fn conversation_context(
+        &self,
+        token: &str,
+        conversation_id: &str,
+    ) -> Result<Value, ApiError> {
+        let path = format!("/v1/conversations/{conversation_id}/context");
+        self.request(token, Method::GET, &path, None).await
+    }
+
+    /// Stores a summary of every message up to and including `through_message_id`.
+    pub async fn compact_conversation(
+        &self,
+        token: &str,
+        conversation_id: &str,
+        summary: &str,
+        through_message_id: &str,
+        summarized_message_count: usize,
+    ) -> Result<(), ApiError> {
+        let path = format!("/v1/conversations/{conversation_id}/compact");
+        self.request(
+            token,
+            Method::POST,
+            &path,
+            Some(json!({
+                "summary": summary,
+                "through_message_id": through_message_id,
+                "summarized_message_count": summarized_message_count,
+            })),
+        )
+        .await
+        .map(|_| ())
+    }
+
     async fn broker(&self, token: &str, body: Value) -> Result<Value, ApiError> {
         self.request(token, Method::POST, "/v1/ai/provider-broker", Some(body))
             .await
