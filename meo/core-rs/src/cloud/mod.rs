@@ -14,6 +14,7 @@ pub mod host;
 pub mod locale;
 pub mod manifest;
 pub mod orchestration;
+pub mod remote;
 pub mod richtext;
 pub mod router;
 pub mod storage;

@@ -8,7 +8,7 @@
 //! settings or buttons added here appear on every client unchanged.
 
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
@@ -30,7 +30,7 @@ use super::{
     host::Host,
     locale,
     manifest::Manifest,
-    orchestration, richtext,
+    orchestration, remote, richtext,
     router::{self, Choice, Router},
     storage::Storage,
 };
@@ -318,8 +318,27 @@ struct RemoteRun {
     done: bool,
 }
 
+/// Remote control: the user's other devices and what is running on whose behalf.
+#[derive(Default)]
+struct RemoteLink {
+    devices: BTreeMap<String, remote::Device>,
+    /// Host side: the device whose task runs here and receives its approvals.
+    controller: Option<String>,
+    /// Controller side: the host running the task sent from here.
+    task_host: Option<String>,
+    /// Controller side: what the host asks about (host id, text).
+    approval: Option<(String, String)>,
+}
+
+/// Work the realtime loop runs beside the event stream, so approvals and stop keep arriving.
+enum RemoteJob {
+    Task { from: String, text: String },
+    Decide { allow: bool },
+}
+
 #[derive(Default)]
 struct State {
+    remote: RemoteLink,
     auth: AuthState,
     session: Option<Session>,
     pending_auth: Option<PendingAuthorization>,
@@ -512,7 +531,10 @@ impl AppCore {
             Action::MoveToChat { id } => self.set_work(id, false).await,
             Action::SelectConversation { id } => self.select_conversation(id).await,
             Action::Send { text } => self.send(text).await,
-            Action::Stop => self.cancel.store(true, Ordering::SeqCst),
+            Action::Stop => {
+                self.cancel.store(true, Ordering::SeqCst);
+                self.remote_stop().await;
+            }
             Action::ApproveConsent => {
                 let pending = self.state.lock().unwrap().consent.take();
                 if let Some(pending) = pending {
@@ -524,6 +546,8 @@ impl AppCore {
                 }
             }
             Action::DenyConsent => self.update(|s| s.consent = None),
+            Action::ApproveTool if self.remote_decide(true).await => {}
+            Action::DenyTool if self.remote_decide(false).await => {}
             Action::ApproveTool => {
                 let pending = self.state.lock().unwrap().agent.pending.take();
                 if let Some(p) = pending {
@@ -2170,8 +2194,29 @@ impl AppCore {
                     let mut events = Box::pin(events);
                     backoff = 1;
                     self.update(|s| s.sync_live = true);
-                    while let Some(Ok(event)) = events.next().await {
-                        self.on_remote_event(event).await;
+                    // At most one job for another device runs beside the stream.
+                    let mut job = None;
+                    loop {
+                        let next = match job.as_mut() {
+                            None => events.next().await,
+                            Some(running) => {
+                                match futures_util::future::select(events.next(), running).await {
+                                    futures_util::future::Either::Left((next, _)) => next,
+                                    futures_util::future::Either::Right(_) => {
+                                        job = None;
+                                        continue;
+                                    }
+                                }
+                            }
+                        };
+                        let Some(Ok(event)) = next else { break };
+                        match self.remote_job_for(&event) {
+                            Some(work) if job.is_none() => {
+                                job = Some(Box::pin(self.remote_job(work)));
+                            }
+                            Some(_) => self.remote_busy(&event).await,
+                            None => self.on_remote_event(event).await,
+                        }
                     }
                 }
             }
@@ -2188,6 +2233,9 @@ impl AppCore {
         let data = &event.data;
         let own = data["origin"].as_str() == Some(self.client_id.as_str());
         let conversation = data["conversationId"].as_str().map(str::to_owned);
+        if event.name.starts_with("remote.") {
+            return self.on_remote_message(&event.name, data, own).await;
+        }
         match event.name.as_str() {
             "memory.changed" if !own => self.refresh_memories().await,
             "settings.changed" if !own => {
@@ -2206,7 +2254,12 @@ impl AppCore {
             "files.changed" if !own => self.refresh_files().await,
             "presence" => {
                 let devices = data["devices"].as_u64().unwrap_or(0) as usize;
-                self.update(|s| s.sync_devices = devices);
+                self.update(|s| {
+                    s.sync_devices = devices;
+                    // Someone joined or left: everyone says hello again, which drops the gone ones.
+                    s.remote.devices.clear();
+                });
+                self.remote_announce(true, None).await;
             }
             "hello" => {
                 let devices = data["devices"].as_u64().unwrap_or(0) as usize;
@@ -2273,11 +2326,299 @@ impl AppCore {
         }
     }
 
+    // ---- remote control ------------------------------------------------
+
+    fn remote_enabled(&self) -> bool {
+        pref_bool(&self.state.lock().unwrap(), "remote.enabled", true)
+    }
+
+    fn device_name(&self) -> String {
+        let name = self
+            .state
+            .lock()
+            .unwrap()
+            .prefs
+            .get("remote.name")
+            .and_then(Value::as_str)
+            .map(|n| n.trim().to_owned())
+            .filter(|n| !n.is_empty());
+        name.unwrap_or_else(|| {
+            let tail: String = self.client_id.chars().take(4).collect();
+            format!("{} {tail}", remote::platform())
+        })
+    }
+
+    async fn remote_send(&self, message: Value) {
+        let _ = self
+            .call(|api, t| {
+                let message = message.clone();
+                async move { api.send_remote(&t, message).await }
+            })
+            .await;
+    }
+
+    async fn remote_announce(&self, reply: bool, to: Option<&str>) {
+        if self.remote_enabled() {
+            let name = self.device_name();
+            self.remote_send(remote::hello(&name, reply, to)).await;
+        }
+    }
+
+    /// The device chosen in "Run on", when it is still online and Work is open.
+    fn remote_target(&self) -> Option<remote::Device> {
+        let s = self.state.lock().unwrap();
+        if s.route != "work" || !pref_bool(&s, "remote.enabled", true) {
+            return None;
+        }
+        let id = s.prefs.get("remote.target").and_then(Value::as_str)?;
+        s.remote.devices.get(id).filter(|d| d.hosts).cloned()
+    }
+
+    async fn remote_dispatch(&self, device: remote::Device, text: String) {
+        let text = text.trim().to_owned();
+        if text.is_empty() {
+            return;
+        }
+        self.update(|s| s.remote.task_host = Some(device.id.clone()));
+        self.remote_send(remote::message("task", &device.id, json!({ "text": text })))
+            .await;
+        self.notice(
+            "info",
+            format!("Sent to {}. It runs there; follow it here.", device.name),
+        );
+    }
+
+    /// Controller: stop the task running on the host.
+    async fn remote_stop(&self) {
+        let host = self.state.lock().unwrap().remote.task_host.clone();
+        if let Some(host) = host {
+            self.remote_send(remote::message("stop", &host, json!({})))
+                .await;
+        }
+    }
+
+    /// Controller: answer the host's question. False when none is waiting.
+    async fn remote_decide(&self, allow: bool) -> bool {
+        let asked = self.state.lock().unwrap().remote.approval.take();
+        let Some((host, _)) = asked else { return false };
+        self.hooks.changed();
+        self.remote_send(remote::message(
+            "decision",
+            &host,
+            json!({ "allow": allow }),
+        ))
+        .await;
+        true
+    }
+
+    /// Host: tell the controller what waits for its approval.
+    async fn remote_ask(&self) {
+        let (to, text) = {
+            let s = self.state.lock().unwrap();
+            match (&s.remote.controller, &s.agent.pending) {
+                (Some(to), Some(p)) => (to.clone(), approval_text(&s, p)),
+                _ => return,
+            }
+        };
+        self.remote_send(remote::message("approval", &to, json!({ "text": text })))
+            .await;
+    }
+
+    /// Host: the work this event asks for, when it asks for any.
+    fn remote_job_for(&self, event: &RemoteEvent) -> Option<RemoteJob> {
+        let data = &event.data;
+        if data["origin"].as_str() == Some(self.client_id.as_str())
+            || !remote::is_for(data, &self.client_id)
+            || data["to"].is_null()
+        {
+            return None;
+        }
+        let from = data["origin"].as_str()?.to_owned();
+        match event.name.as_str() {
+            "remote.task" => Some(RemoteJob::Task {
+                from,
+                text: data["text"].as_str()?.to_owned(),
+            }),
+            "remote.decision" => {
+                let s = self.state.lock().unwrap();
+                (s.remote.controller.as_deref() == Some(from.as_str()) && s.agent.pending.is_some())
+                    .then(|| RemoteJob::Decide {
+                        allow: data["allow"].as_bool().unwrap_or(false),
+                    })
+            }
+            _ => None,
+        }
+    }
+
+    async fn remote_busy(&self, event: &RemoteEvent) {
+        if let Some(from) = event.data["origin"].as_str() {
+            let m = remote::message(
+                "status",
+                from,
+                json!({ "state": "refused", "reason": "That device is busy with another task." }),
+            );
+            self.remote_send(m).await;
+        }
+    }
+
+    async fn remote_refuse(&self, to: &str, reason: &str) {
+        let m = remote::message(
+            "status",
+            to,
+            json!({ "state": "refused", "reason": reason }),
+        );
+        self.remote_send(m).await;
+    }
+
+    async fn remote_job(&self, job: RemoteJob) {
+        match job {
+            RemoteJob::Task { from, text } => {
+                let busy = {
+                    let s = self.state.lock().unwrap();
+                    s.streaming.is_some()
+                        || s.agent.pending.is_some()
+                        || s.remote.controller.is_some()
+                };
+                if !self.remote_enabled() || !remote::can_host() {
+                    return self
+                        .remote_refuse(&from, "Remote control is off on that device.")
+                        .await;
+                }
+                if busy {
+                    return self
+                        .remote_refuse(&from, "That device is busy with another task.")
+                        .await;
+                }
+                if self.ensure_host().is_none() {
+                    return self
+                        .remote_refuse(&from, "Open a folder in Work on that device first.")
+                        .await;
+                }
+                self.update(|s| {
+                    s.remote.controller = Some(from.clone());
+                    s.files.clear();
+                    s.new_chat_project = None;
+                    s.active = None;
+                    s.route = "work".into();
+                });
+                self.remote_send(remote::message(
+                    "status",
+                    &from,
+                    json!({ "state": "started" }),
+                ))
+                .await;
+                self.send(text).await;
+            }
+            RemoteJob::Decide { allow } => {
+                let action = if allow {
+                    Action::ApproveTool
+                } else {
+                    Action::DenyTool
+                };
+                Box::pin(self.dispatch(action)).await;
+            }
+        }
+        self.remote_finish().await;
+    }
+
+    /// Host: the task is over unless it waits for the controller or for a password.
+    async fn remote_finish(&self) {
+        let (to, conversation, waiting) = {
+            let s = self.state.lock().unwrap();
+            (
+                s.remote.controller.clone(),
+                s.active.clone(),
+                s.agent.pending.is_some()
+                    || s.agent
+                        .host
+                        .as_ref()
+                        .is_some_and(|h| h.pending_password().is_some()),
+            )
+        };
+        let Some(to) = to else { return };
+        if waiting {
+            return;
+        }
+        self.update(|s| s.remote.controller = None);
+        let m = remote::message(
+            "status",
+            &to,
+            json!({ "state": "done", "conversationId": conversation }),
+        );
+        self.remote_send(m).await;
+    }
+
+    async fn on_remote_message(&self, name: &str, data: &Value, own: bool) {
+        if own || !remote::is_for(data, &self.client_id) {
+            return;
+        }
+        let from = data["origin"].as_str().unwrap_or_default().to_owned();
+        match name {
+            "remote.hello" => {
+                if !self.remote_enabled() {
+                    return;
+                }
+                if let Some(device) = remote::device_from(data) {
+                    self.update(|s| {
+                        s.remote.devices.insert(device.id.clone(), device);
+                    });
+                }
+                if data["reply"].as_bool() == Some(true) && !from.is_empty() {
+                    self.remote_announce(false, Some(&from)).await;
+                }
+            }
+            "remote.status" => {
+                let host = self
+                    .state
+                    .lock()
+                    .unwrap()
+                    .remote
+                    .devices
+                    .get(&from)
+                    .map_or_else(|| "The other device".to_owned(), |d| d.name.clone());
+                match data["state"].as_str().unwrap_or_default() {
+                    "started" => self.notice("info", format!("{host} started the task.")),
+                    "refused" => {
+                        self.update(|s| s.remote.task_host = None);
+                        let why = data["reason"].as_str().unwrap_or("It did not start.");
+                        self.notice("error", format!("{host}: {why}"));
+                    }
+                    "done" => {
+                        self.update(|s| {
+                            s.remote.task_host = None;
+                            s.remote.approval = None;
+                        });
+                        if let Some(id) = data["conversationId"].as_str() {
+                            self.refresh_conversations().await;
+                            self.select_conversation(id.to_owned()).await;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            "remote.approval" => {
+                let text = data["text"].as_str().unwrap_or_default().to_owned();
+                self.update(|s| s.remote.approval = Some((from, text)));
+            }
+            "remote.stop" => {
+                let mine =
+                    self.state.lock().unwrap().remote.controller.as_deref() == Some(from.as_str());
+                if mine {
+                    self.cancel.store(true, Ordering::SeqCst);
+                }
+            }
+            _ => {}
+        }
+    }
+
     // ---- chat ----------------------------------------------------------
 
     async fn send(&self, text: String) {
         if self.slash_command(&text).await {
             return;
+        }
+        if let Some(device) = self.remote_target() {
+            return self.remote_dispatch(device, text).await;
         }
         self.agent_begin(&text);
         self.turn(text, true, true).await;
@@ -3468,7 +3809,10 @@ impl AppCore {
         match agent::gate(self.agent_permission(), &call.tool) {
             agent::Gate::Allow => self.agent_execute(id, call).await,
             agent::Gate::Deny(reason) => self.agent_refuse(id, call, &reason).await,
-            agent::Gate::Ask(reason) => self.agent_ask(id, call, reason),
+            agent::Gate::Ask(reason) => {
+                self.agent_ask(id, call, reason);
+                self.remote_ask().await;
+            }
             agent::Gate::Approver => {
                 let (verdict, why) = self.agent_approver(&call).await;
                 match verdict {
@@ -3487,7 +3831,8 @@ impl AppCore {
                         } else {
                             why
                         };
-                        self.agent_ask(id, call, why)
+                        self.agent_ask(id, call, why);
+                        self.remote_ask().await;
                     }
                 }
             }
@@ -4182,6 +4527,17 @@ impl AppCore {
                                 "value": s.sync_devices.max(1),
                             }));
                         }
+                        items.push(json!({
+                            "id": "remote_enabled", "label": "Let my other devices run tasks here (remote control)",
+                            "kind": "toggle", "binding": "remote.enabled",
+                            "value": pref_bool(s, "remote.enabled", true),
+                        }));
+                        for d in s.remote.devices.values() {
+                            items.push(json!({
+                                "id": format!("remote_{}", d.id), "kind": "info", "label": d.name,
+                                "value": format!("{}{}", d.platform, if d.hosts { " · can run tasks" } else { "" }),
+                            }));
+                        }
                         let email = s.session.as_ref().map(|x| x.email.clone()).unwrap_or_default();
                         items.push(json!({ "id": "email", "label": "Signed in as", "kind": "info", "value": email }));
                         items.push(json!({
@@ -4656,21 +5012,23 @@ fn composer_controls(s: &State) -> Vec<Value> {
     };
     // Older settings only had the consent switch.
     let permission = permission_value(s);
-    let mut controls = vec![
-        slider(
-            "permission",
-            "Permissions",
-            "chat.permission",
-            &permission,
-            PERMISSIONS,
-            false,
-        ),
-        json!({
-            "id": "web_search", "label": "Search the web", "kind": "toggle", "binding": "chat.web_search",
-            "icon": "language", "iconOnly": true,
-            "value": s.prefs.get("chat.web_search").cloned().unwrap_or(json!(false)), "align": "start",
-        }),
-    ];
+    let mut controls = Vec::new();
+    if let Some(run_on) = run_on_control(s) {
+        controls.push(run_on);
+    }
+    controls.push(slider(
+        "permission",
+        "Permissions",
+        "chat.permission",
+        &permission,
+        PERMISSIONS,
+        false,
+    ));
+    controls.push(json!({
+        "id": "web_search", "label": "Search the web", "kind": "toggle", "binding": "chat.web_search",
+        "icon": "language", "iconOnly": true,
+        "value": s.prefs.get("chat.web_search").cloned().unwrap_or(json!(false)), "align": "start",
+    }));
     if let Some(mut model) = mode_control(s) {
         model["align"] = json!("end");
         controls.push(model);
@@ -5420,8 +5778,40 @@ fn conversation_page(s: &State) -> Value {
                 button("Allow", "primary", json!({ "type": "approve_tool" })),
                 button("Don't allow", "secondary", json!({ "type": "deny_tool" })),
             ],
+        }))).or_else(|| s.remote.approval.as_ref().map(|(host, text)| json!({
+            "title": format!("Allow this action on {}?", s.remote.devices.get(host).map_or("the other device", |d| d.name.as_str())),
+            "text": text,
+            "actions": [
+                button("Allow", "primary", json!({ "type": "approve_tool" })),
+                button("Don't allow", "secondary", json!({ "type": "deny_tool" })),
+            ],
         }))),
     })
+}
+
+/// "Run on": this device or another of the user's devices that can host Work (Work page only).
+fn run_on_control(s: &State) -> Option<Value> {
+    if s.route != "work" || !pref_bool(s, "remote.enabled", true) {
+        return None;
+    }
+    let options = remote::run_on_options(&s.remote.devices);
+    if options.len() < 2 {
+        return None;
+    }
+    let chosen = s
+        .prefs
+        .get("remote.target")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let value = if options.iter().any(|o| o["value"] == chosen) {
+        chosen
+    } else {
+        ""
+    };
+    Some(json!({
+        "id": "run_on", "label": "Run on", "kind": "select", "binding": "remote.target",
+        "icon": "devices", "value": value, "options": options, "align": "start",
+    }))
 }
 
 /// The dialog of a command that waits for a password: a masked field, answered by the user only.
@@ -7002,6 +7392,8 @@ mod tests {
         streams: Arc<Mutex<Vec<Value>>>,
         /// Every body posted to /v1/conversations/{id}/compact.
         compacts: Arc<Mutex<Vec<Value>>>,
+        /// Every body posted to /v1/realtime/send.
+        remotes: Arc<Mutex<Vec<Value>>>,
     }
 
     fn fake_api(replies: Vec<&str>) -> FakeApi {
@@ -7018,12 +7410,23 @@ mod tests {
         let streams = Arc::new(Mutex::new(Vec::<Value>::new()));
         let store = Arc::new(Mutex::new(seed));
         let compacts = Arc::new(Mutex::new(Vec::<Value>::new()));
-        let (seen, kept, saved) = (streams.clone(), store.clone(), compacts.clone());
+        let remotes = Arc::new(Mutex::new(Vec::<Value>::new()));
+        let (seen, kept, saved, relayed) = (
+            streams.clone(),
+            store.clone(),
+            compacts.clone(),
+            remotes.clone(),
+        );
         std::thread::spawn(move || {
             for conn in listener.incoming() {
                 let Ok(mut conn) = conn else { continue };
-                let (replies, seen, kept, saved) =
-                    (replies.clone(), seen.clone(), kept.clone(), saved.clone());
+                let (replies, seen, kept, saved, relayed) = (
+                    replies.clone(),
+                    seen.clone(),
+                    kept.clone(),
+                    saved.clone(),
+                    relayed.clone(),
+                );
                 std::thread::spawn(move || {
                     let mut raw = Vec::new();
                     let mut buf = [0u8; 4096];
@@ -7125,6 +7528,16 @@ mod tests {
                             json!({ "text": reply })
                         );
                         (200, "text/event-stream", frame)
+                    } else if path == "/v1/conversations" && method == "POST" {
+                        (
+                            200,
+                            "application/json",
+                            json!({ "conversation": { "id": "c1", "title": body["title"] } })
+                                .to_string(),
+                        )
+                    } else if path == "/v1/realtime/send" {
+                        relayed.lock().unwrap().push(body.clone());
+                        (200, "application/json", "{}".to_owned())
                     } else if path == "/v1/search/web" {
                         (
                             200,
@@ -7187,6 +7600,7 @@ mod tests {
             origin,
             streams,
             compacts,
+            remotes,
         }
     }
 
@@ -7243,6 +7657,211 @@ mod tests {
             .iter()
             .map(|m| m["text"].as_str().unwrap_or_default().to_owned())
             .collect()
+    }
+
+    fn sent_kinds(api: &FakeApi) -> Vec<String> {
+        api.remotes
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|m| m["type"].as_str().unwrap_or_default().to_owned())
+            .collect()
+    }
+
+    fn event(name: &str, origin: &str, to: &str, mut data: Value) -> RemoteEvent {
+        data["origin"] = json!(origin);
+        data["to"] = json!(to);
+        RemoteEvent {
+            name: name.into(),
+            data,
+        }
+    }
+
+    #[test]
+    fn a_host_runs_the_controllers_task_and_asks_it_before_a_write() {
+        let folder = temp_folder("remote-host");
+        std::fs::write(folder.join("notes.txt"), "todo\n").unwrap();
+        let api = fake_api(vec![READ, EDIT, FINISH]);
+        let c = work_core(&api, &folder, "low");
+        let me = c.client_id.clone();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        let task = event("remote.task", "phone", &me, json!({ "text": "finish it" }));
+        let job = c
+            .remote_job_for(&task)
+            .expect("a task for this device is work");
+        rt.block_on(c.remote_job(job));
+
+        // The edit waits; the controller is told and nothing is reported as done.
+        assert_eq!(
+            std::fs::read_to_string(folder.join("notes.txt")).unwrap(),
+            "todo\n"
+        );
+        let sent = api.remotes.lock().unwrap().clone();
+        let kinds: Vec<&str> = sent.iter().filter_map(|m| m["type"].as_str()).collect();
+        assert_eq!(kinds, ["remote.status", "remote.approval"], "{sent:?}");
+        assert!(sent.iter().all(|m| m["to"] == "phone"));
+        assert!(sent[1]["text"].as_str().unwrap().contains("Edit notes.txt"));
+
+        // Someone else cannot answer for the controller.
+        let stranger = event("remote.decision", "tablet", &me, json!({ "allow": true }));
+        assert!(c.remote_job_for(&stranger).is_none());
+
+        let decision = event("remote.decision", "phone", &me, json!({ "allow": true }));
+        let job = c
+            .remote_job_for(&decision)
+            .expect("the controller may decide");
+        rt.block_on(c.remote_job(job));
+        assert_eq!(
+            std::fs::read_to_string(folder.join("notes.txt")).unwrap(),
+            "done\n"
+        );
+        let kinds = sent_kinds(&api);
+        assert_eq!(kinds.last().map(String::as_str), Some("remote.status"));
+        let done = api.remotes.lock().unwrap().last().cloned().unwrap();
+        assert_eq!(done["state"], "done");
+        assert_eq!(done["conversationId"], "c1");
+        assert!(c.state.lock().unwrap().remote.controller.is_none());
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn a_host_refuses_when_remote_control_is_off_or_it_is_busy() {
+        let folder = temp_folder("remote-refuse");
+        let api = fake_api(vec![]);
+        let c = work_core(&api, &folder, "all");
+        let me = c.client_id.clone();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        c.update(|s| {
+            s.prefs.insert("remote.enabled".into(), json!(false));
+        });
+        let task = event("remote.task", "phone", &me, json!({ "text": "x" }));
+        rt.block_on(c.remote_job(c.remote_job_for(&task).unwrap()));
+        let sent = api.remotes.lock().unwrap().clone();
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0]["state"], "refused");
+        assert!(api.streams.lock().unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn the_controller_sends_work_to_the_chosen_device_and_answers_its_questions() {
+        let folder = temp_folder("remote-controller");
+        let api = fake_api(vec![]);
+        let c = work_core(&api, &folder, "smart");
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        // The other device says hello; this one answers it directly.
+        let hello = event(
+            "remote.hello",
+            "pc",
+            &c.client_id.clone(),
+            json!({
+                "name": "Studio PC", "platform": "linux", "hosts": true, "reply": true
+            }),
+        );
+        rt.block_on(c.on_remote_event(hello));
+        assert_eq!(sent_kinds(&api), ["remote.hello"]);
+        assert_eq!(api.remotes.lock().unwrap()[0]["to"], "pc");
+        assert_eq!(api.remotes.lock().unwrap()[0]["reply"], false);
+
+        // "Run on" appears once a device can host; choosing it sends the message instead of asking a model.
+        let toolbar = c.view()["page"]["composer"]["toolbar"].clone();
+        let run_on = toolbar
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["id"] == "run_on")
+            .unwrap();
+        assert_eq!(run_on["options"][1]["value"], "pc");
+        rt.block_on(c.set_setting("remote.target".into(), json!("pc")));
+        run(
+            &c,
+            Action::Send {
+                text: "build the app".into(),
+            },
+        );
+        assert!(api.streams.lock().unwrap().is_empty());
+        let task = api.remotes.lock().unwrap().last().cloned().unwrap();
+        assert_eq!(
+            (
+                task["type"].as_str(),
+                task["to"].as_str(),
+                task["text"].as_str()
+            ),
+            (Some("remote.task"), Some("pc"), Some("build the app"))
+        );
+
+        // The host's question shows as the usual approval card, and the answer goes back to it.
+        let me = c.client_id.clone();
+        rt.block_on(c.on_remote_event(event(
+            "remote.approval",
+            "pc",
+            &me,
+            json!({ "text": "Run cargo build" }),
+        )));
+        let consent = c.view()["page"]["consent"].clone();
+        assert!(
+            consent["title"].as_str().unwrap().contains("Studio PC"),
+            "{consent}"
+        );
+        assert_eq!(consent["text"], "Run cargo build");
+        run(&c, Action::ApproveTool);
+        let decision = api.remotes.lock().unwrap().last().cloned().unwrap();
+        assert_eq!(
+            (decision["type"].as_str(), decision["allow"].as_bool()),
+            (Some("remote.decision"), Some(true))
+        );
+        assert!(c.view()["page"]["consent"].is_null());
+
+        // Stop reaches the host while its task runs, and a refusal ends the wait.
+        run(&c, Action::Stop);
+        assert_eq!(
+            sent_kinds(&api).last().map(String::as_str),
+            Some("remote.stop")
+        );
+        rt.block_on(c.on_remote_event(event(
+            "remote.status",
+            "pc",
+            &me,
+            json!({ "state": "refused", "reason": "busy" }),
+        )));
+        assert!(c.state.lock().unwrap().remote.task_host.is_none());
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn presence_changes_make_devices_introduce_themselves_again() {
+        let folder = temp_folder("remote-presence");
+        let api = fake_api(vec![]);
+        let c = work_core(&api, &folder, "smart");
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        c.update(|s| {
+            s.remote.devices.insert(
+                "gone".into(),
+                remote::Device {
+                    id: "gone".into(),
+                    name: "Gone".into(),
+                    platform: "linux",
+                    hosts: true,
+                },
+            );
+        });
+        rt.block_on(c.on_remote_event(RemoteEvent {
+            name: "presence".into(),
+            data: json!({ "devices": 2 }),
+        }));
+        assert!(c.state.lock().unwrap().remote.devices.is_empty());
+        assert_eq!(api.remotes.lock().unwrap()[0]["reply"], true);
+        // Switched off, a device stays silent.
+        c.update(|s| {
+            s.prefs.insert("remote.enabled".into(), json!(false));
+        });
+        rt.block_on(c.on_remote_event(RemoteEvent {
+            name: "presence".into(),
+            data: json!({ "devices": 3 }),
+        }));
+        assert_eq!(api.remotes.lock().unwrap().len(), 1);
+        let _ = std::fs::remove_dir_all(&folder);
     }
 
     #[test]

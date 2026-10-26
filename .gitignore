@@ -10,3 +10,4 @@ build/
 meo/android/.gradle/
 meo/android/.kotlin/
 meo/android/local.properties
+meo/core-rs/target/

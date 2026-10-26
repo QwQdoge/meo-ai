@@ -312,6 +312,13 @@ impl MeoApi {
     }
 
     /// Stores a summary of every message up to and including `through_message_id`.
+    /// Sends a `remote.*` message to the user's other devices (see [`crate::cloud::remote`]).
+    pub async fn send_remote(&self, token: &str, message: Value) -> Result<(), ApiError> {
+        self.request(token, Method::POST, "/v1/realtime/send", Some(message))
+            .await
+            .map(|_| ())
+    }
+
     pub async fn compact_conversation(
         &self,
         token: &str,
