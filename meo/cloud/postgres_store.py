@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import ssl
 from datetime import datetime, timezone
@@ -14,34 +15,40 @@ class NeonPostgresStore:
             raise ValueError("MEO_DATABASE_URL must be a PostgreSQL connection URL")
         self._database_url = database_url
         self._pool = pool
+        self._pool_lock = asyncio.Lock()
 
     async def _get_pool(self):
-        if self._pool is None:
-            try:
-                import asyncpg
-            except ImportError as exc:
-                raise RuntimeError("Neon persistence requires asyncpg") from exc
+        if self._pool is not None:
+            return self._pool
+        async with self._pool_lock:
+            # Recheck under the same lock as registration so concurrent first
+            # requests cannot create and leak multiple connection pools.
+            if self._pool is None:
+                try:
+                    import asyncpg
+                except ImportError as exc:
+                    raise RuntimeError("Neon persistence requires asyncpg") from exc
 
-            async def initialize(connection):
-                await connection.set_type_codec(
-                    "json", schema="pg_catalog", encoder=json.dumps, decoder=json.loads,
-                )
-                await connection.set_type_codec(
-                    "jsonb", schema="pg_catalog", encoder=json.dumps, decoder=json.loads,
-                )
+                async def initialize(connection):
+                    await connection.set_type_codec(
+                        "json", schema="pg_catalog", encoder=json.dumps, decoder=json.loads,
+                    )
+                    await connection.set_type_codec(
+                        "jsonb", schema="pg_catalog", encoder=json.dumps, decoder=json.loads,
+                    )
 
-            self._pool = await asyncpg.create_pool(
-                dsn=self._database_url,
-                ssl=ssl.create_default_context(),
-                server_settings={"role": "meo_ai_limited"},
-                # asyncpg 0.32 separates initial pool size from its minimum floor.
-                init_size=1,
-                min_size=1,
-                max_size=10,
-                command_timeout=15,
-                init=initialize,
-            )
-        return self._pool
+                self._pool = await asyncpg.create_pool(
+                    dsn=self._database_url,
+                    ssl=ssl.create_default_context(),
+                    server_settings={"role": "meo_ai_limited"},
+                    # asyncpg 0.32 separates initial pool size from its minimum floor.
+                    init_size=1,
+                    min_size=1,
+                    max_size=10,
+                    command_timeout=15,
+                    init=initialize,
+                )
+            return self._pool
 
     @staticmethod
     def _rows(records) -> tuple[dict, ...]:
@@ -323,9 +330,10 @@ class NeonPostgresStore:
         return False
 
     async def close(self) -> None:
-        if self._pool is not None:
-            await self._pool.close()
-            self._pool = None
+        async with self._pool_lock:
+            if self._pool is not None:
+                await self._pool.close()
+                self._pool = None
 
     @staticmethod
     def _sha256_hex(value: str) -> None:
