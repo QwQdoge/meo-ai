@@ -3,6 +3,7 @@ import { Blocks } from "./rich";
 import { Icon } from "./icons";
 import { useCore, type Action, type View } from "./useCore";
 import "./core.css";
+import "./pixel.css";
 
 // Generic renderer for the Meo AI core view (meo/docs/cloud-core-view.md). It
 // knows component kinds only, never product features: navigation, pages,
@@ -478,6 +479,39 @@ function InspectorSection({ sec }: { sec: Spec }) {
   );
 }
 
+/** Slider in a popover. It closes on an outside press or Escape, never on blur: blur/preventDefault
+ * on the popover made the range thumb undraggable. */
+function SliderChip({ item, act }: { item: Spec; act: Act }) {
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLSpanElement>(null);
+  const options: Spec[] = item.options ?? [];
+  const index = Math.max(0, options.findIndex((o) => o.value === item.value));
+  const current = options[index];
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: PointerEvent) => { if (!root.current?.contains(e.target as Node)) setOpen(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("pointerdown", away);
+    document.addEventListener("keydown", esc);
+    return () => { document.removeEventListener("pointerdown", away); document.removeEventListener("keydown", esc); };
+  }, [open]);
+  return (
+    <span className="core-pop" ref={root}>
+      <button className="core-chipbtn" aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+        {current?.label ?? item.label} ▾
+      </button>
+      {open && (
+        <div className="core-popover" role="dialog" aria-label={item.label}>
+          <span className="core-muted">{item.label}</span>
+          <input type="range" min={0} max={options.length - 1} step={1} value={index} aria-valuetext={current?.label}
+            onChange={(e) => act(setting(item, options[Number(e.target.value)].value))} />
+          <span>{current?.label}</span>
+        </div>
+      )}
+    </span>
+  );
+}
+
 /** Quiet one-line control under the composer (Claude style): text button, slider in a popover. */
 function ControlChip({ item, act }: { item: Spec; act: Act }) {
   const [open, setOpen] = useState(false);
@@ -505,21 +539,7 @@ function ControlChip({ item, act }: { item: Spec; act: Act }) {
     );
   }
   if (item.kind === "slider") {
-    const index = Math.max(0, options.findIndex((o) => o.value === item.value));
-    return (
-      <span className="core-pop">
-        <button className="core-chipbtn" aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen((v) => !v)} onBlur={() => setTimeout(() => setOpen(false), 150)}>
-          {current?.label ?? item.label} ▾
-        </button>
-        {open && (
-          <div className="core-popover" role="dialog" aria-label={item.label} onMouseDown={(e) => e.preventDefault()}>
-            <span className="core-muted">{item.label}</span>
-            <input type="range" min={0} max={options.length - 1} step={1} value={index} onChange={(e) => act(setting(item, options[Number(e.target.value)].value))} />
-            <span>{current?.label}</span>
-          </div>
-        )}
-      </span>
-    );
+    return <SliderChip item={item} act={act} />;
   }
   return <Control item={item} act={act} />;
 }

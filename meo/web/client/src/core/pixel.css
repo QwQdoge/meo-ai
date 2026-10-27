@@ -1,0 +1,101 @@
+/* Pixel / Material You look for the core renderer. Loaded after core.css; it only restyles,
+   so server-driven layout and every action keep working. Colors still come from MeoUI tokens. */
+:root {
+  --px-radius-s: 12px;
+  --px-radius-m: 20px;
+  --px-radius-l: 28px;
+  --px-radius-xl: 36px;
+  --px-ease: cubic-bezier(.2, 0, 0, 1);
+  --px-elev-1: 0 1px 2px rgb(0 0 0 / .10), 0 1px 3px 1px rgb(0 0 0 / .08);
+  --px-elev-2: 0 1px 2px rgb(0 0 0 / .12), 0 2px 6px 2px rgb(0 0 0 / .10);
+  --px-elev-3: 0 4px 8px 3px rgb(0 0 0 / .10), 0 1px 3px rgb(0 0 0 / .14);
+  --px-tonal: color-mix(in srgb, rgb(var(--accent-primary)) 10%, rgb(var(--surface-secondary)));
+  --px-tonal-strong: color-mix(in srgb, rgb(var(--accent-primary)) 18%, rgb(var(--surface-secondary)));
+}
+.core-app, .core-app button, .core-app input, .core-app select, .core-app textarea {
+  font-family: "Google Sans Flex", "Google Sans", "Product Sans", "Roboto Flex", Roboto, system-ui, sans-serif;
+}
+.core-app { background: rgb(var(--surface-secondary)); }
+
+/* Rails and surfaces: a tonal canvas with one large rounded content sheet, as on Pixel. */
+.core-sidebar, .core-nav { background: transparent; border: 0; }
+.core-sidebar { padding: 16px 12px; gap: 6px; }
+.core-thread, .core-page, .core-settings { background: rgb(var(--surface-primary)); }
+.core-thread { margin: 8px 8px 8px 0; border-radius: var(--px-radius-xl); overflow: hidden; box-shadow: var(--px-elev-1); }
+.core-page { margin: 8px 8px 8px 0; border-radius: var(--px-radius-xl); box-shadow: var(--px-elev-1); }
+.core-header h1 { font-size: 1.35rem; font-weight: 500; letter-spacing: -.005em; }
+.core-thread .core-header { padding: 10px 20px; }
+
+/* Buttons: pills, filled primary, tonal secondary. */
+.core-button { padding: 10px 22px; border: 0; border-radius: 999px; background: var(--px-tonal-strong); font-weight: 500;
+  transition: box-shadow .2s var(--px-ease), background-color .2s var(--px-ease), transform .1s var(--px-ease); }
+.core-button:hover { box-shadow: var(--px-elev-1); }
+.core-button:active { transform: scale(.97); }
+.core-button.primary { background: rgb(var(--accent-primary)); color: #fff; }
+.core-button.primary:hover { box-shadow: var(--px-elev-2); }
+.core-chip, .core-chips .core-chip { border-radius: var(--px-radius-s); }
+.core-chips .core-chip { background: var(--px-tonal); border: 0; padding: 10px 16px; }
+.core-chips .core-chip:hover { background: var(--px-tonal-strong); }
+
+/* Lists and sidebar rows: full-pill selection like a navigation drawer. */
+.core-list { gap: 4px; }
+.core-list button { padding: 12px 18px; border-radius: var(--px-radius-l); transition: background-color .2s var(--px-ease); }
+.core-list button:hover:not(:disabled) { background: var(--px-tonal); }
+.core-list button[aria-current="true"], .core-list button[aria-current="page"] { background: var(--px-tonal-strong); font-weight: 600; }
+.core-list li { border-radius: var(--px-radius-l); }
+.core-nav-item[aria-current="page"] { background: var(--px-tonal-strong); border-radius: 999px; }
+
+/* Messages. */
+.core-messages { padding: 20px clamp(16px, 6vw, 72px); gap: 16px; }
+.core-bubble.user { border-radius: var(--px-radius-l) var(--px-radius-l) 8px var(--px-radius-l); background: var(--px-tonal-strong); padding: 12px 18px; }
+.core-bubble.assistant { line-height: 1.6; }
+.core-bubble.assistant pre { border-radius: var(--px-radius-m); background: var(--px-tonal); }
+
+/* Composer: one large rounded card with the controls inside it. */
+.core-composer { margin: 0 clamp(12px, 4vw, 56px) 16px; padding: 12px 14px 8px; border-radius: var(--px-radius-xl);
+  background: var(--px-tonal); box-shadow: var(--px-elev-1); transition: box-shadow .2s var(--px-ease); }
+.core-composer:focus-within { box-shadow: var(--px-elev-2); }
+.core-input-row textarea { border: 0; background: transparent; padding: 8px 10px; border-radius: var(--px-radius-m); outline: 0; }
+.core-input-row textarea:focus-visible { outline: 0; }
+.core-controls { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-top: 4px; }
+.core-controls-start, .core-controls-end { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.core-chipbtn, .core-chipselect { padding: 6px 12px; border-radius: 999px; transition: background-color .2s var(--px-ease); }
+.core-chipbtn:hover, .core-chipselect:hover { background: var(--px-tonal-strong); }
+.core-chipbtn[aria-pressed="true"] { background: color-mix(in srgb, rgb(var(--accent-primary)) 22%, transparent); color: rgb(var(--accent-primary)); }
+.core-chipbtn.icon { width: 36px; height: 36px; padding: 0; }
+
+/* Slider popover (permissions, thinking): a proper Material slider. */
+.core-popover { padding: 14px 18px 12px; min-width: 220px; border: 0; border-radius: var(--px-radius-l); box-shadow: var(--px-elev-3);
+  background: rgb(var(--surface-primary)); gap: 10px; }
+.core-app input[type="range"] { -webkit-appearance: none; appearance: none; height: 28px; width: 100%; background: transparent; cursor: pointer; touch-action: pan-y; }
+.core-app input[type="range"]::-webkit-slider-runnable-track { height: 6px; border-radius: 999px; background: color-mix(in srgb, rgb(var(--accent-primary)) 28%, transparent); }
+.core-app input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 20px; height: 20px; margin-top: -7px; border-radius: 50%;
+  background: rgb(var(--accent-primary)); box-shadow: var(--px-elev-1); transition: transform .15s var(--px-ease); }
+.core-app input[type="range"]:active::-webkit-slider-thumb { transform: scale(1.25); }
+.core-app input[type="range"]::-moz-range-track { height: 6px; border-radius: 999px; background: color-mix(in srgb, rgb(var(--accent-primary)) 28%, transparent); }
+.core-app input[type="range"]::-moz-range-thumb { width: 20px; height: 20px; border: 0; border-radius: 50%; background: rgb(var(--accent-primary)); }
+.core-slider input { width: 140px; }
+
+/* Material switch for every toggle. */
+.core-app input[type="checkbox"][role="switch"] { -webkit-appearance: none; appearance: none; position: relative; flex: none; width: 52px; height: 32px;
+  border-radius: 999px; border: 2px solid rgb(var(--text-secondary)); background: transparent; transition: background-color .2s var(--px-ease), border-color .2s var(--px-ease); }
+.core-app input[type="checkbox"][role="switch"]::before { content: ""; position: absolute; top: 50%; left: 6px; width: 16px; height: 16px; border-radius: 50%;
+  background: rgb(var(--text-secondary)); transform: translateY(-50%); transition: left .2s var(--px-ease), width .2s var(--px-ease), height .2s var(--px-ease), background-color .2s var(--px-ease); }
+.core-app input[type="checkbox"][role="switch"]:checked { background: rgb(var(--accent-primary)); border-color: rgb(var(--accent-primary)); }
+.core-app input[type="checkbox"][role="switch"]:checked::before { left: 22px; width: 24px; height: 24px; margin-top: 0; background: #fff; }
+.core-row { padding: 14px 4px; }
+
+/* Settings: tonal card with a pill navigation. */
+.core-settings { margin: 8px; border-radius: var(--px-radius-xl); }
+.core-settings-card { border-radius: var(--px-radius-xl); }
+.core-settings-nav button { padding: 10px 18px; border: 0; border-radius: 999px; background: none; color: inherit; text-align: start; transition: background-color .2s var(--px-ease); }
+.core-settings-nav button:hover { background: var(--px-tonal); }
+.core-settings-nav button[aria-current="page"] { background: var(--px-tonal-strong); font-weight: 600; }
+.core-field select, .core-field input, .core-field textarea { border-radius: var(--px-radius-m); background: var(--px-tonal); border: 1px solid transparent; }
+.core-field select:focus, .core-field input:focus, .core-field textarea:focus { border-color: rgb(var(--accent-primary)); outline: 0; }
+.core-banner { border-radius: var(--px-radius-l); background: var(--px-tonal-strong); }
+
+@media (max-width: 839px) {
+  .core-thread, .core-page { margin: 0; border-radius: 0; box-shadow: none; }
+  .core-composer { margin: 0 8px 8px; }
+}
