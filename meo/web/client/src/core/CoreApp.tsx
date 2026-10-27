@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, type ReactNode } from "react";
 import { Blocks } from "./rich";
 import { Icon, hasIcon } from "./icons";
 import browserHost from "./browserHost";
+import { documentExtensions, downloadGenerated, fileNameOf, readDocument } from "./docFiles";
 import { useCore, type Action, type View } from "./useCore";
 import "./core.css";
 import "./shell.css";
@@ -379,15 +380,41 @@ function Control({ item, act }: { item: Spec; act: Act }) {
 }
 
 /** Fenced code from a model answer, with a language label and a copy button. */
+const LANGUAGE_EXT: Record<string, string> = {
+  python: "py", javascript: "js", typescript: "ts", tsx: "tsx", jsx: "jsx", json: "json", html: "html", css: "css", bash: "sh",
+  shell: "sh", sh: "sh", sql: "sql", yaml: "yaml", yml: "yml", markdown: "md", md: "md", csv: "csv", xml: "xml", svg: "svg",
+  rust: "rs", go: "go", java: "java", kotlin: "kt", c: "c", cpp: "cpp", toml: "toml", text: "txt",
+};
+
 function CodeBlock({ node, children, label, done }: { node?: any; children?: React.ReactNode; label: string; done: string }) {
   const code = node?.children?.[0];
   const language = String(code?.properties?.className?.[0] ?? "").replace("language-", "") || "code";
   const text = (code?.children ?? []).map((c: any) => c.value ?? "").join("");
+  const fileName = fileNameOf(language);
+  const ext = LANGUAGE_EXT[language.toLowerCase()];
+  if (fileName) {
+    // A file the model wrote for the user: one card, saved with a click.
+    const kind = fileName.split(".").pop()?.toLowerCase();
+    return (
+      <div className="core-filecard">
+        <Icon name="description" size={22} />
+        <div className="core-filecard-text">
+          <strong>{fileName}</strong>
+          <span className="core-muted">{kind === "docx" ? "Word document" : kind === "xlsx" ? "Excel workbook" : `${(text.length / 1024).toFixed(1)} KB`}</span>
+        </div>
+        <CopyButton text={text} label={label} done={done} />
+        <button className="core-filecard-save" onClick={() => downloadGenerated(fileName, text)}>Download</button>
+      </div>
+    );
+  }
   return (
     <div className="core-code">
       <div className="core-code-head">
         <span>{language}</span>
-        <CopyButton text={text} label={label} done={done} />
+        <span className="core-code-actions">
+          {ext && text.length > 200 && <button onClick={() => downloadGenerated(`snippet.${ext}`, text)}>Download</button>}
+          <CopyButton text={text} label={label} done={done} />
+        </span>
       </div>
       <pre>{children}</pre>
     </div>
@@ -678,12 +705,21 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
         const data = await shrinkImage(file);
         if (data) act({ type: "attach_image", name: file.name || "image.jpg", mime: "image/jpeg", data });
         else note(`Could not read ${file.name || "the picture"}`);
+      } else if (documentExtensions.includes(ext) || file.type === "application/pdf") {
+        if (file.size > 25 * 1024 * 1024) { note(`${file.name} is larger than 25 MB`); continue; }
+        try {
+          const text = await readDocument(file);
+          if (text && text.trim()) act({ type: composer.attach.action, name: `${file.name}.txt`, text });
+          else note(`No text found in ${file.name} (scanned pages need OCR)`);
+        } catch {
+          note(`Could not read ${file.name}`);
+        }
       } else if (file.size > 2 * 1024 * 1024) {
         note(`${file.name} is larger than 2 MB`);
       } else if (textTypes.includes(ext) || file.type.startsWith("text/") || (!ext && file.type === "")) {
         act({ type: composer.attach.action, name: file.name || "pasted.txt", text: await file.text() });
       } else {
-        note(`${file.name}: this file type is not supported yet (text, code and pictures work)`);
+        note(`${file.name}: this file type is not supported yet (PDF, Word, Excel, PowerPoint, text, code and pictures work)`);
       }
     }
   };
@@ -786,7 +822,10 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
                     components={{ pre: (props: any) => <CodeBlock {...props} label={strings.copy ?? "Copy"} done={strings.copied ?? "Copied"} /> }}
                   />
                   {(m.images ?? []).map((img: Spec, k: number) => (
-                    <img key={k} className="core-image" src={img.url} alt="" loading="lazy" />
+                    <span key={k} className="core-image-wrap">
+                      <img className="core-image" src={img.url} alt="" loading="lazy" />
+                      <a className="core-image-save" href={img.url} download={`meo-image-${k + 1}.png`} aria-label="Download">Download</a>
+                    </span>
                   ))}
                 </div>
               )}
@@ -875,7 +914,7 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
                   type="file"
                   hidden
                   multiple
-                  accept={(composer.attach.extensions ?? []).map((e: string) => "." + e).join(",")}
+                  accept={[...(composer.attach.extensions ?? []), ...documentExtensions].map((e: string) => "." + e).join(",")}
                   onChange={(e) => {
                     const files = Array.from(e.target.files ?? []);
                     e.target.value = "";
