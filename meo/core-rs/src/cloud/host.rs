@@ -27,6 +27,7 @@ mod native {
         inner: Arc<Mutex<Inner>>,
         root: String,
         passwords: Option<Arc<Passwords>>,
+        mcp: Arc<Mutex<crate::cloud::mcp_local::Manager>>,
     }
 
     /// Where the user's answer to a password question goes.
@@ -225,6 +226,7 @@ mod native {
                     checkpoint,
                     store,
                 })),
+                mcp: Arc::new(Mutex::new(crate::cloud::mcp_local::Manager::new(Path::new(&root)))),
                 root,
                 passwords: Passwords::start(),
             })
@@ -236,6 +238,15 @@ mod native {
 
         /// Runs the tool on its own thread and polls for the result, so the app keeps running.
         pub async fn run(&self, tool: Tool) -> Outcome {
+            if let Tool::Mcp { server, tool, args } = tool {
+                let mcp = self.mcp.clone();
+                return self
+                    .off_thread(move || match mcp.lock() {
+                        Ok(mut m) => m.call(&server, &tool, &args),
+                        Err(_) => Outcome::fail("the MCP manager is unavailable"),
+                    })
+                    .await;
+            }
             let slot: Arc<Mutex<Option<Outcome>>> = Arc::new(Mutex::new(None));
             let (inner, out) = (self.inner.clone(), slot.clone());
             let passwords = self.passwords.clone();
@@ -264,6 +275,35 @@ mod native {
                 }
                 futures_timer::Delay::new(Duration::from_millis(25)).await;
             }
+        }
+
+        /// Runs blocking work on its own thread and polls for the result, so the app keeps running.
+        async fn off_thread(&self, work: impl FnOnce() -> Outcome + Send + 'static) -> Outcome {
+            let slot: Arc<Mutex<Option<Outcome>>> = Arc::new(Mutex::new(None));
+            let out = slot.clone();
+            std::thread::spawn(move || {
+                let outcome = work();
+                if let Ok(mut slot) = out.lock() {
+                    *slot = Some(outcome);
+                }
+            });
+            loop {
+                if let Some(outcome) = slot.lock().ok().and_then(|mut s| s.take()) {
+                    return outcome;
+                }
+                futures_timer::Delay::new(Duration::from_millis(25)).await;
+            }
+        }
+
+        /// The prompt section listing the local MCP servers' tools ("" when none is configured).
+        pub async fn mcp_instructions(&self) -> String {
+            let mcp = self.mcp.clone();
+            self.off_thread(move || match mcp.lock() {
+                Ok(mut m) => Outcome::done(m.describe()),
+                Err(_) => Outcome::done(String::new()),
+            })
+            .await
+            .text
         }
 
         /// A new user message starts a new checkpoint (saved to disk once a file changes). Old and
@@ -507,7 +547,14 @@ impl Host {
             Tool::Subagent { .. } | Tool::WebSearch { .. } => {
                 Outcome::fail("this tool is run by the app, not by the folder")
             }
+            Tool::Mcp { .. } => Outcome::fail(
+                "local MCP servers run on a computer with the Meo runner or desktop app, not in a browser",
+            ),
         }
+    }
+
+    pub async fn mcp_instructions(&self) -> String {
+        String::new()
     }
 
     pub fn new_checkpoint(&self) {

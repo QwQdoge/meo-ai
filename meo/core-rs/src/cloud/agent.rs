@@ -13,7 +13,7 @@
 //!   block, never as instructions).
 //! - Anything unparsable is treated as "ask the user".
 
-use serde_json::Value;
+use serde_json::{json, Value};
 
 /// A fenced block the model writes to ask for one tool: ```` ```meo-tool ```` followed by JSON.
 pub const TOOL_FENCE: &str = "meo-tool";
@@ -55,6 +55,12 @@ pub enum Tool {
     WebSearch {
         query: String,
     },
+    /// A tool of a local MCP server (desktop and the headless runner only).
+    Mcp {
+        server: String,
+        tool: String,
+        args: Value,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -82,6 +88,7 @@ impl Tool {
             Tool::Run { .. } => "run",
             Tool::Subagent { .. } => "subagent",
             Tool::WebSearch { .. } => "web_search",
+            Tool::Mcp { .. } => "mcp",
         }
     }
 
@@ -89,7 +96,7 @@ impl Tool {
         match self {
             Tool::ReadFile { .. } | Tool::ListDir { .. } | Tool::Search { .. } => Risk::Read,
             Tool::SearchReplace { .. } | Tool::ApplyPatch { .. } => Risk::Write,
-            Tool::Run { .. } => Risk::Command,
+            Tool::Run { .. } | Tool::Mcp { .. } => Risk::Command,
             // It can only read, but it spends model calls, so "ask every time" still asks.
             Tool::Subagent { .. } => Risk::Read,
             Tool::WebSearch { .. } => Risk::Read,
@@ -124,6 +131,7 @@ impl Tool {
             Tool::Run { command, .. } => format!("Run {}", clip(command)),
             Tool::Subagent { task } => format!("Sub-agent: {}", clip(task)),
             Tool::WebSearch { query } => format!("Search the web for “{}”", clip(query)),
+            Tool::Mcp { server, tool, .. } => format!("MCP {server} / {tool}"),
         }
     }
 }
@@ -174,6 +182,11 @@ fn call_from_json(index: usize, value: &Value) -> Result<ToolCall, String> {
         },
         "web_search" => Tool::WebSearch {
             query: need("query")?,
+        },
+        "mcp" => Tool::Mcp {
+            server: need("server")?,
+            tool: need("name")?,
+            args: args.get("args").cloned().unwrap_or_else(|| json!({})),
         },
         other => return Err(format!("unknown tool \"{other}\"")),
     };
@@ -337,7 +350,7 @@ fn tool_paths(tool: &Tool) -> Vec<String> {
         }
         Tool::Search { path, .. } => path.iter().cloned().collect(),
         Tool::ApplyPatch { patch } => patch_paths(patch),
-        Tool::Run { .. } | Tool::Subagent { .. } | Tool::WebSearch { .. } => Vec::new(),
+        Tool::Run { .. } | Tool::Subagent { .. } | Tool::WebSearch { .. } | Tool::Mcp { .. } => Vec::new(),
     }
 }
 

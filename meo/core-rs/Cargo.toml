@@ -9,6 +9,11 @@ description = "Authoritative Rust core for Meo AI clients, providers, conversati
 crate-type = ["rlib", "staticlib", "cdylib"]
 
 [[bin]]
+name = "meo-runner"
+path = "src/bin/meo-runner.rs"
+required-features = ["client", "cloud"]
+
+[[bin]]
 name = "meo-agent-service"
 path = "src/bin/meo-agent-service.rs"
 required-features = ["service"]

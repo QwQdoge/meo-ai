@@ -3132,8 +3132,14 @@ impl AppCore {
         };
         if tools_root.is_some() || web {
             let current = request["prompt"].as_str().unwrap_or_default().to_owned();
+            let host = self.state.lock().unwrap().agent.host.clone();
+            let mcp = match host {
+                Some(h) => h.mcp_instructions().await,
+                None => String::new(),
+            };
+            let mcp = if mcp.is_empty() { mcp } else { format!("\n\n{mcp}") };
             request["prompt"] = json!(format!(
-                "{}\n\n{current}",
+                "{}{mcp}\n\n{current}",
                 agent::tool_instructions(tools_root.as_deref(), subagents, web)
             ));
         }

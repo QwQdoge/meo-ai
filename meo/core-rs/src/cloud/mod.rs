@@ -13,6 +13,8 @@ pub mod compaction;
 pub mod host;
 pub mod locale;
 pub mod manifest;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod mcp_local;
 pub mod orchestration;
 pub mod remote;
 pub mod richtext;

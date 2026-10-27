@@ -578,7 +578,7 @@ function ComposerControls({ toolbar, act, work, sendAction }: { toolbar: Spec[];
     <>
       {work && <FolderChip sendAction={sendAction} act={act} />}
       {work && !hasDevice && (
-        <span className="core-device reserved" title="No online device is paired. Pair a desktop device in Settings to run Work on it.">
+        <span className="core-device reserved" title="No computer is online. Run meo-runner on a computer you own (see meo/docs/runner.md) and it appears here.">
           <Icon name="device" size={16} /><span>Cloud · no device</span>
         </span>
       )}
