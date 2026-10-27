@@ -26,7 +26,7 @@ use super::{
         RemoteEvent,
     },
     auth::{self, OAuthConfig, PendingAuthorization, Session},
-    compaction,
+    compaction, docs,
     host::Host,
     locale,
     manifest::Manifest,
@@ -161,6 +161,16 @@ pub enum Action {
     OpenProject {
         id: String,
     },
+    /// A PDF, Word, Excel, PowerPoint or RTF file picked on the device; `data` is base64.
+    AttachDocument {
+        name: String,
+        data: String,
+    },
+    /// Saves a file the assistant wrote (the `index`-th `file:` block of a message).
+    SaveFile {
+        message: String,
+        index: usize,
+    },
     /// Installs and enables a built-in plugin bundle (MCP connection plus its Skills).
     InstallPlugin {
         id: String,
@@ -239,6 +249,10 @@ pub trait PlatformHooks: Send + Sync {
     /// An answer started (`true`) or finished/stopped (`false`). Mobile hosts use it to keep
     /// the process alive (foreground service) while the answer is generated.
     fn busy(&self, _busy: bool) {}
+    /// Saves a file for the user (a browser download). `false` lets the core use the Downloads folder.
+    fn save_file(&self, _name: &str, _bytes: &[u8]) -> bool {
+        false
+    }
 }
 
 #[derive(Default, Clone, Copy, PartialEq, Serialize)]
@@ -678,6 +692,8 @@ impl AppCore {
             Action::AttachPath { path } => self.attach_path(path).await,
             Action::RemoveFile { id } => self.remove_file(id).await,
             Action::OpenProject { id } => self.open_project(id).await,
+            Action::AttachDocument { name, data } => self.attach_document(name, data).await,
+            Action::SaveFile { message, index } => self.save_file(message, index),
             Action::InstallPlugin { id } => self.install_plugin(id).await,
             Action::TogglePlugin { id, enabled } => self.toggle_plugin(id, enabled).await,
             Action::BeginNewProject => self.prompt(
@@ -1996,6 +2012,59 @@ impl AppCore {
                 s.project_chats = chats;
             }
         });
+    }
+
+    async fn attach_document(&self, name: String, data: String) {
+        use base64::Engine as _;
+        let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(data.trim()) else {
+            return self.notice("error", "Could not read that file.");
+        };
+        if bytes.len() > 25 * 1024 * 1024 {
+            return self.notice("error", format!("{name} is larger than 25 MB."));
+        }
+        match docs::extract_text(&name, &bytes) {
+            Ok(text) => self.attach_text(format!("{name}.txt"), text).await,
+            Err(e) => self.notice("error", e),
+        }
+    }
+
+    /// The device saves it (browser download, Downloads folder); the core builds the bytes.
+    fn save_file(&self, message: String, index: usize) {
+        let text = {
+            let s = self.state.lock().unwrap();
+            s.messages
+                .values()
+                .flatten()
+                .find(|m| m.id == message)
+                .map(|m| m.text.clone())
+        };
+        let Some((name, content)) = text.and_then(|t| richtext::files(&t).into_iter().nth(index)) else {
+            return self.notice("error", "That file is no longer available.");
+        };
+        let bytes = docs::build_file(&name, &content);
+        if self.hooks.save_file(&name, &bytes) {
+            return;
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let dir = std::env::var_os("HOME")
+                .map(|h| std::path::PathBuf::from(h).join("Downloads"))
+                .unwrap_or_else(std::env::temp_dir);
+            let _ = std::fs::create_dir_all(&dir);
+            let (stem, ext) = name.rsplit_once('.').map_or((name.as_str(), ""), |(a, b)| (a, b));
+            let mut target = dir.join(&name);
+            let mut n = 1;
+            while target.exists() {
+                target = dir.join(if ext.is_empty() { format!("{stem} ({n})") } else { format!("{stem} ({n}).{ext}") });
+                n += 1;
+            }
+            match std::fs::write(&target, &bytes) {
+                Ok(()) => self.notice("info", format!("Saved {}", target.display())),
+                Err(e) => self.notice("error", format!("Could not save {name}: {e}")),
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        self.notice("error", "This device cannot save files.");
     }
 
     async fn install_plugin(&self, id: String) {
@@ -5813,7 +5882,7 @@ fn conversation_page(s: &State) -> Value {
                     images.extend(s.generated.get(&m.id).into_iter().flatten().cloned());
                     let mut message = json!({
                         "id": m.id, "role": m.role, "text": text, "streaming": false, "actions": actions,
-                        "blocks": if m.role == "assistant" { richtext::blocks(&text) } else { Vec::new() },
+                        "blocks": if m.role == "assistant" { with_message_id(richtext::blocks(&text), &m.id) } else { Vec::new() },
                         "images": images.into_iter().map(|u| json!({ "url": u })).collect::<Vec<_>>(),
                     });
                     // Steps stored with the answer; the live steps below replace them while working.
@@ -6145,6 +6214,16 @@ fn project_page(s: &State, id: &str) -> Value {
 /// Built-in plugin bundles (generated from the web catalog); installed through the account API.
 fn plugin_store() -> Vec<Value> {
     serde_json::from_str(include_str!("plugin_store.json")).unwrap_or_default()
+}
+
+/// File cards carry the id of the message they belong to, so `save_file` can find the content again.
+fn with_message_id(mut blocks: Vec<Value>, id: &str) -> Vec<Value> {
+    for block in &mut blocks {
+        if block["type"] == "file" {
+            block["action"]["message"] = json!(id);
+        }
+    }
+    blocks
 }
 
 fn list_page(

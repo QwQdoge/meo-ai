@@ -45,6 +45,13 @@ impl Storage for LocalStorage {
 unsafe impl Send for LocalStorage {}
 unsafe impl Sync for LocalStorage {}
 
+#[wasm_bindgen]
+extern "C" {
+    /// `window.meoSaveFile(name, bytes)`: the page starts a download.
+    #[wasm_bindgen(js_namespace = window, js_name = meoSaveFile, catch)]
+    fn js_save_file(name: &str, bytes: &[u8]) -> Result<(), JsValue>;
+}
+
 struct JsHooks {
     changed: js_sys::Function,
     open_url: js_sys::Function,
@@ -62,6 +69,13 @@ impl PlatformHooks for JsHooks {
 
     fn open_url(&self, url: &str) {
         let _ = self.open_url.call1(&JsValue::NULL, &JsValue::from_str(url));
+    }
+
+    fn save_file(&self, name: &str, bytes: &[u8]) -> bool {
+        match js_save_file(name, bytes) {
+            Ok(()) => true,
+            Err(_) => false,
+        }
     }
 
     fn notify(&self, title: &str, text: &str) {

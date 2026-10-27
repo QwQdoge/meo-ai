@@ -84,3 +84,19 @@ The sender saves the user message before streaming so other devices see the prom
   `src/core/CoreApp.tsx` is the React renderer. The legacy BFF function there only handles
   the callback when it has its own flow cookie, otherwise it serves the app. The old
   `src/meo/*` product components are unused and can be deleted once the Web release is accepted.
+
+## Documents and files (core-owned)
+
+The core reads and writes document formats so every client behaves the same; a client only picks
+or saves bytes.
+
+- **Attach**: clients send `{"type":"attach_text","name","text"}` for text files and
+  `{"type":"attach_image",...}` for pictures. For PDF, Word (docx), Excel (xlsx), PowerPoint (pptx)
+  and RTF they send `{"type":"attach_document","name","data"}` (`data` is base64, up to 25 MB); the
+  core extracts the text (`core-rs/src/cloud/docs.rs`) and attaches it like a text file.
+- **Files the assistant writes**: a fenced block whose language line is `file:<name.ext>` becomes a
+  block `{"type":"file","name","kind","action":{"type":"save_file","message","index"}}`. The client
+  shows a card and sends the action; the core builds the bytes (`.docx` from Markdown, `.xlsx` from
+  CSV, anything else as text) and calls the platform hook `save_file(name, bytes)`. A host that
+  returns `false` (desktop, runner) gets the file in `~/Downloads`; the web hook is
+  `window.meoSaveFile(name, bytes)`.

@@ -2,7 +2,15 @@ import React, { useEffect, useRef, useState, type ReactNode } from "react";
 import { Blocks } from "./rich";
 import { Icon, hasIcon } from "./icons";
 import browserHost from "./browserHost";
-import { documentExtensions, downloadGenerated, fileNameOf, readDocument } from "./docFiles";
+
+// Formats the core reads itself (PDF, Word, Excel, PowerPoint, RTF): the page only hands over the bytes.
+const documentExtensions = ["pdf", "docx", "xlsx", "pptx", "rtf"];
+
+function toBase64(bytes: Uint8Array): string {
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(binary);
+}
 import { useCore, type Action, type View } from "./useCore";
 import "./core.css";
 import "./shell.css";
@@ -380,39 +388,15 @@ function Control({ item, act }: { item: Spec; act: Act }) {
 }
 
 /** Fenced code from a model answer, with a language label and a copy button. */
-const LANGUAGE_EXT: Record<string, string> = {
-  python: "py", javascript: "js", typescript: "ts", tsx: "tsx", jsx: "jsx", json: "json", html: "html", css: "css", bash: "sh",
-  shell: "sh", sh: "sh", sql: "sql", yaml: "yaml", yml: "yml", markdown: "md", md: "md", csv: "csv", xml: "xml", svg: "svg",
-  rust: "rs", go: "go", java: "java", kotlin: "kt", c: "c", cpp: "cpp", toml: "toml", text: "txt",
-};
-
 function CodeBlock({ node, children, label, done }: { node?: any; children?: React.ReactNode; label: string; done: string }) {
   const code = node?.children?.[0];
   const language = String(code?.properties?.className?.[0] ?? "").replace("language-", "") || "code";
   const text = (code?.children ?? []).map((c: any) => c.value ?? "").join("");
-  const fileName = fileNameOf(language);
-  const ext = LANGUAGE_EXT[language.toLowerCase()];
-  if (fileName) {
-    // A file the model wrote for the user: one card, saved with a click.
-    const kind = fileName.split(".").pop()?.toLowerCase();
-    return (
-      <div className="core-filecard">
-        <Icon name="description" size={22} />
-        <div className="core-filecard-text">
-          <strong>{fileName}</strong>
-          <span className="core-muted">{kind === "docx" ? "Word document" : kind === "xlsx" ? "Excel workbook" : `${(text.length / 1024).toFixed(1)} KB`}</span>
-        </div>
-        <CopyButton text={text} label={label} done={done} />
-        <button className="core-filecard-save" onClick={() => downloadGenerated(fileName, text)}>Download</button>
-      </div>
-    );
-  }
   return (
     <div className="core-code">
       <div className="core-code-head">
         <span>{language}</span>
         <span className="core-code-actions">
-          {ext && text.length > 200 && <button onClick={() => downloadGenerated(`snippet.${ext}`, text)}>Download</button>}
           <CopyButton text={text} label={label} done={done} />
         </span>
       </div>
@@ -707,13 +691,7 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
         else note(`Could not read ${file.name || "the picture"}`);
       } else if (documentExtensions.includes(ext) || file.type === "application/pdf") {
         if (file.size > 25 * 1024 * 1024) { note(`${file.name} is larger than 25 MB`); continue; }
-        try {
-          const text = await readDocument(file);
-          if (text && text.trim()) act({ type: composer.attach.action, name: `${file.name}.txt`, text });
-          else note(`No text found in ${file.name} (scanned pages need OCR)`);
-        } catch {
-          note(`Could not read ${file.name}`);
-        }
+        act({ type: "attach_document", name: file.name, data: toBase64(new Uint8Array(await file.arrayBuffer())) });
       } else if (file.size > 2 * 1024 * 1024) {
         note(`${file.name} is larger than 2 MB`);
       } else if (textTypes.includes(ext) || file.type.startsWith("text/") || (!ext && file.type === "")) {
@@ -817,6 +795,7 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
                   <Blocks
                     blocks={m.blocks?.length ? m.blocks : [{ type: "markdown", text: m.text }]}
                     streaming={!!m.streaming}
+                    act={act as (action: Spec) => void}
                     copy={strings.copy ?? "Copy"}
                     copied={strings.copied ?? "Copied"}
                     components={{ pre: (props: any) => <CodeBlock {...props} label={strings.copy ?? "Copy"} done={strings.copied ?? "Copied"} /> }}

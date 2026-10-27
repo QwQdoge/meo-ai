@@ -104,9 +104,29 @@ fn tasks_markdown(list: &[Value]) -> String {
     text
 }
 
+/// The files the assistant wrote: fenced blocks whose language line is `file:<name>` (closed ones only).
+pub fn files(text: &str) -> Vec<(String, String)> {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut found = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        if let Some(info) = lines[i].trim_start().strip_prefix("```") {
+            let end = (i + 1..lines.len()).find(|&j| lines[j].trim_start().starts_with("```"));
+            if let (Some(name), Some(end)) = (info.trim().strip_prefix("file:"), end) {
+                found.push((super::docs::safe_name(name.trim()), lines[i + 1..end].join("\n")));
+            }
+            i = end.map_or(lines.len(), |e| e + 1);
+        } else {
+            i += 1;
+        }
+    }
+    found
+}
+
 pub fn blocks(text: &str) -> Vec<Value> {
     let lines: Vec<&str> = text.lines().collect();
     let mut out = Vec::new();
+    let mut file_index = 0usize;
     let mut markdown: Vec<&str> = Vec::new();
     let mut i = 0;
     while i < lines.len() {
@@ -125,6 +145,20 @@ pub fn blocks(text: &str) -> Vec<Value> {
                         continue;
                     }
                 }
+            }
+            if let (Some(name), Some(end)) = (info.strip_prefix("file:"), end) {
+                let name = super::docs::safe_name(name.trim());
+                let content = lines[i + 1..end].join("\n");
+                flush(&mut markdown, &mut out);
+                out.push(json!({
+                    "type": "file",
+                    "name": name,
+                    "kind": super::docs::describe(&name, content.len()),
+                    "action": { "type": "save_file", "message": Value::Null, "index": file_index },
+                }));
+                file_index += 1;
+                i = end + 1;
+                continue;
             }
             if info == "meo-tasks" {
                 let stop = end.unwrap_or(lines.len());
@@ -254,5 +288,22 @@ mod tests {
             blocks("```meo-tasks\nnothing\n```")[0]["text"],
             "```meo-tasks\nnothing\n```"
         );
+    }
+}
+
+#[cfg(test)]
+mod file_tests {
+    use super::*;
+
+    #[test]
+    fn a_file_fence_becomes_a_card_and_is_found_again_for_saving() {
+        let text = "Here you go.\n\n```file:notes.md\n# Notes\n- one\n```\n\nBye";
+        let b = blocks(text);
+        let card = b.iter().find(|x| x["type"] == "file").expect("a file card");
+        assert_eq!(card["name"], "notes.md");
+        assert_eq!(card["action"]["index"], 0);
+        assert_eq!(files(text), vec![("notes.md".to_owned(), "# Notes\n- one".to_owned())]);
+        // An unfinished fence stays code while the answer streams.
+        assert!(blocks("```file:a.md\nhalf").iter().all(|x| x["type"] != "file"));
     }
 }

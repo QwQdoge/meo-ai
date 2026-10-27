@@ -159,3 +159,21 @@ const host = {
 export type BrowserHost = typeof host;
 (globalThis as any).meoHost = host;
 export default host;
+
+// The core builds a file the assistant wrote and asks the platform to save it: here, a download.
+(globalThis as any).meoSaveFile = (name: string, bytes: Uint8Array) => {
+  const ext = name.includes(".") ? name.split(".").pop()!.toLowerCase() : "";
+  const type: Record<string, string> = {
+    docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    csv: "text/csv", json: "application/json", html: "text/html", svg: "image/svg+xml", md: "text/markdown",
+  };
+  const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: type[ext] ?? "application/octet-stream" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+};

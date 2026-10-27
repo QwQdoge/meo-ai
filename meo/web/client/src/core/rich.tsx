@@ -47,6 +47,20 @@ export function Markdown({ text, components }: { text: string; components?: Reco
   );
 }
 
+/** A file the assistant wrote: the core owns its content and builds the bytes; the page only asks to save. */
+export function FileCard({ block, act }: { block: Spec; act: (action: Spec) => void }) {
+  return (
+    <div className="core-filecard">
+      <Icon name="description" size={22} />
+      <div className="core-filecard-text">
+        <strong>{block.name}</strong>
+        <span className="core-muted">{block.kind}</span>
+      </div>
+      <button className="core-filecard-save" disabled={!block.action?.message} onClick={() => act(block.action)}>Download</button>
+    </div>
+  );
+}
+
 export function Callout({ block, components }: { block: Spec; components?: Record<string, any> }) {
   return (
     <aside className={`core-callout ${block.kind}`}>
@@ -93,11 +107,12 @@ export function DraftCard({ block, copy, copied }: { block: Spec; copy: string; 
   );
 }
 
-export function Blocks({ blocks, components, copy, copied, streaming }: { blocks: Spec[]; components?: Record<string, any>; copy: string; copied: string; streaming?: boolean }): ReactNode {
+export function Blocks({ blocks, components, copy, copied, streaming, act }: { blocks: Spec[]; components?: Record<string, any>; copy: string; copied: string; streaming?: boolean; act?: (action: Spec) => void }): ReactNode {
   return (
     <>
       {blocks.map((b, i) => {
         if (b.type === "callout") return <Callout key={i} block={b} components={components} />;
+        if (b.type === "file" && act) return <FileCard key={i} block={b} act={act} />;
         if (b.type === "draft") return <DraftCard key={i} block={b} copy={copy} copied={copied} />;
         const last = streaming && i === blocks.length - 1;
         return <Markdown key={i} text={b.text + (last ? " ▍" : "")} components={components} />;
