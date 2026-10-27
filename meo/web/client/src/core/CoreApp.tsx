@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, type ReactNode } from "react";
 import { Blocks } from "./rich";
 import { Icon, hasIcon } from "./icons";
+import browserHost from "./browserHost";
 import { useCore, type Action, type View } from "./useCore";
 import "./core.css";
 import "./shell.css";
@@ -550,12 +551,32 @@ function ControlChip({ item, act }: { item: Spec; act: Act }) {
 }
 
 /** Quick toggles (search, sub-agents) and the Work device, shown as chips next to the attach button. */
-function ComposerControls({ toolbar, act, work }: { toolbar: Spec[]; act: Act; work?: boolean }) {
+function FolderChip({ sendAction, act }: { sendAction?: Spec; act: Act }) {
+  const [name, setName] = useState(browserHost.name);
+  if (!browserHost.supported || !sendAction) return null;
+  const choose = async () => {
+    try {
+      const picked = await browserHost.pick();
+      setName(picked);
+      act({ type: "send", ...sendAction, text: "/workspace " + picked });
+    } catch {
+      // The picker was closed without a choice.
+    }
+  };
+  return (
+    <button className="core-chip-toggle" aria-pressed={!!name} title="Open a folder Meo may read and edit (stays in this browser)" onClick={choose}>
+      <Icon name="projects" size={16} /><span>{name || "Open folder"}</span>
+    </button>
+  );
+}
+
+function ComposerControls({ toolbar, act, work, sendAction }: { toolbar: Spec[]; act: Act; work?: boolean; sendAction?: Spec }) {
   // Work runs on a chosen online device. The core only offers the choice once a device is enrolled and
   // online; until then say so instead of hiding it, so the missing piece is visible.
   const hasDevice = toolbar.some((c) => c.id === "run_on");
   return (
     <>
+      {work && <FolderChip sendAction={sendAction} act={act} />}
       {work && !hasDevice && (
         <span className="core-device reserved" title="No online device is paired. Pair a desktop device in Settings to run Work on it.">
           <Icon name="device" size={16} /><span>Cloud · no device</span>
@@ -829,7 +850,7 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
                 />
               </>
             )}
-              <ComposerControls toolbar={composer.toolbar ?? []} act={act} work={work} />
+              <ComposerControls toolbar={composer.toolbar ?? []} act={act} work={work} sendAction={composer.sendAction} />
               <span className="core-spacer" />
               <TuneButton toolbar={composer.toolbar ?? []} act={act} />
             <button

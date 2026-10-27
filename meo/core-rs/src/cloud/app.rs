@@ -2016,14 +2016,29 @@ impl AppCore {
             return;
         }
         let remote = entry["remoteUrl"].as_str().map(str::to_owned);
-        let skills: Vec<Value> = entry["skills"]
+        let mut fetched: Option<Value> = None;
+        if let Some(src) = entry.get("github").filter(|g| g.is_object()).cloned() {
+            match self
+                .call(|api, t| {
+                    let src = src.clone();
+                    async move { api.github_skill(&t, &src).await }
+                })
+                .await
+            {
+                Ok(skill) => fetched = Some(skill),
+                Err(e) => return self.notice("error", format!("Could not fetch {name} from GitHub: {e}")),
+            }
+        }
+        let skills: Vec<Value> = if let Some(k) = &fetched {
+            vec![json!({ "name": k["name"], "description": k["description"], "content": k["content"], "enabled": true })]
+        } else { entry["skills"]
             .as_array()
             .map(|a| {
                 a.iter()
                     .map(|k| json!({ "name": k["name"], "description": k["description"], "content": k["content"], "enabled": true }))
                     .collect()
             })
-            .unwrap_or_default();
+            .unwrap_or_default() };
         let mut body = json!({
             "name": name,
             "description": entry["description"],
@@ -4105,7 +4120,7 @@ impl AppCore {
                 match self.ensure_host() {
                     Some(h) => format!("Work folder: {}", h.root()),
                     None => {
-                        "No folder is open. Use /workspace <folder> (desktop app only).".to_owned()
+                        "No folder is open. Use the Open folder button, or /workspace <folder> on desktop.".to_owned()
                     }
                 },
             );
@@ -4510,7 +4525,7 @@ impl AppCore {
                             if have.iter().any(|h| h == name) {
                                 continue;
                             }
-                            let tools = if p["remoteUrl"].is_null() { "" } else { " · MCP tools" };
+                            let tools = if !p["remoteUrl"].is_null() { " · MCP tools" } else if p.get("github").is_some() { " · GitHub" } else { "" };
                             items.push(json!({
                                 "id": format!("store:{}", p["id"].as_str().unwrap_or_default()),
                                 "title": format!("Install · {name}"),

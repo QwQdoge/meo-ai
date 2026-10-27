@@ -209,5 +209,187 @@
     "content": "先确认目标、现有水平、每周可用时间；输出按周的计划，每周有产出物与检验方式，并预留复习时间。"
    }
   ]
+ },
+ {
+  "id": "cloudflare-docs",
+  "name": "Cloudflare 文档",
+  "description": "搜索 Cloudflare 官方文档（Workers、Pages、R2 等），只读，无需登录。",
+  "remoteUrl": "https://docs.mcp.cloudflare.com/mcp",
+  "requires": null,
+  "skills": [
+   {
+    "name": "按文档回答 Cloudflare 问题",
+    "description": "先搜文档再回答，并给出来源。",
+    "content": "涉及 Cloudflare 产品的配置或限制时：先用 search_cloudflare_documentation 检索，再基于结果回答，列出文档来源；检索不到就明确说没有找到，不要凭记忆给限额或价格。"
+   }
+  ]
+ },
+ {
+  "id": "microsoft-learn",
+  "name": "Microsoft Learn 文档",
+  "description": "搜索并读取 Microsoft Learn（Azure、.NET、Windows 等）官方文档和代码示例，只读。",
+  "remoteUrl": "https://learn.microsoft.com/api/mcp",
+  "requires": null,
+  "skills": [
+   {
+    "name": "查微软官方文档",
+    "description": "用官方文档和示例回答微软技术问题。",
+    "content": "用 microsoft_docs_search 找到相关页面，需要细节时再用 microsoft_docs_fetch 读取全文；代码示例用 microsoft_code_sample_search。回答要标明文档来源，版本相关的结论要写出版本。"
+   }
+  ]
+ },
+ {
+  "id": "grep-app",
+  "name": "GitHub 代码搜索 (grep.app)",
+  "description": "在上百万个公开 GitHub 仓库里按代码片段搜索真实用法，只读。",
+  "remoteUrl": "https://mcp.grep.app/",
+  "requires": null,
+  "skills": [
+   {
+    "name": "找真实代码用法",
+    "description": "搜索开源代码里某个 API 的真实写法。",
+    "content": "需要看某个库或 API 在真实项目中怎么用时，用 searchGitHub，搜索的是字面代码片段（例如 useEffect(() => 或某个函数调用），不是自然语言。给出代码时标明仓库与文件路径，并说明样本量有限。"
+   }
+  ]
+ },
+ {
+  "id": "oss-frontend-design",
+  "name": "前端设计（Anthropic 开源）",
+  "description": "高质量、不千篇一律的前端界面设计与实现指南。 来自 anthropics/skills，安装时从 GitHub 获取原文。",
+  "remoteUrl": null,
+  "requires": null,
+  "skills": [],
+  "github": {
+   "owner": "anthropics",
+   "repo": "skills",
+   "ref": "main",
+   "path": "skills/frontend-design/SKILL.md"
+  }
+ },
+ {
+  "id": "oss-doc-coauthoring",
+  "name": "文档协作写作（Anthropic 开源）",
+  "description": "分阶段与你一起起草、打磨文档的流程。 来自 anthropics/skills，安装时从 GitHub 获取原文。",
+  "remoteUrl": null,
+  "requires": null,
+  "skills": [],
+  "github": {
+   "owner": "anthropics",
+   "repo": "skills",
+   "ref": "main",
+   "path": "skills/doc-coauthoring/SKILL.md"
+  }
+ },
+ {
+  "id": "oss-mcp-builder",
+  "name": "MCP 服务器构建（Anthropic 开源）",
+  "description": "设计并实现高质量 MCP 服务器的完整指南。 来自 anthropics/skills，安装时从 GitHub 获取原文。",
+  "remoteUrl": null,
+  "requires": null,
+  "skills": [],
+  "github": {
+   "owner": "anthropics",
+   "repo": "skills",
+   "ref": "main",
+   "path": "skills/mcp-builder/SKILL.md"
+  }
+ },
+ {
+  "id": "oss-webapp-testing",
+  "name": "网页应用测试（Anthropic 开源）",
+  "description": "用 Playwright 测试和调试本地网页应用的方法。 来自 anthropics/skills，安装时从 GitHub 获取原文。",
+  "remoteUrl": null,
+  "requires": null,
+  "skills": [],
+  "github": {
+   "owner": "anthropics",
+   "repo": "skills",
+   "ref": "main",
+   "path": "skills/webapp-testing/SKILL.md"
+  }
+ },
+ {
+  "id": "oss-skill-creator",
+  "name": "Skill 创建器（Anthropic 开源）",
+  "description": "创建、改进并评估新的 Skill。 来自 anthropics/skills，安装时从 GitHub 获取原文。",
+  "remoteUrl": null,
+  "requires": null,
+  "skills": [],
+  "github": {
+   "owner": "anthropics",
+   "repo": "skills",
+   "ref": "main",
+   "path": "skills/skill-creator/SKILL.md"
+  }
+ },
+ {
+  "id": "oss-theme-factory",
+  "name": "主题工厂（Anthropic 开源）",
+  "description": "为文档、幻灯片和网页套用统一的设计主题。 来自 anthropics/skills，安装时从 GitHub 获取原文。",
+  "remoteUrl": null,
+  "requires": null,
+  "skills": [],
+  "github": {
+   "owner": "anthropics",
+   "repo": "skills",
+   "ref": "main",
+   "path": "skills/theme-factory/SKILL.md"
+  }
+ },
+ {
+  "id": "oss-canvas-design",
+  "name": "画布设计（Anthropic 开源）",
+  "description": "创作海报与视觉设计作品的方法。 来自 anthropics/skills，安装时从 GitHub 获取原文。",
+  "remoteUrl": null,
+  "requires": null,
+  "skills": [],
+  "github": {
+   "owner": "anthropics",
+   "repo": "skills",
+   "ref": "main",
+   "path": "skills/canvas-design/SKILL.md"
+  }
+ },
+ {
+  "id": "oss-internal-comms",
+  "name": "内部沟通（Anthropic 开源）",
+  "description": "撰写状态报告、公告和 FAQ 等内部文档。 来自 anthropics/skills，安装时从 GitHub 获取原文。",
+  "remoteUrl": null,
+  "requires": null,
+  "skills": [],
+  "github": {
+   "owner": "anthropics",
+   "repo": "skills",
+   "ref": "main",
+   "path": "skills/internal-comms/SKILL.md"
+  }
+ },
+ {
+  "id": "oss-brand-guidelines",
+  "name": "品牌规范（Anthropic 开源）",
+  "description": "让产出遵循品牌色彩与排版规范。 来自 anthropics/skills，安装时从 GitHub 获取原文。",
+  "remoteUrl": null,
+  "requires": null,
+  "skills": [],
+  "github": {
+   "owner": "anthropics",
+   "repo": "skills",
+   "ref": "main",
+   "path": "skills/brand-guidelines/SKILL.md"
+  }
+ },
+ {
+  "id": "oss-algorithmic-art",
+  "name": "算法艺术（Anthropic 开源）",
+  "description": "用 p5.js 创作生成式艺术。 来自 anthropics/skills，安装时从 GitHub 获取原文。",
+  "remoteUrl": null,
+  "requires": null,
+  "skills": [],
+  "github": {
+   "owner": "anthropics",
+   "repo": "skills",
+   "ref": "main",
+   "path": "skills/algorithmic-art/SKILL.md"
+  }
  }
 ]

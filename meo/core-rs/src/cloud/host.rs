@@ -359,25 +359,160 @@ pub fn askpass_main(args: &[String]) -> Option<i32> {
     }
 }
 
+/// Browser host: the same tools over a folder the user picked with the File System Access API.
+/// The page owns the folder handle (`window.meoHost`, see `web/client/src/core/browserHost.ts`);
+/// the core only forwards each tool call as JSON and gets `{ ok, text }` back. Commands cannot run
+/// in a browser, so `run` answers with an error the model can read.
+#[cfg(target_arch = "wasm32")]
+mod browser {
+    use wasm_bindgen::prelude::*;
+
+    #[wasm_bindgen]
+    extern "C" {
+        #[wasm_bindgen(js_namespace = ["window", "meoHost"], js_name = open, catch)]
+        pub fn open(name: &str) -> Result<String, JsValue>;
+        #[wasm_bindgen(js_namespace = ["window", "meoHost"], js_name = readFile, catch)]
+        pub async fn read_file(path: &str, start: u32, end: u32) -> Result<JsValue, JsValue>;
+        #[wasm_bindgen(js_namespace = ["window", "meoHost"], js_name = listDir, catch)]
+        pub async fn list_dir(path: &str) -> Result<JsValue, JsValue>;
+        #[wasm_bindgen(js_namespace = ["window", "meoHost"], js_name = search, catch)]
+        pub async fn search(pattern: &str, path: &str) -> Result<JsValue, JsValue>;
+        #[wasm_bindgen(js_namespace = ["window", "meoHost"], js_name = readText, catch)]
+        pub async fn read_text(path: &str) -> Result<JsValue, JsValue>;
+        #[wasm_bindgen(js_namespace = ["window", "meoHost"], js_name = exists, catch)]
+        pub async fn exists(path: &str) -> Result<JsValue, JsValue>;
+        #[wasm_bindgen(js_namespace = ["window", "meoHost"], js_name = writeText, catch)]
+        pub async fn write_text(path: &str, text: &str) -> Result<JsValue, JsValue>;
+        #[wasm_bindgen(js_namespace = ["window", "meoHost"], js_name = remove, catch)]
+        pub async fn remove(path: &str) -> Result<JsValue, JsValue>;
+        #[wasm_bindgen(js_namespace = ["window", "meoHost"], js_name = changed)]
+        pub fn changed() -> u32;
+        #[wasm_bindgen(js_namespace = ["window", "meoHost"], js_name = newCheckpoint)]
+        pub fn new_checkpoint();
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn js_err(e: wasm_bindgen::JsValue) -> String {
+    e.as_string()
+        .or_else(|| js_sys::Reflect::get(&e, &"message".into()).ok().and_then(|m| m.as_string()))
+        .unwrap_or_else(|| "the folder is not available; open it again".to_owned())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn js_text(v: Result<wasm_bindgen::JsValue, wasm_bindgen::JsValue>) -> Outcome {
+    match v {
+        Ok(value) => Outcome::done(value.as_string().unwrap_or_default()),
+        Err(e) => Outcome::fail(js_err(e)),
+    }
+}
+
 #[cfg(target_arch = "wasm32")]
 #[derive(Clone)]
-pub struct Host;
+pub struct Host {
+    root: String,
+}
 
 #[cfg(target_arch = "wasm32")]
 impl Host {
-    pub fn open(_path: &str) -> Result<Self, String> {
-        Err("File tools are only available in the desktop app.".to_owned())
+    pub fn open(path: &str) -> Result<Self, String> {
+        browser::open(path)
+            .map(|root| Self { root })
+            .map_err(|e| e.as_string().unwrap_or_else(|| "Pick a folder first with the Open folder button.".to_owned()))
     }
 
     pub fn root(&self) -> &str {
-        ""
+        &self.root
     }
 
-    pub async fn run(&self, _tool: Tool) -> Outcome {
-        Outcome::fail("File tools are only available in the desktop app.")
+    pub async fn run(&self, tool: Tool) -> Outcome {
+        use super::agent::{apply_hunks, parse_patch, replace_once, FileOp};
+        match tool {
+            Tool::ReadFile { path, start, end } => js_text(
+                browser::read_file(&path, start.unwrap_or(1) as u32, end.map_or(0, |e| e as u32)).await,
+            ),
+            Tool::ListDir { path } => js_text(browser::list_dir(&path).await),
+            Tool::Search { pattern, path } => {
+                js_text(browser::search(&pattern, path.as_deref().unwrap_or(".")).await)
+            }
+            Tool::SearchReplace { path, old, new } => {
+                let text = match browser::read_text(&path).await {
+                    Ok(v) => v.as_string().unwrap_or_default(),
+                    Err(e) => return Outcome::fail(format!("cannot read {path}: {}", js_err(e))),
+                };
+                let updated = match replace_once(&text, &old, &new) {
+                    Ok(u) => u,
+                    Err(e) => return Outcome::fail(format!("{path}: {e}")),
+                };
+                match browser::write_text(&path, &updated).await {
+                    Ok(_) => Outcome::done(format!("edited {path}")),
+                    Err(e) => Outcome::fail(format!("cannot write {path}: {}", js_err(e))),
+                }
+            }
+            Tool::ApplyPatch { patch } => {
+                let ops = match parse_patch(&patch) {
+                    Ok(o) => o,
+                    Err(e) => return Outcome::fail(e),
+                };
+                // Work out every result first: a patch applies completely or not at all.
+                enum Write {
+                    Put(String, String),
+                    Remove(String),
+                }
+                let mut writes = Vec::new();
+                let mut report = Vec::new();
+                for op in &ops {
+                    match op {
+                        FileOp::Add { path, content } => {
+                            if browser::exists(path).await.ok().and_then(|v| v.as_bool()).unwrap_or(false) {
+                                return Outcome::fail(format!("{path} already exists"));
+                            }
+                            writes.push(Write::Put(path.clone(), content.clone()));
+                            report.push(format!("added {path}"));
+                        }
+                        FileOp::Delete { path } => {
+                            if !browser::exists(path).await.ok().and_then(|v| v.as_bool()).unwrap_or(false) {
+                                return Outcome::fail(format!("{path} does not exist"));
+                            }
+                            writes.push(Write::Remove(path.clone()));
+                            report.push(format!("deleted {path}"));
+                        }
+                        FileOp::Update { path, hunks } => {
+                            let text = match browser::read_text(path).await {
+                                Ok(v) => v.as_string().unwrap_or_default(),
+                                Err(e) => return Outcome::fail(format!("cannot read {path}: {}", js_err(e))),
+                            };
+                            match apply_hunks(&text, hunks) {
+                                Ok(updated) => writes.push(Write::Put(path.clone(), updated)),
+                                Err(e) => return Outcome::fail(format!("{path}: {e}")),
+                            }
+                            report.push(format!("updated {path}"));
+                        }
+                    }
+                }
+                for write in writes {
+                    let result = match &write {
+                        Write::Put(path, content) => browser::write_text(path, content).await,
+                        Write::Remove(path) => browser::remove(path).await,
+                    };
+                    if let Err(e) = result {
+                        return Outcome::fail(js_err(e));
+                    }
+                }
+                Outcome::done(report.join("\n"))
+            }
+            Tool::Run { .. } => Outcome::fail(
+                "commands cannot run in a browser; use the desktop app, or edit files and tell the user what to run",
+            ),
+            Tool::Subagent { .. } | Tool::WebSearch { .. } => {
+                Outcome::fail("this tool is run by the app, not by the folder")
+            }
+        }
     }
 
-    pub fn new_checkpoint(&self) {}
+    pub fn new_checkpoint(&self) {
+        browser::new_checkpoint();
+    }
 
     pub fn set_notifier(&self, _notify: std::sync::Arc<dyn Fn() + Send + Sync>) {}
 
@@ -392,7 +527,7 @@ impl Host {
     }
 
     pub fn changed(&self) -> usize {
-        0
+        browser::changed() as usize
     }
 
     pub fn rewind(&self) -> usize {

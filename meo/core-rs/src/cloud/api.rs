@@ -814,6 +814,17 @@ impl MeoApi {
         Ok(body["plugins"].as_array().cloned().unwrap_or_default())
     }
 
+    /// One public `SKILL.md` from GitHub, fetched by Meo API (fixed origin, bounded, text only).
+    pub async fn github_skill(&self, token: &str, src: &Value) -> Result<Value, ApiError> {
+        let field = |k: &str| src[k].as_str().unwrap_or_default().to_owned();
+        let path = format!(
+            "/v1/ai/catalog/github-skill?owner={}&repo={}&ref={}&path={}",
+            field("owner"), field("repo"), field("ref"), field("path")
+        );
+        let body = self.request(token, Method::GET, &path, None).await?;
+        Ok(body["skill"].clone())
+    }
+
     pub async fn create_plugin(&self, token: &str, body: Value) -> Result<(), ApiError> {
         self.request(token, Method::POST, "/v1/ai/plugins", Some(body))
             .await
