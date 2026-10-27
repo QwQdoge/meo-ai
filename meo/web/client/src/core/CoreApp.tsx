@@ -757,12 +757,6 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
           )}
         </header>
         <div className="core-messages">
-          {inspector.visible && (
-            <aside className="core-inspector" aria-label={inspector.title}>
-              <header><strong>{inspector.title}</strong><button aria-label="Hide" onClick={() => act(inspector.hide)}>✕</button></header>
-              {(inspector.sections ?? []).map((sec: Spec) => <InspectorSection key={sec.id} sec={sec} />)}
-            </aside>
-          )}
           {page.empty && (
             <div className="core-empty">
               <h2>{page.empty.title}</h2>
@@ -931,6 +925,12 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
           </div>
         </div>
       </section>
+      {inspector.visible && (
+        <aside className="core-inspector" aria-label={inspector.title}>
+          <header><strong>{inspector.title}</strong><button aria-label="Hide" onClick={() => act(inspector.hide)}>✕</button></header>
+          {(inspector.sections ?? []).map((sec: Spec) => <InspectorSection key={sec.id} sec={sec} />)}
+        </aside>
+      )}
     </div>
   );
 }

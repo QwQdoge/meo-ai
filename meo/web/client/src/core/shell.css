@@ -157,6 +157,16 @@
 .core-app .core-diff .hunk { color: rgb(var(--text-secondary)); }
 @media (prefers-color-scheme: dark) { .core-app .core-change-stat .add, .core-app .core-diff .add { color: #56d364; } .core-app .core-change-stat .del, .core-app .core-diff .del { color: #ff7b72; } }
 
+/* Details card: a right-hand panel on wide screens, a bottom sheet on narrow ones. */
+.core-app .core-chat { display: flex; }
+.core-app .core-inspector { position: static; align-self: stretch; flex: none; width: 360px; max-width: none; margin: 8px 8px 8px 0; padding: 8px 10px 12px; overflow: auto;
+  border: 0; border-radius: var(--r-l); background: var(--tonal); font-size: 13px; }
+.core-app .core-inspector > header { padding: 8px 10px; font-size: 14px; }
+.core-app .core-isec { border-top: 1px solid color-mix(in srgb, rgb(var(--border-light)) 60%, transparent); }
+@media (max-width: 1099px) {
+  .core-app .core-inspector { position: fixed; z-index: 15; inset: auto 8px 8px 8px; width: auto; max-height: 62vh; margin: 0; background: rgb(var(--surface-primary)); box-shadow: var(--elev-3); }
+}
+
 /* ---------- Material controls ---------- */
 .core-app input[type="range"] { -webkit-appearance: none; appearance: none; width: 100%; height: 28px; background: transparent; cursor: pointer; touch-action: pan-y; }
 .core-app input[type="range"]::-webkit-slider-runnable-track { height: 8px; border-radius: 999px; background: color-mix(in srgb, rgb(var(--accent-primary)) 25%, transparent); }
