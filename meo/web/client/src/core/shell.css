@@ -125,6 +125,10 @@
 .core-app .core-pop { position: relative; }
 .core-app .core-commands { border-radius: var(--r-m); background: rgb(var(--surface-primary)); box-shadow: var(--elev-3); border: 0; }
 
+.core-app .core-composer.dragging .core-input-box { outline: 2px dashed rgb(var(--accent-primary)); outline-offset: -2px; background: var(--tonal-2); }
+.core-app .core-attach-note { margin: 0; padding: 8px 16px; border-radius: var(--r-m); background: var(--tonal-2); font-size: 13px; }
+.core-app .core-files { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 4px; }
+
 /* ---------- Material controls ---------- */
 .core-app input[type="range"] { -webkit-appearance: none; appearance: none; width: 100%; height: 28px; background: transparent; cursor: pointer; touch-action: pan-y; }
 .core-app input[type="range"]::-webkit-slider-runnable-track { height: 8px; border-radius: 999px; background: color-mix(in srgb, rgb(var(--accent-primary)) 25%, transparent); }

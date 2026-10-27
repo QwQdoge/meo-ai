@@ -665,6 +665,28 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
   const end = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const [input, setInput] = useState("");
+  const [dragging, setDragging] = useState(false);
+  const [attachNote, setAttachNote] = useState("");
+  const note = (text: string) => { setAttachNote(text); window.setTimeout(() => setAttachNote(""), 4000); };
+  // One path for the picker, paste and drag-and-drop: pictures are shrunk, text files go in as text.
+  const attachFiles = async (files: File[]) => {
+    if (!composer.attach) return;
+    const textTypes: string[] = composer.attach.extensions ?? [];
+    for (const file of files) {
+      const ext = file.name.includes(".") ? file.name.split(".").pop()!.toLowerCase() : "";
+      if (file.type.startsWith("image/")) {
+        const data = await shrinkImage(file);
+        if (data) act({ type: "attach_image", name: file.name || "image.jpg", mime: "image/jpeg", data });
+        else note(`Could not read ${file.name || "the picture"}`);
+      } else if (file.size > 2 * 1024 * 1024) {
+        note(`${file.name} is larger than 2 MB`);
+      } else if (textTypes.includes(ext) || file.type.startsWith("text/") || (!ext && file.type === "")) {
+        act({ type: composer.attach.action, name: file.name || "pasted.txt", text: await file.text() });
+      } else {
+        note(`${file.name}: this file type is not supported yet (text, code and pictures work)`);
+      }
+    }
+  };
   const last = messages[messages.length - 1]?.text?.length ?? 0;
 
   useEffect(() => {
@@ -786,7 +808,18 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
             {(page.consent.actions ?? []).map((a: Spec, i: number) => <Button key={i} spec={a} act={act} />)}
           </div>
         )}
-        <div className="core-composer">
+        <div
+          className={`core-composer${dragging ? " dragging" : ""}`}
+          onDragOver={(e) => { if (composer.attach && e.dataTransfer.types.includes("Files")) { e.preventDefault(); setDragging(true); } }}
+          onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragging(false); }}
+          onDrop={(e) => {
+            if (!composer.attach) return;
+            e.preventDefault();
+            setDragging(false);
+            void attachFiles(Array.from(e.dataTransfer.files));
+          }}
+        >
+          {attachNote && <p className="core-attach-note" role="status">{attachNote}</p>}
           {matches.length > 0 && (
             <ul className="core-commands" role="listbox">
               {matches.map((c: Spec) => (
@@ -815,6 +848,12 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
               value={input}
               placeholder={composer.placeholder}
               onChange={(e) => { setInput(e.target.value); fit(e.target); }}
+              onPaste={(e) => {
+                const files = Array.from(e.clipboardData.files);
+                if (files.length === 0) return;
+                e.preventDefault();
+                void attachFiles(files);
+              }}
               onKeyDown={(e) => {
                 if (e.key === "Escape" && composer.busy) act(composer.stopAction);
                 if (e.key === "Tab" && matches.length > 0) {
@@ -835,17 +874,12 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
                   ref={fileInput}
                   type="file"
                   hidden
+                  multiple
                   accept={(composer.attach.extensions ?? []).map((e: string) => "." + e).join(",")}
-                  onChange={async (e) => {
-                    const file = e.target.files?.[0];
+                  onChange={(e) => {
+                    const files = Array.from(e.target.files ?? []);
                     e.target.value = "";
-                    if (!file) return;
-                    if (file.type.startsWith("image/")) {
-                      const data = await shrinkImage(file);
-                      if (data) act({ type: "attach_image", name: file.name, mime: "image/jpeg", data });
-                    } else if (file.size <= 2 * 1024 * 1024) {
-                      act({ type: composer.attach.action, name: file.name, text: await file.text() });
-                    }
+                    void attachFiles(files);
                   }}
                 />
               </>
