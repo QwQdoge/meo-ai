@@ -1,9 +1,9 @@
 import React, { useEffect, useRef, useState, type ReactNode } from "react";
 import { Blocks } from "./rich";
-import { Icon } from "./icons";
+import { Icon, hasIcon } from "./icons";
 import { useCore, type Action, type View } from "./useCore";
 import "./core.css";
-import "./pixel.css";
+import "./shell.css";
 
 // Generic renderer for the Meo AI core view (meo/docs/cloud-core-view.md). It
 // knows component kinds only, never product features: navigation, pages,
@@ -37,13 +37,18 @@ export default function CoreApp() {
 
   const page: Spec = view.page;
   return (
-    <div className="core-app">
+    <div className={`core-app${drawer ? " drawer-open" : ""}`} data-mode={view.route === "work" ? "work" : "chat"}>
       {view.sidebar && <Sidebar sidebar={view.sidebar} strings={strings} act={act} open={drawer} setOpen={setDrawer} />}
-      {view.sidebar && (
-        <button className="core-menu" aria-label="Menu" onClick={() => setDrawer((v) => !v)}>☰</button>
-      )}
+      {view.sidebar && drawer && <div className="core-drawer-scrim" onClick={() => setDrawer(false)} />}
       {view.dialog && <Dialog dialog={view.dialog} act={act} />}
       <div className="core-main">
+        {view.sidebar && (
+          <div className="core-appbar">
+            <button className="core-icon-btn" aria-label="Menu" onClick={() => setDrawer((v) => !v)}><Icon name="menu" size={22} /></button>
+            <img src="/meo-ai.svg" alt="" width={24} height={24} />
+            <strong>Meo AI</strong>
+          </div>
+        )}
         {view.notice && (
           <Banner error={view.notice.kind === "error"} action={view.notice.actionLabel ?? strings.dismiss ?? "Dismiss"} onAction={() => act(view.notice.action)}>
             {view.notice.text}
@@ -56,7 +61,7 @@ export default function CoreApp() {
   );
 }
 
-const ICONS: Record<string, string> = { chat: "💬", work: "🧰", skills: "🧩", projects: "📁", settings: "⚙" };
+const glyph = (name: string, size = 18): ReactNode => (hasIcon(name) ? <Icon name={name} size={size} /> : <span>•</span>);
 
 /** Claude-style left column: Chat | Work switch, search, new chat, plugins, projects tree, chats. */
 function Sidebar({ sidebar, strings, act, open, setOpen }: { sidebar: Spec; strings: Spec; act: Act; open: boolean; setOpen: (v: boolean) => void }) {
@@ -77,16 +82,16 @@ function Sidebar({ sidebar, strings, act, open, setOpen }: { sidebar: Spec; stri
         <div className="core-modes" role="tablist">
           {(sidebar.modes ?? []).map((m: Spec) => (
             <button key={m.id} role="tab" aria-selected={!!m.selected} title={m.label} onClick={() => go(m.action)}>
-              {collapsed ? <span aria-hidden>{ICONS[m.icon] ?? "•"}</span> : <span>{m.label}</span>}
+              {glyph(m.icon)}{!collapsed && <span>{m.label}</span>}
             </button>
           ))}
         </div>
-        <button className="core-collapse" aria-label="Collapse sidebar" onClick={() => act(sidebar.toggle)}>{collapsed ? "»" : "«"}</button>
+        <button className="core-icon-btn core-collapse" aria-label="Collapse sidebar" onClick={() => act(sidebar.toggle)}>{glyph(collapsed ? "expand" : "collapse", 20)}</button>
       </div>
       {!collapsed && sidebar.search && <SearchBox search={sidebar.search} act={act} />}
       {sidebar.newChat && (
         <button className="core-newchat" title={sidebar.newChat.label} onClick={() => go(sidebar.newChat.action)}>
-          <span aria-hidden>＋</span>{!collapsed && <span>{sidebar.newChat.label}</span>}
+          {glyph("add", 20)}{!collapsed && <span>{sidebar.newChat.label}</span>}
         </button>
       )}
       <div className="core-side-scroll">
@@ -109,7 +114,7 @@ function Sidebar({ sidebar, strings, act, open, setOpen }: { sidebar: Spec; stri
             ) : (
               <>
                 <button className="core-side-link" aria-current={sec.selected ? "page" : undefined} title={sec.label} onClick={() => go(sec.action)}>
-                  <span aria-hidden>{ICONS[sec.icon] ?? "•"}</span>{!collapsed && <span>{sec.label}</span>}
+                  {glyph(sec.icon)}{!collapsed && <span>{sec.label}</span>}
                 </button>
                 {!collapsed && sec.kind === "tree" && (
                   <ul className="core-list">
@@ -129,7 +134,7 @@ function Sidebar({ sidebar, strings, act, open, setOpen }: { sidebar: Spec; stri
       <div className="core-side-foot">
         {(sidebar.footer ?? []).map((f: Spec) => (
           <button key={f.id} className="core-side-link" aria-current={f.selected ? "page" : undefined} title={f.label} onClick={() => go(f.action)}>
-            <span aria-hidden>{ICONS[f.icon] ?? "•"}</span>{!collapsed && <span>{f.label}</span>}
+            {glyph(f.icon)}{!collapsed && <span>{f.label}</span>}
           </button>
         ))}
       </div>
@@ -427,7 +432,7 @@ function RowMenu({ menu, act, label }: { menu: Spec[]; act: Act; label: string }
   const [open, setOpen] = useState(false);
   return (
     <div className="core-row-menu">
-      <button aria-label={label} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((v) => !v)} onBlur={() => setTimeout(() => setOpen(false), 150)}>⋮</button>
+      <button aria-label={label} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((v) => !v)} onBlur={() => setTimeout(() => setOpen(false), 150)}><Icon name="more" size={18} /></button>
       {open && (
         <ul role="menu">
           {menu.map((m, i) => (
@@ -544,6 +549,85 @@ function ControlChip({ item, act }: { item: Spec; act: Act }) {
   return <Control item={item} act={act} />;
 }
 
+/** Quick toggles (search, sub-agents) and the Work device, shown as chips next to the attach button. */
+function ComposerControls({ toolbar, act }: { toolbar: Spec[]; act: Act }) {
+  return (
+    <>
+      {toolbar.filter((c) => c.id === "run_on").map((c) => <DeviceChip key={c.id} item={c} act={act} />)}
+      {toolbar.filter((c) => c.kind === "toggle" && c.icon).map((c) => (
+        <button key={c.id} className="core-chip-toggle" aria-pressed={c.value === true} title={c.label} onClick={() => act(setting(c, c.value !== true))}>
+          <Icon name={c.icon} size={16} /><span>{c.label}</span>
+        </button>
+      ))}
+    </>
+  );
+}
+
+function DeviceChip({ item, act }: { item: Spec; act: Act }) {
+  const options: Spec[] = item.options ?? [];
+  return (
+    <label className="core-device" title={item.label}>
+      <Icon name="device" size={16} />
+      <select aria-label={item.label} value={item.value ?? ""} onChange={(e) => act(setting(item, e.target.value))}>
+        {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
+    </label>
+  );
+}
+
+/** One "Tune" sheet instead of a row of loose controls: ordered choices are sliders, the rest are selects. */
+function TuneButton({ toolbar, act }: { toolbar: Spec[]; act: Act }) {
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLSpanElement>(null);
+  const items = toolbar.filter((c) => c.id !== "run_on" && !(c.kind === "toggle" && c.icon));
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: PointerEvent) => { if (!root.current?.contains(e.target as Node)) setOpen(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("pointerdown", away);
+    document.addEventListener("keydown", esc);
+    return () => { document.removeEventListener("pointerdown", away); document.removeEventListener("keydown", esc); };
+  }, [open]);
+  if (items.length === 0) return null;
+  const summary = items
+    .filter((c) => c.kind === "slider" || c.id === "mode")
+    .map((c) => (c.options ?? []).find((o: Spec) => o.value === c.value)?.label)
+    .filter(Boolean)
+    .slice(0, 2)
+    .join(" · ");
+  return (
+    <span className="core-pop" ref={root}>
+      <button className="core-tune" aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+        <Icon name="tune" size={16} /><span>{summary || items[0].label}</span>
+      </button>
+      {open && (
+        <div className="core-sheet" role="dialog">
+          {items.map((item) => {
+            const options: Spec[] = item.options ?? [];
+            const index = Math.max(0, options.findIndex((o) => o.value === item.value));
+            return (
+              <div key={item.id} className="core-sheet-row">
+                <div className="core-sheet-label">{item.icon && <Icon name={item.icon} size={16} />}<span>{item.label}</span>
+                  {item.kind === "slider" && <b>{options[index]?.label}</b>}</div>
+                {item.kind === "slider" ? (
+                  <input type="range" min={0} max={options.length - 1} step={1} value={index} aria-label={item.label} aria-valuetext={options[index]?.label}
+                    onChange={(e) => act(setting(item, options[Number(e.target.value)].value))} />
+                ) : item.kind === "select" ? (
+                  <select aria-label={item.label} value={item.value ?? ""} onChange={(e) => act(setting(item, e.target.value))}>
+                    {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  </select>
+                ) : (
+                  <ControlChip item={item} act={act} />
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </span>
+  );
+}
+
 function Conversation({ page, prefs, strings, act }: { page: Spec; prefs: Spec; strings: Spec; act: Act }) {
   const inspector: Spec = page.inspector ?? {};
   const area = useRef<HTMLTextAreaElement>(null);
@@ -605,7 +689,7 @@ function Conversation({ page, prefs, strings, act }: { page: Spec; prefs: Spec; 
               <p className="core-muted">{page.empty.text}</p>
               <div className="core-chips">
                 {(page.empty.suggestions ?? []).map((c: Spec, i: number) => (
-                  <button key={i} className="core-chip" onClick={() => act(c.action)}>{c.label}</button>
+                  <button key={i} className="core-suggest" onClick={() => act(c.action)}><Icon name="auto_awesome" size={18} /><span>{c.label}</span></button>
                 ))}
               </div>
             </div>
@@ -717,7 +801,7 @@ function Conversation({ page, prefs, strings, act }: { page: Spec; prefs: Spec; 
             <div className="core-input-bar">
             {composer.attach && (
               <>
-                <button className="core-attach" aria-label={composer.attach.label} title={composer.attach.label} onClick={() => fileInput.current?.click()}>📎</button>
+                <button className="core-icon-btn core-attach" aria-label={composer.attach.label} title={composer.attach.label} onClick={() => fileInput.current?.click()}><Icon name="attach" size={20} /></button>
                 <input
                   ref={fileInput}
                   type="file"
@@ -737,22 +821,16 @@ function Conversation({ page, prefs, strings, act }: { page: Spec; prefs: Spec; 
                 />
               </>
             )}
+              <ComposerControls toolbar={composer.toolbar ?? []} act={act} />
               <span className="core-spacer" />
+              <TuneButton toolbar={composer.toolbar ?? []} act={act} />
             <button
                 className="core-send"
                 aria-label={composer.busy ? (strings.stop ?? "Stop") : (strings.send ?? "Send")}
                 onClick={() => (composer.busy ? act(composer.stopAction) : send())}
               >
-                {composer.busy ? "■" : "↑"}
+                {composer.busy ? <Icon name="stop" size={16} /> : <Icon name="arrow_up" size={20} />}
               </button>
-            </div>
-          </div>
-          <div className="core-controls">
-            <div className="core-controls-start">
-              {(composer.toolbar ?? []).filter((c: Spec) => c.align !== "end").map((item: Spec) => <ControlChip key={item.id} item={item} act={act} />)}
-            </div>
-            <div className="core-controls-end">
-              {(composer.toolbar ?? []).filter((c: Spec) => c.align === "end").map((item: Spec) => <ControlChip key={item.id} item={item} act={act} />)}
             </div>
           </div>
         </div>
