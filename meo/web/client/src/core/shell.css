@@ -89,7 +89,7 @@
 .core-app .core-empty h2 { font-size: clamp(1.8rem, 4vw, 2.6rem); font-weight: 500; letter-spacing: -.02em; margin: 0 0 8px;
   background: linear-gradient(90deg, rgb(var(--accent-primary)), color-mix(in srgb, rgb(var(--accent-primary)) 40%, #d0679d)); -webkit-background-clip: text; background-clip: text; color: transparent; }
 .core-app .core-empty p { margin: 0 0 28px; font-size: 1rem; }
-.core-app .core-empty .core-chips { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; justify-content: stretch; margin: 0; }
+.core-app .core-empty .core-chips { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; justify-content: stretch; margin: 0; }
 .core-app .core-suggest { display: flex; flex-direction: column; align-items: flex-start; gap: 18px; min-height: 108px; padding: 16px 18px; border: 0; border-radius: var(--r-l);
   background: var(--tonal); color: inherit; font-size: 15px; text-align: start; transition: background-color .2s var(--ease), box-shadow .2s var(--ease); }
 .core-app .core-suggest:hover { background: var(--tonal-2); box-shadow: var(--elev-1); }
@@ -175,6 +175,7 @@
   .core-app .core-thread .core-header { padding: 8px 16px 4px; }
   .core-app .core-messages { padding: 8px 16px; }
   .core-app .core-composer { width: calc(100% - 16px); margin-bottom: 8px; }
+  .core-app .core-empty .core-chips { gap: 8px; }
   .core-app .core-chip-toggle span { display: none; }
   .core-app .core-chip-toggle { padding: 0 10px; }
 }
