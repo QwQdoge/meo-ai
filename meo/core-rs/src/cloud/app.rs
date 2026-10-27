@@ -161,6 +161,15 @@ pub enum Action {
     OpenProject {
         id: String,
     },
+    /// Installs and enables a built-in plugin bundle (MCP connection plus its Skills).
+    InstallPlugin {
+        id: String,
+    },
+    /// Turns an installed plugin on or off.
+    TogglePlugin {
+        id: String,
+        enabled: bool,
+    },
     BeginNewProject,
     /// A text file picked on the device. Hosts send only its name and decoded text.
     AttachText {
@@ -669,6 +678,8 @@ impl AppCore {
             Action::AttachPath { path } => self.attach_path(path).await,
             Action::RemoveFile { id } => self.remove_file(id).await,
             Action::OpenProject { id } => self.open_project(id).await,
+            Action::InstallPlugin { id } => self.install_plugin(id).await,
+            Action::TogglePlugin { id, enabled } => self.toggle_plugin(id, enabled).await,
             Action::BeginNewProject => self.prompt(
                 "New project",
                 "",
@@ -1985,6 +1996,94 @@ impl AppCore {
                 s.project_chats = chats;
             }
         });
+    }
+
+    async fn install_plugin(&self, id: String) {
+        let Some(entry) = plugin_store().into_iter().find(|p| p["id"] == id.as_str()) else {
+            return;
+        };
+        let name = entry["name"].as_str().unwrap_or_default().to_owned();
+        let installed = self
+            .state
+            .lock()
+            .unwrap()
+            .plugins
+            .as_ref()
+            .and_then(|r| r.as_ref().ok())
+            .is_some_and(|rows| rows.iter().any(|p| p["name"] == name.as_str()));
+        if installed {
+            self.notice("info", format!("{name} is already installed."));
+            return;
+        }
+        let remote = entry["remoteUrl"].as_str().map(str::to_owned);
+        let skills: Vec<Value> = entry["skills"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .map(|k| json!({ "name": k["name"], "description": k["description"], "content": k["content"], "enabled": true }))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut body = json!({
+            "name": name,
+            "description": entry["description"],
+            "kind": if remote.is_some() { "bundle" } else { "skills" },
+            "source": "custom",
+            "transport": if remote.is_some() { "remote_http" } else { "none" },
+            "enabled": true,
+            "manifest": { "builtin": id },
+            "skills": skills,
+        });
+        if let Some(url) = remote {
+            body["remoteUrl"] = json!(url);
+        }
+        match self
+            .call(|api, t| {
+                let body = body.clone();
+                async move { api.create_plugin(&t, body).await }
+            })
+            .await
+        {
+            Ok(()) => {
+                let note = entry["requires"].as_str().unwrap_or_default();
+                self.notice("info", format!("{name} installed and enabled. {note}").trim().to_owned());
+                self.refresh_plugins().await;
+            }
+            Err(e) => self.notice("error", e.to_string()),
+        }
+    }
+
+    async fn toggle_plugin(&self, id: String, enabled: bool) {
+        let version = self
+            .state
+            .lock()
+            .unwrap()
+            .plugins
+            .as_ref()
+            .and_then(|r| r.as_ref().ok())
+            .and_then(|rows| rows.iter().find(|p| p["id"] == id.as_str()))
+            .and_then(|p| p["version"].as_i64());
+        let Some(version) = version else { return };
+        match self
+            .call(|api, t| {
+                let id = id.clone();
+                async move {
+                    api.patch_plugin(&t, &id, json!({ "enabled": enabled, "expectedVersion": version }))
+                        .await
+                }
+            })
+            .await
+        {
+            Ok(()) => self.refresh_plugins().await,
+            Err(e) => self.notice("error", e.to_string()),
+        }
+    }
+
+    async fn refresh_plugins(&self) {
+        let r = self
+            .call(|api, t| async move { api.list_plugins(&t).await })
+            .await;
+        self.update(|s| s.plugins = Some(r.map_err(|e| e.to_string())));
     }
 
     async fn create_project(&self, text: String) {
@@ -4383,12 +4482,46 @@ impl AppCore {
                         page
                     }
                 },
-                "skills" => list_page(
-                    "Skills",
-                    &s.plugins,
-                    |p| json!({ "id": p["id"], "title": p["name"], "subtitle": p["description"] }),
-                    "No skills or apps yet",
-                ),
+                "skills" => {
+                    let mut page = list_page(
+                        "Skills",
+                        &s.plugins,
+                        |p| {
+                            let on = p["enabled"].as_bool().unwrap_or(false);
+                            json!({
+                                "id": p["id"],
+                                "title": format!("{} · {}", p["name"].as_str().unwrap_or_default(), if on { "On" } else { "Off" }),
+                                "subtitle": p["description"],
+                                "action": { "type": "toggle_plugin", "id": p["id"], "enabled": !on },
+                            })
+                        },
+                        "No skills or apps yet",
+                    );
+                    if page["kind"] == "list" {
+                        let have: Vec<String> = s
+                            .plugins
+                            .as_ref()
+                            .and_then(|r| r.as_ref().ok())
+                            .map(|rows| rows.iter().filter_map(|p| p["name"].as_str().map(str::to_owned)).collect())
+                            .unwrap_or_default();
+                        let items = page["items"].as_array_mut().unwrap();
+                        for p in plugin_store() {
+                            let name = p["name"].as_str().unwrap_or_default();
+                            if have.iter().any(|h| h == name) {
+                                continue;
+                            }
+                            let tools = if p["remoteUrl"].is_null() { "" } else { " · MCP tools" };
+                            items.push(json!({
+                                "id": format!("store:{}", p["id"].as_str().unwrap_or_default()),
+                                "title": format!("Install · {name}"),
+                                "subtitle": format!("{}{tools}", p["description"].as_str().unwrap_or_default()),
+                                "action": { "type": "install_plugin", "id": p["id"] },
+                            }));
+                        }
+                        page["empty"] = Value::Null;
+                    }
+                    page
+                }
                 "settings" => self.settings_page(&s),
                 _ => json!({
                     "kind": "unavailable",
@@ -5986,6 +6119,11 @@ fn project_page(s: &State, id: &str) -> Value {
             }]},
         ],
     })
+}
+
+/// Built-in plugin bundles (generated from the web catalog); installed through the account API.
+fn plugin_store() -> Vec<Value> {
+    serde_json::from_str(include_str!("plugin_store.json")).unwrap_or_default()
 }
 
 fn list_page(

@@ -814,6 +814,19 @@ impl MeoApi {
         Ok(body["plugins"].as_array().cloned().unwrap_or_default())
     }
 
+    pub async fn create_plugin(&self, token: &str, body: Value) -> Result<(), ApiError> {
+        self.request(token, Method::POST, "/v1/ai/plugins", Some(body))
+            .await
+            .map(|_| ())
+    }
+
+    pub async fn patch_plugin(&self, token: &str, id: &str, patch: Value) -> Result<(), ApiError> {
+        let path = format!("/v1/ai/plugins/{id}");
+        self.request(token, Method::PATCH, &path, Some(patch))
+            .await
+            .map(|_| ())
+    }
+
     pub async fn get_settings(&self, token: &str) -> Result<Value, ApiError> {
         let body = self
             .request(token, Method::GET, "/v1/ai/settings", None)
