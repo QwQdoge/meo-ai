@@ -1441,6 +1441,60 @@ impl AppCore {
         }
     }
 
+    /// Opens the answer stream. A saturated provider route gets one retry on another model (new consent).
+    async fn open_stream(
+        &self,
+        request: &Value,
+        body: &Value,
+    ) -> Result<std::pin::Pin<Box<impl futures_util::Stream<Item = Result<ChatEvent, ApiError>>>>, ApiError> {
+        let first = self
+            .call(|api, t| {
+                let body = body.clone();
+                async move { api.chat_stream(&t, &body).await.map(Box::pin) }
+            })
+            .await;
+        if !matches!(&first, Err(ApiError::Status { code, .. }) if code == "ai_provider_rate_limited") {
+            return first;
+        }
+        let Some(retry) = self.fallback_body(request).await else {
+            return first;
+        };
+        self.notice("info", "That model is busy. Trying another one.");
+        self.call(|api, t| {
+            let retry = retry.clone();
+            async move { api.chat_stream(&t, &retry).await.map(Box::pin) }
+        })
+        .await
+    }
+
+    /// The same request on a different model with fresh consent, or None when no other route exists.
+    async fn fallback_body(&self, request: &Value) -> Option<Value> {
+        let current = request["model"].as_str().unwrap_or_default().to_owned();
+        let (credential, model) = {
+            let s = self.state.lock().unwrap();
+            ["fast", "balanced", "default", "thinking"]
+                .iter()
+                .filter_map(|r| router::resolve(&s.router, r, None).cloned())
+                .find(|(_, m)| *m != current)?
+        };
+        let mut retry = request.clone();
+        retry["credentialId"] = json!(credential);
+        retry["model"] = json!(model);
+        let consent = self
+            .call(|api, t| {
+                let retry = retry.clone();
+                async move { api.chat_prepare(&t, &retry).await }
+            })
+            .await
+            .ok()?;
+        retry["consent"] = json!({
+            "requestId": consent["requestId"],
+            "payloadSha256": consent["payloadSha256"],
+            "confirmationVersion": 1,
+        });
+        Some(retry)
+    }
+
     /// One consented question to one model, answered in full (no conversation involved).
     async fn ask_model(&self, (credential, model): &Choice, prompt: &str) -> Option<String> {
         let request = json!({ "credentialId": credential, "model": model, "prompt": prompt });
@@ -3592,12 +3646,7 @@ impl AppCore {
         self.hooks.busy(true);
         self.ensure_activity(&id);
         self.step("answer", "Answer", "", "running", vec![]);
-        let stream = self
-            .call(|api, t| {
-                let body = body.clone();
-                async move { api.chat_stream(&t, &body).await.map(Box::pin) }
-            })
-            .await;
+        let stream = Box::pin(self.open_stream(&pending.request, &body)).await;
         let mut failure = None;
         match stream {
             Ok(mut events) => {
