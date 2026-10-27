@@ -1,6 +1,7 @@
 import { FormEvent, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { settingsRequest } from './settingsClient';
+import { builtinPlugins, pluginCategories, type BuiltinPlugin } from './builtinPlugins';
 import './PluginDiscovery.css';
 
 type CatalogItem = {
@@ -39,7 +40,7 @@ type Props = {
 };
 export default function PluginDiscovery({ selectedPluginName, onInstalled, onImportSkill }: Props) {
   const { t } = useTranslation();
-  const [source, setSource] = useState<'mcp' | 'github'>('mcp');
+  const [source, setSource] = useState<'store' | 'mcp' | 'github'>('store');
   const [query, setQuery] = useState('');
   const [result, setResult] = useState<SearchResult | null>(null);
   const [busy, setBusy] = useState(false);
@@ -83,6 +84,32 @@ export default function PluginDiscovery({ selectedPluginName, onInstalled, onImp
       setStatus('Could not save server: ' + (reason as Error).message);
     } finally { setBusy(false); }
   }
+  async function installBuiltin(item: BuiltinPlugin) {
+    setBusy(true);
+    setStatus('');
+    try {
+      const existing = await settingsRequest<{ plugins: Array<{ name: string }> }>('/ai/plugins');
+      if (existing.plugins.some((plugin) => plugin.name === item.name)) {
+        setStatus(item.name + ' is already installed.');
+        return;
+      }
+      const value = await settingsRequest<{ plugin: { id: string } }>('/ai/plugins', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: item.name, description: item.description,
+          kind: item.remoteUrl ? 'bundle' : 'skills', source: 'custom',
+          transport: item.remoteUrl ? 'remote_http' : 'none',
+          ...(item.remoteUrl ? { remoteUrl: item.remoteUrl } : {}),
+          enabled: true, manifest: { builtin: item.id },
+          skills: item.skills.map((skill) => ({ ...skill, enabled: true })),
+        }),
+      });
+      await onInstalled(value.plugin.id);
+      setStatus(item.name + ' installed and enabled.' + (item.requires ? ' ' + item.requires : ''));
+    } catch (reason) {
+      setStatus('Could not install ' + item.name + ': ' + (reason as Error).message);
+    } finally { setBusy(false); }
+  }
   async function fetchSkill(event: FormEvent) {
     event.preventDefault();
     await fetchSkillSource({ owner, repo, ref, path });
@@ -124,11 +151,22 @@ export default function PluginDiscovery({ selectedPluginName, onInstalled, onImp
       <div className="meo-discovery-heading">
         <div><strong>Discover &amp; import</strong><p>Catalog items are third-party content. Saving does not execute them.</p></div>
         <div className="meo-discovery-tabs" role="group" aria-label="Discovery source">
+          <button type="button" aria-pressed={source === 'store'} onClick={() => setSource('store')}>Plugin store</button>
           <button type="button" aria-pressed={source === 'mcp'} onClick={() => setSource('mcp')}>MCP Registry</button>
           <button type="button" aria-pressed={source === 'github'} onClick={() => setSource('github')}>GitHub Skill</button>
         </div>
       </div>
-      {source === 'mcp' ? <>
+      {source === 'store' ? <div className="meo-discovery-results">
+        {builtinPlugins.map((item) => (
+          <article key={item.id} className="meo-discovery-result">
+            <div><h4>{item.name}</h4>
+              <small>{pluginCategories[item.category]} · {item.skills.length} skills{item.remoteUrl ? ' · MCP tools' : ''}</small>
+              <p>{item.description}</p>
+              {item.requires && <small>{item.requires}</small>}</div>
+            <button type="button" disabled={busy} onClick={() => void installBuiltin(item)}>Install</button>
+          </article>
+        ))}
+      </div> : source === 'mcp' ? <>
         <form onSubmit={(event) => void search(event)} className="meo-discovery-form">
           <label htmlFor="meo-mcp-search">Search official MCP server names</label>
           <div><input id="meo-mcp-search" value={query} minLength={2} maxLength={80} required
