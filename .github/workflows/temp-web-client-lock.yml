@@ -1,0 +1,55 @@
+name: Temporary web client lock refresh
+
+on:
+  push:
+    branches:
+      - deps/web-client-stable-20261027
+
+permissions:
+  contents: write
+
+jobs:
+  refresh-lock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: meo/web/client
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: meo/web/client/package-lock.json
+
+      - name: Pin npm lockfile generator
+        run: npm install --global npm@11.8.0
+
+      - name: Generate lockfile for the updated stable pins
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+
+      - name: Install reproducible dependencies
+        run: npm ci
+
+      - name: TypeScript
+        run: npm run typecheck
+
+      - name: Browser edge regression tests
+        run: npm test
+
+      - name: Commit generated lockfile
+        working-directory: .
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add meo/web/client/package-lock.json
+          if git diff --cached --quiet; then
+            echo "No lockfile changes to commit"
+            exit 0
+          fi
+          git commit -m "deps(web): refresh stable client lock"
+          git push
