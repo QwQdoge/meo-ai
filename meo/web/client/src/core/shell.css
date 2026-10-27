@@ -109,6 +109,7 @@
 .core-app .core-chip-toggle:hover, .core-app .core-tune:hover { background: var(--tonal-2); }
 .core-app .core-chip-toggle[aria-pressed="true"] { background: color-mix(in srgb, rgb(var(--accent-primary)) 18%, transparent); border-color: transparent; color: rgb(var(--accent-primary)); }
 .core-app .core-device { padding-inline: 12px; background: color-mix(in srgb, rgb(var(--accent-primary)) 14%, transparent); border-color: transparent; color: rgb(var(--accent-primary)); }
+.core-app .core-device.reserved { background: none; border: 1px dashed rgb(var(--border-light)); color: rgb(var(--text-secondary)); cursor: help; }
 .core-app .core-device select { border: 0; background: none; color: inherit; font: inherit; max-width: 160px; outline: 0; }
 .core-app .core-tune { border-color: transparent; }
 .core-app .core-send { width: 44px; height: 44px; margin-inline-start: 4px; border-radius: 50%; background: rgb(var(--accent-primary)); color: var(--on-accent); font-size: 0;

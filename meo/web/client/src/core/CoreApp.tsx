@@ -55,7 +55,7 @@ export default function CoreApp() {
           </Banner>
         )}
         {view.online === false && <Banner>{strings.offline ?? "Offline — showing saved data"}</Banner>}
-        <Page page={page} prefs={prefs} strings={strings} act={act} />
+        <Page page={page} prefs={prefs} strings={strings} act={act} work={view.route === "work"} />
       </div>
     </div>
   );
@@ -185,12 +185,12 @@ function Dialog({ dialog, act }: { dialog: Spec; act: Act }) {
   );
 }
 
-function Page({ page, prefs, strings, act }: { page: Spec; prefs: Spec; strings: Spec; act: Act }) {
+function Page({ page, prefs, strings, act, work }: { page: Spec; prefs: Spec; strings: Spec; act: Act; work?: boolean }) {
   switch (page.kind) {
     case "sign_in":
       return <SignIn page={page} act={act} />;
     case "conversation":
-      return <Conversation page={page} prefs={prefs} strings={strings} act={act} />;
+      return <Conversation page={page} prefs={prefs} strings={strings} act={act} work={work} />;
     case "list":
       return <ListPage page={page} act={act} />;
     case "settings":
@@ -550,9 +550,17 @@ function ControlChip({ item, act }: { item: Spec; act: Act }) {
 }
 
 /** Quick toggles (search, sub-agents) and the Work device, shown as chips next to the attach button. */
-function ComposerControls({ toolbar, act }: { toolbar: Spec[]; act: Act }) {
+function ComposerControls({ toolbar, act, work }: { toolbar: Spec[]; act: Act; work?: boolean }) {
+  // Work runs on a chosen online device. The core only offers the choice once a device is enrolled and
+  // online; until then say so instead of hiding it, so the missing piece is visible.
+  const hasDevice = toolbar.some((c) => c.id === "run_on");
   return (
     <>
+      {work && !hasDevice && (
+        <span className="core-device reserved" title="No online device is paired. Pair a desktop device in Settings to run Work on it.">
+          <Icon name="device" size={16} /><span>Cloud · no device</span>
+        </span>
+      )}
       {toolbar.filter((c) => c.id === "run_on").map((c) => <DeviceChip key={c.id} item={c} act={act} />)}
       {toolbar.filter((c) => c.kind === "toggle" && c.icon).map((c) => (
         <button key={c.id} className="core-chip-toggle" aria-pressed={c.value === true} title={c.label} onClick={() => act(setting(c, c.value !== true))}>
@@ -628,7 +636,7 @@ function TuneButton({ toolbar, act }: { toolbar: Spec[]; act: Act }) {
   );
 }
 
-function Conversation({ page, prefs, strings, act }: { page: Spec; prefs: Spec; strings: Spec; act: Act }) {
+function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: Spec; strings: Spec; act: Act; work?: boolean }) {
   const inspector: Spec = page.inspector ?? {};
   const area = useRef<HTMLTextAreaElement>(null);
   const messages: Spec[] = page.messages ?? [];
@@ -821,7 +829,7 @@ function Conversation({ page, prefs, strings, act }: { page: Spec; prefs: Spec; 
                 />
               </>
             )}
-              <ComposerControls toolbar={composer.toolbar ?? []} act={act} />
+              <ComposerControls toolbar={composer.toolbar ?? []} act={act} work={work} />
               <span className="core-spacer" />
               <TuneButton toolbar={composer.toolbar ?? []} act={act} />
             <button
