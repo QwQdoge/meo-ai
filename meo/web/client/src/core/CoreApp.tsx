@@ -485,6 +485,21 @@ function InspectorSection({ sec }: { sec: Spec }) {
               {r.value != null && <span className="core-muted">{r.value}</span>}
             </div>
           ))}
+          {(sec.files ?? []).map((f: Spec) => (
+            <details key={f.path} className="core-change">
+              <summary>
+                <Icon name="description" size={14} />
+                <span className="label">{f.path}</span>
+                <span className="core-change-stat"><b className="add">+{f.added}</b> <b className="del">−{f.removed}</b></span>
+                <em className={`core-change-state ${f.state}`}>{f.state}</em>
+              </summary>
+              <pre className="core-diff">
+                {String(f.diff).split("\n").map((line, i) => (
+                  <span key={i} className={line.startsWith("+") && !line.startsWith("+++") ? "add" : line.startsWith("-") && !line.startsWith("---") ? "del" : line.startsWith("@@") ? "hunk" : ""}>{line + "\n"}</span>
+                ))}
+              </pre>
+            </details>
+          ))}
           {(sec.links ?? []).map((r: Spec, i: number) => (
             <div key={i} className="core-irow">
               {/^https?:\/\//.test(r.url ?? "") ? <a href={r.url} target="_blank" rel="noreferrer noopener">{r.title || r.url}</a> : <span className="label">{r.title}</span>}

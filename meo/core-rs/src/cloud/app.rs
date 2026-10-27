@@ -312,6 +312,8 @@ struct AgentRun {
     pending: Option<PendingTool>,
     /// Failed runs of the check command for this user message.
     verifies: usize,
+    /// Files this message changed, with their diffs, for the Details card.
+    changes: Vec<Value>,
 }
 
 /// What a compaction replaced in one conversation, for the Details numbers.
@@ -4089,6 +4091,25 @@ impl AppCore {
         self.agent_send(id, text).await;
     }
 
+    /// Rebuilds the list of files the open folder's last checkpoint changed, with a diff for each.
+    async fn refresh_changes(&self) {
+        let Some(host) = self.state.lock().unwrap().agent.host.clone() else { return };
+        let changes: Vec<Value> = host
+            .changes()
+            .await
+            .into_iter()
+            .take(50)
+            .map(|c| {
+                let diff = agent::unified_diff(&c.path, &c.before, &c.after);
+                let added = diff.lines().filter(|l| l.starts_with('+') && !l.starts_with("+++")).count();
+                let removed = diff.lines().filter(|l| l.starts_with('-') && !l.starts_with("---")).count();
+                let state = if c.before.is_empty() && !c.after.is_empty() { "added" } else if c.after.is_empty() { "deleted" } else { "edited" };
+                json!({ "path": c.path, "state": state, "added": added, "removed": removed, "diff": diff })
+            })
+            .collect();
+        self.update(|s| s.agent.changes = changes);
+    }
+
     async fn agent_execute(&self, id: &str, call: agent::ToolCall) {
         let (host, round) = {
             let s = self.state.lock().unwrap();
@@ -4109,6 +4130,9 @@ impl AppCore {
             (tool, Some(host)) => host.run(tool.clone()).await,
             (_, None) => agent::Outcome::fail("no folder is open on this device"),
         };
+        if call.tool.risk() != agent::Risk::Read {
+            self.refresh_changes().await;
+        }
         let first_line: String = outcome
             .text
             .lines()
@@ -5405,6 +5429,13 @@ fn inspector(s: &State, messages: &[Value], active: Option<&String>) -> Value {
             ] },
             "rows": context_rows }),
     ];
+    if !s.agent.changes.is_empty() {
+        sections.insert(
+            0,
+            json!({ "id": "changes", "title": format!("Files changed · {}", s.agent.changes.len()), "open": true,
+                "files": s.agent.changes }),
+        );
+    }
     // A Work task's list: the newest one an answer wrote (the one streaming now first).
     let task_list = s
         .streaming

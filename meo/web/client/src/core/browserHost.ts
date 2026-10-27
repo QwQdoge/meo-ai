@@ -12,6 +12,13 @@ const SKIPPED = new Set([".git", "target", "node_modules", ".cache", ".venv", "d
 
 let root: Dir | null = null;
 let changed = new Set<string>();
+// The text of each changed file before the turn's first change ("" when it did not exist).
+let before = new Map<string, string>();
+
+async function remember(path: string) {
+  if (before.has(path)) return;
+  try { before.set(path, new TextDecoder().decode(await readBytes(path))); } catch { before.set(path, ""); }
+}
 
 function parts(path: string): string[] {
   if (path.startsWith("/") || /^[A-Za-z]:/.test(path)) throw new Error("path must be relative to the folder");
@@ -66,7 +73,17 @@ const host = {
     root = handle;
     host.name = handle.name;
     changed = new Set();
+    before = new Map();
     return handle.name;
+  },
+
+  /** Use a folder handle the page already holds (a restored handle, or the browser's private file system). */
+  adopt(handle: Dir): string {
+    root = handle;
+    host.name = handle.name || "browser-files";
+    changed = new Set();
+    before = new Map();
+    return host.name;
   },
 
   /** Called by the core when a folder is needed. Succeeds only for the folder picked in this tab. */
@@ -76,7 +93,7 @@ const host = {
     return host.name;
   },
 
-  newCheckpoint() { changed = new Set(); },
+  newCheckpoint() { changed = new Set(); before = new Map(); },
   changed(): number { return changed.size; },
 
   async readFile(path: string, start: number, end: number): Promise<string> {
@@ -139,7 +156,20 @@ const host = {
     try { await fileHandle(path); return true; } catch { return false; }
   },
 
+  /** Before and after text of the files this turn changed, as JSON for the core's diff view. */
+  async changes(): Promise<string> {
+    const out: Array<{ path: string; before: string; after: string }> = [];
+    for (const path of changed) {
+      let after = "";
+      try { after = new TextDecoder().decode(await readBytes(path)); } catch { /* deleted */ }
+      const was = before.get(path) ?? "";
+      if (was !== after) out.push({ path, before: was, after });
+    }
+    return JSON.stringify(out);
+  },
+
   async writeText(path: string, text: string): Promise<void> {
+    await remember(path);
     const handle = await fileHandle(path, true);
     const writable = await (handle as any).createWritable();
     await writable.write(text);
@@ -148,6 +178,7 @@ const host = {
   },
 
   async remove(path: string): Promise<void> {
+    await remember(path);
     const all = parts(path);
     const name = all.pop();
     if (!name) throw new Error("path is empty");

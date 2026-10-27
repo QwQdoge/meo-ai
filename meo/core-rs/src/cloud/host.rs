@@ -363,11 +363,58 @@ mod native {
         pub fn rewind(&self) -> usize {
             self.inner.lock().map_or(0, |mut g| g.checkpoint.rewind())
         }
+
+        /// Before and after text of every file this turn changed (for the Files changed view).
+        pub async fn changes(&self) -> Vec<super::Change> {
+            let inner = self.inner.clone();
+            let root = self.root.clone();
+            let slot: Arc<Mutex<Option<Vec<super::Change>>>> = Arc::new(Mutex::new(None));
+            let out = slot.clone();
+            std::thread::spawn(move || {
+                let list = match inner.lock() {
+                    Ok(g) => g
+                        .checkpoint
+                        .entries()
+                        .iter()
+                        .filter_map(|(path, before)| {
+                            let after = std::fs::read(path).ok();
+                            let binary = |b: &Vec<u8>| b.iter().take(8000).any(|&c| c == 0);
+                            if before.as_ref().is_some_and(binary) || after.as_ref().is_some_and(binary) {
+                                return None;
+                            }
+                            let text = |b: Option<Vec<u8>>| b.map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default();
+                            let shown = path.strip_prefix(&root).unwrap_or(path).display().to_string();
+                            let (before, after) = (text(before.clone()), text(after));
+                            (before != after).then_some(super::Change { path: shown, before, after })
+                        })
+                        .collect(),
+                    Err(_) => Vec::new(),
+                };
+                if let Ok(mut s) = out.lock() {
+                    *s = Some(list);
+                }
+            });
+            loop {
+                if let Some(list) = slot.lock().ok().and_then(|mut s| s.take()) {
+                    return list;
+                }
+                futures_timer::Delay::new(Duration::from_millis(25)).await;
+            }
+        }
     }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::Host;
+
+/// One file a turn changed: its text before the first change and now ("" when it did not exist or
+/// was deleted). Binary files are left out.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Change {
+    pub path: String,
+    pub before: String,
+    pub after: String,
+}
 
 /// The askpass helper: `meo-ai-desktop --askpass "<prompt>"`. `sudo`, `git` and `ssh` start it when
 /// they need a password; it asks the running app over the private socket and prints the answer for
@@ -427,6 +474,8 @@ mod browser {
         pub async fn remove(path: &str) -> Result<JsValue, JsValue>;
         #[wasm_bindgen(js_namespace = ["window", "meoHost"], js_name = changed)]
         pub fn changed() -> u32;
+        #[wasm_bindgen(js_namespace = ["window", "meoHost"], js_name = changes, catch)]
+        pub async fn changes() -> Result<JsValue, JsValue>;
         #[wasm_bindgen(js_namespace = ["window", "meoHost"], js_name = newCheckpoint)]
         pub fn new_checkpoint();
     }
@@ -555,6 +604,23 @@ impl Host {
 
     pub async fn mcp_instructions(&self) -> String {
         String::new()
+    }
+
+    /// The page keeps the before-text of each file it changed; this reads them back as JSON.
+    pub async fn changes(&self) -> Vec<Change> {
+        let Ok(value) = browser::changes().await else { return Vec::new() };
+        let Some(json) = value.as_string() else { return Vec::new() };
+        serde_json::from_str::<Vec<serde_json::Value>>(&json)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|c| {
+                Some(Change {
+                    path: c["path"].as_str()?.to_owned(),
+                    before: c["before"].as_str().unwrap_or_default().to_owned(),
+                    after: c["after"].as_str().unwrap_or_default().to_owned(),
+                })
+            })
+            .collect()
     }
 
     pub fn new_checkpoint(&self) {
@@ -787,5 +853,27 @@ pub(crate) mod testing {
             std::env::set_var("MEO_ASKPASS_PROGRAM", &program);
         });
         PATH.get().unwrap()
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod changes_tests {
+    use super::*;
+
+    #[test]
+    fn the_files_a_turn_changed_come_back_with_before_and_after() {
+        let base = std::env::temp_dir().join(format!("meo-changes-{}", std::process::id()));
+        let (folder, store) = (base.join("work"), base.join("store"));
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("a.txt"), "one\n").unwrap();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let host = Host::open_with_store(folder.to_str().unwrap(), store).unwrap();
+        host.new_checkpoint();
+        let out = rt.block_on(host.run(Tool::SearchReplace { path: "a.txt".into(), old: "one".into(), new: "two".into() }));
+        assert!(out.ok, "{out:?}");
+        let changes = rt.block_on(host.changes());
+        assert_eq!(changes.len(), 1);
+        assert_eq!((changes[0].path.as_str(), changes[0].before.as_str(), changes[0].after.as_str()), ("a.txt", "one\n", "two\n"));
+        let _ = std::fs::remove_dir_all(base);
     }
 }

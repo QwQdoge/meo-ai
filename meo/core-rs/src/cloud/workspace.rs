@@ -79,6 +79,11 @@ impl Checkpoint {
         !Self::load(dir).is_empty()
     }
 
+    /// The files changed since the checkpoint began, with their contents from before the first change.
+    pub fn entries(&self) -> &[(PathBuf, Option<Vec<u8>>)] {
+        &self.files
+    }
+
     fn record(&mut self, path: &Path) {
         if self.files.iter().any(|(p, _)| p == path) {
             return;
