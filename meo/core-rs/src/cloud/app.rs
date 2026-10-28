@@ -3605,7 +3605,9 @@ impl AppCore {
             .get("chat.web_search")
             .and_then(Value::as_bool)
             .unwrap_or(false)
-            || (mode == "auto" && router::wants_search(&text));
+            || (mode == "auto"
+                && router::wants_search(&text)
+                && !self.mentions_connected_app(&text));
         // Above "low" the answer may take several model calls (router, steps, a check). Each call is
         // a separate request, so it only runs when sending without asking each time is allowed.
         let auto_consent = pref_bool(&self.state.lock().unwrap(), "chat.auto_consent", true);
@@ -4559,6 +4561,29 @@ impl AppCore {
             })
             .collect();
         self.update(|s| s.agent.changes = changes);
+    }
+
+    /// True when the text names one of the enabled connected apps (then the model should use the
+    /// app, not a web search about the name).
+    fn mentions_connected_app(&self, text: &str) -> bool {
+        let lower = text.to_lowercase();
+        let s = self.state.lock().unwrap();
+        s.plugins
+            .as_ref()
+            .and_then(|r| r.as_ref().ok())
+            .is_some_and(|rows| {
+                rows.iter()
+                    .filter(|p| p["enabled"] == true && p["remoteUrl"].is_string())
+                    .any(|p| {
+                        p["name"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .split_whitespace()
+                            .map(str::to_lowercase)
+                            .filter(|w| w.is_ascii() && w.len() >= 4)
+                            .any(|w| lower.contains(&w))
+                    })
+            })
     }
 
     /// Puts the tool instructions (folder tools, web search, connected apps) in front of the prompt.
