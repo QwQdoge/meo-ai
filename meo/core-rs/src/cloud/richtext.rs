@@ -113,7 +113,10 @@ pub fn files(text: &str) -> Vec<(String, String)> {
         if let Some(info) = lines[i].trim_start().strip_prefix("```") {
             let end = (i + 1..lines.len()).find(|&j| lines[j].trim_start().starts_with("```"));
             if let (Some(name), Some(end)) = (info.trim().strip_prefix("file:"), end) {
-                found.push((super::docs::safe_name(name.trim()), lines[i + 1..end].join("\n")));
+                found.push((
+                    super::docs::safe_name(name.trim()),
+                    lines[i + 1..end].join("\n"),
+                ));
             }
             i = end.map_or(lines.len(), |e| e + 1);
         } else {
@@ -302,8 +305,13 @@ mod file_tests {
         let card = b.iter().find(|x| x["type"] == "file").expect("a file card");
         assert_eq!(card["name"], "notes.md");
         assert_eq!(card["action"]["index"], 0);
-        assert_eq!(files(text), vec![("notes.md".to_owned(), "# Notes\n- one".to_owned())]);
+        assert_eq!(
+            files(text),
+            vec![("notes.md".to_owned(), "# Notes\n- one".to_owned())]
+        );
         // An unfinished fence stays code while the answer streams.
-        assert!(blocks("```file:a.md\nhalf").iter().all(|x| x["type"] != "file"));
+        assert!(blocks("```file:a.md\nhalf")
+            .iter()
+            .all(|x| x["type"] != "file"));
     }
 }
