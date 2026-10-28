@@ -11,7 +11,9 @@ const MAX_TEXT: usize = 400_000;
 pub const DOCUMENT_EXTENSIONS: [&str; 5] = ["pdf", "docx", "xlsx", "pptx", "rtf"];
 
 fn extension(name: &str) -> String {
-    name.rsplit_once('.').map(|(_, e)| e.to_lowercase()).unwrap_or_default()
+    name.rsplit_once('.')
+        .map(|(_, e)| e.to_lowercase())
+        .unwrap_or_default()
 }
 
 /// Trailing spaces off every line and no more than one blank line in a row (PDF layout leaves both).
@@ -22,7 +24,9 @@ fn tidy(text: &str) -> String {
         let line = line.trim_end();
         if line.is_empty() {
             blank += 1;
-            if blank > 1 { continue; }
+            if blank > 1 {
+                continue;
+            }
         } else {
             blank = 0;
         }
@@ -48,7 +52,10 @@ fn decode(s: &str) -> String {
 }
 
 fn encode(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 /// Text of an XML part: tags are dropped, paragraph ends and breaks become newlines.
@@ -57,7 +64,9 @@ fn xml_text(xml: &str) -> String {
     let mut rest = xml;
     while let Some(start) = rest.find('<') {
         out.push_str(&rest[..start]);
-        let Some(end) = rest[start..].find('>') else { break };
+        let Some(end) = rest[start..].find('>') else {
+            break;
+        };
         let tag = &rest[start + 1..start + end];
         if tag == "/w:p" || tag == "/a:p" || tag.starts_with("w:br") {
             out.push('\n');
@@ -83,7 +92,9 @@ fn elements<'a>(xml: &'a str, open: &str) -> Vec<(&'a str, &'a str)> {
             (None, None) => break,
         };
         let after = &rest[start..];
-        let Some(tag_end) = after.find('>') else { break };
+        let Some(tag_end) = after.find('>') else {
+            break;
+        };
         let attrs = &after[open.len() + 1..tag_end];
         if let Some(stripped) = attrs.strip_suffix('/') {
             found.push((stripped, ""));
@@ -116,7 +127,10 @@ fn numbered(archive: &zip::ZipArchive<Cursor<&[u8]>>, prefix: &str) -> Vec<Strin
         .file_names()
         .filter(|n| n.starts_with(prefix) && n.ends_with(".xml"))
         .filter_map(|n| {
-            let digits: String = n[prefix.len()..].chars().take_while(char::is_ascii_digit).collect();
+            let digits: String = n[prefix.len()..]
+                .chars()
+                .take_while(char::is_ascii_digit)
+                .collect();
             digits.parse().ok().map(|i| (i, n.to_owned()))
         })
         .collect();
@@ -125,7 +139,11 @@ fn numbered(archive: &zip::ZipArchive<Cursor<&[u8]>>, prefix: &str) -> Vec<Strin
 }
 
 fn csv_cell(v: &str) -> String {
-    if v.contains(['"', ',', '\n']) { format!("\"{}\"", v.replace('"', "\"\"")) } else { v.to_owned() }
+    if v.contains(['"', ',', '\n']) {
+        format!("\"{}\"", v.replace('"', "\"\""))
+    } else {
+        v.to_owned()
+    }
 }
 
 fn xlsx_text(archive: &mut zip::ZipArchive<Cursor<&[u8]>>) -> String {
@@ -133,16 +151,33 @@ fn xlsx_text(archive: &mut zip::ZipArchive<Cursor<&[u8]>>) -> String {
         .map(|x| {
             elements(&x, "si")
                 .into_iter()
-                .map(|(_, body)| decode(&elements(body, "t").iter().map(|(_, t)| *t).collect::<String>()))
+                .map(|(_, body)| {
+                    decode(
+                        &elements(body, "t")
+                            .iter()
+                            .map(|(_, t)| *t)
+                            .collect::<String>(),
+                    )
+                })
                 .collect()
         })
         .unwrap_or_default();
     let names: Vec<String> = zip_text(archive, "xl/workbook.xml")
-        .map(|x| elements(&x, "sheet").iter().filter_map(|(a, _)| attr(a, "name").map(decode)).collect())
+        .map(|x| {
+            elements(&x, "sheet")
+                .iter()
+                .filter_map(|(a, _)| attr(a, "name").map(decode))
+                .collect()
+        })
         .unwrap_or_default();
     let mut out = Vec::new();
-    for (i, sheet) in numbered(archive, "xl/worksheets/sheet").into_iter().enumerate() {
-        let Some(xml) = zip_text(archive, &sheet) else { continue };
+    for (i, sheet) in numbered(archive, "xl/worksheets/sheet")
+        .into_iter()
+        .enumerate()
+    {
+        let Some(xml) = zip_text(archive, &sheet) else {
+            continue;
+        };
         let rows: Vec<String> = elements(&xml, "row")
             .into_iter()
             .map(|(_, row)| {
@@ -151,9 +186,20 @@ fn xlsx_text(archive: &mut zip::ZipArchive<Cursor<&[u8]>>) -> String {
                     .map(|(attrs, body)| {
                         let value = elements(body, "v").first().map(|(_, v)| *v).unwrap_or("");
                         if attr(attrs, "t") == Some("s") {
-                            csv_cell(value.parse::<usize>().ok().and_then(|n| shared.get(n)).map_or("", String::as_str))
+                            csv_cell(
+                                value
+                                    .parse::<usize>()
+                                    .ok()
+                                    .and_then(|n| shared.get(n))
+                                    .map_or("", String::as_str),
+                            )
                         } else if attr(attrs, "t") == Some("inlineStr") {
-                            csv_cell(&decode(&elements(body, "t").iter().map(|(_, t)| *t).collect::<String>()))
+                            csv_cell(&decode(
+                                &elements(body, "t")
+                                    .iter()
+                                    .map(|(_, t)| *t)
+                                    .collect::<String>(),
+                            ))
                         } else {
                             csv_cell(&decode(value))
                         }
@@ -162,7 +208,11 @@ fn xlsx_text(archive: &mut zip::ZipArchive<Cursor<&[u8]>>) -> String {
                     .join(",")
             })
             .collect();
-        out.push(format!("--- sheet {} (CSV) ---\n{}", names.get(i).cloned().unwrap_or_else(|| (i + 1).to_string()), rows.join("\n")));
+        out.push(format!(
+            "--- sheet {} (CSV) ---\n{}",
+            names.get(i).cloned().unwrap_or_else(|| (i + 1).to_string()),
+            rows.join("\n")
+        ));
     }
     out.join("\n\n")
 }
@@ -177,14 +227,29 @@ fn rtf_text(bytes: &[u8]) -> String {
             '\\' => {
                 let mut word = String::new();
                 while let Some(&n) = chars.peek() {
-                    if n.is_ascii_alphabetic() { word.push(n); chars.next(); } else { break }
+                    if n.is_ascii_alphabetic() {
+                        word.push(n);
+                        chars.next();
+                    } else {
+                        break;
+                    }
                 }
                 while let Some(&n) = chars.peek() {
-                    if n.is_ascii_digit() || n == '-' { chars.next(); } else { break }
+                    if n.is_ascii_digit() || n == '-' {
+                        chars.next();
+                    } else {
+                        break;
+                    }
                 }
-                if chars.peek() == Some(&' ') { chars.next(); }
-                if word == "par" || word == "pard" { out.push('\n'); }
-                if word.is_empty() { chars.next(); }
+                if chars.peek() == Some(&' ') {
+                    chars.next();
+                }
+                if word == "par" || word == "pard" {
+                    out.push('\n');
+                }
+                if word.is_empty() {
+                    chars.next();
+                }
             }
             _ => out.push(c),
         }
@@ -197,21 +262,34 @@ pub fn extract_text(name: &str, bytes: &[u8]) -> Result<String, String> {
     let ext = extension(name);
     let text = match ext.as_str() {
         "pdf" => {
-            let doc = lopdf::Document::load_mem(bytes).map_err(|_| format!("Could not read {name}."))?;
+            let doc =
+                lopdf::Document::load_mem(bytes).map_err(|_| format!("Could not read {name}."))?;
             let mut pages = Vec::new();
             for (n, _) in doc.get_pages() {
-                pages.push(format!("--- page {n} ---\n{}", doc.extract_text(&[n]).unwrap_or_default()));
+                pages.push(format!(
+                    "--- page {n} ---\n{}",
+                    doc.extract_text(&[n]).unwrap_or_default()
+                ));
             }
             pages.join("\n\n")
         }
         "docx" | "xlsx" | "pptx" => {
-            let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).map_err(|_| format!("Could not read {name}."))?;
+            let mut archive = zip::ZipArchive::new(Cursor::new(bytes))
+                .map_err(|_| format!("Could not read {name}."))?;
             match ext.as_str() {
-                "docx" => xml_text(&zip_text(&mut archive, "word/document.xml").unwrap_or_default()),
+                "docx" => {
+                    xml_text(&zip_text(&mut archive, "word/document.xml").unwrap_or_default())
+                }
                 "pptx" => numbered(&archive, "ppt/slides/slide")
                     .into_iter()
                     .enumerate()
-                    .map(|(i, n)| format!("--- slide {} ---\n{}", i + 1, xml_text(&zip_text(&mut archive, &n).unwrap_or_default()).trim()))
+                    .map(|(i, n)| {
+                        format!(
+                            "--- slide {} ---\n{}",
+                            i + 1,
+                            xml_text(&zip_text(&mut archive, &n).unwrap_or_default()).trim()
+                        )
+                    })
                     .collect::<Vec<_>>()
                     .join("\n\n"),
                 _ => xlsx_text(&mut archive),
@@ -252,23 +330,41 @@ fn csv_rows(text: &str) -> Vec<Vec<String>> {
     let mut chars = text.chars().peekable();
     while let Some(c) = chars.next() {
         if quoted {
-            if c == '"' && chars.peek() == Some(&'"') { cell.push('"'); chars.next(); }
-            else if c == '"' { quoted = false } else { cell.push(c) }
-        } else if c == '"' { quoted = true }
-        else if c == ',' { row.push(std::mem::take(&mut cell)) }
-        else if c == '\n' || c == '\r' {
-            if c == '\r' && chars.peek() == Some(&'\n') { chars.next(); }
+            if c == '"' && chars.peek() == Some(&'"') {
+                cell.push('"');
+                chars.next();
+            } else if c == '"' {
+                quoted = false
+            } else {
+                cell.push(c)
+            }
+        } else if c == '"' {
+            quoted = true
+        } else if c == ',' {
+            row.push(std::mem::take(&mut cell))
+        } else if c == '\n' || c == '\r' {
+            if c == '\r' && chars.peek() == Some(&'\n') {
+                chars.next();
+            }
             row.push(std::mem::take(&mut cell));
             rows.push(std::mem::take(&mut row));
-        } else { cell.push(c) }
+        } else {
+            cell.push(c)
+        }
     }
-    if !cell.is_empty() || !row.is_empty() { row.push(cell); rows.push(row); }
+    if !cell.is_empty() || !row.is_empty() {
+        row.push(cell);
+        rows.push(row);
+    }
     rows
 }
 
 fn column(n: usize) -> String {
     let (mut s, mut x) = (String::new(), n + 1);
-    while x > 0 { s.insert(0, (b'A' + ((x - 1) % 26) as u8) as char); x = (x - 1) / 26; }
+    while x > 0 {
+        s.insert(0, (b'A' + ((x - 1) % 26) as u8) as char);
+        x = (x - 1) / 26;
+    }
     s
 }
 
@@ -335,11 +431,21 @@ pub fn build_file(name: &str, content: &str) -> Vec<u8> {
 pub fn safe_name(name: &str) -> String {
     let cleaned: String = name
         .chars()
-        .map(|c| if c.is_control() || "\\/:*?\"<>|".contains(c) { '_' } else { c })
+        .map(|c| {
+            if c.is_control() || "\\/:*?\"<>|".contains(c) {
+                '_'
+            } else {
+                c
+            }
+        })
         .take(120)
         .collect();
     let cleaned = cleaned.trim().trim_start_matches('.').to_owned();
-    if cleaned.is_empty() { "file.txt".to_owned() } else { cleaned }
+    if cleaned.is_empty() {
+        "file.txt".to_owned()
+    } else {
+        cleaned
+    }
 }
 
 /// Human kind and size for the file card.
@@ -359,7 +465,10 @@ mod tests {
     fn word_and_excel_files_round_trip_through_the_reader() {
         let doc = build_file("a.docx", "# 标题\n\n正文 **粗体** & <b>\n- 要点一");
         let text = extract_text("a.docx", &doc).unwrap();
-        assert!(text.contains("标题") && text.contains("正文 粗体 & <b>") && text.contains("• 要点一"), "{text}");
+        assert!(
+            text.contains("标题") && text.contains("正文 粗体 & <b>") && text.contains("• 要点一"),
+            "{text}"
+        );
         let sheet = build_file("b.xlsx", "name,score\nAlice,3\n\"Bob, Jr.\",4.5\n");
         assert_eq!(
             extract_text("b.xlsx", &sheet).unwrap(),
@@ -378,6 +487,11 @@ mod tests {
 
     #[test]
     fn rtf_text_is_recovered() {
-        assert_eq!(extract_text("a.rtf", b"{\\rtf1\\ansi Hello\\par World}").unwrap().trim(), "Hello\nWorld");
+        assert_eq!(
+            extract_text("a.rtf", b"{\\rtf1\\ansi Hello\\par World}")
+                .unwrap()
+                .trim(),
+            "Hello\nWorld"
+        );
     }
 }
