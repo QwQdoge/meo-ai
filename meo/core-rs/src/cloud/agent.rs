@@ -350,7 +350,9 @@ fn tool_paths(tool: &Tool) -> Vec<String> {
         }
         Tool::Search { path, .. } => path.iter().cloned().collect(),
         Tool::ApplyPatch { patch } => patch_paths(patch),
-        Tool::Run { .. } | Tool::Subagent { .. } | Tool::WebSearch { .. } | Tool::Mcp { .. } => Vec::new(),
+        Tool::Run { .. } | Tool::Subagent { .. } | Tool::WebSearch { .. } | Tool::Mcp { .. } => {
+            Vec::new()
+        }
     }
 }
 
