@@ -26,7 +26,13 @@
         "description": "写清晰的提交信息和 PR 说明。",
         "content": "提交信息：首行 type(scope): 动词开头的摘要（不超过 72 字符），空行后写动机与影响。\nPR 描述包含：背景、改动要点、测试情况（只写实际做过的）、已知限制、回滚方式。"
       }
-    ]
+    ],
+    "icon": {
+      "svg": "M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12",
+      "color": null
+    },
+    "publisher": "api.githubcopilot.com",
+    "category": "MCP"
   },
   {
     "id": "deepwiki",
@@ -40,7 +46,13 @@
         "description": "先看结构，再分层提问，快速建立对代码库的理解。",
         "content": "对一个不熟悉的仓库：先用 read_wiki_structure 获取目录，再用 read_wiki_contents 读相关章节，最后用 ask_wiki_question 补充细节。\n仓库名使用 owner/repo 格式。回答要标明依据来自哪个章节；Wiki 是自动生成的，可能过时，关键结论要提醒用户对照源码确认。\n输出：架构概览、核心模块及职责、数据流、入口文件、如何运行与测试。"
       }
-    ]
+    ],
+    "icon": {
+      "glyph": "account_tree",
+      "color": "#2563EB"
+    },
+    "publisher": "mcp.deepwiki.com",
+    "category": "MCP"
   },
   {
     "id": "context7",
@@ -54,7 +66,13 @@
         "description": "使用第三方库前先查文档，再给出带版本的代码。",
         "content": "涉及第三方库/框架 API 时：先 resolve-library-id 找到库，再 query-docs 查询具体问题，然后基于结果写代码。\n回答中标明所用库版本；文档里没有的内容不要凭记忆编造，明确说“文档中未找到”。"
       }
-    ]
+    ],
+    "icon": {
+      "glyph": "description",
+      "color": "#0F766E"
+    },
+    "publisher": "mcp.context7.com",
+    "category": "MCP"
   },
   {
     "id": "code-assistant",
@@ -78,7 +96,13 @@
         "description": "在保持行为不变的前提下重构，并补最小必要测试。",
         "content": "重构前先说明要保持的行为，列出风险点。小步改动，每步可独立验证。\n测试只覆盖会出错的行为：边界、错误路径、回归用例；避免重复实现逻辑的测试。"
       }
-    ]
+    ],
+    "icon": {
+      "glyph": "deployed_code",
+      "color": "#2563EB"
+    },
+    "publisher": "Meo AI",
+    "category": "Bundle"
   },
   {
     "id": "research",
@@ -102,7 +126,13 @@
         "description": "拆解论断并逐条判断证据。",
         "content": "把一段话拆成独立论断，逐条标注：有证据支持 / 证据不足 / 与证据矛盾，并写出依据。\n注意日期、数字、因果和“只有一半真”的表述。"
       }
-    ]
+    ],
+    "icon": {
+      "glyph": "search",
+      "color": "#0F766E"
+    },
+    "publisher": "Meo AI",
+    "category": "Bundle"
   },
   {
     "id": "writing",
@@ -131,7 +161,13 @@
         "description": "写目的明确、可直接发送的邮件草稿。",
         "content": "结构：主题行（具体）→ 一句话目的 → 必要背景 → 明确的请求与截止时间。只提供草稿，不代发；收件人、金额、日期等缺失信息先询问。"
       }
-    ]
+    ],
+    "icon": {
+      "glyph": "edit",
+      "color": "#C2410C"
+    },
+    "publisher": "Meo AI",
+    "category": "Bundle"
   },
   {
     "id": "data-analysis",
@@ -155,7 +191,13 @@
         "description": "在分享分析结论前做口径与偏差检查。",
         "content": "检查：口径是否一致、是否存在幸存者偏差、样本是否足够、相关是否被说成因果、数字能否复现。列出支持与不支持结论的证据。"
       }
-    ]
+    ],
+    "icon": {
+      "glyph": "account_tree",
+      "color": "#7C3AED"
+    },
+    "publisher": "Meo AI",
+    "category": "Bundle"
   },
   {
     "id": "product",
@@ -184,7 +226,13 @@
         "description": "事后复盘：事实、原因、改进。",
         "content": "按 时间线 → 做得好的 → 出问题的及根因（追问到流程/机制层）→ 具体改进项（负责人与期限）。对事不对人。"
       }
-    ]
+    ],
+    "icon": {
+      "glyph": "work",
+      "color": "#DB2777"
+    },
+    "publisher": "Meo AI",
+    "category": "Bundle"
   },
   {
     "id": "learning",
@@ -208,7 +256,13 @@
         "description": "根据目标与时间制定计划。",
         "content": "先确认目标、现有水平、每周可用时间；输出按周的计划，每周有产出物与检验方式，并预留复习时间。"
       }
-    ]
+    ],
+    "icon": {
+      "glyph": "lightbulb",
+      "color": "#CA8A04"
+    },
+    "publisher": "Meo AI",
+    "category": "Bundle"
   },
   {
     "id": "cloudflare-docs",
@@ -222,7 +276,13 @@
         "description": "先搜文档再回答，并给出来源。",
         "content": "涉及 Cloudflare 产品的配置或限制时：先用 search_cloudflare_documentation 检索，再基于结果回答，列出文档来源；检索不到就明确说没有找到，不要凭记忆给限额或价格。"
       }
-    ]
+    ],
+    "icon": {
+      "svg": "M16.5088 16.8447c.1475-.5068.0908-.9707-.1553-1.3154-.2246-.3164-.6045-.499-1.0615-.5205l-8.6592-.1123a.1559.1559 0 0 1-.1333-.0713c-.0283-.042-.0351-.0986-.021-.1553.0278-.084.1123-.1484.2036-.1562l8.7359-.1123c1.0351-.0489 2.1601-.8868 2.5537-1.9136l.499-1.3013c.0215-.0561.0293-.1128.0147-.168-.5625-2.5463-2.835-4.4453-5.5499-4.4453-2.5039 0-4.6284 1.6177-5.3876 3.8614-.4927-.3658-1.1187-.5625-1.794-.499-1.2026.119-2.1665 1.083-2.2861 2.2856-.0283.31-.0069.6128.0635.894C1.5683 13.171 0 14.7754 0 16.752c0 .1748.0142.3515.0352.5273.0141.083.0844.1475.1689.1475h15.9814c.0909 0 .1758-.0645.2032-.1553l.12-.4268zm2.7568-5.5634c-.0771 0-.1611 0-.2383.0112-.0566 0-.1054.0415-.127.0976l-.3378 1.1744c-.1475.5068-.0918.9707.1543 1.3164.2256.3164.6055.498 1.0625.5195l1.8437.1133c.0557 0 .1055.0263.1329.0703.0283.043.0351.1074.0214.1562-.0283.084-.1132.1485-.204.1553l-1.921.1123c-1.041.0488-2.1582.8867-2.5527 1.914l-.1406.3585c-.0283.0713.0215.1416.0986.1416h6.5977c.0771 0 .1474-.0489.169-.126.1122-.4082.1757-.837.1757-1.2803 0-2.6025-2.125-4.727-4.7344-4.727",
+      "color": "#F38020"
+    },
+    "publisher": "docs.mcp.cloudflare.com",
+    "category": "MCP"
   },
   {
     "id": "microsoft-learn",
@@ -236,7 +296,13 @@
         "description": "用官方文档和示例回答微软技术问题。",
         "content": "用 microsoft_docs_search 找到相关页面，需要细节时再用 microsoft_docs_fetch 读取全文；代码示例用 microsoft_code_sample_search。回答要标明文档来源，版本相关的结论要写出版本。"
       }
-    ]
+    ],
+    "icon": {
+      "glyph": "language",
+      "color": "#0078D4"
+    },
+    "publisher": "learn.microsoft.com",
+    "category": "MCP"
   },
   {
     "id": "grep-app",
@@ -250,7 +316,13 @@
         "description": "搜索开源代码里某个 API 的真实写法。",
         "content": "需要看某个库或 API 在真实项目中怎么用时，用 searchGitHub，搜索的是字面代码片段（例如 useEffect(() => 或某个函数调用），不是自然语言。给出代码时标明仓库与文件路径，并说明样本量有限。"
       }
-    ]
+    ],
+    "icon": {
+      "glyph": "search",
+      "color": "#7C3AED"
+    },
+    "publisher": "mcp.grep.app",
+    "category": "MCP"
   },
   {
     "id": "oss-frontend-design",
@@ -264,7 +336,13 @@
       "repo": "skills",
       "ref": "main",
       "path": "skills/frontend-design/SKILL.md"
-    }
+    },
+    "icon": {
+      "svg": "M17.3041 3.541h-3.6718l6.696 16.918H24Zm-10.6082 0L0 20.459h3.7442l1.3693-3.5527h7.0052l1.3693 3.5528h3.7442L10.5363 3.5409Zm-.3712 10.2232 2.2914-5.9456 2.2914 5.9456Z",
+      "color": "#D97757"
+    },
+    "publisher": "anthropics/skills",
+    "category": "Skill"
   },
   {
     "id": "oss-doc-coauthoring",
@@ -278,7 +356,13 @@
       "repo": "skills",
       "ref": "main",
       "path": "skills/doc-coauthoring/SKILL.md"
-    }
+    },
+    "icon": {
+      "svg": "M17.3041 3.541h-3.6718l6.696 16.918H24Zm-10.6082 0L0 20.459h3.7442l1.3693-3.5527h7.0052l1.3693 3.5528h3.7442L10.5363 3.5409Zm-.3712 10.2232 2.2914-5.9456 2.2914 5.9456Z",
+      "color": "#D97757"
+    },
+    "publisher": "anthropics/skills",
+    "category": "Skill"
   },
   {
     "id": "oss-mcp-builder",
@@ -292,7 +376,13 @@
       "repo": "skills",
       "ref": "main",
       "path": "skills/mcp-builder/SKILL.md"
-    }
+    },
+    "icon": {
+      "svg": "M17.3041 3.541h-3.6718l6.696 16.918H24Zm-10.6082 0L0 20.459h3.7442l1.3693-3.5527h7.0052l1.3693 3.5528h3.7442L10.5363 3.5409Zm-.3712 10.2232 2.2914-5.9456 2.2914 5.9456Z",
+      "color": "#D97757"
+    },
+    "publisher": "anthropics/skills",
+    "category": "Skill"
   },
   {
     "id": "oss-webapp-testing",
@@ -306,7 +396,13 @@
       "repo": "skills",
       "ref": "main",
       "path": "skills/webapp-testing/SKILL.md"
-    }
+    },
+    "icon": {
+      "svg": "M17.3041 3.541h-3.6718l6.696 16.918H24Zm-10.6082 0L0 20.459h3.7442l1.3693-3.5527h7.0052l1.3693 3.5528h3.7442L10.5363 3.5409Zm-.3712 10.2232 2.2914-5.9456 2.2914 5.9456Z",
+      "color": "#D97757"
+    },
+    "publisher": "anthropics/skills",
+    "category": "Skill"
   },
   {
     "id": "oss-skill-creator",
@@ -320,7 +416,13 @@
       "repo": "skills",
       "ref": "main",
       "path": "skills/skill-creator/SKILL.md"
-    }
+    },
+    "icon": {
+      "svg": "M17.3041 3.541h-3.6718l6.696 16.918H24Zm-10.6082 0L0 20.459h3.7442l1.3693-3.5527h7.0052l1.3693 3.5528h3.7442L10.5363 3.5409Zm-.3712 10.2232 2.2914-5.9456 2.2914 5.9456Z",
+      "color": "#D97757"
+    },
+    "publisher": "anthropics/skills",
+    "category": "Skill"
   },
   {
     "id": "oss-theme-factory",
@@ -334,7 +436,13 @@
       "repo": "skills",
       "ref": "main",
       "path": "skills/theme-factory/SKILL.md"
-    }
+    },
+    "icon": {
+      "svg": "M17.3041 3.541h-3.6718l6.696 16.918H24Zm-10.6082 0L0 20.459h3.7442l1.3693-3.5527h7.0052l1.3693 3.5528h3.7442L10.5363 3.5409Zm-.3712 10.2232 2.2914-5.9456 2.2914 5.9456Z",
+      "color": "#D97757"
+    },
+    "publisher": "anthropics/skills",
+    "category": "Skill"
   },
   {
     "id": "oss-canvas-design",
@@ -348,7 +456,13 @@
       "repo": "skills",
       "ref": "main",
       "path": "skills/canvas-design/SKILL.md"
-    }
+    },
+    "icon": {
+      "svg": "M17.3041 3.541h-3.6718l6.696 16.918H24Zm-10.6082 0L0 20.459h3.7442l1.3693-3.5527h7.0052l1.3693 3.5528h3.7442L10.5363 3.5409Zm-.3712 10.2232 2.2914-5.9456 2.2914 5.9456Z",
+      "color": "#D97757"
+    },
+    "publisher": "anthropics/skills",
+    "category": "Skill"
   },
   {
     "id": "oss-internal-comms",
@@ -362,7 +476,13 @@
       "repo": "skills",
       "ref": "main",
       "path": "skills/internal-comms/SKILL.md"
-    }
+    },
+    "icon": {
+      "svg": "M17.3041 3.541h-3.6718l6.696 16.918H24Zm-10.6082 0L0 20.459h3.7442l1.3693-3.5527h7.0052l1.3693 3.5528h3.7442L10.5363 3.5409Zm-.3712 10.2232 2.2914-5.9456 2.2914 5.9456Z",
+      "color": "#D97757"
+    },
+    "publisher": "anthropics/skills",
+    "category": "Skill"
   },
   {
     "id": "oss-brand-guidelines",
@@ -376,7 +496,13 @@
       "repo": "skills",
       "ref": "main",
       "path": "skills/brand-guidelines/SKILL.md"
-    }
+    },
+    "icon": {
+      "svg": "M17.3041 3.541h-3.6718l6.696 16.918H24Zm-10.6082 0L0 20.459h3.7442l1.3693-3.5527h7.0052l1.3693 3.5528h3.7442L10.5363 3.5409Zm-.3712 10.2232 2.2914-5.9456 2.2914 5.9456Z",
+      "color": "#D97757"
+    },
+    "publisher": "anthropics/skills",
+    "category": "Skill"
   },
   {
     "id": "oss-algorithmic-art",
@@ -390,7 +516,13 @@
       "repo": "skills",
       "ref": "main",
       "path": "skills/algorithmic-art/SKILL.md"
-    }
+    },
+    "icon": {
+      "svg": "M17.3041 3.541h-3.6718l6.696 16.918H24Zm-10.6082 0L0 20.459h3.7442l1.3693-3.5527h7.0052l1.3693 3.5528h3.7442L10.5363 3.5409Zm-.3712 10.2232 2.2914-5.9456 2.2914 5.9456Z",
+      "color": "#D97757"
+    },
+    "publisher": "anthropics/skills",
+    "category": "Skill"
   },
   {
     "id": "oss-pdf",
@@ -404,7 +536,13 @@
       "repo": "skills",
       "ref": "main",
       "path": "skills/pdf/SKILL.md"
-    }
+    },
+    "icon": {
+      "svg": "M17.3041 3.541h-3.6718l6.696 16.918H24Zm-10.6082 0L0 20.459h3.7442l1.3693-3.5527h7.0052l1.3693 3.5528h3.7442L10.5363 3.5409Zm-.3712 10.2232 2.2914-5.9456 2.2914 5.9456Z",
+      "color": "#D97757"
+    },
+    "publisher": "anthropics/skills",
+    "category": "Skill"
   },
   {
     "id": "oss-docx",
@@ -418,7 +556,13 @@
       "repo": "skills",
       "ref": "main",
       "path": "skills/docx/SKILL.md"
-    }
+    },
+    "icon": {
+      "svg": "M17.3041 3.541h-3.6718l6.696 16.918H24Zm-10.6082 0L0 20.459h3.7442l1.3693-3.5527h7.0052l1.3693 3.5528h3.7442L10.5363 3.5409Zm-.3712 10.2232 2.2914-5.9456 2.2914 5.9456Z",
+      "color": "#D97757"
+    },
+    "publisher": "anthropics/skills",
+    "category": "Skill"
   },
   {
     "id": "oss-xlsx",
@@ -432,7 +576,13 @@
       "repo": "skills",
       "ref": "main",
       "path": "skills/xlsx/SKILL.md"
-    }
+    },
+    "icon": {
+      "svg": "M17.3041 3.541h-3.6718l6.696 16.918H24Zm-10.6082 0L0 20.459h3.7442l1.3693-3.5527h7.0052l1.3693 3.5528h3.7442L10.5363 3.5409Zm-.3712 10.2232 2.2914-5.9456 2.2914 5.9456Z",
+      "color": "#D97757"
+    },
+    "publisher": "anthropics/skills",
+    "category": "Skill"
   },
   {
     "id": "oss-web-artifacts-builder",
@@ -446,7 +596,13 @@
       "repo": "skills",
       "ref": "main",
       "path": "skills/web-artifacts-builder/SKILL.md"
-    }
+    },
+    "icon": {
+      "svg": "M17.3041 3.541h-3.6718l6.696 16.918H24Zm-10.6082 0L0 20.459h3.7442l1.3693-3.5527h7.0052l1.3693 3.5528h3.7442L10.5363 3.5409Zm-.3712 10.2232 2.2914-5.9456 2.2914 5.9456Z",
+      "color": "#D97757"
+    },
+    "publisher": "anthropics/skills",
+    "category": "Skill"
   },
   {
     "id": "oss-slack-gif-creator",
@@ -460,7 +616,13 @@
       "repo": "skills",
       "ref": "main",
       "path": "skills/slack-gif-creator/SKILL.md"
-    }
+    },
+    "icon": {
+      "svg": "M17.3041 3.541h-3.6718l6.696 16.918H24Zm-10.6082 0L0 20.459h3.7442l1.3693-3.5527h7.0052l1.3693 3.5528h3.7442L10.5363 3.5409Zm-.3712 10.2232 2.2914-5.9456 2.2914 5.9456Z",
+      "color": "#D97757"
+    },
+    "publisher": "anthropics/skills",
+    "category": "Skill"
   },
   {
     "id": "oss-react-best-practices",
@@ -474,7 +636,13 @@
       "repo": "agent-skills",
       "ref": "main",
       "path": "skills/react-best-practices/SKILL.md"
-    }
+    },
+    "icon": {
+      "svg": "M24 22.525H0l12-21.05 12 21.05z",
+      "color": null
+    },
+    "publisher": "vercel-labs/agent-skills",
+    "category": "Skill"
   },
   {
     "id": "oss-web-design-guidelines",
@@ -488,7 +656,13 @@
       "repo": "agent-skills",
       "ref": "main",
       "path": "skills/web-design-guidelines/SKILL.md"
-    }
+    },
+    "icon": {
+      "svg": "M24 22.525H0l12-21.05 12 21.05z",
+      "color": null
+    },
+    "publisher": "vercel-labs/agent-skills",
+    "category": "Skill"
   },
   {
     "id": "oss-composition-patterns",
@@ -502,7 +676,13 @@
       "repo": "agent-skills",
       "ref": "main",
       "path": "skills/composition-patterns/SKILL.md"
-    }
+    },
+    "icon": {
+      "svg": "M24 22.525H0l12-21.05 12 21.05z",
+      "color": null
+    },
+    "publisher": "vercel-labs/agent-skills",
+    "category": "Skill"
   },
   {
     "id": "oss-react-native-skills",
@@ -516,7 +696,13 @@
       "repo": "agent-skills",
       "ref": "main",
       "path": "skills/react-native-skills/SKILL.md"
-    }
+    },
+    "icon": {
+      "svg": "M24 22.525H0l12-21.05 12 21.05z",
+      "color": null
+    },
+    "publisher": "vercel-labs/agent-skills",
+    "category": "Skill"
   },
   {
     "id": "oss-writing-guidelines",
@@ -530,7 +716,13 @@
       "repo": "agent-skills",
       "ref": "main",
       "path": "skills/writing-guidelines/SKILL.md"
-    }
+    },
+    "icon": {
+      "svg": "M24 22.525H0l12-21.05 12 21.05z",
+      "color": null
+    },
+    "publisher": "vercel-labs/agent-skills",
+    "category": "Skill"
   },
   {
     "id": "oss-systematic-debugging",
@@ -544,7 +736,13 @@
       "repo": "superpowers",
       "ref": "main",
       "path": "skills/systematic-debugging/SKILL.md"
-    }
+    },
+    "icon": {
+      "glyph": "auto_awesome",
+      "color": "#7C3AED"
+    },
+    "publisher": "obra/superpowers",
+    "category": "Skill"
   },
   {
     "id": "oss-test-driven-development",
@@ -558,7 +756,13 @@
       "repo": "superpowers",
       "ref": "main",
       "path": "skills/test-driven-development/SKILL.md"
-    }
+    },
+    "icon": {
+      "glyph": "auto_awesome",
+      "color": "#7C3AED"
+    },
+    "publisher": "obra/superpowers",
+    "category": "Skill"
   },
   {
     "id": "oss-writing-plans",
@@ -572,7 +776,13 @@
       "repo": "superpowers",
       "ref": "main",
       "path": "skills/writing-plans/SKILL.md"
-    }
+    },
+    "icon": {
+      "glyph": "auto_awesome",
+      "color": "#7C3AED"
+    },
+    "publisher": "obra/superpowers",
+    "category": "Skill"
   },
   {
     "id": "oss-verification-before-completion",
@@ -586,7 +796,13 @@
       "repo": "superpowers",
       "ref": "main",
       "path": "skills/verification-before-completion/SKILL.md"
-    }
+    },
+    "icon": {
+      "glyph": "auto_awesome",
+      "color": "#7C3AED"
+    },
+    "publisher": "obra/superpowers",
+    "category": "Skill"
   },
   {
     "id": "oss-requesting-code-review",
@@ -600,7 +816,13 @@
       "repo": "superpowers",
       "ref": "main",
       "path": "skills/requesting-code-review/SKILL.md"
-    }
+    },
+    "icon": {
+      "glyph": "auto_awesome",
+      "color": "#7C3AED"
+    },
+    "publisher": "obra/superpowers",
+    "category": "Skill"
   },
   {
     "id": "oss-receiving-code-review",
@@ -614,7 +836,13 @@
       "repo": "superpowers",
       "ref": "main",
       "path": "skills/receiving-code-review/SKILL.md"
-    }
+    },
+    "icon": {
+      "glyph": "auto_awesome",
+      "color": "#7C3AED"
+    },
+    "publisher": "obra/superpowers",
+    "category": "Skill"
   },
   {
     "id": "oss-dispatching-parallel-agents",
@@ -628,6 +856,12 @@
       "repo": "superpowers",
       "ref": "main",
       "path": "skills/dispatching-parallel-agents/SKILL.md"
-    }
+    },
+    "icon": {
+      "glyph": "auto_awesome",
+      "color": "#7C3AED"
+    },
+    "publisher": "obra/superpowers",
+    "category": "Skill"
   }
 ]

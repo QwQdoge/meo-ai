@@ -11,6 +11,7 @@ function toBase64(bytes: Uint8Array): string {
   for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
   return btoa(binary);
 }
+import StorePage from "./StorePage";
 import { useCore, type Action, type View } from "./useCore";
 import "./core.css";
 import "./shell.css";
@@ -201,6 +202,8 @@ function Page({ page, prefs, strings, act, work }: { page: Spec; prefs: Spec; st
       return <SignIn page={page} act={act} />;
     case "conversation":
       return <Conversation page={page} prefs={prefs} strings={strings} act={act} work={work} />;
+    case "store":
+      return <StorePage page={page} act={act} />;
     case "list":
       return <ListPage page={page} act={act} />;
     case "settings":

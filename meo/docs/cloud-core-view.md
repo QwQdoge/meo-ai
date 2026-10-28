@@ -100,3 +100,14 @@ or saves bytes.
   CSV, anything else as text) and calls the platform hook `save_file(name, bytes)`. A host that
   returns `false` (desktop, runner) gets the file in `~/Downloads`; the web hook is
   `window.meoSaveFile(name, bytes)`.
+
+## Store page (`page.kind = "store"`)
+
+The Skills route renders the plugin store. Fields: `tabs` (`discover`, `installed`, `import`), `filters`
+(category chips), `search {value, placeholder, action, field}` (the client sends `action` plus
+`{[field]: text}`), `sections[]` with `cards[]` (`title`, `subtitle`, `publisher`, `badges`, `state`:
+`available|installed|on|off`, `icon`, `actions`), `forms[]` (import inputs, same `action`+`field`
+convention) and `links[]`. `icon` is `{svg, color}` (a 24x24 path), `{glyph, color}` (a Material
+Symbols name) or null (draw a letter tile). Actions: `store_tab`, `store_filter`, `store_search`,
+`install_plugin`, `install_registry`, `import_skill`, `import_mcp`, `uninstall_plugin`,
+`toggle_plugin`. An action `{type:"open_link", url}` is handled by the client itself (open in a new tab).

@@ -175,6 +175,32 @@ pub enum Action {
     InstallPlugin {
         id: String,
     },
+    /// Store: switches tab (`discover`, `installed`, `import`) or category filter.
+    StoreTab {
+        tab: String,
+    },
+    StoreFilter {
+        category: String,
+    },
+    /// Store: searches built-in entries and the public MCP registry.
+    StoreSearch {
+        query: String,
+    },
+    /// Imports a public `SKILL.md` from a GitHub URL.
+    ImportSkill {
+        url: String,
+    },
+    /// Adds a remote (streamable HTTP) MCP server by URL.
+    ImportMcp {
+        url: String,
+    },
+    /// Installs a server found in the MCP registry.
+    InstallRegistry {
+        id: String,
+    },
+    UninstallPlugin {
+        id: String,
+    },
     /// Turns an installed plugin on or off.
     TogglePlugin {
         id: String,
@@ -361,6 +387,16 @@ enum RemoteJob {
     Decide { allow: bool },
 }
 
+/// What the store page shows besides the installed list.
+#[derive(Default)]
+struct StoreUi {
+    tab: String,
+    category: String,
+    query: String,
+    registry: Option<Result<Vec<Value>, String>>,
+    loading: bool,
+}
+
 #[derive(Default)]
 struct State {
     remote: RemoteLink,
@@ -423,6 +459,7 @@ struct State {
     selected: Option<(String, String)>,
     projects: Option<Result<Vec<Value>, String>>,
     plugins: Option<Result<Vec<Value>, String>>,
+    store: StoreUi,
     prefs: Map<String, Value>,
     cloud_settings: Option<Value>,
 }
@@ -698,6 +735,13 @@ impl AppCore {
             Action::SaveFile { message, index } => self.save_file(message, index),
             Action::InstallPlugin { id } => self.install_plugin(id).await,
             Action::TogglePlugin { id, enabled } => self.toggle_plugin(id, enabled).await,
+            Action::StoreTab { tab } => Box::pin(self.store_tab(tab)).await,
+            Action::StoreFilter { category } => self.update(|s| s.store.category = category),
+            Action::StoreSearch { query } => Box::pin(self.store_search(query)).await,
+            Action::ImportSkill { url } => Box::pin(self.import_skill(url)).await,
+            Action::ImportMcp { url } => Box::pin(self.import_mcp(url)).await,
+            Action::InstallRegistry { id } => Box::pin(self.install_registry(id)).await,
+            Action::UninstallPlugin { id } => Box::pin(self.uninstall_plugin(id)).await,
             Action::BeginNewProject => self.prompt(
                 "New project",
                 "",
@@ -1669,6 +1713,9 @@ impl AppCore {
                     .call(|api, t| async move { api.list_plugins(&t).await })
                     .await;
                 self.update(|s| s.plugins = Some(r.map_err(|e| e.to_string())));
+                if self.state.lock().unwrap().store.registry.is_none() {
+                    self.store_search(String::new()).await;
+                }
             }
             _ => {}
         }
@@ -2189,6 +2236,156 @@ impl AppCore {
                 self.notice("info", format!("{name} installed and enabled. {note}").trim().to_owned());
                 self.refresh_plugins().await;
             }
+            Err(e) => self.notice("error", e.to_string()),
+        }
+    }
+
+    async fn store_tab(&self, tab: String) {
+        let load = tab == "discover" && self.state.lock().unwrap().store.registry.is_none();
+        self.update(|s| s.store.tab = tab);
+        if load {
+            self.store_search(String::new()).await;
+        }
+    }
+
+    async fn store_search(&self, query: String) {
+        let query = query.trim().to_owned();
+        let term = if query.chars().count() >= 2 { query.clone() } else { "mcp".to_owned() };
+        self.update(|s| {
+            s.store.tab = "discover".into();
+            s.store.query = query;
+            s.store.loading = true;
+        });
+        let r = self
+            .call(|api, t| {
+                let term = term.clone();
+                async move { api.search_mcp(&t, &term).await }
+            })
+            .await;
+        self.update(|s| {
+            s.store.registry = Some(r.map_err(|e| e.to_string()));
+            s.store.loading = false;
+        });
+    }
+
+    async fn installed_names(&self) -> Vec<String> {
+        self.state
+            .lock()
+            .unwrap()
+            .plugins
+            .as_ref()
+            .and_then(|r| r.as_ref().ok())
+            .map(|rows| rows.iter().filter_map(|p| p["name"].as_str().map(str::to_owned)).collect())
+            .unwrap_or_default()
+    }
+
+    async fn import_skill(&self, url: String) {
+        let Some(src) = parse_github_skill(&url) else {
+            return self.notice("error", "Paste a GitHub link to a SKILL.md (or the folder that holds it).");
+        };
+        let skill = match self
+            .call(|api, t| {
+                let src = src.clone();
+                async move { api.github_skill(&t, &src).await }
+            })
+            .await
+        {
+            Ok(skill) => skill,
+            Err(e) => return self.notice("error", format!("Could not fetch that skill: {e}")),
+        };
+        let name = skill["name"].as_str().unwrap_or("Imported skill").to_owned();
+        if self.installed_names().await.contains(&name) {
+            return self.notice("info", format!("{name} is already installed."));
+        }
+        let body = json!({
+            "name": name,
+            "description": skill["description"],
+            "kind": "skills", "source": "custom", "transport": "none", "enabled": true,
+            "manifest": { "imported": url.trim() },
+            "skills": [{ "name": skill["name"], "description": skill["description"], "content": skill["content"], "enabled": true }],
+        });
+        self.save_new_plugin(body, &name, "Read it before relying on it: imported skills are instructions from a third party.").await;
+    }
+
+    async fn import_mcp(&self, url: String) {
+        let url = url.trim().to_owned();
+        let host = url.strip_prefix("https://").map(|r| r.split('/').next().unwrap_or("").to_owned());
+        let Some(host) = host.filter(|h| h.contains('.') && !h.contains('@') && !h.contains(' ')) else {
+            return self.notice("error", "Enter the https address of a remote MCP server.");
+        };
+        if self.installed_names().await.contains(&host) {
+            return self.notice("info", format!("{host} is already installed."));
+        }
+        let body = json!({
+            "name": host, "description": format!("Remote MCP server at {url}"),
+            "kind": "bundle", "source": "custom", "transport": "remote_http", "enabled": true,
+            "remoteUrl": url, "manifest": { "imported": url }, "skills": [],
+        });
+        self.save_new_plugin(body, &host, "Its tools run only when your Meo API operator has approved this address.").await;
+    }
+
+    async fn install_registry(&self, id: String) {
+        let entry = self
+            .state
+            .lock()
+            .unwrap()
+            .store
+            .registry
+            .as_ref()
+            .and_then(|r| r.as_ref().ok())
+            .and_then(|rows| rows.iter().find(|r| r["id"] == id.as_str()).cloned());
+        let Some(entry) = entry else { return };
+        let Some(url) = entry["remoteUrl"].as_str() else {
+            return self.notice("info", "This server has no hosted address; it needs a local install.");
+        };
+        let name = entry["name"].as_str().unwrap_or(&id).to_owned();
+        if self.installed_names().await.contains(&name) {
+            return self.notice("info", format!("{name} is already installed."));
+        }
+        let body = json!({
+            "name": name, "description": entry["description"],
+            "kind": "bundle", "source": "custom", "transport": "remote_http", "enabled": true,
+            "remoteUrl": url, "manifest": { "registry": id }, "skills": [],
+        });
+        self.save_new_plugin(body, &name, "Its tools run only when your Meo API operator has approved this address.").await;
+    }
+
+    async fn save_new_plugin(&self, body: Value, name: &str, note: &str) {
+        match self
+            .call(|api, t| {
+                let body = body.clone();
+                async move { api.create_plugin(&t, body).await }
+            })
+            .await
+        {
+            Ok(()) => {
+                self.notice("info", format!("{name} added and enabled. {note}"));
+                self.refresh_plugins().await;
+                self.update(|s| s.store.tab = "installed".into());
+            }
+            Err(e) => self.notice("error", e.to_string()),
+        }
+    }
+
+    async fn uninstall_plugin(&self, id: String) {
+        let version = self
+            .state
+            .lock()
+            .unwrap()
+            .plugins
+            .as_ref()
+            .and_then(|r| r.as_ref().ok())
+            .and_then(|rows| rows.iter().find(|p| p["id"] == id.as_str()))
+            .and_then(|p| p["version"].as_i64());
+        let Some(version) = version else { return };
+        match self
+            .call(|api, t| {
+                let id = id.clone();
+                async move { api.delete_plugin(&t, &id, version).await }
+            })
+            .await
+        {
+            Ok(()) => self.refresh_plugins().await,
             Err(e) => self.notice("error", e.to_string()),
         }
     }
@@ -4645,46 +4842,7 @@ impl AppCore {
                         page
                     }
                 },
-                "skills" => {
-                    let mut page = list_page(
-                        "Skills",
-                        &s.plugins,
-                        |p| {
-                            let on = p["enabled"].as_bool().unwrap_or(false);
-                            json!({
-                                "id": p["id"],
-                                "title": format!("{} · {}", p["name"].as_str().unwrap_or_default(), if on { "On" } else { "Off" }),
-                                "subtitle": p["description"],
-                                "action": { "type": "toggle_plugin", "id": p["id"], "enabled": !on },
-                            })
-                        },
-                        "No skills or apps yet",
-                    );
-                    if page["kind"] == "list" {
-                        let have: Vec<String> = s
-                            .plugins
-                            .as_ref()
-                            .and_then(|r| r.as_ref().ok())
-                            .map(|rows| rows.iter().filter_map(|p| p["name"].as_str().map(str::to_owned)).collect())
-                            .unwrap_or_default();
-                        let items = page["items"].as_array_mut().unwrap();
-                        for p in plugin_store() {
-                            let name = p["name"].as_str().unwrap_or_default();
-                            if have.iter().any(|h| h == name) {
-                                continue;
-                            }
-                            let tools = if !p["remoteUrl"].is_null() { " · MCP tools" } else if p.get("github").is_some() { " · GitHub" } else { "" };
-                            items.push(json!({
-                                "id": format!("store:{}", p["id"].as_str().unwrap_or_default()),
-                                "title": format!("Install · {name}"),
-                                "subtitle": format!("{}{tools}", p["description"].as_str().unwrap_or_default()),
-                                "action": { "type": "install_plugin", "id": p["id"] },
-                            }));
-                        }
-                        page["empty"] = Value::Null;
-                    }
-                    page
-                }
+                "skills" => store_page(&s),
                 "settings" => self.settings_page(&s),
                 _ => json!({
                     "kind": "unavailable",
@@ -6306,6 +6464,144 @@ fn with_message_id(mut blocks: Vec<Value>, id: &str) -> Vec<Value> {
     blocks
 }
 
+/// `https://github.com/o/r/blob/ref/path/SKILL.md`, a `tree` folder link or a raw link, as the
+/// source object Meo API's skill preview takes.
+fn parse_github_skill(url: &str) -> Option<Value> {
+    let url = url.trim().split(['?', '#']).next()?;
+    let (host, rest) = url.strip_prefix("https://")?.split_once('/')?;
+    let parts: Vec<&str> = rest.trim_end_matches('/').split('/').collect();
+    let (owner, repo, ref_, path): (&str, &str, &str, Vec<&str>) = match host {
+        "github.com" if parts.len() == 2 => (parts[0], parts[1], "main", vec![]),
+        "github.com" if parts.len() >= 4 && (parts[2] == "blob" || parts[2] == "tree") => {
+            (parts[0], parts[1], parts[3], parts[4..].to_vec())
+        }
+        "raw.githubusercontent.com" if parts.len() >= 4 => (parts[0], parts[1], parts[2], parts[3..].to_vec()),
+        _ => return None,
+    };
+    let mut path = path.join("/");
+    if !path.ends_with("SKILL.md") {
+        path = if path.is_empty() { "SKILL.md".into() } else { format!("{path}/SKILL.md") };
+    }
+    Some(json!({ "owner": owner, "repo": repo, "ref": ref_, "path": path }))
+}
+
+/// A store card; `actions` are buttons, `icon` is `{svg,color}` or `{glyph,color}` (clients draw a
+/// letter tile when it is missing).
+fn store_card(id: String, title: &str, subtitle: &str, icon: &Value, publisher: &str, badges: Vec<&str>, state: &str, actions: Vec<Value>) -> Value {
+    json!({ "id": id, "title": title, "subtitle": subtitle, "icon": icon, "publisher": publisher,
+            "badges": badges, "state": state, "actions": actions })
+}
+
+fn store_page(s: &State) -> Value {
+    let store = plugin_store();
+    let tab = if s.store.tab.is_empty() { "discover" } else { s.store.tab.as_str() };
+    let category = if s.store.category.is_empty() { "all" } else { s.store.category.as_str() };
+    let rows = s.plugins.as_ref().and_then(|r| r.as_ref().ok()).cloned().unwrap_or_default();
+    let entry_of = |p: &Value| {
+        let builtin = p["manifest"]["builtin"].as_str();
+        store.iter().find(|e| Some(e["id"].as_str().unwrap_or_default()) == builtin || e["name"] == p["name"]).cloned()
+    };
+    let tabs: Vec<Value> = [("discover", "Discover"), ("installed", "Installed"), ("import", "Import")]
+        .iter()
+        .map(|(id, label)| json!({ "id": id, "label": label, "selected": *id == tab, "action": { "type": "store_tab", "tab": id } }))
+        .collect();
+    let mut page = json!({
+        "kind": "store", "title": "Apps & Skills", "tab": tab, "tabs": tabs,
+        "search": { "value": s.store.query, "placeholder": "Search apps, skills and MCP servers",
+                    "action": { "type": "store_search" }, "field": "query" },
+        "loading": s.plugins.is_none() || s.store.loading,
+        "sections": [],
+    });
+    let mut sections = Vec::new();
+    match tab {
+        "installed" => {
+            let cards: Vec<Value> = rows.iter().map(|p| {
+                let on = p["enabled"].as_bool().unwrap_or(false);
+                let e = entry_of(p);
+                let icon = e.as_ref().map(|e| e["icon"].clone()).unwrap_or(Value::Null);
+                let publisher = e.as_ref().and_then(|e| e["publisher"].as_str()).unwrap_or("Custom").to_owned();
+                let id = p["id"].as_str().unwrap_or_default();
+                let mut badges = vec![];
+                if !p["remoteUrl"].is_null() { badges.push("MCP"); }
+                if p["kind"] == "skills" || p["kind"] == "bundle" { badges.push("Skills"); }
+                store_card(id.to_owned(), p["name"].as_str().unwrap_or_default(), p["description"].as_str().unwrap_or_default(), &icon, &publisher, badges,
+                    if on { "on" } else { "off" },
+                    vec![
+                        button(if on { "On" } else { "Off" }, if on { "primary" } else { "secondary" }, json!({ "type": "toggle_plugin", "id": id, "enabled": !on })),
+                        button("Remove", "secondary", json!({ "type": "uninstall_plugin", "id": id })),
+                    ])
+            }).collect();
+            sections.push(json!({ "id": "installed", "title": format!("Installed · {}", cards.len()), "cards": cards,
+                                   "empty": "Nothing installed yet. Open Discover to add apps and skills." }));
+        }
+        "import" => {
+            sections.push(json!({ "id": "import", "title": "Bring your own", "forms": [
+                { "id": "skill", "title": "Skill from GitHub", "icon": { "glyph": "description" },
+                  "text": "Paste a link to a SKILL.md or the folder that holds it. Works with any public repository, for example anthropics/skills, vercel-labs/agent-skills or obra/superpowers.",
+                  "placeholder": "https://github.com/owner/repo/tree/main/skills/name",
+                  "button": "Import skill", "action": { "type": "import_skill" }, "field": "url" },
+                { "id": "mcp", "title": "Remote MCP server", "icon": { "glyph": "cloud" },
+                  "text": "The https address of a streamable-HTTP MCP server. It runs only if your Meo API operator has approved that address.",
+                  "placeholder": "https://example.com/mcp",
+                  "button": "Add server", "action": { "type": "import_mcp" }, "field": "url" },
+            ]}));
+            sections.push(json!({ "id": "libraries", "title": "Libraries to browse", "links": [
+                { "title": "MCP Registry", "subtitle": "Official registry of MCP servers (searched in Discover)", "url": "https://registry.modelcontextprotocol.io" },
+                { "title": "anthropics/skills", "subtitle": "Anthropic's open-source skills", "url": "https://github.com/anthropics/skills" },
+                { "title": "vercel-labs/agent-skills", "subtitle": "Vercel's skills for React and web design", "url": "https://github.com/vercel-labs/agent-skills" },
+                { "title": "obra/superpowers", "subtitle": "A development workflow made of skills", "url": "https://github.com/obra/superpowers" },
+            ]}));
+        }
+        _ => {
+            let q = s.store.query.to_lowercase();
+            let have: Vec<&str> = rows.iter().filter_map(|p| p["name"].as_str()).collect();
+            let cards: Vec<Value> = store.iter()
+                .filter(|e| category == "all" || e["category"].as_str().map(str::to_lowercase).as_deref() == Some(category))
+                .filter(|e| q.is_empty() || e["name"].as_str().unwrap_or_default().to_lowercase().contains(&q)
+                    || e["description"].as_str().unwrap_or_default().to_lowercase().contains(&q))
+                .map(|e| {
+                    let name = e["name"].as_str().unwrap_or_default();
+                    let installed = have.contains(&name);
+                    let id = e["id"].as_str().unwrap_or_default();
+                    store_card(format!("store:{id}"), name, e["description"].as_str().unwrap_or_default(), &e["icon"],
+                        e["publisher"].as_str().unwrap_or_default(), vec![e["category"].as_str().unwrap_or("Bundle")],
+                        if installed { "installed" } else { "available" },
+                        if installed { vec![] } else { vec![button("Install", "primary", json!({ "type": "install_plugin", "id": id }))] })
+                }).collect();
+            let chips: Vec<Value> = [("all", "All"), ("mcp", "MCP"), ("skill", "Skills"), ("bundle", "Bundles")].iter()
+                .map(|(id, label)| json!({ "id": id, "label": label, "selected": *id == category, "action": { "type": "store_filter", "category": id } }))
+                .collect();
+            page["filters"] = json!(chips);
+            sections.push(json!({ "id": "builtin", "title": "From Meo AI and open source", "cards": cards, "empty": "No built-in entries match." }));
+            let registry = match &s.store.registry {
+                Some(Ok(servers)) => {
+                    let cards: Vec<Value> = servers.iter().map(|r| {
+                        let id = r["id"].as_str().unwrap_or_default();
+                        let hosted = r["remoteUrl"].is_string();
+                        let installed = have.contains(&r["name"].as_str().unwrap_or_default());
+                        let mut actions = vec![];
+                        if hosted && !installed {
+                            actions.push(button("Install", "primary", json!({ "type": "install_registry", "id": id })));
+                        }
+                        if let Some(repo) = r["repositoryUrl"].as_str() {
+                            actions.push(button("Source", "secondary", json!({ "type": "open_link", "url": repo })));
+                        }
+                        store_card(format!("registry:{id}"), r["name"].as_str().unwrap_or(id), r["description"].as_str().unwrap_or_default(), &Value::Null,
+                            id, vec!["MCP", if hosted { "Hosted" } else { "Needs local setup" }],
+                            if installed { "installed" } else { "available" }, actions)
+                    }).collect();
+                    json!({ "id": "registry", "title": "MCP registry", "cards": cards, "empty": "No servers found." })
+                }
+                Some(Err(e)) => json!({ "id": "registry", "title": "MCP registry", "cards": [], "empty": format!("The registry could not be reached: {e}") }),
+                None => json!({ "id": "registry", "title": "MCP registry", "cards": [], "empty": "" }),
+            };
+            sections.push(registry);
+        }
+    }
+    page["sections"] = json!(sections);
+    page
+}
+
 fn list_page(
     title: &str,
     data: &Option<Result<Vec<Value>, String>>,
@@ -6335,6 +6631,19 @@ fn list_page(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn github_links_become_skill_sources() {
+        let a = parse_github_skill("https://github.com/anthropics/skills/tree/main/skills/pdf").unwrap();
+        assert_eq!(a["path"], "skills/pdf/SKILL.md");
+        let b = parse_github_skill("https://github.com/o/r/blob/dev/x/SKILL.md?plain=1").unwrap();
+        assert_eq!((b["ref"].as_str(), b["path"].as_str()), (Some("dev"), Some("x/SKILL.md")));
+        assert_eq!(parse_github_skill("https://github.com/o/r").unwrap()["path"], "SKILL.md");
+        assert!(parse_github_skill("https://example.com/o/r").is_none());
+        let page = store_page(&State::default());
+        assert_eq!(page["kind"], "store");
+        assert!(page["sections"][0]["cards"].as_array().unwrap().len() >= 30);
+    }
     use super::*;
     use crate::cloud::MemoryStorage;
 

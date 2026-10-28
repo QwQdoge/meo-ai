@@ -221,3 +221,42 @@
   .core-app .core-chip-toggle span { display: none; }
   .core-app .core-chip-toggle { padding: 0 10px; }
 }
+
+/* ---------- Store ---------- */
+.core-app .store { display: flex; flex-direction: column; gap: 14px; }
+.core-app .store-head { display: flex; align-items: center; gap: 12px; }
+.core-app .store-head h1 { margin: 0; font-size: 28px; font-weight: 500; }
+.core-app .store-search { display: flex; align-items: center; gap: 10px; padding: 4px 8px 4px 18px; border-radius: 999px; background: var(--tonal); max-width: 640px; }
+.core-app .store-search:focus-within { box-shadow: 0 0 0 2px rgb(var(--accent-primary)); }
+.core-app .store-search input { flex: 1; min-width: 0; padding: 12px 0; border: 0; outline: 0; background: none; font-size: 15px; color: inherit; }
+.core-app .store-tabs { display: flex; gap: 4px; border-bottom: 1px solid rgb(var(--border-light)); }
+.core-app .store-tabs button { padding: 10px 18px; border: 0; background: none; color: rgb(var(--text-secondary)); font-size: 14px; font-weight: 500; border-bottom: 3px solid transparent; border-radius: 0; margin-bottom: -1px; }
+.core-app .store-tabs button[aria-selected="true"] { color: rgb(var(--accent-primary)); border-bottom-color: rgb(var(--accent-primary)); }
+.core-app .store-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.core-app .store-chips button { padding: 6px 14px; border-radius: var(--r-s); border: 1px solid rgb(var(--border-light)); background: none; color: inherit; font-size: 13px; }
+.core-app .store-chips button[aria-pressed="true"] { background: var(--tonal-2); border-color: transparent; font-weight: 600; }
+.core-app .store-section h2 { margin: 10px 0 12px; font-size: 16px; font-weight: 600; color: rgb(var(--text-secondary)); }
+.core-app .store-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
+.core-app .store-card { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; padding: 16px; border-radius: var(--r-l); background: var(--tonal); transition: background-color .2s var(--ease), box-shadow .2s var(--ease); }
+.core-app .store-card:hover { background: var(--tonal-2); box-shadow: var(--elev-1); }
+.core-app .store-icon { display: inline-grid; place-items: center; flex: none; border-radius: 28%; background: rgb(var(--surface-primary)); box-shadow: inset 0 0 0 1px rgb(var(--border-light)); color: rgb(var(--text-primary)); }
+.core-app .store-card-body { min-width: 0; }
+.core-app .store-card h3 { margin: 0; font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
+.core-app .store-pub { margin: 2px 0 6px; font-size: 12px; color: rgb(var(--text-tertiary, var(--text-secondary))); overflow-wrap: anywhere; }
+.core-app .store-desc { margin: 0 0 8px; font-size: 13px; line-height: 1.45; color: rgb(var(--text-secondary)); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.core-app .store-badges { display: flex; flex-wrap: wrap; gap: 6px; }
+.core-app .store-badges span { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 6px; font-size: 11px; font-weight: 600; background: rgb(var(--surface-primary)); color: rgb(var(--text-secondary)); }
+.core-app .store-badges .ok { color: rgb(var(--accent-primary)); }
+.core-app .store-card-actions { grid-column: 1 / -1; display: flex; gap: 8px; justify-content: flex-end; }
+.core-app .store-card-actions:empty { display: none; }
+.core-app .store-forms { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+.core-app .store-form { display: flex; flex-direction: column; gap: 10px; padding: 18px; border-radius: var(--r-l); background: var(--tonal); }
+.core-app .store-form-head { display: flex; align-items: center; gap: 12px; }
+.core-app .store-form-head h3 { margin: 0; font-size: 16px; }
+.core-app .store-form input { padding: 12px 14px; border-radius: var(--r-s); border: 1px solid rgb(var(--border-light)); background: rgb(var(--surface-primary)); color: inherit; font-size: 14px; }
+.core-app .store-form button[type="submit"] { align-self: flex-start; }
+.core-app .store-links { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.core-app .store-links button { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; padding: 12px 18px; border: 0; border-radius: var(--r-m); background: var(--tonal); color: inherit; text-align: start; }
+.core-app .store-links button:hover { background: var(--tonal-2); }
+.core-app .store-links span { font-size: 12px; color: rgb(var(--text-secondary)); }
+@media (max-width: 600px) { .core-app .store-grid { grid-template-columns: 1fr; } }

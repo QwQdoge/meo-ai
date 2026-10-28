@@ -825,6 +825,25 @@ impl MeoApi {
         Ok(body["skill"].clone())
     }
 
+    /// Searches the public MCP registry through Meo API (fixed origin, bounded).
+    pub async fn search_mcp(&self, token: &str, query: &str) -> Result<Vec<Value>, ApiError> {
+        let encoded: String = query
+            .bytes()
+            .map(|b| match b {
+                b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' => (b as char).to_string(),
+                _ => format!("%{b:02X}"),
+            })
+            .collect();
+        let path = format!("/v1/ai/catalog/mcp?q={encoded}");
+        let body = self.request(token, Method::GET, &path, None).await?;
+        Ok(body["servers"].as_array().cloned().unwrap_or_default())
+    }
+
+    pub async fn delete_plugin(&self, token: &str, id: &str, version: i64) -> Result<(), ApiError> {
+        let path = format!("/v1/ai/plugins/{id}?expectedVersion={version}");
+        self.request(token, Method::DELETE, &path, None).await.map(|_| ())
+    }
+
     pub async fn create_plugin(&self, token: &str, body: Value) -> Result<(), ApiError> {
         self.request(token, Method::POST, "/v1/ai/plugins", Some(body))
             .await
