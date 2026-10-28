@@ -1490,14 +1490,18 @@ impl AppCore {
         &self,
         request: &Value,
         body: &Value,
-    ) -> Result<std::pin::Pin<Box<impl futures_util::Stream<Item = Result<ChatEvent, ApiError>>>>, ApiError> {
+    ) -> Result<
+        std::pin::Pin<Box<impl futures_util::Stream<Item = Result<ChatEvent, ApiError>>>>,
+        ApiError,
+    > {
         let first = self
             .call(|api, t| {
                 let body = body.clone();
                 async move { api.chat_stream(&t, &body).await.map(Box::pin) }
             })
             .await;
-        if !matches!(&first, Err(ApiError::Status { code, .. }) if code == "ai_provider_rate_limited") {
+        if !matches!(&first, Err(ApiError::Status { code, .. }) if code == "ai_provider_rate_limited")
+        {
             return first;
         }
         let Some(retry) = self.fallback_body(request).await else {
@@ -2141,7 +2145,8 @@ impl AppCore {
                 .find(|m| m.id == message)
                 .map(|m| m.text.clone())
         };
-        let Some((name, content)) = text.and_then(|t| richtext::files(&t).into_iter().nth(index)) else {
+        let Some((name, content)) = text.and_then(|t| richtext::files(&t).into_iter().nth(index))
+        else {
             return self.notice("error", "That file is no longer available.");
         };
         let bytes = docs::build_file(&name, &content);
@@ -2154,11 +2159,17 @@ impl AppCore {
                 .map(|h| std::path::PathBuf::from(h).join("Downloads"))
                 .unwrap_or_else(std::env::temp_dir);
             let _ = std::fs::create_dir_all(&dir);
-            let (stem, ext) = name.rsplit_once('.').map_or((name.as_str(), ""), |(a, b)| (a, b));
+            let (stem, ext) = name
+                .rsplit_once('.')
+                .map_or((name.as_str(), ""), |(a, b)| (a, b));
             let mut target = dir.join(&name);
             let mut n = 1;
             while target.exists() {
-                target = dir.join(if ext.is_empty() { format!("{stem} ({n})") } else { format!("{stem} ({n}).{ext}") });
+                target = dir.join(if ext.is_empty() {
+                    format!("{stem} ({n})")
+                } else {
+                    format!("{stem} ({n}).{ext}")
+                });
                 n += 1;
             }
             match std::fs::write(&target, &bytes) {
@@ -2198,19 +2209,25 @@ impl AppCore {
                 .await
             {
                 Ok(skill) => fetched = Some(skill),
-                Err(e) => return self.notice("error", format!("Could not fetch {name} from GitHub: {e}")),
+                Err(e) => {
+                    return self.notice("error", format!("Could not fetch {name} from GitHub: {e}"))
+                }
             }
         }
         let skills: Vec<Value> = if let Some(k) = &fetched {
-            vec![json!({ "name": k["name"], "description": k["description"], "content": k["content"], "enabled": true })]
-        } else { entry["skills"]
+            vec![
+                json!({ "name": k["name"], "description": k["description"], "content": k["content"], "enabled": true }),
+            ]
+        } else {
+            entry["skills"]
             .as_array()
             .map(|a| {
                 a.iter()
                     .map(|k| json!({ "name": k["name"], "description": k["description"], "content": k["content"], "enabled": true }))
                     .collect()
             })
-            .unwrap_or_default() };
+            .unwrap_or_default()
+        };
         let mut body = json!({
             "name": name,
             "description": entry["description"],
@@ -2233,7 +2250,12 @@ impl AppCore {
         {
             Ok(()) => {
                 let note = entry["requires"].as_str().unwrap_or_default();
-                self.notice("info", format!("{name} installed and enabled. {note}").trim().to_owned());
+                self.notice(
+                    "info",
+                    format!("{name} installed and enabled. {note}")
+                        .trim()
+                        .to_owned(),
+                );
                 self.refresh_plugins().await;
             }
             Err(e) => self.notice("error", e.to_string()),
@@ -2250,7 +2272,11 @@ impl AppCore {
 
     async fn store_search(&self, query: String) {
         let query = query.trim().to_owned();
-        let term = if query.chars().count() >= 2 { query.clone() } else { "mcp".to_owned() };
+        let term = if query.chars().count() >= 2 {
+            query.clone()
+        } else {
+            "mcp".to_owned()
+        };
         self.update(|s| {
             s.store.tab = "discover".into();
             s.store.query = query;
@@ -2275,13 +2301,20 @@ impl AppCore {
             .plugins
             .as_ref()
             .and_then(|r| r.as_ref().ok())
-            .map(|rows| rows.iter().filter_map(|p| p["name"].as_str().map(str::to_owned)).collect())
+            .map(|rows| {
+                rows.iter()
+                    .filter_map(|p| p["name"].as_str().map(str::to_owned))
+                    .collect()
+            })
             .unwrap_or_default()
     }
 
     async fn import_skill(&self, url: String) {
         let Some(src) = parse_github_skill(&url) else {
-            return self.notice("error", "Paste a GitHub link to a SKILL.md (or the folder that holds it).");
+            return self.notice(
+                "error",
+                "Paste a GitHub link to a SKILL.md (or the folder that holds it).",
+            );
         };
         let skill = match self
             .call(|api, t| {
@@ -2293,7 +2326,10 @@ impl AppCore {
             Ok(skill) => skill,
             Err(e) => return self.notice("error", format!("Could not fetch that skill: {e}")),
         };
-        let name = skill["name"].as_str().unwrap_or("Imported skill").to_owned();
+        let name = skill["name"]
+            .as_str()
+            .unwrap_or("Imported skill")
+            .to_owned();
         if self.installed_names().await.contains(&name) {
             return self.notice("info", format!("{name} is already installed."));
         }
@@ -2304,13 +2340,21 @@ impl AppCore {
             "manifest": { "imported": url.trim() },
             "skills": [{ "name": skill["name"], "description": skill["description"], "content": skill["content"], "enabled": true }],
         });
-        self.save_new_plugin(body, &name, "Read it before relying on it: imported skills are instructions from a third party.").await;
+        self.save_new_plugin(
+            body,
+            &name,
+            "Read it before relying on it: imported skills are instructions from a third party.",
+        )
+        .await;
     }
 
     async fn import_mcp(&self, url: String) {
         let url = url.trim().to_owned();
-        let host = url.strip_prefix("https://").map(|r| r.split('/').next().unwrap_or("").to_owned());
-        let Some(host) = host.filter(|h| h.contains('.') && !h.contains('@') && !h.contains(' ')) else {
+        let host = url
+            .strip_prefix("https://")
+            .map(|r| r.split('/').next().unwrap_or("").to_owned());
+        let Some(host) = host.filter(|h| h.contains('.') && !h.contains('@') && !h.contains(' '))
+        else {
             return self.notice("error", "Enter the https address of a remote MCP server.");
         };
         if self.installed_names().await.contains(&host) {
@@ -2321,7 +2365,12 @@ impl AppCore {
             "kind": "bundle", "source": "custom", "transport": "remote_http", "enabled": true,
             "remoteUrl": url, "manifest": { "imported": url }, "skills": [],
         });
-        self.save_new_plugin(body, &host, "Its tools run only when your Meo API operator has approved this address.").await;
+        self.save_new_plugin(
+            body,
+            &host,
+            "Its tools run only when your Meo API operator has approved this address.",
+        )
+        .await;
     }
 
     async fn install_registry(&self, id: String) {
@@ -2336,7 +2385,10 @@ impl AppCore {
             .and_then(|rows| rows.iter().find(|r| r["id"] == id.as_str()).cloned());
         let Some(entry) = entry else { return };
         let Some(url) = entry["remoteUrl"].as_str() else {
-            return self.notice("info", "This server has no hosted address; it needs a local install.");
+            return self.notice(
+                "info",
+                "This server has no hosted address; it needs a local install.",
+            );
         };
         let name = entry["name"].as_str().unwrap_or(&id).to_owned();
         if self.installed_names().await.contains(&name) {
@@ -2347,7 +2399,12 @@ impl AppCore {
             "kind": "bundle", "source": "custom", "transport": "remote_http", "enabled": true,
             "remoteUrl": url, "manifest": { "registry": id }, "skills": [],
         });
-        self.save_new_plugin(body, &name, "Its tools run only when your Meo API operator has approved this address.").await;
+        self.save_new_plugin(
+            body,
+            &name,
+            "Its tools run only when your Meo API operator has approved this address.",
+        )
+        .await;
     }
 
     async fn save_new_plugin(&self, body: Value, name: &str, note: &str) {
@@ -2405,8 +2462,12 @@ impl AppCore {
             .call(|api, t| {
                 let id = id.clone();
                 async move {
-                    api.patch_plugin(&t, &id, json!({ "enabled": enabled, "expectedVersion": version }))
-                        .await
+                    api.patch_plugin(
+                        &t,
+                        &id,
+                        json!({ "enabled": enabled, "expectedVersion": version }),
+                    )
+                    .await
                 }
             })
             .await
@@ -3459,7 +3520,11 @@ impl AppCore {
                 Some(h) => h.mcp_instructions().await,
                 None => String::new(),
             };
-            let mcp = if mcp.is_empty() { mcp } else { format!("\n\n{mcp}") };
+            let mcp = if mcp.is_empty() {
+                mcp
+            } else {
+                format!("\n\n{mcp}")
+            };
             request["prompt"] = json!(format!(
                 "{}{mcp}\n\n{current}",
                 agent::tool_instructions(tools_root.as_deref(), subagents, web)
@@ -4339,7 +4404,9 @@ impl AppCore {
 
     /// Rebuilds the list of files the open folder's last checkpoint changed, with a diff for each.
     async fn refresh_changes(&self) {
-        let Some(host) = self.state.lock().unwrap().agent.host.clone() else { return };
+        let Some(host) = self.state.lock().unwrap().agent.host.clone() else {
+            return;
+        };
         let changes: Vec<Value> = host
             .changes()
             .await
@@ -6475,31 +6542,64 @@ fn parse_github_skill(url: &str) -> Option<Value> {
         "github.com" if parts.len() >= 4 && (parts[2] == "blob" || parts[2] == "tree") => {
             (parts[0], parts[1], parts[3], parts[4..].to_vec())
         }
-        "raw.githubusercontent.com" if parts.len() >= 4 => (parts[0], parts[1], parts[2], parts[3..].to_vec()),
+        "raw.githubusercontent.com" if parts.len() >= 4 => {
+            (parts[0], parts[1], parts[2], parts[3..].to_vec())
+        }
         _ => return None,
     };
     let mut path = path.join("/");
     if !path.ends_with("SKILL.md") {
-        path = if path.is_empty() { "SKILL.md".into() } else { format!("{path}/SKILL.md") };
+        path = if path.is_empty() {
+            "SKILL.md".into()
+        } else {
+            format!("{path}/SKILL.md")
+        };
     }
     Some(json!({ "owner": owner, "repo": repo, "ref": ref_, "path": path }))
 }
 
 /// A store card; `actions` are buttons, `icon` is `{svg,color}` or `{glyph,color}` (clients draw a
 /// letter tile when it is missing).
-fn store_card(id: String, title: &str, subtitle: &str, icon: &Value, publisher: &str, badges: Vec<&str>, state: &str, actions: Vec<Value>) -> Value {
+fn store_card(
+    id: String,
+    title: &str,
+    subtitle: &str,
+    icon: &Value,
+    publisher: &str,
+    badges: Vec<&str>,
+    state: &str,
+    actions: Vec<Value>,
+) -> Value {
     json!({ "id": id, "title": title, "subtitle": subtitle, "icon": icon, "publisher": publisher,
             "badges": badges, "state": state, "actions": actions })
 }
 
 fn store_page(s: &State) -> Value {
     let store = plugin_store();
-    let tab = if s.store.tab.is_empty() { "discover" } else { s.store.tab.as_str() };
-    let category = if s.store.category.is_empty() { "all" } else { s.store.category.as_str() };
-    let rows = s.plugins.as_ref().and_then(|r| r.as_ref().ok()).cloned().unwrap_or_default();
+    let tab = if s.store.tab.is_empty() {
+        "discover"
+    } else {
+        s.store.tab.as_str()
+    };
+    let category = if s.store.category.is_empty() {
+        "all"
+    } else {
+        s.store.category.as_str()
+    };
+    let rows = s
+        .plugins
+        .as_ref()
+        .and_then(|r| r.as_ref().ok())
+        .cloned()
+        .unwrap_or_default();
     let entry_of = |p: &Value| {
         let builtin = p["manifest"]["builtin"].as_str();
-        store.iter().find(|e| Some(e["id"].as_str().unwrap_or_default()) == builtin || e["name"] == p["name"]).cloned()
+        store
+            .iter()
+            .find(|e| {
+                Some(e["id"].as_str().unwrap_or_default()) == builtin || e["name"] == p["name"]
+            })
+            .cloned()
     };
     let tabs: Vec<Value> = [("discover", "Discover"), ("installed", "Installed"), ("import", "Import")]
         .iter()
@@ -6515,22 +6615,48 @@ fn store_page(s: &State) -> Value {
     let mut sections = Vec::new();
     match tab {
         "installed" => {
-            let cards: Vec<Value> = rows.iter().map(|p| {
-                let on = p["enabled"].as_bool().unwrap_or(false);
-                let e = entry_of(p);
-                let icon = e.as_ref().map(|e| e["icon"].clone()).unwrap_or(Value::Null);
-                let publisher = e.as_ref().and_then(|e| e["publisher"].as_str()).unwrap_or("Custom").to_owned();
-                let id = p["id"].as_str().unwrap_or_default();
-                let mut badges = vec![];
-                if !p["remoteUrl"].is_null() { badges.push("MCP"); }
-                if p["kind"] == "skills" || p["kind"] == "bundle" { badges.push("Skills"); }
-                store_card(id.to_owned(), p["name"].as_str().unwrap_or_default(), p["description"].as_str().unwrap_or_default(), &icon, &publisher, badges,
-                    if on { "on" } else { "off" },
-                    vec![
-                        button(if on { "On" } else { "Off" }, if on { "primary" } else { "secondary" }, json!({ "type": "toggle_plugin", "id": id, "enabled": !on })),
-                        button("Remove", "secondary", json!({ "type": "uninstall_plugin", "id": id })),
-                    ])
-            }).collect();
+            let cards: Vec<Value> = rows
+                .iter()
+                .map(|p| {
+                    let on = p["enabled"].as_bool().unwrap_or(false);
+                    let e = entry_of(p);
+                    let icon = e.as_ref().map(|e| e["icon"].clone()).unwrap_or(Value::Null);
+                    let publisher = e
+                        .as_ref()
+                        .and_then(|e| e["publisher"].as_str())
+                        .unwrap_or("Custom")
+                        .to_owned();
+                    let id = p["id"].as_str().unwrap_or_default();
+                    let mut badges = vec![];
+                    if !p["remoteUrl"].is_null() {
+                        badges.push("MCP");
+                    }
+                    if p["kind"] == "skills" || p["kind"] == "bundle" {
+                        badges.push("Skills");
+                    }
+                    store_card(
+                        id.to_owned(),
+                        p["name"].as_str().unwrap_or_default(),
+                        p["description"].as_str().unwrap_or_default(),
+                        &icon,
+                        &publisher,
+                        badges,
+                        if on { "on" } else { "off" },
+                        vec![
+                            button(
+                                if on { "On" } else { "Off" },
+                                if on { "primary" } else { "secondary" },
+                                json!({ "type": "toggle_plugin", "id": id, "enabled": !on }),
+                            ),
+                            button(
+                                "Remove",
+                                "secondary",
+                                json!({ "type": "uninstall_plugin", "id": id }),
+                            ),
+                        ],
+                    )
+                })
+                .collect();
             sections.push(json!({ "id": "installed", "title": format!("Installed · {}", cards.len()), "cards": cards,
                                    "empty": "Nothing installed yet. Open Discover to add apps and skills." }));
         }
@@ -6555,19 +6681,50 @@ fn store_page(s: &State) -> Value {
         _ => {
             let q = s.store.query.to_lowercase();
             let have: Vec<&str> = rows.iter().filter_map(|p| p["name"].as_str()).collect();
-            let cards: Vec<Value> = store.iter()
-                .filter(|e| category == "all" || e["category"].as_str().map(str::to_lowercase).as_deref() == Some(category))
-                .filter(|e| q.is_empty() || e["name"].as_str().unwrap_or_default().to_lowercase().contains(&q)
-                    || e["description"].as_str().unwrap_or_default().to_lowercase().contains(&q))
+            let cards: Vec<Value> = store
+                .iter()
+                .filter(|e| {
+                    category == "all"
+                        || e["category"].as_str().map(str::to_lowercase).as_deref()
+                            == Some(category)
+                })
+                .filter(|e| {
+                    q.is_empty()
+                        || e["name"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .to_lowercase()
+                            .contains(&q)
+                        || e["description"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .to_lowercase()
+                            .contains(&q)
+                })
                 .map(|e| {
                     let name = e["name"].as_str().unwrap_or_default();
                     let installed = have.contains(&name);
                     let id = e["id"].as_str().unwrap_or_default();
-                    store_card(format!("store:{id}"), name, e["description"].as_str().unwrap_or_default(), &e["icon"],
-                        e["publisher"].as_str().unwrap_or_default(), vec![e["category"].as_str().unwrap_or("Bundle")],
+                    store_card(
+                        format!("store:{id}"),
+                        name,
+                        e["description"].as_str().unwrap_or_default(),
+                        &e["icon"],
+                        e["publisher"].as_str().unwrap_or_default(),
+                        vec![e["category"].as_str().unwrap_or("Bundle")],
                         if installed { "installed" } else { "available" },
-                        if installed { vec![] } else { vec![button("Install", "primary", json!({ "type": "install_plugin", "id": id }))] })
-                }).collect();
+                        if installed {
+                            vec![]
+                        } else {
+                            vec![button(
+                                "Install",
+                                "primary",
+                                json!({ "type": "install_plugin", "id": id }),
+                            )]
+                        },
+                    )
+                })
+                .collect();
             let chips: Vec<Value> = [("all", "All"), ("mcp", "MCP"), ("skill", "Skills"), ("bundle", "Bundles")].iter()
                 .map(|(id, label)| json!({ "id": id, "label": label, "selected": *id == category, "action": { "type": "store_filter", "category": id } }))
                 .collect();
@@ -6575,25 +6732,54 @@ fn store_page(s: &State) -> Value {
             sections.push(json!({ "id": "builtin", "title": "From Meo AI and open source", "cards": cards, "empty": "No built-in entries match." }));
             let registry = match &s.store.registry {
                 Some(Ok(servers)) => {
-                    let cards: Vec<Value> = servers.iter().map(|r| {
-                        let id = r["id"].as_str().unwrap_or_default();
-                        let hosted = r["remoteUrl"].is_string();
-                        let installed = have.contains(&r["name"].as_str().unwrap_or_default());
-                        let mut actions = vec![];
-                        if hosted && !installed {
-                            actions.push(button("Install", "primary", json!({ "type": "install_registry", "id": id })));
-                        }
-                        if let Some(repo) = r["repositoryUrl"].as_str() {
-                            actions.push(button("Source", "secondary", json!({ "type": "open_link", "url": repo })));
-                        }
-                        store_card(format!("registry:{id}"), r["name"].as_str().unwrap_or(id), r["description"].as_str().unwrap_or_default(), &Value::Null,
-                            id, vec!["MCP", if hosted { "Hosted" } else { "Needs local setup" }],
-                            if installed { "installed" } else { "available" }, actions)
-                    }).collect();
+                    let cards: Vec<Value> = servers
+                        .iter()
+                        .map(|r| {
+                            let id = r["id"].as_str().unwrap_or_default();
+                            let hosted = r["remoteUrl"].is_string();
+                            let installed = have.contains(&r["name"].as_str().unwrap_or_default());
+                            let mut actions = vec![];
+                            if hosted && !installed {
+                                actions.push(button(
+                                    "Install",
+                                    "primary",
+                                    json!({ "type": "install_registry", "id": id }),
+                                ));
+                            }
+                            if let Some(repo) = r["repositoryUrl"].as_str() {
+                                actions.push(button(
+                                    "Source",
+                                    "secondary",
+                                    json!({ "type": "open_link", "url": repo }),
+                                ));
+                            }
+                            store_card(
+                                format!("registry:{id}"),
+                                r["name"].as_str().unwrap_or(id),
+                                r["description"].as_str().unwrap_or_default(),
+                                &Value::Null,
+                                id,
+                                vec![
+                                    "MCP",
+                                    if hosted {
+                                        "Hosted"
+                                    } else {
+                                        "Needs local setup"
+                                    },
+                                ],
+                                if installed { "installed" } else { "available" },
+                                actions,
+                            )
+                        })
+                        .collect();
                     json!({ "id": "registry", "title": "MCP registry", "cards": cards, "empty": "No servers found." })
                 }
-                Some(Err(e)) => json!({ "id": "registry", "title": "MCP registry", "cards": [], "empty": format!("The registry could not be reached: {e}") }),
-                None => json!({ "id": "registry", "title": "MCP registry", "cards": [], "empty": "" }),
+                Some(Err(e)) => {
+                    json!({ "id": "registry", "title": "MCP registry", "cards": [], "empty": format!("The registry could not be reached: {e}") })
+                }
+                None => {
+                    json!({ "id": "registry", "title": "MCP registry", "cards": [], "empty": "" })
+                }
             };
             sections.push(registry);
         }
@@ -6634,11 +6820,18 @@ mod tests {
 
     #[test]
     fn github_links_become_skill_sources() {
-        let a = parse_github_skill("https://github.com/anthropics/skills/tree/main/skills/pdf").unwrap();
+        let a = parse_github_skill("https://github.com/anthropics/skills/tree/main/skills/pdf")
+            .unwrap();
         assert_eq!(a["path"], "skills/pdf/SKILL.md");
         let b = parse_github_skill("https://github.com/o/r/blob/dev/x/SKILL.md?plain=1").unwrap();
-        assert_eq!((b["ref"].as_str(), b["path"].as_str()), (Some("dev"), Some("x/SKILL.md")));
-        assert_eq!(parse_github_skill("https://github.com/o/r").unwrap()["path"], "SKILL.md");
+        assert_eq!(
+            (b["ref"].as_str(), b["path"].as_str()),
+            (Some("dev"), Some("x/SKILL.md"))
+        );
+        assert_eq!(
+            parse_github_skill("https://github.com/o/r").unwrap()["path"],
+            "SKILL.md"
+        );
         assert!(parse_github_skill("https://example.com/o/r").is_none());
         let page = store_page(&State::default());
         assert_eq!(page["kind"], "store");
