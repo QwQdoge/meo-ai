@@ -819,7 +819,10 @@ impl MeoApi {
         let field = |k: &str| src[k].as_str().unwrap_or_default().to_owned();
         let path = format!(
             "/v1/ai/catalog/github-skill?owner={}&repo={}&ref={}&path={}",
-            field("owner"), field("repo"), field("ref"), field("path")
+            field("owner"),
+            field("repo"),
+            field("ref"),
+            field("path")
         );
         let body = self.request(token, Method::GET, &path, None).await?;
         Ok(body["skill"].clone())
@@ -830,7 +833,9 @@ impl MeoApi {
         let encoded: String = query
             .bytes()
             .map(|b| match b {
-                b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' => (b as char).to_string(),
+                b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' => {
+                    (b as char).to_string()
+                }
                 _ => format!("%{b:02X}"),
             })
             .collect();
@@ -841,7 +846,9 @@ impl MeoApi {
 
     pub async fn delete_plugin(&self, token: &str, id: &str, version: i64) -> Result<(), ApiError> {
         let path = format!("/v1/ai/plugins/{id}?expectedVersion={version}");
-        self.request(token, Method::DELETE, &path, None).await.map(|_| ())
+        self.request(token, Method::DELETE, &path, None)
+            .await
+            .map(|_| ())
     }
 
     pub async fn create_plugin(&self, token: &str, body: Value) -> Result<(), ApiError> {
