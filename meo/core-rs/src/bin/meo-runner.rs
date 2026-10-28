@@ -31,7 +31,11 @@ fn open_browser(url: &str) {
     } else {
         ("xdg-open", vec![url])
     };
-    if std::process::Command::new(program).args(args).spawn().is_err() {
+    if std::process::Command::new(program)
+        .args(args)
+        .spawn()
+        .is_err()
+    {
         eprintln!("Open this address in a browser to sign in:\n{url}");
     }
 }
@@ -41,7 +45,10 @@ fn listen_for_callback(sender: tokio::sync::mpsc::UnboundedSender<String>) {
     let listener = match TcpListener::bind(("127.0.0.1", cloud::DESKTOP_LOOPBACK_PORT)) {
         Ok(l) => l,
         Err(e) => {
-            eprintln!("The sign-in callback port {} is busy: {e}", cloud::DESKTOP_LOOPBACK_PORT);
+            eprintln!(
+                "The sign-in callback port {} is busy: {e}",
+                cloud::DESKTOP_LOOPBACK_PORT
+            );
             return;
         }
     };
@@ -63,7 +70,11 @@ fn listen_for_callback(sender: tokio::sync::mpsc::UnboundedSender<String>) {
                 body.len(),
                 body
             );
-            let _ = sender.send(format!("http://127.0.0.1:{}{}", cloud::DESKTOP_LOOPBACK_PORT, path));
+            let _ = sender.send(format!(
+                "http://127.0.0.1:{}{}",
+                cloud::DESKTOP_LOOPBACK_PORT,
+                path
+            ));
             break;
         }
     });
@@ -80,7 +91,10 @@ impl PlatformHooks for Hooks {
 }
 
 fn flag(args: &[String], name: &str) -> Option<String> {
-    args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned()
+    args.iter()
+        .position(|a| a == name)
+        .and_then(|i| args.get(i + 1))
+        .cloned()
 }
 
 fn expand(path: &str) -> String {
@@ -105,13 +119,16 @@ async fn main() {
     let (callback_tx, mut callback_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
     let core = AppCore::new(
         OAuthConfig {
-            account_origin: env::var("MEO_ACCOUNT_ORIGIN").unwrap_or_else(|_| cloud::ACCOUNT_ORIGIN.into()),
+            account_origin: env::var("MEO_ACCOUNT_ORIGIN")
+                .unwrap_or_else(|_| cloud::ACCOUNT_ORIGIN.into()),
             api_origin: env::var("MEO_API_ORIGIN").unwrap_or_else(|_| cloud::API_ORIGIN.into()),
             client_id: cloud::DESKTOP_CLIENT_ID.into(),
             redirect_uri: cloud::DESKTOP_REDIRECT_URI.into(),
         },
         Arc::new(FileStorage::default_location()),
-        Arc::new(Hooks { callbacks: Mutex::new(Some(callback_tx)) }),
+        Arc::new(Hooks {
+            callbacks: Mutex::new(Some(callback_tx)),
+        }),
     );
 
     let forwarded = core.clone();
@@ -121,14 +138,27 @@ async fn main() {
         }
     });
 
-    let host_locale = env::var("LC_ALL").or_else(|_| env::var("LANG")).unwrap_or_default();
-    core.dispatch(Action::SetLocale { locale: host_locale }).await;
+    let host_locale = env::var("LC_ALL")
+        .or_else(|_| env::var("LANG"))
+        .unwrap_or_default();
+    core.dispatch(Action::SetLocale {
+        locale: host_locale,
+    })
+    .await;
     core.dispatch(Action::Start).await;
     if let Some(name) = flag(&args, "--name") {
-        core.dispatch(Action::SetSetting { binding: "remote.name".into(), value: json!(name) }).await;
+        core.dispatch(Action::SetSetting {
+            binding: "remote.name".into(),
+            value: json!(name),
+        })
+        .await;
     }
     if let Some(folder) = flag(&args, "--folder") {
-        core.dispatch(Action::SetSetting { binding: "work.workspace".into(), value: json!(expand(&folder)) }).await;
+        core.dispatch(Action::SetSetting {
+            binding: "work.workspace".into(),
+            value: json!(expand(&folder)),
+        })
+        .await;
     }
 
     let realtime = core.clone();
@@ -149,9 +179,15 @@ async fn main() {
         if state == "signed_in" {
             if !announced {
                 announced = true;
-                println!("Signed in as {}. This computer is ready for Work tasks.", view["auth"]["email"].as_str().unwrap_or(""));
+                println!(
+                    "Signed in as {}. This computer is ready for Work tasks.",
+                    view["auth"]["email"].as_str().unwrap_or("")
+                );
             }
-        } else if !asked_sign_in && matches!(state, "signed_out" | "") && view["page"]["kind"] == "sign_in" {
+        } else if !asked_sign_in
+            && matches!(state, "signed_out" | "")
+            && view["page"]["kind"] == "sign_in"
+        {
             asked_sign_in = true;
             println!("Sign in with Meo Account in the browser that just opened.");
             core.dispatch(Action::SignIn).await;

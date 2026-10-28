@@ -47,6 +47,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AttachFile
@@ -1254,7 +1255,7 @@ private fun AppIcon(icon: JSONObject?, label: String, tile: androidx.compose.ui.
                 }
                 if (path != null) androidx.compose.foundation.Canvas(Modifier.size(tile * 0.56f)) {
                     val k = size.width / 24f
-                    androidx.compose.ui.graphics.drawscope.withTransform({ scale(k, k, androidx.compose.ui.geometry.Offset.Zero) }) {
+                    scale(k, k, androidx.compose.ui.geometry.Offset.Zero) {
                         drawPath(path, tint)
                     }
                 }
