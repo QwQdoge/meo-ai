@@ -201,6 +201,14 @@ pub enum Action {
     UninstallPlugin {
         id: String,
     },
+    /// Asks for the API token a hosted MCP server needs.
+    BeginPluginToken {
+        id: String,
+    },
+    SetPluginToken {
+        id: String,
+        text: String,
+    },
     /// Turns an installed plugin on or off.
     TogglePlugin {
         id: String,
@@ -355,6 +363,7 @@ struct Summary {
 struct Dialog {
     kind: &'static str,
     multiline: bool,
+    secret: bool,
     title: String,
     text: String,
     value: String,
@@ -741,6 +750,8 @@ impl AppCore {
             Action::ImportSkill { url } => Box::pin(self.import_skill(url)).await,
             Action::ImportMcp { url } => Box::pin(self.import_mcp(url)).await,
             Action::InstallRegistry { id } => Box::pin(self.install_registry(id)).await,
+            Action::BeginPluginToken { id } => self.begin_plugin_token(&id),
+            Action::SetPluginToken { id, text } => Box::pin(self.set_plugin_token(id, text)).await,
             Action::UninstallPlugin { id } => Box::pin(self.uninstall_plugin(id)).await,
             Action::BeginNewProject => self.prompt(
                 "New project",
@@ -2010,9 +2021,27 @@ impl AppCore {
             s.dialog = Some(Dialog {
                 kind: "prompt",
                 multiline,
+                secret: false,
                 title: title.into(),
                 text: text.into(),
                 value: value.into(),
+                actions: vec![
+                    confirm,
+                    button("Cancel", "secondary", json!({ "type": "close_dialog" })),
+                ],
+            })
+        });
+    }
+
+    fn prompt_secret(&self, title: &str, text: &str, confirm: Value) {
+        self.update(|s| {
+            s.dialog = Some(Dialog {
+                kind: "prompt",
+                multiline: false,
+                secret: true,
+                title: title.into(),
+                text: text.into(),
+                value: String::new(),
                 actions: vec![
                     confirm,
                     button("Cancel", "secondary", json!({ "type": "close_dialog" })),
@@ -2026,6 +2055,7 @@ impl AppCore {
             s.dialog = Some(Dialog {
                 kind: "confirm",
                 multiline: false,
+                secret: false,
                 title: title.into(),
                 text: text.into(),
                 value: String::new(),
@@ -2186,6 +2216,9 @@ impl AppCore {
             return;
         };
         let name = entry["name"].as_str().unwrap_or_default().to_owned();
+        if entry["comingSoon"] == true {
+            return self.notice("info", format!("{name} is not available yet."));
+        }
         let installed = self
             .state
             .lock()
@@ -2199,8 +2232,12 @@ impl AppCore {
             return;
         }
         let remote = entry["remoteUrl"].as_str().map(str::to_owned);
-        let mut fetched: Option<Value> = None;
-        if let Some(src) = entry.get("github").filter(|g| g.is_object()).cloned() {
+        let mut sources: Vec<Value> = entry["githubs"].as_array().cloned().unwrap_or_default();
+        if let Some(src) = entry.get("github").filter(|g| g.is_object()) {
+            sources.push(src.clone());
+        }
+        let mut skills: Vec<Value> = Vec::new();
+        for src in sources {
             match self
                 .call(|api, t| {
                     let src = src.clone();
@@ -2208,26 +2245,13 @@ impl AppCore {
                 })
                 .await
             {
-                Ok(skill) => fetched = Some(skill),
-                Err(e) => {
-                    return self.notice("error", format!("Could not fetch {name} from GitHub: {e}"))
-                }
+                Ok(k) => skills.push(json!({ "name": k["name"], "description": k["description"], "content": k["content"], "enabled": true })),
+                Err(e) => return self.notice("error", format!("Could not fetch {name} from GitHub: {e}")),
             }
         }
-        let skills: Vec<Value> = if let Some(k) = &fetched {
-            vec![
-                json!({ "name": k["name"], "description": k["description"], "content": k["content"], "enabled": true }),
-            ]
-        } else {
-            entry["skills"]
-            .as_array()
-            .map(|a| {
-                a.iter()
-                    .map(|k| json!({ "name": k["name"], "description": k["description"], "content": k["content"], "enabled": true }))
-                    .collect()
-            })
-            .unwrap_or_default()
-        };
+        skills.extend(entry["skills"].as_array().into_iter().flatten().map(
+            |k| json!({ "name": k["name"], "description": k["description"], "content": k["content"], "enabled": true }),
+        ));
         let mut body = json!({
             "name": name,
             "description": entry["description"],
@@ -2255,6 +2279,74 @@ impl AppCore {
                     format!("{name} installed and enabled. {note}")
                         .trim()
                         .to_owned(),
+                );
+                self.refresh_plugins().await;
+            }
+            Err(e) => self.notice("error", e.to_string()),
+        }
+    }
+
+    fn plugin_id_by_name(&self, name: &str) -> Option<String> {
+        self.state
+            .lock()
+            .unwrap()
+            .plugins
+            .as_ref()
+            .and_then(|r| r.as_ref().ok())
+            .and_then(|rows| rows.iter().find(|p| p["name"] == name))
+            .and_then(|p| p["id"].as_str().map(str::to_owned))
+    }
+
+    /// Asks for the API token of a hosted MCP server (Cloudflare, Supabase, Neon).
+    fn begin_plugin_token(&self, id: &str) {
+        let (name, entry) = {
+            let s = self.state.lock().unwrap();
+            let row = s
+                .plugins
+                .as_ref()
+                .and_then(|r| r.as_ref().ok())
+                .and_then(|rows| rows.iter().find(|p| p["id"] == id).cloned());
+            let name = row
+                .as_ref()
+                .and_then(|p| p["name"].as_str())
+                .unwrap_or_default()
+                .to_owned();
+            let entry = plugin_store()
+                .into_iter()
+                .find(|e| e["name"] == name.as_str());
+            (name, entry)
+        };
+        let help = entry
+            .as_ref()
+            .and_then(|e| e["token"]["help"].as_str())
+            .unwrap_or(
+                "Paste an API token for this server. It is kept encrypted and never shown again.",
+            );
+        self.prompt_secret(
+            &format!("API token · {name}"),
+            help,
+            input_button(
+                "Save token",
+                "primary",
+                json!({ "type": "set_plugin_token", "id": id }),
+            ),
+        );
+    }
+
+    async fn set_plugin_token(&self, id: String, text: String) {
+        self.update(|s| s.dialog = None);
+        let token = text.trim().to_owned();
+        match self
+            .call(|api, t| {
+                let (id, token) = (id.clone(), token.clone());
+                async move { api.set_plugin_token(&t, &id, Some(&token)).await }
+            })
+            .await
+        {
+            Ok(()) => {
+                self.notice(
+                    "info",
+                    "Token saved. It is kept encrypted and never shown again.",
                 );
                 self.refresh_plugins().await;
             }
@@ -2593,6 +2685,7 @@ impl AppCore {
             s.dialog = Some(Dialog {
                 kind: "prompt",
                 multiline: false,
+                secret: false,
                 title: "Rename chat".into(),
                 text: String::new(),
                 value: title,
@@ -2613,6 +2706,7 @@ impl AppCore {
             s.dialog = Some(Dialog {
                 kind: "confirm",
                 multiline: false,
+                secret: false,
                 title: "Delete this chat?".into(),
                 text: "The chat and its messages are removed from every device. This cannot be undone.".into(),
                 value: String::new(),
@@ -3834,6 +3928,7 @@ impl AppCore {
             s.dialog = Some(Dialog {
                 kind: "prompt",
                 multiline: true,
+                secret: false,
                 title: "Edit message".into(),
                 text: "Everything after this message is replaced by a new answer.".into(),
                 value,
@@ -4947,7 +5042,7 @@ impl AppCore {
                 "kind": d.kind,
                 "title": d.title,
                 "text": d.text,
-                "input": (d.kind == "prompt").then(|| json!({ "value": d.value, "placeholder": if d.multiline { "Message" } else { "Title" }, "multiline": d.multiline })),
+                "input": (d.kind == "prompt").then(|| json!({ "value": d.value, "placeholder": if d.secret { "Token" } else if d.multiline { "Message" } else { "Title" }, "multiline": d.multiline, "secret": d.secret })),
                 "actions": d.actions,
             })).or_else(|| password_dialog(&s)),
             "notice": s.notice.as_ref().map(|(kind, text)| {
@@ -6574,6 +6669,13 @@ fn store_card(
             "badges": badges, "state": state, "actions": actions })
 }
 
+/// Hosted MCP servers that need a pasted API token (kept in step with Meo API).
+const TOKEN_ENDPOINTS: [&str; 3] = [
+    "https://mcp.cloudflare.com/mcp",
+    "https://mcp.supabase.com/mcp",
+    "https://mcp.neon.tech/mcp",
+];
+
 fn store_page(s: &State) -> Value {
     let store = plugin_store();
     let tab = if s.store.tab.is_empty() {
@@ -6642,18 +6744,30 @@ fn store_page(s: &State) -> Value {
                         &publisher,
                         badges,
                         if on { "on" } else { "off" },
-                        vec![
-                            button(
+                        {
+                            let mut actions = vec![button(
                                 if on { "On" } else { "Off" },
                                 if on { "primary" } else { "secondary" },
                                 json!({ "type": "toggle_plugin", "id": id, "enabled": !on }),
-                            ),
-                            button(
+                            )];
+                            if p["remoteUrl"]
+                                .as_str()
+                                .is_some_and(|u| TOKEN_ENDPOINTS.contains(&u))
+                            {
+                                let has = p["manifest"]["hasToken"] == true;
+                                actions.push(button(
+                                    if has { "Update token" } else { "Add token" },
+                                    if has { "secondary" } else { "primary" },
+                                    json!({ "type": "begin_plugin_token", "id": id }),
+                                ));
+                            }
+                            actions.push(button(
                                 "Remove",
                                 "secondary",
                                 json!({ "type": "uninstall_plugin", "id": id }),
-                            ),
-                        ],
+                            ));
+                            actions
+                        },
                     )
                 })
                 .collect();
@@ -6681,15 +6795,41 @@ fn store_page(s: &State) -> Value {
         _ => {
             let q = s.store.query.to_lowercase();
             let have: Vec<&str> = rows.iter().filter_map(|p| p["name"].as_str()).collect();
-            let cards: Vec<Value> = store
-                .iter()
-                .filter(|e| {
-                    category == "all"
-                        || e["category"].as_str().map(str::to_lowercase).as_deref()
-                            == Some(category)
-                })
-                .filter(|e| {
-                    q.is_empty()
+            let card_of = |e: &Value| {
+                let name = e["name"].as_str().unwrap_or_default();
+                let installed = have.contains(&name);
+                let id = e["id"].as_str().unwrap_or_default();
+                let soon = e["comingSoon"] == true;
+                let mut badges = vec![e["category"].as_str().unwrap_or("Bundle")];
+                if e.get("token").is_some() {
+                    badges.push("API token");
+                }
+                if soon {
+                    badges.push("Coming soon");
+                }
+                store_card(
+                    format!("store:{id}"),
+                    name,
+                    e["description"].as_str().unwrap_or_default(),
+                    &e["icon"],
+                    e["publisher"].as_str().unwrap_or_default(),
+                    badges,
+                    if installed { "installed" } else { "available" },
+                    if installed || soon {
+                        vec![]
+                    } else {
+                        vec![button(
+                            "Install",
+                            "primary",
+                            json!({ "type": "install_plugin", "id": id }),
+                        )]
+                    },
+                )
+            };
+            let matches = |e: &&Value| {
+                (category == "all"
+                    || e["category"].as_str().map(str::to_lowercase).as_deref() == Some(category))
+                    && (q.is_empty()
                         || e["name"]
                             .as_str()
                             .unwrap_or_default()
@@ -6699,36 +6839,34 @@ fn store_page(s: &State) -> Value {
                             .as_str()
                             .unwrap_or_default()
                             .to_lowercase()
-                            .contains(&q)
-                })
-                .map(|e| {
-                    let name = e["name"].as_str().unwrap_or_default();
-                    let installed = have.contains(&name);
-                    let id = e["id"].as_str().unwrap_or_default();
-                    store_card(
-                        format!("store:{id}"),
-                        name,
-                        e["description"].as_str().unwrap_or_default(),
-                        &e["icon"],
-                        e["publisher"].as_str().unwrap_or_default(),
-                        vec![e["category"].as_str().unwrap_or("Bundle")],
-                        if installed { "installed" } else { "available" },
-                        if installed {
-                            vec![]
-                        } else {
-                            vec![button(
-                                "Install",
-                                "primary",
-                                json!({ "type": "install_plugin", "id": id }),
-                            )]
-                        },
-                    )
-                })
-                .collect();
-            let chips: Vec<Value> = [("all", "All"), ("mcp", "MCP"), ("skill", "Skills"), ("bundle", "Bundles")].iter()
+                            .contains(&q))
+            };
+            let chips: Vec<Value> = [("all", "All"), ("mcp", "MCP"), ("skill", "Skills"), ("bundle", "Bundles")]
+                .iter()
                 .map(|(id, label)| json!({ "id": id, "label": label, "selected": *id == category, "action": { "type": "store_filter", "category": id } }))
                 .collect();
             page["filters"] = json!(chips);
+            for (key, title) in [
+                ("essentials", "Essentials"),
+                ("connectors", "Connect your services"),
+            ] {
+                let cards: Vec<Value> = store
+                    .iter()
+                    .filter(|e| e["featured"] == key)
+                    .filter(matches)
+                    .map(card_of)
+                    .collect();
+                if !cards.is_empty() {
+                    sections
+                        .push(json!({ "id": key, "title": title, "cards": cards, "empty": "" }));
+                }
+            }
+            let cards: Vec<Value> = store
+                .iter()
+                .filter(|e| e["featured"].is_null())
+                .filter(matches)
+                .map(card_of)
+                .collect();
             sections.push(json!({ "id": "builtin", "title": "From Meo AI and open source", "cards": cards, "empty": "No built-in entries match." }));
             let registry = match &s.store.registry {
                 Some(Ok(servers)) => {
@@ -6835,7 +6973,18 @@ mod tests {
         assert!(parse_github_skill("https://example.com/o/r").is_none());
         let page = store_page(&State::default());
         assert_eq!(page["kind"], "store");
-        assert!(page["sections"][0]["cards"].as_array().unwrap().len() >= 30);
+        let all: usize = page["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|x| x["cards"].as_array().map_or(0, Vec::len))
+            .sum();
+        assert!(all >= 40);
+        let first = &page["sections"][0];
+        assert_eq!(
+            (first["id"].as_str(), first["cards"][0]["title"].as_str()),
+            (Some("essentials"), Some("Meo 必备包"))
+        );
     }
     use super::*;
     use crate::cloud::MemoryStorage;

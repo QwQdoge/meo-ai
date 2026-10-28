@@ -32,7 +32,8 @@
       "color": null
     },
     "publisher": "api.githubcopilot.com",
-    "category": "MCP"
+    "category": "MCP",
+    "featured": "connectors"
   },
   {
     "id": "deepwiki",
@@ -282,7 +283,8 @@
       "color": "#F38020"
     },
     "publisher": "docs.mcp.cloudflare.com",
-    "category": "MCP"
+    "category": "MCP",
+    "featured": null
   },
   {
     "id": "microsoft-learn",
@@ -863,5 +865,182 @@
     },
     "publisher": "obra/superpowers",
     "category": "Skill"
+  },
+  {
+    "id": "cloudflare",
+    "name": "Cloudflare 操作",
+    "description": "直接操作你的 Cloudflare 账户：Workers、Pages、R2、D1、KV、DNS 等（通过 Cloudflare API MCP：search 查接口、execute 执行）。每次执行都会先让你确认。",
+    "remoteUrl": "https://mcp.cloudflare.com/mcp",
+    "requires": "需要粘贴一个 Cloudflare API Token（按最小权限创建）。",
+    "featured": "connectors",
+    "publisher": "mcp.cloudflare.com",
+    "category": "MCP",
+    "icon": {
+      "svg": "M16.5088 16.8447c.1475-.5068.0908-.9707-.1553-1.3154-.2246-.3164-.6045-.499-1.0615-.5205l-8.6592-.1123a.1559.1559 0 0 1-.1333-.0713c-.0283-.042-.0351-.0986-.021-.1553.0278-.084.1123-.1484.2036-.1562l8.7359-.1123c1.0351-.0489 2.1601-.8868 2.5537-1.9136l.499-1.3013c.0215-.0561.0293-.1128.0147-.168-.5625-2.5463-2.835-4.4453-5.5499-4.4453-2.5039 0-4.6284 1.6177-5.3876 3.8614-.4927-.3658-1.1187-.5625-1.794-.499-1.2026.119-2.1665 1.083-2.2861 2.2856-.0283.31-.0069.6128.0635.894C1.5683 13.171 0 14.7754 0 16.752c0 .1748.0142.3515.0352.5273.0141.083.0844.1475.1689.1475h15.9814c.0909 0 .1758-.0645.2032-.1553l.12-.4268zm2.7568-5.5634c-.0771 0-.1611 0-.2383.0112-.0566 0-.1054.0415-.127.0976l-.3378 1.1744c-.1475.5068-.0918.9707.1543 1.3164.2256.3164.6055.498 1.0625.5195l1.8437.1133c.0557 0 .1055.0263.1329.0703.0283.043.0351.1074.0214.1562-.0283.084-.1132.1485-.204.1553l-1.921.1123c-1.041.0488-2.1582.8867-2.5527 1.914l-.1406.3585c-.0283.0713.0215.1416.0986.1416h6.5977c.0771 0 .1474-.0489.169-.126.1122-.4082.1757-.837.1757-1.2803 0-2.6025-2.125-4.727-4.7344-4.727",
+      "color": "#F38020"
+    },
+    "token": {
+      "help": "在 Cloudflare 控制台「我的资料 → API 令牌」创建一个只含所需权限的令牌，粘贴到这里。令牌加密保存，之后不再显示。",
+      "url": "https://dash.cloudflare.com/profile/api-tokens"
+    },
+    "skills": [
+      {
+        "name": "Cloudflare 操作",
+        "description": "用 search 找接口，用 execute 执行，先小范围只读再写入。",
+        "content": "使用 Cloudflare MCP 时：先用 search 查找要用的 API 与参数；写入或删除前向用户说明将改动的资源（账户、Worker、DNS 记录等）；优先只读查询确认现状；一次只做一件事，执行后回报结果与资源 ID；绝不展示或复述 API 令牌。"
+      }
+    ]
+  },
+  {
+    "id": "supabase",
+    "name": "Supabase 数据库与后端",
+    "description": "管理 Supabase 项目：查看表与迁移、执行 SQL、应用迁移、读取日志与安全建议、部署 Edge Functions、生成 TypeScript 类型。",
+    "remoteUrl": "https://mcp.supabase.com/mcp",
+    "requires": "需要粘贴一个 Supabase 个人访问令牌（Personal Access Token）。",
+    "featured": "connectors",
+    "publisher": "mcp.supabase.com",
+    "category": "MCP",
+    "icon": {
+      "svg": "M11.9 1.036c-.015-.986-1.26-1.41-1.874-.637L.764 12.05C-.33 13.427.65 15.455 2.409 15.455h9.579l.113 7.51c.014.985 1.259 1.408 1.873.636l9.262-11.653c1.093-1.375.113-3.403-1.645-3.403h-9.642z",
+      "color": "#3ECF8E"
+    },
+    "token": {
+      "help": "在 Supabase 控制台「Account → Access Tokens」创建个人访问令牌并粘贴到这里。令牌加密保存，之后不再显示。",
+      "url": "https://supabase.com/dashboard/account/tokens"
+    },
+    "skills": [
+      {
+        "name": "Supabase 安全操作",
+        "description": "改库先看结构，结构变更用迁移，SQL 先说明影响。",
+        "content": "使用 Supabase MCP 时：先 list_tables / list_migrations 了解现状；结构变更用 apply_migration 而不是临时 execute_sql；涉及 DELETE/UPDATE/DROP 前先向用户说明影响范围并优先在分支上操作；变更后用 get_advisors 检查安全建议；不要输出密钥。"
+      }
+    ]
+  },
+  {
+    "id": "neon",
+    "name": "Neon Postgres",
+    "description": "管理 Neon 项目与分支：浏览表结构、执行 SQL 与事务、创建分支、用迁移流程安全改库、分析慢查询。",
+    "remoteUrl": "https://mcp.neon.tech/mcp",
+    "requires": "需要粘贴一个 Neon API Key。",
+    "featured": "connectors",
+    "publisher": "mcp.neon.tech",
+    "category": "MCP",
+    "icon": {
+      "glyph": "deployed_code",
+      "color": "#00A878"
+    },
+    "token": {
+      "help": "在 Neon 控制台「Account settings → API keys」创建 API Key 并粘贴到这里。令牌加密保存，之后不再显示。",
+      "url": "https://console.neon.tech/app/settings/api-keys"
+    },
+    "skills": [
+      {
+        "name": "Neon 安全改库",
+        "description": "结构变更走 prepare/complete 迁移，先在临时分支验证。",
+        "content": "使用 Neon MCP 时：先 describe_project / get_database_tables 看现状；结构变更用 prepare_database_migration 在临时分支验证，确认后再 complete_database_migration；执行 SQL 前说明影响，危险语句先征得用户同意；不要输出连接串或密码。"
+      }
+    ]
+  },
+  {
+    "id": "google-drive",
+    "name": "Google 云端硬盘",
+    "description": "搜索、读取、创建和更新 Google Drive 里的文件（Google 官方托管的 Drive MCP）。",
+    "remoteUrl": "https://drivemcp.googleapis.com/mcp/v1",
+    "requires": "需要在 Meo 账号里关联 Google 并授予云端硬盘权限。",
+    "featured": "connectors",
+    "publisher": "drivemcp.googleapis.com",
+    "category": "MCP",
+    "icon": {
+      "svg": "M12.01 1.485c-2.082 0-3.754.02-3.743.047.01.02 1.708 3.001 3.774 6.62l3.76 6.574h3.76c2.081 0 3.753-.02 3.742-.047-.005-.02-1.708-3.001-3.775-6.62l-3.76-6.574zm-4.76 1.73a789.828 789.861 0 0 0-3.63 6.319L0 15.868l1.89 3.298 1.885 3.297 3.62-6.335 3.618-6.33-1.88-3.287C8.1 4.704 7.255 3.22 7.25 3.214zm2.259 12.653-.203.348c-.114.198-.96 1.672-1.88 3.287a423.93 423.948 0 0 1-1.698 2.97c-.01.026 3.24.042 7.222.042h7.244l1.796-3.157c.992-1.734 1.85-3.23 1.906-3.323l.104-.167h-7.249z",
+      "color": "#1FA463"
+    },
+    "skills": [
+      {
+        "name": "云端硬盘文件处理",
+        "description": "先搜索定位，读取后再改，写入前确认。",
+        "content": "使用 Drive MCP 时：先用 search_files 定位文件，再用 get_file_metadata / read_file_content 读取；创建或更新文件前向用户确认文件名与位置；不要修改共享权限；回答里给出文件名与链接。"
+      }
+    ]
+  },
+  {
+    "id": "onedrive",
+    "name": "Microsoft OneDrive",
+    "description": "OneDrive 文件读写。微软暂未提供可直接托管的官方 MCP 服务，这一项先预留，等有官方端点或接入 Microsoft Graph 后开放。",
+    "remoteUrl": null,
+    "requires": null,
+    "featured": "connectors",
+    "publisher": "Microsoft",
+    "category": "MCP",
+    "comingSoon": true,
+    "icon": {
+      "glyph": "cloud",
+      "color": "#0078D4"
+    },
+    "skills": []
+  },
+  {
+    "id": "essentials",
+    "name": "Meo 必备包",
+    "description": "日常工作要用的文件和设计能力一次装好：Meo 自带的文件生成规范，加上 Anthropic 的 docx、xlsx、pdf、网页制品与前端设计，以及 Vercel 的网页设计规范与 React 最佳实践。",
+    "remoteUrl": null,
+    "requires": null,
+    "featured": "essentials",
+    "publisher": "Meo AI · Anthropic · Vercel",
+    "category": "Bundle",
+    "icon": {
+      "glyph": "auto_awesome",
+      "color": "#7C3AED"
+    },
+    "githubs": [
+      {
+        "owner": "anthropics",
+        "repo": "skills",
+        "ref": "main",
+        "path": "skills/docx/SKILL.md"
+      },
+      {
+        "owner": "anthropics",
+        "repo": "skills",
+        "ref": "main",
+        "path": "skills/xlsx/SKILL.md"
+      },
+      {
+        "owner": "anthropics",
+        "repo": "skills",
+        "ref": "main",
+        "path": "skills/pdf/SKILL.md"
+      },
+      {
+        "owner": "anthropics",
+        "repo": "skills",
+        "ref": "main",
+        "path": "skills/web-artifacts-builder/SKILL.md"
+      },
+      {
+        "owner": "anthropics",
+        "repo": "skills",
+        "ref": "main",
+        "path": "skills/frontend-design/SKILL.md"
+      },
+      {
+        "owner": "vercel-labs",
+        "repo": "agent-skills",
+        "ref": "main",
+        "path": "skills/web-design-guidelines/SKILL.md"
+      },
+      {
+        "owner": "vercel-labs",
+        "repo": "agent-skills",
+        "ref": "main",
+        "path": "skills/react-best-practices/SKILL.md"
+      }
+    ],
+    "skills": [
+      {
+        "name": "文件生成",
+        "description": "需要交付文件时，用 file 代码块直接生成 Word、Excel、Markdown 等。",
+        "content": "当用户要一个文件（报告、表格、文档）时，在回答里输出代码块并把语言写成 file:文件名.扩展名，例如 ```file:report.docx 后面跟 Markdown 正文（会生成 Word），```file:data.xlsx 后面跟 CSV（会生成 Excel），```file:notes.md 为纯文本。界面会显示文件卡片供下载或保存。文件名用有意义的英文或拼音，内容完整，不要在代码块外重复全文。需要读取用户给的 PDF/Word/Excel 时，内容已由 Meo 提取成文字，直接使用即可。"
+      }
+    ]
   }
 ]

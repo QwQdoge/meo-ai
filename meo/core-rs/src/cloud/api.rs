@@ -844,6 +844,24 @@ impl MeoApi {
         Ok(body["servers"].as_array().cloned().unwrap_or_default())
     }
 
+    /// Stores (or with `None` clears) the API token a hosted MCP server needs; Meo API keeps it encrypted.
+    pub async fn set_plugin_token(
+        &self,
+        token: &str,
+        id: &str,
+        secret: Option<&str>,
+    ) -> Result<(), ApiError> {
+        let path = format!("/v1/ai/plugins/{id}/secret");
+        match secret {
+            Some(secret) => {
+                self.request(token, Method::PUT, &path, Some(json!({ "token": secret })))
+                    .await
+            }
+            None => self.request(token, Method::DELETE, &path, None).await,
+        }
+        .map(|_| ())
+    }
+
     pub async fn delete_plugin(&self, token: &str, id: &str, version: i64) -> Result<(), ApiError> {
         let path = format!("/v1/ai/plugins/{id}?expectedVersion={version}");
         self.request(token, Method::DELETE, &path, None)
