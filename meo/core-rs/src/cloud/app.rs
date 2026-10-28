@@ -1030,11 +1030,13 @@ impl AppCore {
                 s.selected = selected.clone();
             });
         }
-        let (_, settings, projects, profiles) = futures_util::join!(
+        let (_, settings, projects, profiles, _) = futures_util::join!(
             self.load_catalogue(),
             self.call(|api, t| async move { api.get_settings(&t).await }),
             self.call(|api, t| async move { api.list_projects(&t).await }),
             self.call(|api, t| async move { api.model_profiles(&t).await }),
+            // Installed apps are known before the first message, so it does not wait for them.
+            Box::pin(self.refresh_plugins()),
         );
         self.update(|s| s.profiles = Some(profiles.map_err(|e| e.to_string())));
         // The settings carry the model routes: without them nothing is chosen, so a failed read
@@ -2305,7 +2307,7 @@ impl AppCore {
                         .to_owned(),
                 );
                 self.refresh_plugins().await;
-                if entry.get("token").is_some() {
+                if entry.get("token").is_some() || entry["oauth"] == true {
                     if let Some(id) = self.plugin_id_by_name(&name) {
                         self.connect_plugin(id).await;
                     }
@@ -4636,28 +4638,44 @@ impl AppCore {
                     .collect()
             })
             .unwrap_or_default();
+        // List every app's tools at once (a slow or broken server must not delay the others), and
+        // remember failures too: they are cleared when the plugins are reloaded.
+        let missing: Vec<String> = {
+            let s = self.state.lock().unwrap();
+            rows.iter()
+                .filter_map(|p| p["id"].as_str())
+                .filter(|id| !s.app_tools.contains_key(*id))
+                .map(str::to_owned)
+                .collect()
+        };
+        let fetched = futures_util::future::join_all(missing.into_iter().map(|id| async move {
+            let r = self
+                .call(|api, t| {
+                    let id = id.clone();
+                    async move { api.plugin_tools(&t, &id).await }
+                })
+                .await
+                .map_err(|e| e.to_string());
+            (id, r)
+        }))
+        .await;
+        self.update(|s| {
+            for (id, r) in fetched {
+                s.app_tools.insert(id, r);
+            }
+        });
         let mut out = String::new();
         for p in rows {
             let id = p["id"].as_str().unwrap_or_default().to_owned();
             let name = p["name"].as_str().unwrap_or_default();
-            let cached = self.state.lock().unwrap().app_tools.get(&id).cloned();
-            let listed = match cached {
-                Some(Ok(tools)) => Ok(tools),
-                _ => {
-                    let r = self
-                        .call(|api, t| {
-                            let id = id.clone();
-                            async move { api.plugin_tools(&t, &id).await }
-                        })
-                        .await
-                        .map_err(|e| e.to_string());
-                    let keep = r.clone();
-                    self.update(|s| {
-                        s.app_tools.insert(id.clone(), keep);
-                    });
-                    r
-                }
-            };
+            let listed = self
+                .state
+                .lock()
+                .unwrap()
+                .app_tools
+                .get(&id)
+                .cloned()
+                .unwrap_or_else(|| Ok(Vec::new()));
             match listed {
                 Ok(tools) if !tools.is_empty() => {
                     out.push_str(&format!("- {name}:\n"));
@@ -6939,11 +6957,22 @@ fn app_error_hint(error: &str) -> String {
     format!("{error}: {fix}")
 }
 
-/// Hosted MCP servers that need a pasted API token (kept in step with Meo API).
+/// Hosted MCP servers with a Connect flow (OAuth, kept in step with Meo API) and, for the first
+/// three, a pasted API token as the alternative.
 const TOKEN_ENDPOINTS: [&str; 3] = [
     "https://mcp.cloudflare.com/mcp",
     "https://mcp.supabase.com/mcp",
     "https://mcp.neon.tech/mcp",
+];
+const OAUTH_ENDPOINTS: [&str; 8] = [
+    "https://mcp.linear.app/mcp",
+    "https://mcp.notion.com/mcp",
+    "https://mcp.vercel.com/",
+    "https://mcp.figma.com/mcp",
+    "https://huggingface.co/mcp",
+    "https://mcp.canva.com/mcp",
+    "https://mcp.dropbox.com/mcp",
+    "https://mcp.zapier.com/api/mcp/mcp",
 ];
 
 fn store_page(s: &State) -> Value {
@@ -7007,9 +7036,9 @@ fn store_page(s: &State) -> Value {
                         badges.push("Skills");
                     }
                     let account = account_provider(p["remoteUrl"].as_str().unwrap_or_default());
-                    let token_app = p["remoteUrl"]
-                        .as_str()
-                        .is_some_and(|u| TOKEN_ENDPOINTS.contains(&u));
+                    let token_app = p["remoteUrl"].as_str().is_some_and(|u| {
+                        TOKEN_ENDPOINTS.contains(&u) || OAUTH_ENDPOINTS.contains(&u)
+                    });
                     if token_app || account.is_some() {
                         let connected = if token_app {
                             p["manifest"]["hasToken"] == true
@@ -7047,21 +7076,21 @@ fn store_page(s: &State) -> Value {
                                     ));
                                 }
                             }
-                            if p["remoteUrl"]
-                                .as_str()
-                                .is_some_and(|u| TOKEN_ENDPOINTS.contains(&u))
-                            {
+                            let url = p["remoteUrl"].as_str().unwrap_or_default();
+                            if TOKEN_ENDPOINTS.contains(&url) || OAUTH_ENDPOINTS.contains(&url) {
                                 let has = p["manifest"]["hasToken"] == true;
                                 actions.push(button(
                                     if has { "Reconnect" } else { "Connect" },
                                     if has { "secondary" } else { "primary" },
                                     json!({ "type": "connect_plugin", "id": id }),
                                 ));
-                                actions.push(button(
-                                    "API token",
-                                    "secondary",
-                                    json!({ "type": "begin_plugin_token", "id": id }),
-                                ));
+                                if TOKEN_ENDPOINTS.contains(&url) {
+                                    actions.push(button(
+                                        "API token",
+                                        "secondary",
+                                        json!({ "type": "begin_plugin_token", "id": id }),
+                                    ));
+                                }
                                 if has {
                                     actions.push(button(
                                         "Disconnect",
