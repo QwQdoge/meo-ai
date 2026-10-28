@@ -205,6 +205,10 @@ pub enum Action {
     ConnectPlugin {
         id: String,
     },
+    /// Opens Meo Account, where GitHub or Google is linked for the apps that use that account.
+    ConnectAccount {
+        provider: String,
+    },
     /// Forgets the saved authorization or token of a hosted MCP server.
     DisconnectPlugin {
         id: String,
@@ -761,6 +765,14 @@ impl AppCore {
             Action::ImportMcp { url } => Box::pin(self.import_mcp(url)).await,
             Action::InstallRegistry { id } => Box::pin(self.install_registry(id)).await,
             Action::ConnectPlugin { id } => Box::pin(self.connect_plugin(id)).await,
+            Action::ConnectAccount { provider } => {
+                self.notice(
+                    "info",
+                    format!("Link your {provider} account in Meo Account, then come back and try again."),
+                );
+                self.hooks
+                    .open_url("https://account.meoarch.org/account/sign-in-methods");
+            }
             Action::DisconnectPlugin { id } => Box::pin(self.disconnect_plugin(id)).await,
             Action::BeginPluginToken { id } => self.begin_plugin_token(&id),
             Action::SetPluginToken { id, text } => Box::pin(self.set_plugin_token(id, text)).await,
@@ -6866,6 +6878,15 @@ fn store_card(
             "badges": badges, "state": state, "actions": actions })
 }
 
+/// The account an app's server uses, by its address (linked in Meo Account).
+fn account_provider(url: &str) -> Option<&'static str> {
+    match url {
+        "https://api.githubcopilot.com/mcp/" => Some("GitHub"),
+        "https://drivemcp.googleapis.com/mcp/v1" => Some("Google"),
+        _ => None,
+    }
+}
+
 /// What the user has to do about a failed app call (the model passes it on).
 fn app_error_hint(error: &str) -> String {
     let fix = if error.contains("mcp_github_not_linked")
@@ -6960,8 +6981,21 @@ fn store_page(s: &State) -> Value {
                     if p["kind"] == "skills" || p["kind"] == "bundle" {
                         badges.push("Skills");
                     }
-                    if p["manifest"]["hasToken"] == true {
-                        badges.push("Connected");
+                    let account = account_provider(p["remoteUrl"].as_str().unwrap_or_default());
+                    let token_app = p["remoteUrl"]
+                        .as_str()
+                        .is_some_and(|u| TOKEN_ENDPOINTS.contains(&u));
+                    if token_app || account.is_some() {
+                        let connected = if token_app {
+                            p["manifest"]["hasToken"] == true
+                        } else {
+                            p["linkedAccount"] == true
+                        };
+                        badges.push(if connected {
+                            "Connected"
+                        } else {
+                            "Not connected"
+                        });
                     }
                     store_card(
                         id.to_owned(),
@@ -6977,6 +7011,17 @@ fn store_page(s: &State) -> Value {
                                 if on { "primary" } else { "secondary" },
                                 json!({ "type": "toggle_plugin", "id": id, "enabled": !on }),
                             )];
+                            if let Some(provider) =
+                                account_provider(p["remoteUrl"].as_str().unwrap_or_default())
+                            {
+                                if p["linkedAccount"] != true {
+                                    actions.insert(0, button(
+                                        &format!("Connect {provider}"),
+                                        "primary",
+                                        json!({ "type": "connect_account", "provider": provider }),
+                                    ));
+                                }
+                            }
                             if p["remoteUrl"]
                                 .as_str()
                                 .is_some_and(|u| TOKEN_ENDPOINTS.contains(&u))
