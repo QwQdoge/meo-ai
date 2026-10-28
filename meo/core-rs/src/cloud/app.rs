@@ -468,6 +468,8 @@ struct State {
     selected: Option<(String, String)>,
     projects: Option<Result<Vec<Value>, String>>,
     plugins: Option<Result<Vec<Value>, String>>,
+    /// Tools of the connected apps by plugin id (a failed listing is kept as its message).
+    app_tools: HashMap<String, Result<Vec<Value>, String>>,
     store: StoreUi,
     prefs: Map<String, Value>,
     cloud_settings: Option<Value>,
@@ -2573,7 +2575,10 @@ impl AppCore {
         let r = self
             .call(|api, t| async move { api.list_plugins(&t).await })
             .await;
-        self.update(|s| s.plugins = Some(r.map_err(|e| e.to_string())));
+        self.update(|s| {
+            s.plugins = Some(r.map_err(|e| e.to_string()));
+            s.app_tools.clear();
+        });
     }
 
     async fn create_project(&self, text: String) {
@@ -3599,31 +3604,7 @@ impl AppCore {
         // Chat and Work alike: tell the model how to ask for tools (every round, the saved history
         // does not carry these instructions). An open folder gives the file and command tools, the
         // search switch gives web search, which works on every device.
-        let (tools_root, web, subagents) = {
-            let s = self.state.lock().unwrap();
-            (
-                s.agent.host.as_ref().map(|h| h.root().to_owned()),
-                pref_bool(&s, "chat.web_search", false),
-                pref_bool(&s, "chat.subagents", false),
-            )
-        };
-        if tools_root.is_some() || web {
-            let current = request["prompt"].as_str().unwrap_or_default().to_owned();
-            let host = self.state.lock().unwrap().agent.host.clone();
-            let mcp = match host {
-                Some(h) => h.mcp_instructions().await,
-                None => String::new(),
-            };
-            let mcp = if mcp.is_empty() {
-                mcp
-            } else {
-                format!("\n\n{mcp}")
-            };
-            request["prompt"] = json!(format!(
-                "{}{mcp}\n\n{current}",
-                agent::tool_instructions(tools_root.as_deref(), subagents, web)
-            ));
-        }
+        Box::pin(self.add_tool_prompt(&mut request)).await;
         let route_label =
             router::slot(&route).map_or_else(|| "Custom".to_owned(), |x| x.label.to_owned());
         self.step(
@@ -4359,7 +4340,11 @@ impl AppCore {
     /// The reply asks for a tool and this device can run it (Work, an open folder, under the cap).
     fn agent_wants(&self, reply: &str) -> bool {
         let s = self.state.lock().unwrap();
-        (s.agent.host.is_some() || pref_bool(&s, "chat.web_search", false))
+        let apps = s
+            .app_tools
+            .values()
+            .any(|r| r.as_ref().is_ok_and(|t| !t.is_empty()));
+        (s.agent.host.is_some() || pref_bool(&s, "chat.web_search", false) || apps)
             && s.agent.round < MAX_TOOL_ROUNDS
             && !agent::parse_tool_calls(reply).is_empty()
     }
@@ -4404,7 +4389,7 @@ impl AppCore {
                 .await;
         }
         match agent::gate(self.agent_permission(), &call.tool) {
-            agent::Gate::Allow => self.agent_execute(id, call).await,
+            agent::Gate::Allow => Box::pin(self.agent_execute(id, call)).await,
             agent::Gate::Deny(reason) => self.agent_refuse(id, call, &reason).await,
             agent::Gate::Ask(reason) => {
                 self.agent_ask(id, call, reason);
@@ -4413,7 +4398,7 @@ impl AppCore {
             agent::Gate::Approver => {
                 let (verdict, why) = self.agent_approver(&call).await;
                 match verdict {
-                    agent::Verdict::Allow => self.agent_execute(id, call).await,
+                    agent::Verdict::Allow => Box::pin(self.agent_execute(id, call)).await,
                     agent::Verdict::Deny => {
                         let why = if why.is_empty() {
                             "the approver refused".to_owned()
@@ -4518,12 +4503,176 @@ impl AppCore {
         self.update(|s| s.agent.changes = changes);
     }
 
+    /// Puts the tool instructions (folder tools, web search, connected apps) in front of the prompt.
+    async fn add_tool_prompt(&self, request: &mut Value) {
+        let (tools_root, web, subagents) = {
+            let s = self.state.lock().unwrap();
+            (
+                s.agent.host.as_ref().map(|h| h.root().to_owned()),
+                pref_bool(&s, "chat.web_search", false),
+                pref_bool(&s, "chat.subagents", false),
+            )
+        };
+        let apps = Box::pin(self.app_instructions()).await;
+        if tools_root.is_some() || web || !apps.is_empty() {
+            let current = request["prompt"].as_str().unwrap_or_default().to_owned();
+            let host = self.state.lock().unwrap().agent.host.clone();
+            let mcp = match host {
+                Some(h) => h.mcp_instructions().await,
+                None => String::new(),
+            };
+            let mcp = if mcp.is_empty() {
+                mcp
+            } else {
+                format!("\n\n{mcp}")
+            };
+            request["prompt"] = json!(format!(
+                "{}{mcp}\n\n{current}",
+                agent::tool_instructions_with_apps(tools_root.as_deref(), subagents, web, &apps)
+            ));
+        }
+    }
+
+    /// The connected apps for the tool prompt: enabled plugins with a hosted MCP server and the
+    /// tools they offer. A server that cannot be listed is named with what the user must do.
+    async fn app_instructions(&self) -> String {
+        if self.state.lock().unwrap().plugins.is_none() {
+            self.refresh_plugins().await;
+        }
+        let rows: Vec<Value> = self
+            .state
+            .lock()
+            .unwrap()
+            .plugins
+            .as_ref()
+            .and_then(|r| r.as_ref().ok())
+            .map(|rows| {
+                rows.iter()
+                    .filter(|p| p["enabled"] == true && p["remoteUrl"].is_string())
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut out = String::new();
+        for p in rows {
+            let id = p["id"].as_str().unwrap_or_default().to_owned();
+            let name = p["name"].as_str().unwrap_or_default();
+            let cached = self.state.lock().unwrap().app_tools.get(&id).cloned();
+            let listed = match cached {
+                Some(Ok(tools)) => Ok(tools),
+                _ => {
+                    let r = self
+                        .call(|api, t| {
+                            let id = id.clone();
+                            async move { api.plugin_tools(&t, &id).await }
+                        })
+                        .await
+                        .map_err(|e| e.to_string());
+                    let keep = r.clone();
+                    self.update(|s| {
+                        s.app_tools.insert(id.clone(), keep);
+                    });
+                    r
+                }
+            };
+            match listed {
+                Ok(tools) if !tools.is_empty() => {
+                    out.push_str(&format!("- {name}:\n"));
+                    for t in tools.iter().take(40) {
+                        let props: Vec<String> = t["inputSchema"]["properties"]
+                            .as_object()
+                            .map(|o| o.keys().take(8).cloned().collect())
+                            .unwrap_or_default();
+                        let desc: String = t["description"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .lines()
+                            .next()
+                            .unwrap_or_default()
+                            .chars()
+                            .take(110)
+                            .collect();
+                        out.push_str(&format!(
+                            "  - {} {{{}}} {}\n",
+                            t["name"].as_str().unwrap_or_default(),
+                            props.join(","),
+                            desc
+                        ));
+                    }
+                }
+                Ok(_) => {}
+                Err(e) => out.push_str(&format!(
+                    "- {name}: not usable yet ({}). Tell the user what to do if they ask for it.\n",
+                    app_error_hint(&e)
+                )),
+            }
+        }
+        out.chars().take(9000).collect()
+    }
+
+    async fn run_app(&self, app: &str, tool: &str, args: &Value) -> agent::Outcome {
+        let plugin = self
+            .state
+            .lock()
+            .unwrap()
+            .plugins
+            .as_ref()
+            .and_then(|r| r.as_ref().ok())
+            .and_then(|rows| {
+                rows.iter()
+                    .find(|p| {
+                        p["enabled"] == true
+                            && p["remoteUrl"].is_string()
+                            && (p["id"] == app
+                                || p["name"]
+                                    .as_str()
+                                    .is_some_and(|n| n.eq_ignore_ascii_case(app)))
+                    })
+                    .cloned()
+            });
+        let Some(plugin) = plugin else {
+            return agent::Outcome::fail(format!("no connected app named \"{app}\""));
+        };
+        let id = plugin["id"].as_str().unwrap_or_default().to_owned();
+        let result = self
+            .call(|api, t| {
+                let (id, tool, args) = (id.clone(), tool.to_owned(), args.clone());
+                async move { api.plugin_call(&t, &id, &tool, &args).await }
+            })
+            .await;
+        match result {
+            Ok(r) => {
+                let text: String = r["content"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|c| c["text"].as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let text = if text.is_empty() {
+                    "(no text result)".to_owned()
+                } else {
+                    text
+                };
+                if r["isError"] == true {
+                    agent::Outcome::fail(text)
+                } else {
+                    agent::Outcome::done(text)
+                }
+            }
+            Err(e) => agent::Outcome::fail(app_error_hint(&e.to_string())),
+        }
+    }
+
     async fn agent_execute(&self, id: &str, call: agent::ToolCall) {
         let (host, round) = {
             let s = self.state.lock().unwrap();
             (s.agent.host.clone(), s.agent.round)
         };
-        let needs_folder = !matches!(call.tool, agent::Tool::WebSearch { .. });
+        let needs_folder = !matches!(
+            call.tool,
+            agent::Tool::WebSearch { .. } | agent::Tool::App { .. }
+        );
         if needs_folder && host.is_none() {
             return self
                 .agent_refuse(id, call, "no folder is open on this device")
@@ -4534,6 +4683,9 @@ impl AppCore {
         self.step(&step_id, &title, "Running…", "running", vec![]);
         let outcome = match (&call.tool, host) {
             (agent::Tool::WebSearch { query }, _) => self.run_web_search(query).await,
+            (agent::Tool::App { app, tool, args }, _) => {
+                Box::pin(self.run_app(app, tool, args)).await
+            }
             (agent::Tool::Subagent { task }, Some(host)) => self.run_subagent(&host, task).await,
             (tool, Some(host)) => host.run(tool.clone()).await,
             (_, None) => agent::Outcome::fail("no folder is open on this device"),
@@ -4556,8 +4708,7 @@ impl AppCore {
             if outcome.ok { "done" } else { "error" },
             vec![],
         );
-        self.agent_send(id, agent::observation(&call, &outcome.text))
-            .await;
+        Box::pin(self.agent_send(id, agent::observation(&call, &outcome.text))).await;
     }
 
     /// Sends a tool result back as the next message of the same conversation (the loop continues
@@ -6667,6 +6818,33 @@ fn store_card(
 ) -> Value {
     json!({ "id": id, "title": title, "subtitle": subtitle, "icon": icon, "publisher": publisher,
             "badges": badges, "state": state, "actions": actions })
+}
+
+/// What the user has to do about a failed app call (the model passes it on).
+fn app_error_hint(error: &str) -> String {
+    let fix = if error.contains("mcp_github_not_linked")
+        || error.contains("mcp_github_reauthorization")
+    {
+        "link a GitHub account (with repo access) in Meo Account, then try again"
+    } else if error.contains("mcp_google_not_linked")
+        || error.contains("mcp_google_reauthorization")
+    {
+        "link a Google account with Drive access in Meo Account, then try again"
+    } else if error.contains("mcp_token_required") {
+        "add the API token: Apps & Skills > Installed > Add token"
+    } else if error.contains("mcp_external_authorization_required") {
+        "the service rejected the credential; update the token or re-link the account"
+    } else if error.contains("mcp_endpoint_not_trusted")
+        || error.contains("mcp_tool_policy_missing")
+        || error.contains("mcp_tool_not_authorized")
+        || error.contains("insufficient_scope")
+        || error.contains("mcp_browser_session_required")
+    {
+        "Meo API has not allowed this server, tool or sign-in for it"
+    } else {
+        "try again later"
+    };
+    format!("{error}: {fix}")
 }
 
 /// Hosted MCP servers that need a pasted API token (kept in step with Meo API).

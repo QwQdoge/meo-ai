@@ -226,9 +226,10 @@ impl Workspace {
                 command,
                 timeout_secs,
             } => self.command(command, *timeout_secs, env),
-            Tool::Subagent { .. } | Tool::WebSearch { .. } | Tool::Mcp { .. } => {
-                fail("this tool is run by the app, not by the folder")
-            }
+            Tool::Subagent { .. }
+            | Tool::WebSearch { .. }
+            | Tool::Mcp { .. }
+            | Tool::App { .. } => fail("this tool is run by the app, not by the folder"),
         }
     }
 

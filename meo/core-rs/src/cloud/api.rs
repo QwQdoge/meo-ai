@@ -862,6 +862,46 @@ impl MeoApi {
         .map(|_| ())
     }
 
+    /// The tools a plugin's hosted MCP server offers this user (`[{name,description,inputSchema}]`).
+    pub async fn plugin_tools(&self, token: &str, id: &str) -> Result<Vec<Value>, ApiError> {
+        let path = format!("/v1/ai/plugins/{id}/tools");
+        let body = self.request(token, Method::GET, &path, None).await?;
+        Ok(body["tools"].as_array().cloned().unwrap_or_default())
+    }
+
+    /// Runs one tool of a plugin's hosted MCP server: records the approval, then calls it.
+    pub async fn plugin_call(
+        &self,
+        token: &str,
+        id: &str,
+        name: &str,
+        args: &Value,
+    ) -> Result<Value, ApiError> {
+        let payload = json!({ "name": name, "arguments": args });
+        let prepared = self
+            .request(
+                token,
+                Method::POST,
+                &format!("/v1/ai/plugins/{id}/tools/prepare"),
+                Some(payload.clone()),
+            )
+            .await?;
+        let mut call = payload;
+        call.as_object_mut().unwrap().insert(
+            "approvalId".into(),
+            prepared["approval"]["approvalId"].clone(),
+        );
+        let body = self
+            .request(
+                token,
+                Method::POST,
+                &format!("/v1/ai/plugins/{id}/tools/call"),
+                Some(call),
+            )
+            .await?;
+        Ok(body["result"].clone())
+    }
+
     pub async fn delete_plugin(&self, token: &str, id: &str, version: i64) -> Result<(), ApiError> {
         let path = format!("/v1/ai/plugins/{id}?expectedVersion={version}");
         self.request(token, Method::DELETE, &path, None)
