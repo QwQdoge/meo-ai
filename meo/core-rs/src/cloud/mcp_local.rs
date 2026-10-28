@@ -53,13 +53,28 @@ pub fn load_config(root: &Path) -> BTreeMap<String, ServerConfig> {
             };
             let args = entry["args"]
                 .as_array()
-                .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_owned)).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str().map(str::to_owned))
+                        .collect()
+                })
                 .unwrap_or_default();
             let env = entry["env"]
                 .as_object()
-                .map(|o| o.iter().filter_map(|(k, v)| v.as_str().map(|v| (k.clone(), v.to_owned()))).collect())
+                .map(|o| {
+                    o.iter()
+                        .filter_map(|(k, v)| v.as_str().map(|v| (k.clone(), v.to_owned())))
+                        .collect()
+                })
                 .unwrap_or_default();
-            servers.insert(name.clone(), ServerConfig { command: command.to_owned(), args, env });
+            servers.insert(
+                name.clone(),
+                ServerConfig {
+                    command: command.to_owned(),
+                    args,
+                    env,
+                },
+            );
         }
     }
     servers
@@ -100,7 +115,12 @@ impl Server {
                 }
             }
         });
-        let mut server = Self { child, stdin, lines: rx, next: 1 };
+        let mut server = Self {
+            child,
+            stdin,
+            lines: rx,
+            next: 1,
+        };
         server.request(
             "initialize",
             json!({ "protocolVersion": PROTOCOL, "capabilities": {}, "clientInfo": { "name": "meo-ai", "version": "0.1.0" } }),
@@ -110,7 +130,9 @@ impl Server {
     }
 
     fn send(&mut self, message: Value) -> Result<(), String> {
-        writeln!(self.stdin, "{message}").and_then(|_| self.stdin.flush()).map_err(|e| format!("the server closed: {e}"))
+        writeln!(self.stdin, "{message}")
+            .and_then(|_| self.stdin.flush())
+            .map_err(|e| format!("the server closed: {e}"))
     }
 
     fn notify(&mut self, method: &str) -> Result<(), String> {
@@ -122,13 +144,21 @@ impl Server {
         self.next += 1;
         self.send(json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }))?;
         loop {
-            let line = self.lines.recv_timeout(TIMEOUT).map_err(|_| "the server did not answer in time".to_owned())?;
-            let Ok(message) = serde_json::from_str::<Value>(&line) else { continue };
+            let line = self
+                .lines
+                .recv_timeout(TIMEOUT)
+                .map_err(|_| "the server did not answer in time".to_owned())?;
+            let Ok(message) = serde_json::from_str::<Value>(&line) else {
+                continue;
+            };
             if message["id"] != json!(id) {
                 continue; // a notification or a request this client does not serve
             }
             if let Some(error) = message.get("error") {
-                return Err(error["message"].as_str().unwrap_or("the server returned an error").to_owned());
+                return Err(error["message"]
+                    .as_str()
+                    .unwrap_or("the server returned an error")
+                    .to_owned());
             }
             return Ok(message["result"].clone());
         }
@@ -145,12 +175,20 @@ pub struct Manager {
 
 impl Manager {
     pub fn new(root: &Path) -> Self {
-        Self { root: root.to_owned(), config: load_config(root), running: BTreeMap::new(), tools: None }
+        Self {
+            root: root.to_owned(),
+            config: load_config(root),
+            running: BTreeMap::new(),
+            tools: None,
+        }
     }
 
     fn server(&mut self, name: &str) -> Result<&mut Server, String> {
         if !self.running.contains_key(name) {
-            let config = self.config.get(name).ok_or_else(|| format!("no MCP server named \"{name}\" is configured"))?;
+            let config = self
+                .config
+                .get(name)
+                .ok_or_else(|| format!("no MCP server named \"{name}\" is configured"))?;
             let started = Server::start(config, &self.root)?;
             self.running.insert(name.to_owned(), started);
         }
@@ -165,11 +203,25 @@ impl Manager {
         let names: Vec<String> = self.config.keys().cloned().collect();
         let mut lines = Vec::new();
         for name in names {
-            match self.server(&name).and_then(|s| s.request("tools/list", json!({}))) {
+            match self
+                .server(&name)
+                .and_then(|s| s.request("tools/list", json!({})))
+            {
                 Ok(result) => {
-                    for tool in result["tools"].as_array().cloned().unwrap_or_default().into_iter().take(40) {
+                    for tool in result["tools"]
+                        .as_array()
+                        .cloned()
+                        .unwrap_or_default()
+                        .into_iter()
+                        .take(40)
+                    {
                         let tool_name = tool["name"].as_str().unwrap_or_default();
-                        let about: String = tool["description"].as_str().unwrap_or_default().chars().take(160).collect();
+                        let about: String = tool["description"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .chars()
+                            .take(160)
+                            .collect();
                         let schema: String = tool["inputSchema"]["properties"]
                             .as_object()
                             .map(|p| p.keys().cloned().collect::<Vec<_>>().join(","))
@@ -193,7 +245,10 @@ impl Manager {
     }
 
     pub fn call(&mut self, server: &str, tool: &str, args: &Value) -> Outcome {
-        let result = match self.server(server).and_then(|s| s.request("tools/call", json!({ "name": tool, "arguments": args }))) {
+        let result = match self
+            .server(server)
+            .and_then(|s| s.request("tools/call", json!({ "name": tool, "arguments": args })))
+        {
             Ok(r) => r,
             Err(e) => {
                 // A dead server is restarted on the next call.
@@ -203,12 +258,22 @@ impl Manager {
         };
         let mut text = result["content"]
             .as_array()
-            .map(|parts| parts.iter().filter_map(|p| p["text"].as_str()).collect::<Vec<_>>().join("\n"))
+            .map(|parts| {
+                parts
+                    .iter()
+                    .filter_map(|p| p["text"].as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
             .unwrap_or_default();
         if text.chars().count() > MAX_RESULT {
             text = text.chars().take(MAX_RESULT).collect::<String>() + "\n(output cut)";
         }
-        if result["isError"] == true { Outcome::fail(text) } else { Outcome::done(text) }
+        if result["isError"] == true {
+            Outcome::fail(text)
+        } else {
+            Outcome::done(text)
+        }
     }
 }
 
