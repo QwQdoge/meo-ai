@@ -159,10 +159,20 @@ impl PlatformHooks for DesktopHooks {
     }
 
     fn notify(&self, title: &str, text: &str) {
-        if let Err(error) = std::process::Command::new("notify-send")
-            .args(["--app-name=Meo AI", "--icon=org.meo.AI", title, text])
-            .spawn()
-        {
+        let sent = if cfg!(target_os = "macos") {
+            let quote = |t: &str| t.replace('\\', "\\\\").replace('"', "\\\"");
+            std::process::Command::new("osascript")
+                .args([
+                    "-e",
+                    &format!("display notification \"{}\" with title \"{}\"", quote(text), quote(title)),
+                ])
+                .spawn()
+        } else {
+            std::process::Command::new("notify-send")
+                .args(["--app-name=Meo AI", "--icon=org.meo.AI", title, text])
+                .spawn()
+        };
+        if let Err(error) = sent {
             tracing::warn!(%error, "could not show a desktop notification");
         }
     }
@@ -171,7 +181,16 @@ impl PlatformHooks for DesktopHooks {
         if let Some(callbacks) = self.callbacks.lock().unwrap().clone() {
             listen_for_callback(callbacks);
         }
-        if let Err(error) = std::process::Command::new("xdg-open").arg(url).spawn() {
+        let mut open = if cfg!(target_os = "macos") {
+            std::process::Command::new("open")
+        } else if cfg!(target_os = "windows") {
+            let mut c = std::process::Command::new("rundll32");
+            c.arg("url.dll,FileProtocolHandler");
+            c
+        } else {
+            std::process::Command::new("xdg-open")
+        };
+        if let Err(error) = open.arg(url).spawn() {
             tracing::error!(%error, "could not open the browser for sign-in");
         }
     }
