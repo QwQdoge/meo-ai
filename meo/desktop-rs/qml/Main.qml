@@ -6,6 +6,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Dialogs
+import QtQuick.Shapes
 import MeoUI 1.0
 
 ApplicationWindow {
@@ -37,6 +38,10 @@ ApplicationWindow {
     onActiveChanged: core.dispatch(JSON.stringify({ type: "set_foreground", visible: active }))
 
     function act(action) {
+        if (action && action.type === "open_link") {
+            if (/^https:\/\//.test(action.url || "")) Qt.openUrlExternally(action.url)
+            return
+        }
         if (action)
             core.dispatch(JSON.stringify(action))
     }
@@ -410,6 +415,7 @@ ApplicationWindow {
                     sign_in: signInPage,
                     conversation: conversationPage,
                     list: listPage,
+                    store: storePage,
                     settings: settingsPage,
                     unavailable: unavailablePage,
                 })[window.page.kind] || unavailablePage
@@ -494,6 +500,197 @@ ApplicationWindow {
                     supportingText: modelData.subtitle || ""
                     interactive: !!modelData.action
                     onClicked: window.act(modelData.action)
+                }
+            }
+        }
+    }
+
+    // Plugin store: tabs, search, category chips, app cards and import forms from the core.
+    component AppIcon: Rectangle {
+        id: appIcon
+        property var icon: null
+        property string label: ""
+        property real tile: 44
+        width: tile; height: tile; radius: tile * 0.28
+        readonly property bool hasSvg: !!(icon && icon.svg)
+        readonly property bool hasGlyph: !!(icon && icon.glyph)
+        readonly property color brand: (icon && icon.color) ? icon.color : MeoTheme.contentOnSurface
+        color: (hasSvg || hasGlyph) ? MeoTheme.surfaceContainerHighest : Qt.hsla(((label.charCodeAt(0) || 0) * 37 % 360) / 360, 0.55, 0.42, 1)
+        Shape {
+            visible: appIcon.hasSvg
+            anchors.centerIn: parent
+            width: 24; height: 24
+            scale: appIcon.tile * 0.56 / 24
+            ShapePath {
+                fillColor: appIcon.brand
+                strokeColor: "transparent"
+                PathSvg { path: appIcon.hasSvg ? appIcon.icon.svg : "" }
+            }
+        }
+        MeoIcon {
+            visible: appIcon.hasGlyph
+            anchors.centerIn: parent
+            icon: appIcon.hasGlyph ? appIcon.icon.glyph : ""
+            size: appIcon.tile * 0.5
+            color: appIcon.brand
+        }
+        MeoText {
+            visible: !appIcon.hasSvg && !appIcon.hasGlyph
+            anchors.centerIn: parent
+            text: (appIcon.label.match(/[A-Za-z0-9\u00C0-\uFFFF]/) || ["?"])[0].toUpperCase()
+            color: "white"
+            typeRole: "title"; typeSize: "medium"
+        }
+    }
+
+    Component {
+        id: storePage
+        Flickable {
+            id: storeFlick
+            contentWidth: width
+            contentHeight: storeCol.implicitHeight + 48
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+            ScrollBar.vertical: ScrollBar {}
+            property string query: window.page.search ? (window.page.search.value || "") : ""
+            ColumnLayout {
+                id: storeCol
+                x: 24; y: 24
+                width: storeFlick.width - 48
+                spacing: 14
+                RowLayout {
+                    Layout.fillWidth: true
+                    MeoText { text: window.page.title || ""; typeRole: "title"; typeSize: "large"; Layout.fillWidth: true }
+                    MeoLoadingIndicator { visible: !!window.page.loading }
+                }
+                MeoTextField {
+                    Layout.fillWidth: true
+                    Layout.maximumWidth: 640
+                    placeholder: window.page.search ? window.page.search.placeholder : ""
+                    text: storeFlick.query
+                    onAccepted: window.act(window.withFields(window.page.search.action, ({ query: text })))
+                }
+                MeoSegmentedButtons {
+                    Layout.preferredWidth: 360
+                    size: "s"
+                    model: (window.page.tabs || []).map(t => t.label)
+                    currentIndex: Math.max(0, (window.page.tabs || []).findIndex(t => t.selected))
+                    onSelected: (index, data) => window.act(window.page.tabs[index].action)
+                }
+                MeoSegmentedButtons {
+                    visible: (window.page.filters || []).length > 0
+                    Layout.preferredWidth: 360
+                    size: "xs"
+                    model: (window.page.filters || []).map(f => f.label)
+                    currentIndex: Math.max(0, (window.page.filters || []).findIndex(f => f.selected))
+                    onSelected: (index, data) => window.act(window.page.filters[index].action)
+                }
+                Repeater {
+                    model: window.page.sections || []
+                    delegate: ColumnLayout {
+                        id: sectionCol
+                        required property var modelData
+                        Layout.fillWidth: true
+                        spacing: 10
+                        MeoText { text: sectionCol.modelData.title || ""; typeRole: "title"; typeSize: "small" }
+                        MeoText {
+                            visible: !!sectionCol.modelData.cards && sectionCol.modelData.cards.length === 0 && !!sectionCol.modelData.empty
+                            text: sectionCol.modelData.empty || ""
+                            color: MeoTheme.onSurfaceVariant
+                        }
+                        Flow {
+                            Layout.fillWidth: true
+                            spacing: 12
+                            Repeater {
+                                model: sectionCol.modelData.cards || []
+                                delegate: Rectangle {
+                                    id: card
+                                    required property var modelData
+                                    readonly property int columns: Math.max(1, Math.floor((storeCol.width + 12) / 340))
+                                    width: (storeCol.width - 12 * (columns - 1)) / columns
+                                    height: cardCol.implicitHeight + 28
+                                    radius: 20
+                                    color: MeoTheme.surfaceContainerLow
+                                    RowLayout {
+                                        anchors { left: parent.left; right: parent.right; top: parent.top; margins: 14 }
+                                        spacing: 12
+                                        AppIcon { icon: card.modelData.icon; label: card.modelData.title || ""; Layout.alignment: Qt.AlignTop }
+                                        ColumnLayout {
+                                            id: cardCol
+                                            Layout.fillWidth: true
+                                            spacing: 4
+                                            MeoText { text: card.modelData.title || ""; typeRole: "title"; typeSize: "small"; Layout.fillWidth: true; wrapMode: Text.Wrap }
+                                            MeoText { text: card.modelData.publisher || ""; color: MeoTheme.onSurfaceVariant; Layout.fillWidth: true; elide: Text.ElideRight }
+                                            MeoText { text: card.modelData.subtitle || ""; Layout.fillWidth: true; wrapMode: Text.Wrap; maximumLineCount: 3; elide: Text.ElideRight }
+                                            MeoText {
+                                                text: (card.modelData.badges || []).concat(card.modelData.state === "installed" ? ["✓ Installed"] : []).join("  ·  ")
+                                                color: MeoTheme.primary
+                                            }
+                                            RowLayout {
+                                                visible: (card.modelData.actions || []).length > 0
+                                                Layout.alignment: Qt.AlignRight
+                                                Repeater { model: card.modelData.actions || []; ActionButton { spec: modelData } }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Repeater {
+                            model: sectionCol.modelData.forms || []
+                            delegate: Rectangle {
+                                id: form
+                                required property var modelData
+                                Layout.fillWidth: true
+                                Layout.maximumWidth: 720
+                                implicitHeight: formCol.implicitHeight + 28
+                                radius: 20
+                                color: MeoTheme.surfaceContainerLow
+                                ColumnLayout {
+                                    id: formCol
+                                    anchors { left: parent.left; right: parent.right; top: parent.top; margins: 14 }
+                                    spacing: 8
+                                    RowLayout {
+                                        spacing: 10
+                                        AppIcon { icon: form.modelData.icon; label: form.modelData.title || ""; tile: 36 }
+                                        MeoText { text: form.modelData.title || ""; typeRole: "title"; typeSize: "small" }
+                                    }
+                                    MeoText { text: form.modelData.text || ""; color: MeoTheme.onSurfaceVariant; Layout.fillWidth: true; wrapMode: Text.Wrap }
+                                    MeoTextField {
+                                        id: formInput
+                                        Layout.fillWidth: true
+                                        placeholder: form.modelData.placeholder || ""
+                                        onAccepted: form.submit()
+                                    }
+                                    MeoButton {
+                                        text: form.modelData.button || ""
+                                        type: "filled"
+                                        enabled: formInput.text.trim().length > 0
+                                        onClicked: form.submit()
+                                    }
+                                }
+                                function submit() {
+                                    const value = formInput.text.trim()
+                                    if (!value) return
+                                    const fields = ({})
+                                    fields[modelData.field] = value
+                                    window.act(window.withFields(modelData.action, fields))
+                                    formInput.text = ""
+                                }
+                            }
+                        }
+                        Repeater {
+                            model: sectionCol.modelData.links || []
+                            delegate: MeoListItem {
+                                required property var modelData
+                                Layout.fillWidth: true
+                                headline: modelData.title || ""
+                                supportingText: modelData.subtitle || ""
+                                interactive: true
+                                onClicked: if (/^https:\/\//.test(modelData.url || "")) Qt.openUrlExternally(modelData.url)
+                            }
+                        }
+                    }
                 }
             }
         }

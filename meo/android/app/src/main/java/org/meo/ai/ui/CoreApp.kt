@@ -16,6 +16,10 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.material.icons.rounded.AccountTree
+import androidx.compose.material.icons.rounded.Cloud
+import androidx.compose.material.icons.rounded.Description
+import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.Lightbulb
 import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.Psychology
 import androidx.compose.material.icons.rounded.Shield
@@ -43,6 +47,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AttachFile
 import androidx.compose.material.icons.rounded.Add
@@ -182,6 +187,7 @@ fun CoreApp(view: JSONObject, act: (JSONObject) -> Unit) {
                             Box(Modifier.weight(1f)) {
                                 when (page.str("kind")) {
                                     "list" -> ListPage(page, act)
+                                    "store" -> StorePage(page, act)
                                     "settings" -> SettingsPage(page, act)
                                     else -> UnavailablePage(page, act)
                                 }
@@ -1208,3 +1214,166 @@ private fun shrinkPicture(context: android.content.Context, uri: android.net.Uri
     }
     null
 }.getOrNull()
+
+
+// ---------- Plugin store (page.kind = "store") ----------
+
+private fun withField(action: JSONObject, field: String, value: String): JSONObject =
+    JSONObject(action.toString()).put(field, value)
+
+private fun glyphIcon(name: String) = when (name) {
+    "account_tree" -> Icons.Rounded.AccountTree
+    "language" -> Icons.Rounded.Language
+    "description" -> Icons.Rounded.Description
+    "search" -> Icons.Rounded.Search
+    "work" -> Icons.Rounded.Work
+    "edit" -> Icons.Rounded.Edit
+    "cloud" -> Icons.Rounded.Cloud
+    "lightbulb" -> Icons.Rounded.Lightbulb
+    else -> Icons.Rounded.AutoAwesome
+}
+
+/** The app mark: a brand glyph (24x24 `svg` path), a named glyph, or a letter tile. */
+@Composable
+private fun AppIcon(icon: JSONObject?, label: String, tile: androidx.compose.ui.unit.Dp = 44.dp) {
+    val svg = icon?.str("svg").orEmpty()
+    val glyph = icon?.str("glyph").orEmpty()
+    val tint = icon?.str("color").orEmpty().let { c ->
+        runCatching { androidx.compose.ui.graphics.Color(android.graphics.Color.parseColor(c)) }.getOrNull()
+    } ?: MaterialTheme.colorScheme.onSurface
+    val letterBg = androidx.compose.ui.graphics.Color.hsl(((label.firstOrNull()?.code ?: 0) * 37 % 360).toFloat(), 0.55f, 0.42f)
+    Box(
+        Modifier.size(tile).clip(RoundedCornerShape(tile * 0.28f))
+            .background(if (svg.isNotEmpty() || glyph.isNotEmpty()) MaterialTheme.colorScheme.surfaceContainerHighest else letterBg),
+        contentAlignment = Alignment.Center,
+    ) {
+        when {
+            svg.isNotEmpty() -> {
+                val path = remember(svg) {
+                    runCatching { androidx.compose.ui.graphics.vector.PathParser().parsePathString(svg).toPath() }.getOrNull()
+                }
+                if (path != null) androidx.compose.foundation.Canvas(Modifier.size(tile * 0.56f)) {
+                    val k = size.width / 24f
+                    androidx.compose.ui.graphics.drawscope.withTransform({ scale(k, k, androidx.compose.ui.geometry.Offset.Zero) }) {
+                        drawPath(path, tint)
+                    }
+                }
+            }
+            glyph.isNotEmpty() -> Icon(glyphIcon(glyph), contentDescription = null, tint = tint, modifier = Modifier.size(tile * 0.5f))
+            else -> Text(
+                label.firstOrNull { it.isLetterOrDigit() }?.uppercase() ?: "?",
+                color = androidx.compose.ui.graphics.Color.White,
+                style = MaterialTheme.typography.titleMedium,
+            )
+        }
+    }
+}
+
+@Composable
+private fun StorePage(page: JSONObject, act: Act) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val search = page.obj("search")
+    var query by remember(search?.str("value")) { mutableStateOf(search?.str("value").orEmpty()) }
+    val run: (JSONObject?) -> Unit = { action ->
+        if (action != null && action.str("type") == "open_link") {
+            val url = action.str("url")
+            if (url.startsWith("https://"))
+                runCatching { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))) }
+        } else act.send(action)
+    }
+    LazyColumn(
+        Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(page.str("title"), style = MaterialTheme.typography.headlineMedium)
+                if (page.optBoolean("loading")) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+            }
+        }
+        if (search != null) item {
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                placeholder = { Text(search.str("placeholder")) },
+                leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
+                shape = RoundedCornerShape(28.dp),
+                keyboardOptions = KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Search),
+                keyboardActions = KeyboardActions(onSearch = {
+                    act.send(withField(search.obj("action") ?: JSONObject(), search.str("field"), query))
+                }),
+            )
+        }
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                page.list("tabs").forEach { t ->
+                    FilterChip(selected = t.optBoolean("selected"), onClick = { run(t.obj("action")) }, label = { Text(t.str("label")) })
+                }
+            }
+        }
+        if (page.list("filters").isNotEmpty()) item {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                page.list("filters").forEach { f ->
+                    InputChip(selected = f.optBoolean("selected"), onClick = { run(f.obj("action")) }, label = { Text(f.str("label")) })
+                }
+            }
+        }
+        page.list("sections").forEach { sec ->
+            item { Text(sec.str("title"), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            val cards = sec.list("cards")
+            if (sec.has("cards") && cards.isEmpty() && sec.str("empty").isNotEmpty())
+                item { Text(sec.str("empty"), color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            items(cards) { card ->
+                Card(Modifier.fillMaxWidth()) {
+                    Row(Modifier.padding(14.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        AppIcon(card.obj("icon"), card.str("title"))
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(card.str("title"), style = MaterialTheme.typography.titleSmall)
+                            Text(card.str("publisher"), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(card.str("subtitle"), style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                            val badges = (0 until (card.optJSONArray("badges")?.length() ?: 0)).map { card.optJSONArray("badges")!!.optString(it) } +
+                                if (card.str("state") == "installed") listOf("✓ Installed") else emptyList()
+                            Text(badges.joinToString("  ·  "), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                            val actions = card.list("actions")
+                            if (actions.isNotEmpty()) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
+                                actions.forEach { a ->
+                                    val click = { run(a.obj("action")) }
+                                    if (a.str("style") == "primary") Button(onClick = click) { Text(a.str("label")) }
+                                    else FilledTonalButton(onClick = click) { Text(a.str("label")) }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            items(sec.list("forms")) { form ->
+                var value by remember { mutableStateOf("") }
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            AppIcon(form.obj("icon"), form.str("title"), 36.dp)
+                            Text(form.str("title"), style = MaterialTheme.typography.titleSmall)
+                        }
+                        Text(form.str("text"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        OutlinedTextField(value = value, onValueChange = { value = it }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                            placeholder = { Text(form.str("placeholder")) })
+                        Button(enabled = value.isNotBlank(), onClick = {
+                            act.send(withField(form.obj("action") ?: JSONObject(), form.str("field"), value.trim()))
+                            value = ""
+                        }) { Text(form.str("button")) }
+                    }
+                }
+            }
+            items(sec.list("links")) { link ->
+                ListItem(
+                    headlineContent = { Text(link.str("title")) },
+                    supportingContent = { Text(link.str("subtitle")) },
+                    modifier = Modifier.clickable { run(JSONObject().put("type", "open_link").put("url", link.str("url"))) },
+                )
+            }
+        }
+    }
+}
