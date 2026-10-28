@@ -201,6 +201,14 @@ pub enum Action {
     UninstallPlugin {
         id: String,
     },
+    /// Opens the service's own page to authorize a hosted MCP server, then returns here.
+    ConnectPlugin {
+        id: String,
+    },
+    /// Forgets the saved authorization or token of a hosted MCP server.
+    DisconnectPlugin {
+        id: String,
+    },
     /// Asks for the API token a hosted MCP server needs.
     BeginPluginToken {
         id: String,
@@ -752,6 +760,8 @@ impl AppCore {
             Action::ImportSkill { url } => Box::pin(self.import_skill(url)).await,
             Action::ImportMcp { url } => Box::pin(self.import_mcp(url)).await,
             Action::InstallRegistry { id } => Box::pin(self.install_registry(id)).await,
+            Action::ConnectPlugin { id } => Box::pin(self.connect_plugin(id)).await,
+            Action::DisconnectPlugin { id } => Box::pin(self.disconnect_plugin(id)).await,
             Action::BeginPluginToken { id } => self.begin_plugin_token(&id),
             Action::SetPluginToken { id, text } => Box::pin(self.set_plugin_token(id, text)).await,
             Action::UninstallPlugin { id } => Box::pin(self.uninstall_plugin(id)).await,
@@ -2283,6 +2293,11 @@ impl AppCore {
                         .to_owned(),
                 );
                 self.refresh_plugins().await;
+                if entry.get("token").is_some() {
+                    if let Some(id) = self.plugin_id_by_name(&name) {
+                        self.connect_plugin(id).await;
+                    }
+                }
             }
             Err(e) => self.notice("error", e.to_string()),
         }
@@ -2297,6 +2312,37 @@ impl AppCore {
             .and_then(|r| r.as_ref().ok())
             .and_then(|rows| rows.iter().find(|p| p["name"] == name))
             .and_then(|p| p["id"].as_str().map(str::to_owned))
+    }
+
+    async fn connect_plugin(&self, id: String) {
+        let web = cfg!(target_arch = "wasm32");
+        match self
+            .call(|api, t| {
+                let id = id.clone();
+                async move { api.plugin_oauth_start(&t, &id, web).await }
+            })
+            .await
+        {
+            Ok(url) if url.starts_with("https://") => {
+                self.notice("info", "Opening the service to authorize Meo AI…");
+                self.hooks.open_url(&url);
+            }
+            Ok(_) => self.notice("error", "The service did not give an authorization page."),
+            Err(e) => self.notice("error", e.to_string()),
+        }
+    }
+
+    async fn disconnect_plugin(&self, id: String) {
+        match self
+            .call(|api, t| {
+                let id = id.clone();
+                async move { api.set_plugin_token(&t, &id, None).await }
+            })
+            .await
+        {
+            Ok(()) => self.refresh_plugins().await,
+            Err(e) => self.notice("error", e.to_string()),
+        }
     }
 
     /// Asks for the API token of a hosted MCP server (Cloudflare, Supabase, Neon).
@@ -6914,6 +6960,9 @@ fn store_page(s: &State) -> Value {
                     if p["kind"] == "skills" || p["kind"] == "bundle" {
                         badges.push("Skills");
                     }
+                    if p["manifest"]["hasToken"] == true {
+                        badges.push("Connected");
+                    }
                     store_card(
                         id.to_owned(),
                         p["name"].as_str().unwrap_or_default(),
@@ -6934,10 +6983,22 @@ fn store_page(s: &State) -> Value {
                             {
                                 let has = p["manifest"]["hasToken"] == true;
                                 actions.push(button(
-                                    if has { "Update token" } else { "Add token" },
+                                    if has { "Reconnect" } else { "Connect" },
                                     if has { "secondary" } else { "primary" },
+                                    json!({ "type": "connect_plugin", "id": id }),
+                                ));
+                                actions.push(button(
+                                    "API token",
+                                    "secondary",
                                     json!({ "type": "begin_plugin_token", "id": id }),
                                 ));
+                                if has {
+                                    actions.push(button(
+                                        "Disconnect",
+                                        "secondary",
+                                        json!({ "type": "disconnect_plugin", "id": id }),
+                                    ));
+                                }
                             }
                             actions.push(button(
                                 "Remove",

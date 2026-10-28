@@ -902,6 +902,20 @@ impl MeoApi {
         Ok(body["result"].clone())
     }
 
+    /// The page where the person authorizes a hosted MCP server for this plugin (OAuth).
+    pub async fn plugin_oauth_start(
+        &self,
+        token: &str,
+        id: &str,
+        web: bool,
+    ) -> Result<String, ApiError> {
+        let path = format!("/v1/ai/plugins/{id}/oauth/start");
+        let body = self
+            .request(token, Method::POST, &path, Some(json!({ "web": web })))
+            .await?;
+        Ok(body["url"].as_str().unwrap_or_default().to_owned())
+    }
+
     pub async fn delete_plugin(&self, token: &str, id: &str, version: i64) -> Result<(), ApiError> {
         let path = format!("/v1/ai/plugins/{id}?expectedVersion={version}");
         self.request(token, Method::DELETE, &path, None)
