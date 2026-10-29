@@ -1255,7 +1255,7 @@ private fun AppIcon(icon: JSONObject?, label: String, tile: androidx.compose.ui.
                 }
                 if (path != null) androidx.compose.foundation.Canvas(Modifier.size(tile * 0.56f)) {
                     val k = size.width / 24f
-                    androidx.compose.ui.graphics.drawscope.withTransform({ scale(k, k, androidx.compose.ui.geometry.Offset.Zero) }) {
+                    withTransform({ scale(k, k, androidx.compose.ui.geometry.Offset.Zero) }) {
                         drawPath(path, tint)
                     }
                 }
