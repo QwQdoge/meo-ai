@@ -1186,6 +1186,235 @@ ApplicationWindow {
                             }
                         }
                     }
+                    // --- drawn blocks: formulas, function graphs and charts (the core computes the geometry) begin ---
+                    Component {
+                        id: mathBlock
+                        Rectangle {
+                            implicitHeight: mathText.implicitHeight + 20
+                            radius: 10
+                            color: MeoTheme.surfaceContainer
+                            TextEdit {
+                                id: mathText
+                                x: 12
+                                y: 10
+                                width: parent.width - 24
+                                readOnly: true
+                                selectByMouse: true
+                                wrapMode: Text.Wrap
+                                horizontalAlignment: Text.AlignHCenter
+                                textFormat: TextEdit.PlainText
+                                text: block.text || block.tex || ""
+                                color: MeoTheme.onSurface
+                                font.pixelSize: 19
+                            }
+                        }
+                    }
+                    Component {
+                        id: plotBlock
+                        Rectangle {
+                            id: plotCard
+                            readonly property var palette: ["#7c5cff", "#e8590c", "#2f9e44", "#1c7ed6", "#d6336c", "#f08c00", "#12b886", "#868e96"]
+                            implicitHeight: plotColumn.implicitHeight + 20
+                            radius: 14
+                            color: MeoTheme.surfaceContainer
+                            border.color: MeoTheme.outlineVariant
+                            Column {
+                                id: plotColumn
+                                x: 12
+                                y: 10
+                                width: parent.width - 24
+                                spacing: 6
+                                Text { visible: !!block.title; text: block.title || ""; font.bold: true; font.pixelSize: 14; color: MeoTheme.onSurface }
+                                Canvas {
+                                    id: plotCanvas
+                                    width: parent.width
+                                    height: Math.max(180, Math.min(320, width * 0.62))
+                                    onWidthChanged: requestPaint()
+                                    Connections { target: MeoTheme; function onIsDarkModeChanged() { plotCanvas.requestPaint() } }
+                                    onPaint: {
+                                        const ctx = getContext("2d")
+                                        ctx.reset()
+                                        const x = block.x || [-10, 10], y = block.y || [-10, 10]
+                                        const left = 40, right = 10, top = 8, bottom = 22
+                                        const w = width - left - right, h = height - top - bottom
+                                        if (w <= 0 || h <= 0) return
+                                        const sx = v => left + (v - x[0]) / (x[1] - x[0]) * w
+                                        const sy = v => top + h - (v - y[0]) / (y[1] - y[0]) * h
+                                        ctx.font = "11px sans-serif"
+                                        ctx.lineWidth = 1
+                                        ctx.strokeStyle = MeoTheme.outlineVariant
+                                        ctx.fillStyle = MeoTheme.onSurfaceVariant
+                                        ctx.textAlign = "center"
+                                        for (const t of (block.xticks || [])) {
+                                            ctx.beginPath(); ctx.moveTo(sx(t), top); ctx.lineTo(sx(t), top + h); ctx.stroke()
+                                            ctx.fillText(String(t), sx(t), top + h + 15)
+                                        }
+                                        ctx.textAlign = "right"
+                                        for (const t of (block.yticks || [])) {
+                                            ctx.beginPath(); ctx.moveTo(left, sy(t)); ctx.lineTo(left + w, sy(t)); ctx.stroke()
+                                            ctx.fillText(String(t), left - 5, sy(t) + 4)
+                                        }
+                                        ctx.strokeStyle = MeoTheme.onSurfaceVariant
+                                        ctx.lineWidth = 1.4
+                                        if (x[0] <= 0 && x[1] >= 0) { ctx.beginPath(); ctx.moveTo(sx(0), top); ctx.lineTo(sx(0), top + h); ctx.stroke() }
+                                        if (y[0] <= 0 && y[1] >= 0) { ctx.beginPath(); ctx.moveTo(left, sy(0)); ctx.lineTo(left + w, sy(0)); ctx.stroke() }
+                                        ctx.save()
+                                        ctx.beginPath(); ctx.rect(left, top, w, h); ctx.clip()
+                                        ctx.lineWidth = 2
+                                        ctx.lineJoin = "round"
+                                        const curves = block.curves || []
+                                        for (let i = 0; i < curves.length; i++) {
+                                            const c = curves[i], color = plotCard.palette[i % plotCard.palette.length]
+                                            ctx.strokeStyle = color
+                                            ctx.fillStyle = color
+                                            if (c.kind === "line") {
+                                                for (const line of (c.lines || [])) {
+                                                    ctx.beginPath()
+                                                    for (let k = 0; k < line.length; k++) {
+                                                        if (k === 0) ctx.moveTo(sx(line[k][0]), sy(line[k][1])); else ctx.lineTo(sx(line[k][0]), sy(line[k][1]))
+                                                    }
+                                                    ctx.stroke()
+                                                }
+                                            } else if (c.kind === "vline") {
+                                                ctx.beginPath(); ctx.moveTo(sx(c.x), top); ctx.lineTo(sx(c.x), top + h); ctx.stroke()
+                                            } else if (c.kind === "points") {
+                                                for (const p of (c.points || [])) { ctx.beginPath(); ctx.arc(sx(p[0]), sy(p[1]), 4, 0, 2 * Math.PI); ctx.fill() }
+                                            }
+                                        }
+                                        ctx.restore()
+                                    }
+                                }
+                                Flow {
+                                    width: parent.width
+                                    spacing: 12
+                                    Repeater {
+                                        model: block.curves || []
+                                        Row {
+                                            required property var modelData
+                                            required property int index
+                                            spacing: 5
+                                            Rectangle { y: 3; width: 10; height: 10; radius: 3; color: plotCard.palette[index % plotCard.palette.length] }
+                                            Text { text: modelData.label || ""; font.pixelSize: 12; color: MeoTheme.onSurfaceVariant }
+                                        }
+                                    }
+                                }
+                                Text {
+                                    visible: (block.errors || []).length > 0
+                                    width: parent.width
+                                    wrapMode: Text.Wrap
+                                    text: (block.errors || []).join("\n")
+                                    font.pixelSize: 12
+                                    color: MeoTheme.error
+                                }
+                            }
+                        }
+                    }
+                    Component {
+                        id: chartBlock
+                        Rectangle {
+                            id: chartCard
+                            readonly property var palette: ["#7c5cff", "#e8590c", "#2f9e44", "#1c7ed6", "#d6336c", "#f08c00", "#12b886", "#868e96"]
+                            readonly property bool pie: block.kind === "pie"
+                            implicitHeight: chartColumn.implicitHeight + 20
+                            radius: 14
+                            color: MeoTheme.surfaceContainer
+                            border.color: MeoTheme.outlineVariant
+                            Column {
+                                id: chartColumn
+                                x: 12
+                                y: 10
+                                width: parent.width - 24
+                                spacing: 6
+                                Text { visible: !!block.title; text: block.title || ""; font.bold: true; font.pixelSize: 14; color: MeoTheme.onSurface }
+                                Canvas {
+                                    id: chartCanvas
+                                    width: parent.width
+                                    height: chartCard.pie ? Math.max(200, Math.min(280, width * 0.6)) : Math.max(180, Math.min(300, width * 0.58))
+                                    onWidthChanged: requestPaint()
+                                    Connections { target: MeoTheme; function onIsDarkModeChanged() { chartCanvas.requestPaint() } }
+                                    onPaint: {
+                                        const ctx = getContext("2d")
+                                        ctx.reset()
+                                        const labels = block.labels || [], series = block.series || []
+                                        const n = labels.length
+                                        if (n === 0 || series.length === 0) return
+                                        if (chartCard.pie) {
+                                            const data = series[0].data || []
+                                            let total = 0
+                                            for (const v of data) total += v
+                                            const cx = width / 2, cy = height / 2, r = Math.min(width, height) / 2 - 8
+                                            let angle = -Math.PI / 2
+                                            for (let i = 0; i < data.length; i++) {
+                                                const next = angle + data[i] / total * 2 * Math.PI
+                                                ctx.fillStyle = chartCard.palette[i % chartCard.palette.length]
+                                                ctx.beginPath(); ctx.moveTo(cx, cy); ctx.arc(cx, cy, r, angle, next); ctx.closePath(); ctx.fill()
+                                                angle = next
+                                            }
+                                            return
+                                        }
+                                        const left = 40, right = 10, top = 8, bottom = 22
+                                        const w = width - left - right, h = height - top - bottom
+                                        if (w <= 0 || h <= 0) return
+                                        const lo = block.min, hi = block.max
+                                        const sy = v => top + h - (v - lo) / (hi - lo) * h
+                                        const band = w / n
+                                        ctx.font = "11px sans-serif"
+                                        ctx.lineWidth = 1
+                                        ctx.strokeStyle = MeoTheme.outlineVariant
+                                        ctx.fillStyle = MeoTheme.onSurfaceVariant
+                                        ctx.textAlign = "right"
+                                        for (const t of (block.ticks || [])) {
+                                            ctx.beginPath(); ctx.moveTo(left, sy(t)); ctx.lineTo(left + w, sy(t)); ctx.stroke()
+                                            ctx.fillText(String(t), left - 5, sy(t) + 4)
+                                        }
+                                        ctx.textAlign = "center"
+                                        for (let i = 0; i < n; i++) {
+                                            const text = String(labels[i])
+                                            ctx.fillText(text.length > 10 ? text.slice(0, 9) + "…" : text, left + band * (i + 0.5), top + h + 15)
+                                        }
+                                        for (let s = 0; s < series.length; s++) {
+                                            const color = chartCard.palette[s % chartCard.palette.length]
+                                            const data = series[s].data || []
+                                            if (block.kind === "bar") {
+                                                const bw = band * 0.8 / series.length
+                                                ctx.fillStyle = color
+                                                for (let i = 0; i < data.length; i++) {
+                                                    const y0 = sy(0), y1 = sy(data[i])
+                                                    ctx.fillRect(left + band * i + band * 0.1 + bw * s, Math.min(y0, y1), bw, Math.abs(y1 - y0))
+                                                }
+                                            } else {
+                                                ctx.strokeStyle = color
+                                                ctx.fillStyle = color
+                                                ctx.lineWidth = 2
+                                                ctx.beginPath()
+                                                for (let i = 0; i < data.length; i++) {
+                                                    const px = left + band * (i + 0.5)
+                                                    if (i === 0) ctx.moveTo(px, sy(data[i])); else ctx.lineTo(px, sy(data[i]))
+                                                }
+                                                ctx.stroke()
+                                                for (let i = 0; i < data.length; i++) { ctx.beginPath(); ctx.arc(left + band * (i + 0.5), sy(data[i]), 3.5, 0, 2 * Math.PI); ctx.fill() }
+                                            }
+                                        }
+                                    }
+                                }
+                                Flow {
+                                    width: parent.width
+                                    spacing: 12
+                                    Repeater {
+                                        model: chartCard.pie ? (block.labels || []) : (block.series || [])
+                                        Row {
+                                            required property var modelData
+                                            required property int index
+                                            spacing: 5
+                                            Rectangle { y: 3; width: 10; height: 10; radius: 3; color: chartCard.palette[index % chartCard.palette.length] }
+                                            Text { text: typeof modelData === "string" ? modelData : (modelData.name || ""); font.pixelSize: 12; color: MeoTheme.onSurfaceVariant }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // --- drawn blocks end ---
                     Component {
                         id: draftBlock
                         Rectangle {
@@ -1412,7 +1641,7 @@ ApplicationWindow {
                                             width: blocksColumn.width
                                             property var block: modelData
                                             property bool streaming: !!messageItem.streaming && !!modelData.last
-                                            sourceComponent: block.type === "callout" ? calloutBlock : block.type === "draft" ? draftBlock : markdownBlock
+                                            sourceComponent: block.type === "callout" ? calloutBlock : block.type === "draft" ? draftBlock : block.type === "plot" ? plotBlock : block.type === "chart" ? chartBlock : block.type === "math" ? mathBlock : markdownBlock
                                         }
                                     }
                                 }

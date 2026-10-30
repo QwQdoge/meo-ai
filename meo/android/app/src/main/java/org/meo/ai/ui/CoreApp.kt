@@ -123,6 +123,9 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.drawscope.clipRect
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
@@ -832,6 +835,9 @@ private fun MessageBubble(message: JSONObject, strings: JSONObject, act: Act) {
                         when (block.str("type")) {
                             "callout" -> CalloutBlock(block)
                             "draft" -> DraftBlock(block, strings)
+                            "math" -> MathBlock(block)
+                            "plot" -> PlotBlock(block)
+                            "chart" -> ChartBlock(block)
                             else -> MarkdownText(stripIcons(block.str("text")) + cursor, Modifier.fillMaxWidth())
                         }
                     }
@@ -981,6 +987,200 @@ private fun CalloutBlock(block: JSONObject) {
             Column(Modifier.padding(start = 10.dp, top = 8.dp, bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 if (block.str("title").isNotEmpty()) Text(block.str("title"), style = MaterialTheme.typography.labelLarge)
                 MarkdownText(stripIcons(block.str("text")), Modifier.fillMaxWidth())
+            }
+        }
+    }
+}
+
+private val visualPalette = listOf(0xFF7C5CFF, 0xFFE8590C, 0xFF2F9E44, 0xFF1C7ED6, 0xFFD6336C, 0xFFF08C00, 0xFF12B886, 0xFF868E96)
+    .map { androidx.compose.ui.graphics.Color(it) }
+
+private fun JSONArray.doubles(): List<Double> = (0 until length()).map { optDouble(it, 0.0) }
+
+/** Draws [text] centred (or right/left aligned) at a point; used for axis labels. */
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.label(text: String, x: Float, y: Float, color: Int, align: android.graphics.Paint.Align) {
+    val paint = android.graphics.Paint().apply {
+        isAntiAlias = true
+        this.color = color
+        textSize = 11.sp.toPx()
+        textAlign = align
+    }
+    drawContext.canvas.nativeCanvas.drawText(text, x, y, paint)
+}
+
+/** A formula the core already converted to readable Unicode text. */
+@Composable
+private fun MathBlock(block: JSONObject) {
+    val text = block.str("text").ifEmpty { block.str("tex") }
+    Surface(shape = RoundedCornerShape(10.dp), color = MaterialTheme.colorScheme.surfaceContainer, modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+            textAlign = TextAlign.Center,
+            style = MaterialTheme.typography.titleMedium,
+        )
+    }
+}
+
+@Composable
+private fun VisualCard(title: String, legend: List<Pair<String, androidx.compose.ui.graphics.Color>>, content: @Composable () -> Unit) {
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (title.isNotEmpty()) Text(title, style = MaterialTheme.typography.labelLarge)
+            content()
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                legend.forEach { (name, color) ->
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Box(Modifier.size(10.dp).clip(RoundedCornerShape(3.dp)).background(color))
+                        Text(name, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** A function graph: the core samples the curves, this only maps them onto the canvas. */
+@Composable
+private fun PlotBlock(block: JSONObject) {
+    val x = block.optJSONArray("x")?.doubles() ?: listOf(-10.0, 10.0)
+    val y = block.optJSONArray("y")?.doubles() ?: listOf(-10.0, 10.0)
+    val curves = block.list("curves")
+    val grid = MaterialTheme.colorScheme.outlineVariant
+    val axis = MaterialTheme.colorScheme.onSurfaceVariant
+    val labelColor = axis.toArgb()
+    val legend = curves.mapIndexed { i, c -> c.str("label") to visualPalette[i % visualPalette.size] }
+    VisualCard(block.str("title"), legend) {
+        androidx.compose.foundation.Canvas(Modifier.fillMaxWidth().height(220.dp)) {
+            val left = 40.dp.toPx()
+            val right = 10.dp.toPx()
+            val top = 8.dp.toPx()
+            val bottom = 22.dp.toPx()
+            val w = size.width - left - right
+            val h = size.height - top - bottom
+            if (w <= 0f || h <= 0f || x[1] == x[0] || y[1] == y[0]) return@Canvas
+            fun sx(v: Double) = (left + (v - x[0]) / (x[1] - x[0]) * w).toFloat()
+            fun sy(v: Double) = (top + h - (v - y[0]) / (y[1] - y[0]) * h).toFloat()
+            fun fmt(v: Double) = if (v == Math.rint(v)) v.toLong().toString() else v.toString()
+            block.optJSONArray("xticks")?.doubles()?.forEach { t ->
+                drawLine(grid, androidx.compose.ui.geometry.Offset(sx(t), top), androidx.compose.ui.geometry.Offset(sx(t), top + h), 1f)
+                label(fmt(t), sx(t), top + h + 15.dp.toPx(), labelColor, android.graphics.Paint.Align.CENTER)
+            }
+            block.optJSONArray("yticks")?.doubles()?.forEach { t ->
+                drawLine(grid, androidx.compose.ui.geometry.Offset(left, sy(t)), androidx.compose.ui.geometry.Offset(left + w, sy(t)), 1f)
+                label(fmt(t), left - 5.dp.toPx(), sy(t) + 4.dp.toPx(), labelColor, android.graphics.Paint.Align.RIGHT)
+            }
+            if (x[0] <= 0 && x[1] >= 0) drawLine(axis, androidx.compose.ui.geometry.Offset(sx(0.0), top), androidx.compose.ui.geometry.Offset(sx(0.0), top + h), 1.5f)
+            if (y[0] <= 0 && y[1] >= 0) drawLine(axis, androidx.compose.ui.geometry.Offset(left, sy(0.0)), androidx.compose.ui.geometry.Offset(left + w, sy(0.0)), 1.5f)
+            clipRect(left, top, left + w, top + h) {
+                curves.forEachIndexed { i, c ->
+                    val color = visualPalette[i % visualPalette.size]
+                    when (c.str("kind")) {
+                        "line" -> c.optJSONArray("lines")?.let { lines ->
+                            for (l in 0 until lines.length()) {
+                                val pts = lines.optJSONArray(l) ?: continue
+                                val path = androidx.compose.ui.graphics.Path()
+                                for (k in 0 until pts.length()) {
+                                    val pt = pts.optJSONArray(k) ?: continue
+                                    val px = sx(pt.optDouble(0))
+                                    val py = sy(pt.optDouble(1))
+                                    if (k == 0) path.moveTo(px, py) else path.lineTo(px, py)
+                                }
+                                drawPath(path, color, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx(), join = androidx.compose.ui.graphics.StrokeJoin.Round))
+                            }
+                        }
+                        "vline" -> drawLine(color, androidx.compose.ui.geometry.Offset(sx(c.optDouble("x")), top), androidx.compose.ui.geometry.Offset(sx(c.optDouble("x")), top + h), 2.dp.toPx())
+                        "points" -> c.optJSONArray("points")?.let { pts ->
+                            for (k in 0 until pts.length()) {
+                                val pt = pts.optJSONArray(k) ?: continue
+                                drawCircle(color, 4.dp.toPx(), androidx.compose.ui.geometry.Offset(sx(pt.optDouble(0)), sy(pt.optDouble(1))))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        block.optJSONArray("errors")?.let { errors ->
+            for (i in 0 until errors.length()) Text(errors.optString(i), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+        }
+    }
+}
+
+/** A bar, line or pie chart whose axis range and ticks were chosen by the core. */
+@Composable
+private fun ChartBlock(block: JSONObject) {
+    val pie = block.str("kind") == "pie"
+    val labels = block.optJSONArray("labels")?.let { a -> (0 until a.length()).map { a.optString(it) } } ?: emptyList()
+    val series = block.list("series")
+    val grid = MaterialTheme.colorScheme.outlineVariant
+    val labelColor = MaterialTheme.colorScheme.onSurfaceVariant.toArgb()
+    val legend = if (pie) labels.mapIndexed { i, n -> n to visualPalette[i % visualPalette.size] }
+    else series.mapIndexed { i, s -> s.str("name") to visualPalette[i % visualPalette.size] }
+    VisualCard(block.str("title"), legend) {
+        androidx.compose.foundation.Canvas(Modifier.fillMaxWidth().height(if (pie) 220.dp else 200.dp)) {
+            if (labels.isEmpty() || series.isEmpty()) return@Canvas
+            if (pie) {
+                val data = series[0].optJSONArray("data")?.doubles() ?: return@Canvas
+                val total = data.sum()
+                if (total <= 0.0) return@Canvas
+                val d = minOf(size.width, size.height) - 16.dp.toPx()
+                var start = -90f
+                data.forEachIndexed { i, v ->
+                    val sweep = (v / total * 360.0).toFloat()
+                    drawArc(
+                        visualPalette[i % visualPalette.size], start, sweep, true,
+                        topLeft = androidx.compose.ui.geometry.Offset((size.width - d) / 2, (size.height - d) / 2),
+                        size = androidx.compose.ui.geometry.Size(d, d),
+                    )
+                    start += sweep
+                }
+                return@Canvas
+            }
+            val lo = block.optDouble("min", 0.0)
+            val hi = block.optDouble("max", 1.0)
+            if (hi == lo) return@Canvas
+            val left = 40.dp.toPx()
+            val top = 8.dp.toPx()
+            val w = size.width - left - 10.dp.toPx()
+            val h = size.height - top - 22.dp.toPx()
+            if (w <= 0f || h <= 0f) return@Canvas
+            fun sy(v: Double) = (top + h - (v - lo) / (hi - lo) * h).toFloat()
+            val band = w / labels.size
+            block.optJSONArray("ticks")?.doubles()?.forEach { t ->
+                drawLine(grid, androidx.compose.ui.geometry.Offset(left, sy(t)), androidx.compose.ui.geometry.Offset(left + w, sy(t)), 1f)
+                label(if (t == Math.rint(t)) t.toLong().toString() else t.toString(), left - 5.dp.toPx(), sy(t) + 4.dp.toPx(), labelColor, android.graphics.Paint.Align.RIGHT)
+            }
+            labels.forEachIndexed { i, text ->
+                label(if (text.length > 8) text.take(7) + "…" else text, left + band * (i + 0.5f), top + h + 15.dp.toPx(), labelColor, android.graphics.Paint.Align.CENTER)
+            }
+            series.forEachIndexed { si, s ->
+                val color = visualPalette[si % visualPalette.size]
+                val data = s.optJSONArray("data")?.doubles() ?: return@forEachIndexed
+                if (block.str("kind") == "bar") {
+                    val bw = band * 0.8f / series.size
+                    data.forEachIndexed { i, v ->
+                        val y0 = sy(0.0)
+                        val y1 = sy(v)
+                        drawRect(
+                            color,
+                            topLeft = androidx.compose.ui.geometry.Offset(left + band * i + band * 0.1f + bw * si, minOf(y0, y1)),
+                            size = androidx.compose.ui.geometry.Size(bw, kotlin.math.abs(y1 - y0)),
+                        )
+                    }
+                } else {
+                    val path = androidx.compose.ui.graphics.Path()
+                    data.forEachIndexed { i, v ->
+                        val px = left + band * (i + 0.5f)
+                        if (i == 0) path.moveTo(px, sy(v)) else path.lineTo(px, sy(v))
+                    }
+                    drawPath(path, color, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx()))
+                    data.forEachIndexed { i, v -> drawCircle(color, 3.5.dp.toPx(), androidx.compose.ui.geometry.Offset(left + band * (i + 0.5f), sy(v))) }
+                }
             }
         }
     }

@@ -8,6 +8,7 @@ The project is still in active development. Until the first tagged Meo AI releas
 
 ### Added
 
+- Desktop (QML) and Android (Compose) now draw formulas, function graphs (`plot`) and data charts (`chart`) from the shared core; the core samples the curves and picks axes, so clients only draw. Diagrams (Mermaid) stay web-only. The Android code is written but not yet compiled.
 - Native MeoUI chat surface with responsive navigation, conversation details, presentation cards, model-role controls, memory and resource management.
 - Local AgentService transport with streaming responses, tool decisions, cancellation, reconnect and stale-conversation recovery.
 - Structured request-failure state with an actionable MeoUI error banner and safe retry for text-only requests.

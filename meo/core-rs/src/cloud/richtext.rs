@@ -5,6 +5,9 @@
 //! is never searched for callouts, and a draft that is not valid JSON stays an ordinary code block.
 
 use serde_json::{json, Value};
+use std::borrow::Cow;
+
+use super::{mathtext, plotdata};
 
 const CALLOUTS: [(&str, &str, &str); 5] = [
     ("NOTE", "note", "info"),
@@ -14,7 +17,7 @@ const CALLOUTS: [(&str, &str, &str); 5] = [
     ("CAUTION", "caution", "report"),
 ];
 
-fn flush(markdown: &mut Vec<&str>, out: &mut Vec<Value>) {
+fn flush(markdown: &mut Vec<Cow<str>>, out: &mut Vec<Value>) {
     let text = markdown.join("\n");
     if !text.trim().is_empty() {
         out.push(json!({ "type": "markdown", "text": text.trim_matches('\n') }));
@@ -126,11 +129,17 @@ pub fn files(text: &str) -> Vec<(String, String)> {
     found
 }
 
+/// The blocks of an answer. Native clients (desktop, Android) also get `plot`, `chart` and `math` blocks, drawn from
+/// geometry and Unicode text computed here; the web client (wasm) draws those from the Markdown itself, so it keeps them in it.
 pub fn blocks(text: &str) -> Vec<Value> {
+    blocks_with(text, !cfg!(target_arch = "wasm32"))
+}
+
+pub fn blocks_with(text: &str, native: bool) -> Vec<Value> {
     let lines: Vec<&str> = text.lines().collect();
     let mut out = Vec::new();
     let mut file_index = 0usize;
-    let mut markdown: Vec<&str> = Vec::new();
+    let mut markdown: Vec<Cow<str>> = Vec::new();
     let mut i = 0;
     while i < lines.len() {
         let line = lines[i];
@@ -139,6 +148,23 @@ pub fn blocks(text: &str) -> Vec<Value> {
             // A fenced block: find its end, hand meo-draft to the draft card, keep the rest as code.
             let end = (i + 1..lines.len()).find(|&j| lines[j].trim_start().starts_with("```"));
             let info = info.trim();
+            if native {
+                if let Some(end) = end {
+                    let body = lines[i + 1..end].join("\n");
+                    let fallback = lines[i..=end].join("\n");
+                    let block = match info {
+                        "plot" | "desmos" => plotdata::plot_block(&body, &fallback),
+                        "chart" => plotdata::chart_block(&body, &fallback),
+                        _ => None,
+                    };
+                    if let Some(block) = block {
+                        flush(&mut markdown, &mut out);
+                        out.push(block);
+                        i = end + 1;
+                        continue;
+                    }
+                }
+            }
             if info == "meo-draft" {
                 if let Some(end) = end {
                     if let Some(card) = draft(&lines[i + 1..end].join("\n")) {
@@ -174,9 +200,17 @@ pub fn blocks(text: &str) -> Vec<Value> {
                 }
             }
             let stop = end.unwrap_or(lines.len() - 1);
-            markdown.extend_from_slice(&lines[i..=stop]);
+            markdown.extend(lines[i..=stop].iter().map(|l| Cow::Borrowed(*l)));
             i = stop + 1;
             continue;
+        }
+        if native {
+            if let Some((tex, next)) = mathtext::display_math(&lines, i) {
+                flush(&mut markdown, &mut out);
+                out.push(json!({ "type": "math", "tex": tex, "text": mathtext::to_unicode(&tex) }));
+                i = next;
+                continue;
+            }
         }
         if let Some(rest) = trimmed.strip_prefix('>') {
             let tag = rest
@@ -211,7 +245,11 @@ pub fn blocks(text: &str) -> Vec<Value> {
                 }
             }
         }
-        markdown.push(line);
+        markdown.push(if native {
+            mathtext::convert_inline(line)
+        } else {
+            Cow::Borrowed(line)
+        });
         i += 1;
     }
     flush(&mut markdown, &mut out);
@@ -224,6 +262,31 @@ pub fn blocks(text: &str) -> Vec<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_clients_get_drawable_plot_chart_and_math_blocks() {
+        let text = "Intro with $x^2$.\n\n```plot\ny = x^2\n```\n\n$$\\frac12$$\n\n```chart\n{\"type\":\"bar\",\"labels\":[\"a\"],\"series\":[{\"data\":[1]}]}\n```\n\n```plot\nnot a curve = =\n```";
+        let native = blocks_with(text, true);
+        let kinds: Vec<&str> = native.iter().map(|x| x["type"].as_str().unwrap()).collect();
+        assert_eq!(kinds, ["markdown", "plot", "math", "chart", "markdown"]);
+        assert_eq!(native[0]["text"], "Intro with x².");
+        assert_eq!(native[1]["text"], "```plot\ny = x^2\n```"); // clients that do not know the block still show the source
+        assert_eq!(native[2]["text"], "½");
+        // the unreadable plot stays an ordinary code block
+        assert!(native[4]["text"].as_str().unwrap().contains("not a curve"));
+        // the web client keeps everything as Markdown (it draws these itself)
+        let web = blocks_with(text, false);
+        assert_eq!(web.len(), 1);
+        assert!(web[0]["text"].as_str().unwrap().contains("$x^2$"));
+    }
+
+    #[test]
+    fn unfinished_plots_and_formulas_stay_markdown_while_streaming() {
+        for text in ["```plot\ny = x^2", "$$\n\\int x", "```chart\n{\"ty"] {
+            let b = blocks_with(text, true);
+            assert!(b.iter().all(|x| x["type"] == "markdown"), "{text}");
+        }
+    }
 
     #[test]
     fn plain_text_is_one_markdown_block() {

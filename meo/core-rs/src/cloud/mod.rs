@@ -14,9 +14,11 @@ pub mod docs;
 pub mod host;
 pub mod locale;
 pub mod manifest;
+pub mod mathtext;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod mcp_local;
 pub mod orchestration;
+pub mod plotdata;
 pub mod remote;
 pub mod richtext;
 pub mod router;
