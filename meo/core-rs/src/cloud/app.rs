@@ -208,6 +208,9 @@ pub enum Action {
     /// Opens Meo Account, where GitHub or Google is linked for the apps that use that account.
     ConnectAccount {
         provider: String,
+        /// Already linked: open the "Grant more access" step instead of plain linking.
+        #[serde(default)]
+        grant: bool,
     },
     /// Forgets the saved authorization or token of a hosted MCP server.
     DisconnectPlugin {
@@ -765,13 +768,23 @@ impl AppCore {
             Action::ImportMcp { url } => Box::pin(self.import_mcp(url)).await,
             Action::InstallRegistry { id } => Box::pin(self.install_registry(id)).await,
             Action::ConnectPlugin { id } => Box::pin(self.connect_plugin(id)).await,
-            Action::ConnectAccount { provider } => {
-                self.notice(
-                    "info",
-                    format!("Link your {provider} account in Meo Account, then come back and try again."),
-                );
-                self.hooks
-                    .open_url("https://account.meoarch.org/account/sign-in-methods");
+            Action::ConnectAccount { provider, grant } => {
+                let (message, url) = if grant {
+                    (
+                        format!("Choose the extra {provider} access to add in Meo Account, then come back and try again."),
+                        format!(
+                            "https://account.meoarch.org/account/sign-in-methods?grant={}",
+                            provider.to_lowercase()
+                        ),
+                    )
+                } else {
+                    (
+                        format!("Link your {provider} account in Meo Account, then come back and try again."),
+                        "https://account.meoarch.org/account/sign-in-methods".to_owned(),
+                    )
+                };
+                self.notice("info", message);
+                self.hooks.open_url(&url);
             }
             Action::DisconnectPlugin { id } => Box::pin(self.disconnect_plugin(id)).await,
             Action::BeginPluginToken { id } => self.begin_plugin_token(&id),
@@ -7073,6 +7086,12 @@ fn store_page(s: &State) -> Value {
                                         &format!("Connect {provider}"),
                                         "primary",
                                         json!({ "type": "connect_account", "provider": provider }),
+                                    ));
+                                } else {
+                                    actions.insert(0, button(
+                                        "More access",
+                                        "secondary",
+                                        json!({ "type": "connect_account", "provider": provider, "grant": true }),
                                     ));
                                 }
                             }
