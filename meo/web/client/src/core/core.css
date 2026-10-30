@@ -277,3 +277,24 @@
 .core-bar i { display: block; min-width: 2px; } .core-bar .seg0 { background: #3d7de0; } .core-bar .seg1 { background: #e0663d; }
 .core-bar-label { font-size: 11px; }
 .core-chipbtn.icon { padding: 4px 6px; display: inline-grid; place-items: center; }
+
+/* graphs, charts, diagrams and formulas drawn from answers */
+.core-visual .core-vis { margin: 0; padding: 4px 10px 12px; }
+.core-vis-title { font-weight: 600; font-size: 14px; padding: 4px 4px 6px; }
+.core-vis svg { display: block; width: 100%; height: auto; max-height: 420px; touch-action: none; cursor: grab; user-select: none; }
+.core-vis svg:active { cursor: grabbing; }
+.core-chart svg { cursor: default; }
+.core-vis-grid line { stroke: rgb(var(--border-light)); stroke-width: 1; opacity: .7; }
+.core-vis-axes line { stroke: rgb(var(--text-secondary)); stroke-width: 1.4; }
+.core-vis-labels text { fill: rgb(var(--text-secondary)); font-size: 11px; }
+.core-vis-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; padding: 6px 4px 0; font-size: 12px; color: rgb(var(--text-secondary)); }
+.core-vis-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.core-vis-legend i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+.core-vis-tools { margin-left: auto; gap: 2px !important; }
+.core-vis-tools button { width: 26px; height: 26px; border: 0; border-radius: 999px; background: rgb(var(--surface-primary)); color: inherit; font-size: 15px; }
+.core-vis-tools button:hover { background: rgb(var(--border-light)); }
+.core-vis-errors { margin: 8px 4px 0; padding-left: 18px; font-size: 12px; color: rgb(var(--status-error-strong)); }
+.core-mermaid { overflow-x: auto; }
+.core-mermaid svg { cursor: default; max-height: none; }
+.katex-display { overflow-x: auto; overflow-y: hidden; padding: 2px 0; }
+.core-bubble .katex { font-size: 1.08em; }

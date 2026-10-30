@@ -12,6 +12,7 @@ function toBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 import StorePage from "./StorePage";
+import { VISUAL_LANGUAGES, VisualBlock } from "./RichVisuals";
 import { useCore, type Action, type View } from "./useCore";
 import "./core.css";
 import "./shell.css";
@@ -395,7 +396,7 @@ function CodeBlock({ node, children, label, done }: { node?: any; children?: Rea
   const code = node?.children?.[0];
   const language = String(code?.properties?.className?.[0] ?? "").replace("language-", "") || "code";
   const text = (code?.children ?? []).map((c: any) => c.value ?? "").join("");
-  return (
+  const plain = (
     <div className="core-code">
       <div className="core-code-head">
         <span>{language}</span>
@@ -406,6 +407,8 @@ function CodeBlock({ node, children, label, done }: { node?: any; children?: Rea
       <pre>{children}</pre>
     </div>
   );
+  // Graphs, charts and diagrams are drawn; anything unreadable falls back to the plain code block.
+  return VISUAL_LANGUAGES.has(language) ? <VisualBlock language={language} text={text} label={label} done={done} fallback={plain} /> : plain;
 }
 
 function CopyButton({ text, label, done: doneLabel }: { text: string; label: string; done: string }) {

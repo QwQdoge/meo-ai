@@ -1,6 +1,7 @@
-import React, { useState, type ReactNode } from "react";
+import React, { useEffect, useState, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { prepareMath } from "./mathText.mjs";
 import { Icon, hasIcon } from "./icons";
 
 type Spec = Record<string, any>;
@@ -32,17 +33,37 @@ function remarkIcons() {
   return (tree: any) => walk(tree);
 }
 
+type MathPlugins = { mathRemark: any[]; mathRehype: any[] };
+let mathPlugins: MathPlugins | null = null;
+let mathLoading: Promise<void> | null = null;
+
+/** The math plugins, fetched the first time an answer contains something that looks like a formula. */
+function useMathPlugins(text: string): MathPlugins | null {
+  const needed = /\$|\\\(|\\\[/.test(text);
+  const [, refresh] = useState(0);
+  useEffect(() => {
+    if (!needed || mathPlugins) return;
+    mathLoading ??= import("./mathPlugins").then((m) => { mathPlugins = m; });
+    let alive = true;
+    void mathLoading.then(() => { if (alive) refresh((n) => n + 1); });
+    return () => { alive = false; };
+  }, [needed]);
+  return needed ? mathPlugins : null;
+}
+
 export function Markdown({ text, components }: { text: string; components?: Record<string, any> }) {
+  const math = useMathPlugins(text);
   return (
     <ReactMarkdown
-      remarkPlugins={[remarkGfm, remarkIcons]}
+      remarkPlugins={[remarkGfm, ...(math ? math.mathRemark : []), remarkIcons]}
+      rehypePlugins={math ? math.mathRehype : []}
       components={{
         ...components,
         span: ({ node: _node, ...props }: any) =>
           props["data-icon"] ? <Icon name={props["data-icon"]} className="inline" /> : <span {...props} />,
       }}
     >
-      {text}
+      {math ? prepareMath(text) : text}
     </ReactMarkdown>
   );
 }

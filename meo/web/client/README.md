@@ -75,3 +75,16 @@ Production (`meo-ai-web` on Cloudflare Pages) is uploaded directly; CI only buil
 6. Check `https://chat.meoarch.org/`: headers from `public/_headers`, the app loads, `/api/meo/session` answers 401 when signed out, and a cross-site POST to `/api/meo/*` gets 403.
 
 Last known-good deployment before the security-headers release: `9d424a48-a63e-4b95-83a8-48285c20641c`.
+
+## Answer blocks drawn by the web client
+
+Besides Markdown, tables and code, an answer may contain (the assistant prompt in meo-api only offers these to the web client):
+
+| Written as | Drawn as |
+|---|---|
+| `$x^2$`, `$$…$$`, `\(…\)`, `\[…\]` | typeset maths (KaTeX, loaded on demand; `$5` and code are left alone, see `src/core/mathText.mjs`) |
+| ```` ```mermaid ```` | flowcharts, sequence/class/state diagrams (Mermaid, `securityLevel: strict`, loaded on demand) |
+| ```` ```plot ```` | function graphs: one item per line, e.g. `y = x^2 - 1`, `r = 1 + cos(theta)`, `(cos(t), sin(t)) for t in 0..2pi`, `points: (1,2) (3,5)`, `x: -5..5` (see `src/core/plotSpec.mjs`; expressions are parsed by our own parser, never `eval`) |
+| ```` ```chart ```` | bar, line and pie charts from JSON (`type`, `labels`, `series`) |
+
+Text that is not yet valid (while streaming) or cannot be read stays an ordinary code block. Desktop and Android do not draw these yet.
