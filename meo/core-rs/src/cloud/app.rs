@@ -6935,11 +6935,11 @@ fn app_error_hint(error: &str) -> String {
     let fix = if error.contains("mcp_github_not_linked")
         || error.contains("mcp_github_reauthorization")
     {
-        "link a GitHub account (with repo access) in Meo Account, then try again"
+        "link a GitHub account (with repo access) or use Grant more access in Meo Account > Linked accounts, then try again"
     } else if error.contains("mcp_google_not_linked")
         || error.contains("mcp_google_reauthorization")
     {
-        "link a Google account with Drive access in Meo Account, then try again"
+        "link a Google account or use Grant more access (Drive) in Meo Account > Linked accounts, then try again"
     } else if error.contains("mcp_token_required") {
         "add the API token: Apps & Skills > Installed > Add token"
     } else if error.contains("mcp_external_authorization_required") {
