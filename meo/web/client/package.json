@@ -11,13 +11,13 @@
     "predev": "node scripts/prepare.mjs"
   },
   "dependencies": {
-    "i18next": "26.4.2",
+    "i18next": "26.5.11",
     "lucide-react": "1.62.0",
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "react-i18next": "17.1.9",
     "react-markdown": "10.1.0",
-    "react-router-dom": "7.18.4",
+    "react-router-dom": "7.18.5",
     "remark-gfm": "4.0.0"
   },
   "devDependencies": {
