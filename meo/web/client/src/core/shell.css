@@ -302,3 +302,21 @@
 .core-app .store-form input { padding: 7px 10px; font-size: 13px; }
 .core-app .store-links { gap: 2px; }
 .core-app .store-links button { padding: 6px 12px; }
+
+/* Usage dashboard */
+.core-app .core-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; border: 0; border-radius: 0; }
+.core-app .core-stats > div { align-items: flex-start; gap: 1px; padding: 10px 12px; border: 0; border-radius: 14px; background: var(--tonal); }
+.core-app .core-stats > div span { font-size: 12px; }
+.core-app .core-stats strong { font-size: 1.35rem; font-weight: 600; letter-spacing: -.01em; line-height: 1.2; }
+.core-app .core-stat-hint { font-size: 11px; color: rgb(var(--text-secondary)); min-height: 1.2em; }
+.core-app .core-stat-hint.up { color: #1a7f37; }
+.core-app .core-stat-hint.down { color: #cf222e; }
+@media (prefers-color-scheme: dark) { .core-app .core-stat-hint.up { color: #56d364; } .core-app .core-stat-hint.down { color: #ff7b72; } }
+.core-app .core-bars-wrap { padding: 10px 12px; border-radius: 14px; background: var(--tonal); gap: 8px; }
+.core-app .core-bars { height: 96px; gap: 2px; }
+.core-app .core-bars i { border-radius: 3px 3px 0 0; opacity: .85; }
+.core-app .core-bars i:hover { opacity: 1; }
+.core-app .core-bars i.zero { background: rgb(var(--border-light)); opacity: .6; }
+.core-app .core-bars-axis { display: flex; justify-content: space-between; font-size: 11px; color: rgb(var(--text-secondary)); }
+.core-app .core-subhead { margin: 10px 0 0; font-size: 12px; font-weight: 600; letter-spacing: .04em; color: rgb(var(--text-secondary)); }
+@media (max-width: 520px) { .core-app .core-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

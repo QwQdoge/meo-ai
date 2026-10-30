@@ -353,20 +353,28 @@ function Control({ item, act }: { item: Spec; act: Act }) {
       return (
         <div className="core-stats">
           {(item.items ?? []).map((t: Spec) => (
-            <div key={t.label}><strong>{t.value}</strong><span className="core-muted">{t.label}</span></div>
+            <div key={t.label}>
+              <span className="core-muted">{t.label}</span>
+              <strong>{t.value}</strong>
+              {t.hint && <small className={`core-stat-hint${String(t.hint).startsWith("+") ? " up" : String(t.hint).startsWith("−") ? " down" : ""}`}>{t.hint}</small>}
+            </div>
           ))}
         </div>
       );
+    case "heading":
+      return <h3 className="core-subhead">{item.label}</h3>;
     case "bars": {
-      const peak = Math.max(1, ...(item.items ?? []).map((b: Spec) => b.value));
+      const bars: Spec[] = item.items ?? [];
+      const peak = Math.max(1, ...bars.map((b) => b.value));
       return (
         <div className="core-bars-wrap">
           <span className="core-muted">{item.label}</span>
           <div className="core-bars" role="img" aria-label={item.label}>
-            {(item.items ?? []).map((b: Spec) => (
-              <i key={b.label} title={`${b.label}: ${Math.round(b.value).toLocaleString()}`} style={{ height: `${Math.max(3, (b.value / peak) * 100)}%` }} />
+            {bars.map((b) => (
+              <i key={b.label} className={b.value > 0 ? "" : "zero"} title={`${b.label}: ${Math.round(b.value).toLocaleString()}`} style={{ height: `${b.value > 0 ? Math.max(6, (b.value / peak) * 100) : 3}%` }} />
             ))}
           </div>
+          {item.from && <div className="core-bars-axis"><span>{item.from}</span><span>{item.to}</span></div>}
         </div>
       );
     }

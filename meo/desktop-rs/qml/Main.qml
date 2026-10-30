@@ -891,25 +891,39 @@ ApplicationWindow {
             typeRole: "label"
             color: MeoTheme.onSurfaceVariant
         }
-        Rectangle {
+        MeoText {
+            visible: item.kind === "heading"
+            Layout.fillWidth: true
+            Layout.topMargin: 6
+            text: item.label || ""
+            typeRole: "label"
+            font.bold: true
+            color: MeoTheme.onSurfaceVariant
+        }
+        GridLayout {
             visible: item.kind === "stats"
             Layout.fillWidth: true
-            implicitHeight: 64
-            radius: 18
-            color: "transparent"
-            border.color: MeoTheme.outlineVariant
-            RowLayout {
-                anchors.fill: parent
-                spacing: 0
-                Repeater {
-                    model: item.kind === "stats" ? (item.items || []) : []
+            columns: Math.max(1, Math.min(3, (item.items || []).length))
+            columnSpacing: 8
+            rowSpacing: 8
+            Repeater {
+                model: item.kind === "stats" ? (item.items || []) : []
+                Rectangle {
+                    required property var modelData
+                    Layout.fillWidth: true
+                    Layout.preferredWidth: 1
+                    implicitHeight: statColumn.implicitHeight + 16
+                    radius: 14
+                    color: MeoTheme.surfaceContainer
                     ColumnLayout {
-                        required property var modelData
-                        Layout.fillWidth: true
-                        Layout.alignment: Qt.AlignVCenter
+                        id: statColumn
+                        anchors.fill: parent
+                        anchors.margins: 8
+                        anchors.leftMargin: 12
                         spacing: 0
-                        MeoText { text: modelData.value; typeRole: "title"; typeSize: "small"; Layout.alignment: Qt.AlignHCenter }
-                        MeoText { text: modelData.label; typeRole: "label"; color: MeoTheme.onSurfaceVariant; Layout.alignment: Qt.AlignHCenter }
+                        MeoText { text: modelData.label; typeRole: "label"; color: MeoTheme.onSurfaceVariant }
+                        MeoText { text: modelData.value; typeRole: "title"; typeSize: "medium" }
+                        MeoText { visible: !!modelData.hint; text: modelData.hint || ""; typeRole: "label"; color: MeoTheme.onSurfaceVariant }
                     }
                 }
             }

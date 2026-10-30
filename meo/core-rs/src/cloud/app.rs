@@ -6176,7 +6176,36 @@ fn duration(ms: f64) -> String {
     }
 }
 
-/// Settings > Usage: the account's token totals, last 30 days, breakdown, models and sources.
+/// Days since 1970-01-01 of a `YYYY-MM-DD` date (proleptic Gregorian).
+fn day_number(date: &str) -> Option<i64> {
+    let mut parts = date.get(..10)?.split('-');
+    let (y, m, d): (i64, i64, i64) = (
+        parts.next()?.parse().ok()?,
+        parts.next()?.parse().ok()?,
+        parts.next()?.parse().ok()?,
+    );
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    Some(era * 146_097 + doe - 719_468)
+}
+
+/// The `MM-DD` label of a day number.
+fn day_label(days: i64) -> String {
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    format!("{m:02}-{d:02}")
+}
+
+/// Settings > Usage: headline numbers with context, a continuous 30-day chart, then the breakdowns.
 fn usage_items(s: &State) -> Vec<Value> {
     let Some(usage) = &s.usage else {
         return vec![
@@ -6191,70 +6220,138 @@ fn usage_items(s: &State) -> Vec<Value> {
             "value": "Meo AI, Codex and Claude activity shows up here once it is synced to your account.",
         })];
     }
-    let days = |key: &str| format!("{} days", num(&summary[key]) as u64);
-    let mut items = vec![json!({ "id": "usage_stats", "kind": "stats", "items": [
-            { "label": "Lifetime tokens", "value": compact(num(&summary["lifetime_tokens"])) },
-            { "label": "Peak tokens", "value": compact(num(&summary["peak_day_tokens"])) },
-            { "label": "Longest task", "value": duration(num(&summary["longest_session_ms"])) },
-            { "label": "Longest streak", "value": days("longest_streak") },
-            { "label": "Current streak", "value": days("current_streak") },
-        ] })];
-    let daily: Vec<&Value> = usage["daily"]
+    // Reference day: the latest day with activity (the API sends active days only).
+    let by_day: Vec<(i64, f64)> = usage["daily"]
         .as_array()
-        .map(|d| d.iter().rev().take(30).rev().collect())
-        .unwrap_or_default();
-    if !daily.is_empty() {
+        .into_iter()
+        .flatten()
+        .filter_map(|d| Some((day_number(d["date"].as_str()?)?, num(&d["tokens"]))))
+        .collect();
+    let last = by_day.iter().map(|d| d.0).max();
+    let window = |from: i64, to: i64| -> Vec<f64> {
+        (from..=to)
+            .map(|day| by_day.iter().filter(|d| d.0 == day).map(|d| d.1).sum())
+            .collect()
+    };
+    let recent: Vec<f64> = last.map(|l| window(l - 29, l)).unwrap_or_default();
+    let previous: f64 = last
+        .map(|l| window(l - 59, l - 30).iter().sum())
+        .unwrap_or(0.0);
+    let total30: f64 = recent.iter().sum();
+    let active30 = recent.iter().filter(|v| **v > 0.0).count();
+    let trend = if previous > 0.0 {
+        let pct = (total30 - previous) / previous * 100.0;
+        format!(
+            "{}{:.0}% vs previous 30 days",
+            if pct >= 0.0 { "+" } else { "−" },
+            pct.abs()
+        )
+    } else {
+        String::new()
+    };
+    let cost = num(&summary["estimated_cost_microusd"]) / 1e6;
+    let streak = |key: &str| num(&summary[key]) as u64;
+    let mut tiles = vec![
+        json!({ "label": "Last 30 days", "value": compact(total30), "hint": trend }),
+        json!({ "label": "Active days", "value": format!("{active30} / 30"),
+                "hint": if active30 > 0 { format!("avg {}/day", compact(total30 / active30 as f64)) } else { String::new() } }),
+        json!({ "label": "Lifetime tokens", "value": compact(num(&summary["lifetime_tokens"])),
+                "hint": format!("peak day {}", compact(num(&summary["peak_day_tokens"]))) }),
+        json!({ "label": "Streak", "value": format!("{} days", streak("current_streak")),
+                "hint": format!("longest {} days", streak("longest_streak")) }),
+        json!({ "label": "Longest task", "value": duration(num(&summary["longest_session_ms"])), "hint": "" }),
+    ];
+    if cost > 0.0 {
+        tiles.insert(
+            2,
+            json!({ "label": "Estimated cost", "value": format!("${cost:.2}"), "hint": "lifetime" }),
+        );
+    }
+    let mut items = vec![json!({ "id": "usage_stats", "kind": "stats", "items": tiles })];
+    if let Some(l) = last {
+        let peak = recent.iter().cloned().fold(0.0, f64::max);
+        let peak_day = recent
+            .iter()
+            .position(|v| *v == peak && peak > 0.0)
+            .map(|i| day_label(l - 29 + i as i64));
+        let mut label = format!(
+            "Last 30 days · {} total · avg {}/day",
+            compact(total30),
+            compact(total30 / 30.0)
+        );
+        if let Some(day) = peak_day {
+            label.push_str(&format!(" · peak {} on {day}", compact(peak)));
+        }
         items.push(json!({
-            "id": "usage_daily", "kind": "bars", "label": "Last 30 days",
-            "items": daily.iter().map(|d| json!({
-                "label": d["date"].as_str().unwrap_or_default().get(5..).unwrap_or_default(),
-                "value": num(&d["tokens"]),
+            "id": "usage_daily", "kind": "bars", "label": label,
+            "from": day_label(l - 29), "to": day_label(l),
+            "items": recent.iter().enumerate().map(|(i, v)| json!({
+                "label": day_label(l - 29 + i as i64), "value": v,
             })).collect::<Vec<_>>(),
         }));
     }
     let breakdown = &usage["token_breakdown"];
-    for (key, label) in [
+    let parts: Vec<(&str, f64)> = [
         ("input", "Input"),
         ("cached_input", "Cached input"),
         ("output", "Output"),
         ("reasoning", "Reasoning"),
-    ] {
-        if num(&breakdown[key]) > 0.0 {
-            items.push(json!({ "id": format!("usage_{key}"), "kind": "info", "label": label, "value": compact(num(&breakdown[key])) }));
+    ]
+    .iter()
+    .map(|(key, label)| (*label, num(&breakdown[*key])))
+    .filter(|(_, v)| *v > 0.0)
+    .collect();
+    let parts_total: f64 = parts.iter().map(|p| p.1).sum();
+    if !parts.is_empty() {
+        items.push(json!({ "id": "usage_h_tokens", "kind": "heading", "label": "Tokens by type" }));
+        for (i, (label, v)) in parts.iter().enumerate() {
+            items.push(json!({
+                "id": format!("usage_part_{i}"), "kind": "info", "label": label,
+                "value": format!("{} · {:.0}%", compact(*v), v / parts_total * 100.0),
+            }));
         }
     }
-    let cost = num(&summary["estimated_cost_microusd"]) / 1e6;
-    if cost > 0.0 {
-        items.push(json!({ "id": "usage_cost", "kind": "info", "label": "Estimated cost", "value": format!("${cost:.2}") }));
-    }
-    for (i, m) in usage["models"]
+    let models: Vec<&Value> = usage["models"]
         .as_array()
         .into_iter()
         .flatten()
         .take(5)
-        .enumerate()
-    {
-        items.push(item(
-            format!("usage_model_{i}"),
-            m["name"].as_str().unwrap_or_default(),
-            &format!(
-                "{} · {} tokens",
-                m["provider"].as_str().unwrap_or_default(),
-                compact(num(&m["tokens"]))
-            ),
-            vec![],
-        ));
-    }
-    for (i, src) in usage["sources"]
+        .collect();
+    let models_total: f64 = usage["models"]
         .as_array()
         .into_iter()
         .flatten()
-        .enumerate()
-    {
-        items.push(json!({
-            "id": format!("usage_source_{i}"), "kind": "info",
-            "label": src["source"].as_str().unwrap_or_default(), "value": format!("{} tokens", compact(num(&src["tokens"]))),
-        }));
+        .map(|m| num(&m["tokens"]))
+        .sum();
+    if !models.is_empty() {
+        items.push(json!({ "id": "usage_h_models", "kind": "heading", "label": "Top models" }));
+        for (i, m) in models.iter().enumerate() {
+            let share = if models_total > 0.0 {
+                format!(" · {:.0}%", num(&m["tokens"]) / models_total * 100.0)
+            } else {
+                String::new()
+            };
+            items.push(item(
+                format!("usage_model_{i}"),
+                m["name"].as_str().unwrap_or_default(),
+                &format!(
+                    "{} · {} tokens{share}",
+                    m["provider"].as_str().unwrap_or_default(),
+                    compact(num(&m["tokens"]))
+                ),
+                vec![],
+            ));
+        }
+    }
+    let sources: Vec<&Value> = usage["sources"].as_array().into_iter().flatten().collect();
+    if !sources.is_empty() {
+        items.push(json!({ "id": "usage_h_sources", "kind": "heading", "label": "Sources" }));
+        for (i, src) in sources.iter().enumerate() {
+            items.push(json!({
+                "id": format!("usage_source_{i}"), "kind": "info",
+                "label": src["source"].as_str().unwrap_or_default(), "value": format!("{} tokens", compact(num(&src["tokens"]))),
+            }));
+        }
     }
     items
 }
@@ -7863,15 +7960,26 @@ mod tests {
             .clone();
         let items = section["items"].as_array().unwrap();
         let stats = &items[0]["items"];
-        assert_eq!(stats[0]["value"], "1.2B");
-        assert_eq!(stats[2]["value"], "8h 30m");
+        // 30-day total, active days, cost, lifetime, streak, longest task.
+        assert_eq!(stats[0]["value"], "30");
+        assert_eq!(stats[1]["value"], "2 / 30");
+        assert_eq!(stats[2]["value"], "$2.50");
+        assert_eq!(stats[3]["value"], "1.2B");
         assert_eq!(stats[4]["value"], "23 days");
+        assert_eq!(stats[5]["value"], "8h 30m");
         assert_eq!(items[1]["kind"], "bars");
-        assert_eq!(items[1]["items"][1]["label"], "10-21");
+        assert_eq!(items[1]["items"].as_array().unwrap().len(), 30);
+        assert_eq!(items[1]["items"][29]["label"], "10-21");
+        assert_eq!(items[1]["items"][29]["value"], 20.0);
+        assert_eq!(items[1]["items"][28]["value"], 10.0);
+        assert_eq!(items[1]["from"], "09-22");
         assert!(items.iter().any(|i| i["label"] == "gpt-5"));
         assert!(items
             .iter()
-            .any(|i| i["id"] == "usage_cost" && i["value"] == "$2.50"));
+            .any(|i| i["kind"] == "heading" && i["label"] == "Top models"));
+        assert!(items
+            .iter()
+            .any(|i| i["label"] == "Input" && i["value"] == "1K · 67%"));
         c.update(|s| s.usage = Some(json!({ "summary": { "lifetime_tokens": 0 } })));
         assert_eq!(
             c.view()["page"]["sections"]
@@ -10003,5 +10111,23 @@ mod tests {
             .unwrap()
             .contains("refused-by-user"));
         let _ = std::fs::remove_dir_all(&folder);
+    }
+}
+
+#[cfg(test)]
+mod usage_date_tests {
+    use super::{day_label, day_number};
+
+    #[test]
+    fn day_numbers_round_trip_across_months_and_years() {
+        assert_eq!(day_number("1970-01-01"), Some(0));
+        assert_eq!(day_label(day_number("2026-03-01").unwrap() - 1), "02-28");
+        assert_eq!(day_label(day_number("2028-03-01").unwrap() - 1), "02-29");
+        assert_eq!(day_label(day_number("2026-01-01").unwrap() - 1), "12-31");
+        assert_eq!(
+            day_number("2026-10-21").unwrap() - day_number("2026-09-22").unwrap(),
+            29
+        );
+        assert_eq!(day_number("nope"), None);
     }
 }

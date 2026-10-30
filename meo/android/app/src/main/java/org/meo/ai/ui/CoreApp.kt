@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -426,13 +427,20 @@ private fun SettingControl(item: JSONObject, act: Act, modifier: Modifier = Modi
             }
         }
         "hint" -> Text(item.str("text"), modifier, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        "stats" -> androidx.compose.material3.OutlinedCard(modifier) {
-            Row(Modifier.fillMaxWidth().padding(vertical = 12.dp)) {
-                item.list("items").forEach { t ->
-                    Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(t.str("value"), style = MaterialTheme.typography.titleSmall)
-                        Text(t.str("label"), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        "heading" -> Text(item.str("label"), modifier.padding(top = 6.dp), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        "stats" -> Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            item.list("items").chunked(3).forEach { rowTiles ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    rowTiles.forEach { t ->
+                        Surface(Modifier.weight(1f), shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surfaceContainer) {
+                            Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                                Text(t.str("label"), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(t.str("value"), style = MaterialTheme.typography.titleMedium, maxLines = 1)
+                                if (t.str("hint").isNotEmpty()) Text(t.str("hint"), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
                     }
+                    repeat(3 - rowTiles.size) { Spacer(Modifier.weight(1f)) }
                 }
             }
         }
