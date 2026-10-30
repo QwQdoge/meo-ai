@@ -62,3 +62,16 @@ because Meo API's chat provider contract does not currently expose a trusted
 Agent tool router. The explicit handoff is not represented as that feature.
 Production Pages deploy, Agent cloud deploy, device pairing, account consent
 and a live browser/device acceptance test are also separate steps.
+
+## Deploying chat.meoarch.org from a workstation
+
+Production (`meo-ai-web` on Cloudflare Pages) is uploaded directly; CI only builds and stages the artifact. To publish without CI:
+
+1. `npm ci && npm run typecheck && npm test` in `meo/web/client`.
+2. Install the CLI once: `cargo install wasm-bindgen-cli --version 0.2.129 --locked` (must match the locked crate).
+3. Build with the MeoUI revision CI uses (see `.github/workflows/meo-web-client.yml`): `MEO_OUTPUT_ROOT=<dir> MEO_UI_ROOT=<MeoUI checkout at that ref> npm run build`.
+4. Stage like CI: `stage/site` = `<dir>/meo-ai/build/web`, `stage/functions` = `meo/web/client/functions`.
+5. Note the current production deployment id (`wrangler pages deployment list --project-name=meo-ai-web --environment=production`) so it can be rolled back, then from `stage/` run `wrangler pages deploy site --project-name=meo-ai-web --branch=main`.
+6. Check `https://chat.meoarch.org/`: headers from `public/_headers`, the app loads, `/api/meo/session` answers 401 when signed out, and a cross-site POST to `/api/meo/*` gets 403.
+
+Last known-good deployment before the security-headers release: `9d424a48-a63e-4b95-83a8-48285c20641c`.
