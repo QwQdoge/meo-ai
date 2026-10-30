@@ -15,6 +15,20 @@ The project is still in active development. Until the first tagged Meo AI releas
 - Usage and activity surfaces for model and token visibility.
 - Product experience contract in `docs/product-experience.md`.
 
+### Added (since 2026-10-15; summarised from the commit history)
+
+- **Work mode:** tool loop with folder tools, a permission gate with approver, checkpoints saved on disk with a diff on the approval card, rewind, task lists planned and judged by level, sub-agents, context compaction and an enforced check; "Files changed" per-file diffs in the Details panel; a headless `meo-runner` for Work on your own computers; remote control between a user's devices.
+- **Chat and Work share one conversation:** the server mode follows the conversation on every device, Work is suggested for big tasks, and an answer's steps and check score are stored with it so reloads and other devices show them.
+- **Plugin store (Web, desktop QML, Android Compose):** MCP registry search and third-party import, Skills bundles (including 17 more open-source skills), an Essentials bundle, hosted MCP plugins the model can call in Chat and Work, and OAuth connectors (GitHub, Google and more) with a Connect button and connection status.
+- **Models:** model profiles by requirement (main model, ranking, parallel probe, per-role editor, AI generation), retry once on another model when a provider route is saturated, and Settings > Usage from the account usage dashboard.
+- **Files and attachments (Web):** paste, drag-and-drop and multi-select attachments; reading PDF, Word, Excel, PowerPoint and RTF; downloading model-written files (docx, xlsx, text) and images; browser file tools through the File System Access API.
+- **Rich messages:** callouts, draft cards, tables, icons, nested step details and collapsible inspector sections on Web, desktop and Android.
+- **Clients:** redesigned Web shell (drawer, app bar, tune sheet composer, device chip), dynamic color and capsule composers on desktop and Android, masked password input on every client.
+
+### Fixed (since 2026-10-15)
+
+- Token refresh race on startup; sign-in browser and notifications on macOS and Windows; packaging of the context engine, sub-agent scheduler and tool output modules.
+
 ### Changed
 
 - Root project documentation now presents Meo AI first while preserving Newelle provenance and GPL-3.0 licensing.
