@@ -908,24 +908,9 @@ Popup {
                             }
                         }
 
-                        Rectangle {
+                        ActivityDashboard {
                             Layout.fillWidth: true
-                            implicitHeight: usageColumn.implicitHeight + 28 * root.uiScale
-                            radius: 20 * root.uiScale
-                            color: MeoTheme.surfaceContainerLow
-                            ColumnLayout {
-                                id: usageColumn
-                                anchors.fill: parent; anchors.margins: 14 * root.uiScale; spacing: 9 * root.uiScale
-                                MeoText { text: qsTr("AI activity"); typeRole: "title"; typeSize: "small"; color: MeoTheme.contentOnSurface }
-                                MeoText { Layout.fillWidth: true; text: usage.status || qsTr("Import Codex and Claude Code activity, then sync it through Meo Account."); typeRole: "body"; typeSize: "small"; color: MeoTheme.contentOnSurfaceVariant; wrapMode: Text.Wrap }
-                                RowLayout {
-                                    Layout.fillWidth: true
-                                    MeoButton { text: qsTr("Refresh"); type: "outlined"; size: "xs"; enabled: !usage.busy; onClicked: usage.refresh() }
-                                    MeoButton { text: qsTr("Import history"); type: "tonal"; size: "xs"; enabled: !usage.busy; onClicked: usage.importHistory() }
-                                    MeoButton { text: qsTr("Sync now"); type: "filled"; size: "xs"; enabled: !usage.busy; loading: usage.busy; onClicked: usage.syncNow() }
-                                    Item { Layout.fillWidth: true }
-                                }
-                            }
+                            Layout.preferredHeight: 620 * root.uiScale
                         }
                         Item { Layout.fillHeight: true; Layout.minimumHeight: 8 * root.uiScale }
                     }

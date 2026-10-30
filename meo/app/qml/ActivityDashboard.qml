@@ -14,6 +14,29 @@ ScrollView {
     readonly property var projects: data.projects || []
     readonly property var sources: data.sources || []
     readonly property var daily: data.daily || []
+    readonly property var calendar: {
+        const byDate = ({})
+        for (let i = 0; i < daily.length; ++i)
+            byDate[String(daily[i].date)] = Number(daily[i].tokens || 0)
+        const today = new Date()
+        today.setHours(0, 0, 0, 0)
+        const start = new Date(today)
+        start.setDate(start.getDate() - 364)
+        const cells = []
+        for (let i = 0; i < start.getDay(); ++i) cells.push({date: "", tokens: 0, empty: true})
+        for (let i = 0; i < 365; ++i) {
+            const day = new Date(start)
+            day.setDate(start.getDate() + i)
+            const key = day.getFullYear() + "-" + String(day.getMonth() + 1).padStart(2, "0") + "-" + String(day.getDate()).padStart(2, "0")
+            cells.push({date: key, tokens: byDate[key] || 0, empty: false})
+        }
+        return cells
+    }
+    readonly property real peakDailyTokens: {
+        let maximum = 0
+        for (let i = 0; i < daily.length; ++i) maximum = Math.max(maximum, Number(daily[i].tokens || 0))
+        return maximum
+    }
     readonly property bool requestActive: agent.busy || agent.actionBusy || agent.options.length > 0
     readonly property string selectedModelLabel: {
         for (let i = 0; i < agent.models.length; ++i) {
@@ -51,8 +74,7 @@ ScrollView {
     }
 
     function heatLevel(tokens) {
-        let maximum = 0
-        for (let i = 0; i < daily.length; ++i) maximum = Math.max(maximum, Number(daily[i].tokens || 0))
+        const maximum = peakDailyTokens
         if (!maximum || !tokens) return 0
         const ratio = Number(tokens) / maximum
         if (ratio < 0.08) return 1
@@ -256,7 +278,7 @@ ScrollView {
                 spacing: 12 * root.uiScale
                 RowLayout {
                     Layout.fillWidth: true
-                    MeoText { text: qsTr("Token activity"); typeRole: "label"; typeSize: "medium"; color: MeoTheme.contentOnSurface }
+                    MeoText { text: qsTr("Token activity · last 365 days"); typeRole: "label"; typeSize: "medium"; color: MeoTheme.contentOnSurface }
                     Item { Layout.fillWidth: true }
                     MeoText {
                         text: qsTr("%1 active days").arg(root.summary.active_days || 0)
@@ -265,10 +287,12 @@ ScrollView {
                 }
                 Grid {
                     Layout.fillWidth: true
-                    columns: Math.max(7, Math.floor(width / (12 * root.uiScale)))
+                    columns: Math.ceil(root.calendar.length / 7)
+                    rows: 7
+                    flow: Grid.TopToBottom
                     spacing: 3 * root.uiScale
                     Repeater {
-                        model: root.daily.slice(Math.max(0, root.daily.length - 154))
+                        model: root.calendar
                         delegate: Rectangle {
                             required property var modelData
                             width: 9 * root.uiScale; height: width; radius: 3 * root.uiScale
@@ -278,13 +302,54 @@ ScrollView {
                                  : level === 2 ? MeoTheme.primaryContainer
                                  : level === 3 ? MeoTheme.primary
                                  : MeoTheme.contentOnPrimaryContainer
-                            opacity: level === 0 ? 0.55 : level === 1 ? 0.58 : level === 2 ? 0.72 : 1
-                            ToolTip.visible: heatHover.hovered
+                            opacity: modelData.empty ? 0 : level === 0 ? 0.55 : level === 1 ? 0.58 : level === 2 ? 0.72 : 1
+                            ToolTip.visible: !modelData.empty && heatHover.hovered
                             ToolTip.text: String(modelData.date) + " · " + root.compactNumber(modelData.tokens) + " " + qsTr("tokens")
                             ToolTip.delay: 250
                             HoverHandler { id: heatHover }
                         }
                     }
+                }
+            }
+        }
+
+        Rectangle {
+            Layout.fillWidth: true
+            visible: Number(root.breakdown.input || 0) + Number(root.breakdown.cached_input || 0) + Number(root.breakdown.output || 0) + Number(root.breakdown.reasoning || 0) > 0 || Number(root.summary.estimated_cost_microusd || 0) > 0
+            implicitHeight: breakdownColumn.implicitHeight + 28 * root.uiScale
+            radius: 22 * root.uiScale
+            color: MeoTheme.surfaceContainerLowest
+            border.width: Math.max(1, root.uiScale); border.color: MeoTheme.outlineVariant
+            ColumnLayout {
+                id: breakdownColumn
+                anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
+                anchors.margins: 14 * root.uiScale
+                spacing: 10 * root.uiScale
+                MeoText { text: qsTr("Token breakdown"); typeRole: "label"; typeSize: "medium"; color: MeoTheme.contentOnSurface }
+                GridLayout {
+                    Layout.fillWidth: true
+                    columns: width > 520 * root.uiScale ? 4 : 2
+                    columnSpacing: 8 * root.uiScale; rowSpacing: 8 * root.uiScale
+                    Repeater {
+                        model: [
+                            {label: qsTr("Input"), value: root.breakdown.input},
+                            {label: qsTr("Cached input"), value: root.breakdown.cached_input},
+                            {label: qsTr("Output"), value: root.breakdown.output},
+                            {label: qsTr("Reasoning"), value: root.breakdown.reasoning}
+                        ]
+                        delegate: ColumnLayout {
+                            required property var modelData
+                            Layout.fillWidth: true
+                            spacing: 2 * root.uiScale
+                            MeoText { text: root.compactNumber(modelData.value); typeRole: "title"; typeSize: "small"; color: MeoTheme.contentOnSurface }
+                            MeoText { text: modelData.label; typeRole: "label"; typeSize: "small"; color: MeoTheme.contentOnSurfaceVariant }
+                        }
+                    }
+                }
+                MeoText {
+                    visible: Number(root.summary.estimated_cost_microusd || 0) > 0
+                    text: qsTr("Estimated cost · $%1").arg((Number(root.summary.estimated_cost_microusd || 0) / 1000000).toFixed(2))
+                    typeRole: "label"; typeSize: "small"; color: MeoTheme.contentOnSurfaceVariant
                 }
             }
         }
