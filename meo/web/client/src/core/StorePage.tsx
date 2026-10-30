@@ -85,7 +85,7 @@ export default function StorePage({ page, act }: { page: Spec; act: Act }) {
 function Card({ card, run }: { card: Spec; run: (a: Spec) => void }) {
   return (
     <article className="store-card" data-state={card.state}>
-      <AppIcon icon={card.icon} name={card.title} />
+      <AppIcon icon={card.icon} name={card.title} size={36} />
       <div className="store-card-body">
         <h3>{card.title}</h3>
         <p className="store-pub">{card.publisher}</p>

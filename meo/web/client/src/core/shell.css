@@ -260,3 +260,54 @@
 .core-app .store-links button:hover { background: var(--tonal-2); }
 .core-app .store-links span { font-size: 12px; color: rgb(var(--text-secondary)); }
 @media (max-width: 600px) { .core-app .store-grid { grid-template-columns: 1fr; } }
+
+/* Denser layout: more information per screen, same structure and hierarchy */
+.core-app .core-page { padding: 10px 16px; }
+.core-app .core-header { padding: 4px 0; gap: 8px; }
+.core-app .core-header h1 { font-size: 1.15rem; }
+.core-app .core-section { gap: 6px; margin-block: 12px; }
+.core-app .core-section h2 { font-size: 0.8rem; }
+.core-app .core-button { padding: 5px 14px; font-size: 13px; }
+.core-app .core-field select, .core-app .core-field input, .core-app .core-field textarea { padding: 6px 10px; border-radius: 10px; font-size: 14px; }
+.core-app .core-item { padding: 5px 10px; gap: 8px; border-radius: 12px; }
+.core-app .core-item-text { min-width: 0; }
+.core-app .core-item-text small { display: block; font-size: 12px; }
+.core-app .core-row { gap: 8px; min-height: 30px; }
+.core-app .core-hint { margin: -4px 0 2px; }
+.core-app .core-list { gap: 0; }
+.core-app .core-list button { padding: 5px 10px; gap: 0; }
+.core-app .core-list strong { font-size: 14px; font-weight: 500; }
+.core-app .core-list span { font-size: 12px; }
+@media (min-width: 900px) { .core-app .core-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 8px; } }
+.core-app .core-settings { padding: 8px; }
+.core-app .core-settings-nav { width: 190px; padding: 8px 6px; }
+.core-app .core-settings-nav h3 { margin: 8px 8px 2px; }
+.core-app .core-settings-nav button { padding: 4px 8px; font-size: 14px; }
+.core-app .core-settings-body { padding: 4px 18px 16px; }
+.core-app .core-settings-body .core-section { max-width: 760px; margin-block: 4px; }
+.core-app .core-stats > div { padding: 8px 6px; }
+.core-app .core-messages { padding: 10px 12px; gap: 8px; }
+.core-app .core-bubble.user { padding: 6px 12px; }
+.core-app .store { gap: 8px; }
+.core-app .store-head h1 { font-size: 20px; }
+.core-app .store-search { padding: 0 6px 0 14px; max-width: 520px; }
+.core-app .store-search input { padding: 7px 0; font-size: 14px; }
+.core-app .store-tabs button { padding: 6px 14px; font-size: 13px; }
+.core-app .store-chips { gap: 6px; }
+.core-app .store-chips button { padding: 3px 10px; font-size: 12px; }
+.core-app .store-section h2 { margin: 4px 0 6px; font-size: 13px; }
+.core-app .store-grid { grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 8px; }
+.core-app .store-card { padding: 10px 12px; gap: 3px 10px; border-radius: var(--r-m); align-content: start; }
+.core-app .store-card h3 { font-size: 14px; }
+.core-app .store-pub { margin: 0 0 2px; font-size: 11px; }
+.core-app .store-desc { margin: 0 0 4px; font-size: 12px; line-height: 1.35; -webkit-line-clamp: 2; }
+.core-app .store-badges { gap: 4px; }
+.core-app .store-badges span { padding: 1px 6px; font-size: 10px; }
+.core-app .store-card-actions { gap: 6px; flex-wrap: wrap; }
+.core-app .store-card-actions .core-button { padding: 3px 12px; font-size: 12px; }
+.core-app .store-forms { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 8px; }
+.core-app .store-form { padding: 10px 12px; gap: 6px; border-radius: var(--r-m); }
+.core-app .store-form-head h3 { font-size: 14px; }
+.core-app .store-form input { padding: 7px 10px; font-size: 13px; }
+.core-app .store-links { gap: 2px; }
+.core-app .store-links button { padding: 6px 12px; }
