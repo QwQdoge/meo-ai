@@ -765,6 +765,13 @@ impl MeoApi {
     }
 
     /// The account's token usage across devices and tools (Meo AI, Codex, Claude).
+    /// Adds usage events to the account (at most 250 per call; repeats are ignored by the server).
+    pub async fn post_usage_events(&self, token: &str, events: &[Value]) -> Result<(), ApiError> {
+        self.request(token, Method::POST, "/v1/usage-events", Some(json!(events)))
+            .await
+            .map(|_| ())
+    }
+
     pub async fn usage_dashboard(&self, token: &str, days: u32) -> Result<Value, ApiError> {
         self.request(
             token,

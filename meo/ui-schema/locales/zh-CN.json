@@ -257,5 +257,16 @@
   "Work through a hard problem": "攻克一个难题",
   "Research this topic across several sources and give me a sourced summary with a recommendation. The topic: ": "请从多个来源调研这个主题，给我一份带来源的总结和建议。主题：",
   "Break this goal into a plan with milestones, risks and a first week of tasks. The goal: ": "请把这个目标拆成带里程碑、风险和第一周任务的计划。目标：",
-  "Work through this carefully, check your own result, and tell me how sure you are. The problem: ": "请认真求解，检查自己的结果，并告诉我你有多确定。问题："
+  "Work through this carefully, check your own result, and tell me how sure you are. The problem: ": "请认真求解，检查自己的结果，并告诉我你有多确定。问题：",
+  "Codex and Claude Code usage on this computer": "这台电脑上的 Codex 和 Claude Code 用量",
+  "Add to full stats": "加入完整统计",
+  "Add new activity": "添加新增记录",
+  "Every Meo AI chat is counted here. Chat once and it shows up.": "Meo AI 的每次聊天都会计入这里,聊一次就会显示。",
+  "Reading Codex and Claude Code logs on this computer…": "正在读取这台电脑上的 Codex 和 Claude Code 记录…",
+  "No Codex or Claude Code usage was found on this computer.": "这台电脑上没有找到 Codex 或 Claude Code 的用量。",
+  "Active days": "活跃天数",
+  "Streak": "连续使用",
+  "Tokens by type": "按类型的 tokens",
+  "Top models": "常用模型",
+  "Sources": "来源"
 }

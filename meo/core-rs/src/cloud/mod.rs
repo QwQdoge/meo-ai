@@ -23,6 +23,9 @@ pub mod remote;
 pub mod richtext;
 pub mod router;
 pub mod storage;
+pub mod usage;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod usage_import;
 #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
 pub mod web;
 #[cfg(not(target_arch = "wasm32"))]

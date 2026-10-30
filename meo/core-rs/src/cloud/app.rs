@@ -33,6 +33,7 @@ use super::{
     orchestration, remote, richtext,
     router::{self, Choice, Router},
     storage::Storage,
+    usage,
 };
 
 pub const VIEW_SCHEMA: u32 = 1;
@@ -205,6 +206,8 @@ pub enum Action {
     ConnectPlugin {
         id: String,
     },
+    /// Adds the Codex and Claude Code token logs found on this computer to the account's usage statistics.
+    ImportLocalUsage,
     /// Opens Meo Account, where GitHub or Google is linked for the apps that use that account.
     ConnectAccount {
         provider: String,
@@ -445,6 +448,10 @@ struct State {
     pending_generation: Option<(Choice, String)>,
     /// `/v1/usage-dashboard` of the signed-in account (Settings > Usage).
     usage: Option<Value>,
+    /// Codex and Claude Code records found on this computer: (codex, claude). Desktop only.
+    local_usage: Option<(usize, usize)>,
+    /// How many local records the user added to the account in this session.
+    local_usage_added: Option<usize>,
     /// Steps of the current or last answer: (conversation id, steps) — shown collapsed on that answer.
     activity: Option<(String, Vec<Value>)>,
     remote_run: Option<RemoteRun>,
@@ -768,6 +775,7 @@ impl AppCore {
             Action::ImportMcp { url } => Box::pin(self.import_mcp(url)).await,
             Action::InstallRegistry { id } => Box::pin(self.install_registry(id)).await,
             Action::ConnectPlugin { id } => Box::pin(self.connect_plugin(id)).await,
+            Action::ImportLocalUsage => Box::pin(self.import_local_usage()).await,
             Action::ConnectAccount { provider, grant } => {
                 let (message, url) = if grant {
                     (
@@ -1749,6 +1757,7 @@ impl AppCore {
             "settings" => {
                 self.refresh_profiles().await;
                 self.refresh_memories().await;
+                self.refresh_local_usage().await;
                 if let Ok(usage) = self
                     .call(|api, t| async move { api.usage_dashboard(&t, 365).await })
                     .await
@@ -4054,6 +4063,7 @@ impl AppCore {
                 return self.notice("error", e.to_string());
             }
         }
+        let started = super::now_secs();
         self.cancel.store(false, Ordering::SeqCst);
         self.update(|s| s.streaming = Some((id.clone(), String::new())));
         self.hooks.busy(true);
@@ -4130,6 +4140,7 @@ impl AppCore {
                     async move { api.append_answer(&t, &id, &reply, &steps).await }
                 })
                 .await;
+            self.record_chat_usage(&pending, &reply, started).await;
             // Pick up server ids so the new messages can be edited or regenerated.
             self.refresh_messages(&id).await;
         }
@@ -4154,6 +4165,132 @@ impl AppCore {
                     self.auto_title(&id, &pending.prompt, &reply).await;
                 }
                 self.maybe_compact(&id).await;
+            }
+        }
+    }
+
+    /// Looks for Codex and Claude Code logs on this computer (desktop only; the browser has no files).
+    #[cfg(not(target_arch = "wasm32"))]
+    async fn refresh_local_usage(&self) {
+        let scan = super::usage_import::scan_async().await;
+        let found = (scan.codex.len(), scan.claude.len());
+        self.update(|s| s.local_usage = (found != (0, 0)).then_some(found));
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    async fn refresh_local_usage(&self) {}
+
+    /// Sends the Codex and Claude Code records found here to the account (the server counts each once).
+    #[cfg(not(target_arch = "wasm32"))]
+    async fn import_local_usage(&self) {
+        self.notice(
+            "info",
+            "Reading Codex and Claude Code logs on this computer…",
+        );
+        let scan = super::usage_import::scan_async().await;
+        let events: Vec<Value> = scan.codex.into_iter().chain(scan.claude).collect();
+        if events.is_empty() {
+            return self.notice(
+                "info",
+                "No Codex or Claude Code usage was found on this computer.",
+            );
+        }
+        let mut sent = 0;
+        for chunk in events.chunks(250) {
+            let result = self
+                .call(|api, t| {
+                    let chunk = chunk.to_vec();
+                    async move { api.post_usage_events(&t, &chunk).await }
+                })
+                .await;
+            match result {
+                Ok(()) => sent += chunk.len(),
+                Err(e) => {
+                    self.notice(
+                        "error",
+                        format!("Added {sent} of {} records, then it stopped: {e}. Try again later; records already added are not counted twice.", events.len()),
+                    );
+                    break;
+                }
+            }
+        }
+        if let Ok(usage) = self
+            .call(|api, t| async move { api.usage_dashboard(&t, 365).await })
+            .await
+        {
+            self.update(|s| s.usage = Some(usage));
+        }
+        if sent == events.len() {
+            self.notice(
+                "info",
+                format!("Added {sent} records to your usage statistics."),
+            );
+        }
+        self.update(|s| s.local_usage_added = Some(sent));
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    async fn import_local_usage(&self) {}
+
+    /// Counts this answer in the account's Usage dashboard. Best effort: a failure never disturbs the chat.
+    async fn record_chat_usage(&self, pending: &PendingSend, reply: &str, started: i64) {
+        let (event, had_usage) = {
+            let s = self.state.lock().unwrap();
+            let credential = pending.request["credentialId"].as_str().unwrap_or_default();
+            let provider = s
+                .credentials
+                .iter()
+                .find(|c| c.id == credential)
+                .map_or("", |c| c.provider.as_str());
+            let mut context: String = s
+                .messages
+                .get(&pending.conversation_id)
+                .map(|list| {
+                    list.iter()
+                        .map(|m| m.text.as_str())
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                })
+                .unwrap_or_default();
+            if context.is_empty() {
+                context = pending.prompt.clone();
+            }
+            let project = s
+                .conversations
+                .iter()
+                .find(|c| c.id == pending.conversation_id)
+                .and_then(|c| c.project_id.clone());
+            let request_id = pending.consent["requestId"].as_str().unwrap_or_default();
+            if request_id.is_empty() {
+                return;
+            }
+            (
+                usage::chat_event(&usage::ChatTurn {
+                    request_id,
+                    conversation_id: &pending.conversation_id,
+                    project_id: project.as_deref(),
+                    provider,
+                    model: pending.request["model"].as_str().unwrap_or_default(),
+                    context: &context,
+                    reply,
+                    started,
+                    finished: super::now_secs(),
+                }),
+                s.usage.is_some(),
+            )
+        };
+        let sent = self
+            .call(|api, t| {
+                let event = event.clone();
+                async move { api.post_usage_events(&t, &[event]).await }
+            })
+            .await;
+        if sent.is_ok() && had_usage {
+            if let Ok(usage) = self
+                .call(|api, t| async move { api.usage_dashboard(&t, 365).await })
+                .await
+            {
+                self.update(|s| s.usage = Some(usage));
             }
         }
     }
@@ -6205,20 +6342,46 @@ fn day_label(days: i64) -> String {
     format!("{m:02}-{d:02}")
 }
 
+/// The offer to add Codex and Claude Code usage found on this computer (empty when there is none).
+fn local_usage_items(s: &State) -> Vec<Value> {
+    let Some((codex, claude)) = s.local_usage else {
+        return Vec::new();
+    };
+    let found = format!(
+        "{codex} Codex and {claude} Claude Code records. Only token counts, model names, times and project folder names are sent, never your conversations."
+    );
+    let value = match s.local_usage_added {
+        Some(n) => format!("Added {n} records. {found}"),
+        None => found,
+    };
+    vec![json!({
+        "id": "usage_local", "kind": "item", "label": "Codex and Claude Code usage on this computer",
+        "value": value,
+        "buttons": [button(
+            if s.local_usage_added.is_some() { "Add new activity" } else { "Add to full stats" },
+            "primary",
+            json!({ "type": "import_local_usage" }),
+        )],
+    })]
+}
+
 /// Settings > Usage: headline numbers with context, a continuous 30-day chart, then the breakdowns.
 fn usage_items(s: &State) -> Vec<Value> {
+    let mut local = local_usage_items(s);
     let Some(usage) = &s.usage else {
-        return vec![
+        local.push(
             json!({ "id": "usage_loading", "label": "Loading…", "kind": "info", "value": "" }),
-        ];
+        );
+        return local;
     };
     let num = |v: &Value| v.as_f64().unwrap_or(0.0);
     let summary = &usage["summary"];
     if num(&summary["lifetime_tokens"]) == 0.0 {
-        return vec![json!({
+        local.push(json!({
             "id": "usage_empty", "kind": "info", "label": "No usage yet",
-            "value": "Meo AI, Codex and Claude activity shows up here once it is synced to your account.",
-        })];
+            "value": "Every Meo AI chat is counted here. Chat once and it shows up.",
+        }));
+        return local;
     }
     // Reference day: the latest day with activity (the API sends active days only).
     let by_day: Vec<(i64, f64)> = usage["daily"]
@@ -6267,7 +6430,8 @@ fn usage_items(s: &State) -> Vec<Value> {
             json!({ "label": "Estimated cost", "value": format!("${cost:.2}"), "hint": "lifetime" }),
         );
     }
-    let mut items = vec![json!({ "id": "usage_stats", "kind": "stats", "items": tiles })];
+    let mut items = local;
+    items.push(json!({ "id": "usage_stats", "kind": "stats", "items": tiles }));
     if let Some(l) = last {
         let peak = recent.iter().cloned().fold(0.0, f64::max);
         let peak_day = recent
@@ -7990,6 +8154,41 @@ mod tests {
                 .unwrap()["items"][0]["id"],
             "usage_empty"
         );
+    }
+
+    #[test]
+    fn usage_offers_local_codex_and_claude_records_even_before_any_usage() {
+        let c = signed_in_core();
+        c.update(|s| {
+            s.route = "settings".into();
+            s.usage = Some(json!({ "summary": { "lifetime_tokens": 0 } }));
+            s.local_usage = Some((12, 3));
+        });
+        let view = c.view();
+        let section = view["page"]["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|x| x["id"] == "usage")
+            .unwrap()
+            .clone();
+        let first = &section["items"][0];
+        assert_eq!(first["id"], "usage_local");
+        assert!(first["value"]
+            .as_str()
+            .unwrap()
+            .contains("12 Codex and 3 Claude Code"));
+        assert_eq!(first["buttons"][0]["action"]["type"], "import_local_usage");
+        assert_eq!(first["buttons"][0]["label"], "Add to full stats");
+        c.update(|s| s.local_usage_added = Some(15));
+        let again = c.view()["page"]["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|x| x["id"] == "usage")
+            .unwrap()["items"][0]["buttons"][0]["label"]
+            .clone();
+        assert_eq!(again, "Add new activity");
     }
 
     #[test]
