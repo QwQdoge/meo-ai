@@ -5,6 +5,7 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMeoSession } from "./session";
 import MeoChat from "./MeoChat";
+import type { ChatResponseDetails } from "./MeoChat";
 const SettingsCenter = lazy(() => import("./SettingsCenter"));
 const PluginLibrary = lazy(() => import("./PluginLibrary"));
 const WorkSurface = lazy(() => import("./WorkSurface"));
@@ -115,6 +116,7 @@ export default function MeoDesktopApp() {
   const [searchRequest, setSearchRequest] = useState(0);
   const [chatBusy, setChatBusy] = useState(false);
   const [workHandoff, setWorkHandoff] = useState<WorkHandoff | null>(null);
+  const [lastResponseDetails, setLastResponseDetails] = useState<ChatResponseDetails | null>(null);
   const [compact, setCompact] = useState(
     () => window.matchMedia("(max-width: 759px)").matches,
   );
@@ -392,6 +394,10 @@ export default function MeoDesktopApp() {
               onBusyChange={setChatBusy}
               onSelectConversation={() => setMobileOpen(false)}
               onDelegateToWork={handoffToWork}
+              onResponseDetails={(details) => {
+                setLastResponseDetails(details);
+                setInspectorOpen(true);
+              }}
             />
           </div>
           <Suspense fallback={
@@ -432,12 +438,84 @@ export default function MeoDesktopApp() {
               ×
             </button>
           </div>
-          <div className="meo-desktop-inspector-empty">
-            <Icon name="panel" />
-            <strong>{t("meo_web_details")}</strong>
-            <span>{t("meo_web_details_unavailable")}</span>
-          </div>
+          {lastResponseDetails ? (
+            <ResponseDetailsPanel details={lastResponseDetails} />
+          ) : (
+            <div className="meo-desktop-inspector-empty">
+              <Icon name="panel" />
+              <strong>{t("meo_web_details")}</strong>
+              <span>{t("meo_web_details_unavailable")}</span>
+            </div>
+          )}
         </aside>
+      )}
+    </div>
+  );
+}
+
+function fmtTokens(n: number | undefined): string {
+  if (n === undefined || n === 0) return '—';
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(n);
+}
+
+function ResponseDetailsPanel({ details }: { details: import('./MeoChat').ChatResponseDetails }) {
+  const { t } = useTranslation();
+  const { model, provider, usage, finishedAt } = details;
+  const timeStr = finishedAt
+    ? new Date(finishedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    : '';
+  return (
+    <div className="meo-inspector-details">
+      <dl className="meo-inspector-rows">
+        <div className="meo-inspector-row">
+          <dt>{t('meo_web_model')}</dt>
+          <dd title={model}>{model || '—'}</dd>
+        </div>
+        {provider && (
+          <div className="meo-inspector-row">
+            <dt>{t('meo_web_connection')}</dt>
+            <dd>{provider}</dd>
+          </div>
+        )}
+        {timeStr && (
+          <div className="meo-inspector-row">
+            <dt>{t('meo_web_finished_at')}</dt>
+            <dd>{timeStr}</dd>
+          </div>
+        )}
+      </dl>
+      {usage && (
+        <section className="meo-inspector-section">
+          <h4 className="meo-inspector-section-title">{t('meo_activity_tokens')}</h4>
+          <dl className="meo-inspector-rows">
+            {usage.input_tokens !== undefined && (
+              <div className="meo-inspector-row">
+                <dt>{t('meo_inspector_input_tokens')}</dt>
+                <dd>{fmtTokens(usage.input_tokens)}</dd>
+              </div>
+            )}
+            {usage.output_tokens !== undefined && (
+              <div className="meo-inspector-row">
+                <dt>{t('meo_inspector_output_tokens')}</dt>
+                <dd>{fmtTokens(usage.output_tokens)}</dd>
+              </div>
+            )}
+            {!!usage.reasoning_tokens && (
+              <div className="meo-inspector-row">
+                <dt>{t('meo_inspector_reasoning_tokens')}</dt>
+                <dd>{fmtTokens(usage.reasoning_tokens)}</dd>
+              </div>
+            )}
+            {!!usage.cache_read_tokens && (
+              <div className="meo-inspector-row">
+                <dt>{t('meo_inspector_cache_read')}</dt>
+                <dd>{fmtTokens(usage.cache_read_tokens)}</dd>
+              </div>
+            )}
+          </dl>
+        </section>
       )}
     </div>
   );

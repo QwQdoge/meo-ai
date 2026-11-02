@@ -297,5 +297,11 @@
   "meo.work.noRecentRuns": "No account tasks found.",
   "meo.skills.githubWorkflowTitle": "GitHub development workflow",
   "meo.skills.githubWorkflowScope": "Review a Meo-maintained Skill for code review, changes, tests, PRs and CI. Importing does not grant GitHub access or execute code.",
-  "meo.skills.previewGithubWorkflow": "Preview Meo GitHub Skill"
+  "meo.skills.previewGithubWorkflow": "Preview Meo GitHub Skill",
+  "meo_web_connection": "Connection",
+  "meo_web_finished_at": "Finished at",
+  "meo_inspector_input_tokens": "Input tokens",
+  "meo_inspector_output_tokens": "Output tokens",
+  "meo_inspector_reasoning_tokens": "Reasoning tokens",
+  "meo_inspector_cache_read": "Cache read"
 }

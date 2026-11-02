@@ -241,6 +241,14 @@ const chatMarkdownComponents = {
   img: ChatMarkdownImage,
 };
 
+export type ChatResponseDetails = {
+  model: string;
+  provider: string;
+  requestId: string;
+  usage: { input_tokens?: number; output_tokens?: number; reasoning_tokens?: number; cache_read_tokens?: number } | null;
+  finishedAt: string;
+};
+
 type MeoChatProps = {
   historyTarget: HTMLDivElement | null;
   newChatRequest: number;
@@ -248,10 +256,11 @@ type MeoChatProps = {
   onBusyChange: (busy: boolean) => void;
   onSelectConversation: () => void;
   onDelegateToWork: (text: string, conversationId: string, projectId?: string) => void;
+  onResponseDetails?: (details: ChatResponseDetails) => void;
   active: boolean;
 };
 
-export default function MeoChat({ historyTarget, newChatRequest, searchRequest, onBusyChange, onSelectConversation, onDelegateToWork, active }: MeoChatProps) {
+export default function MeoChat({ historyTarget, newChatRequest, searchRequest, onBusyChange, onSelectConversation, onDelegateToWork, onResponseDetails, active }: MeoChatProps) {
   const preferences = useBrowserPreferences();
   const { t } = useTranslation();
   const { user } = useMeoSession();
@@ -858,6 +867,7 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
       let completed = false;
       let proposal: { project_id: string; task: string } | null = null;
       let mcpProposal: McpProposal | null = null;
+      let donePayload: { model?: string; requestId?: string; usage?: Record<string, number> } | null = null;
       while (true) {
         const { value, done } = await reader.read();
         buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
@@ -883,6 +893,9 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
             throw new Error(failure.message ?? t('meo_web_stream_failed'));
           } else if (eventName === 'done') {
             completed = true;
+            if (data) {
+              try { donePayload = JSON.parse(data) as { model?: string; requestId?: string; usage?: Record<string, number> }; } catch { /* ignore */ }
+            }
           }
         }
         if (pendingText) setMessages((current) => appendAssistantChunk(current, pendingText));
@@ -898,6 +911,22 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
       if (proposal) setAgentProposal({ task: proposal.task, projectId: proposal.project_id, conversationId });
       // The stream is finished; the Stop control must not claim to cancel persistence.
       setStreamingActive(false);
+      if (donePayload && onResponseDetails) {
+        onResponseDetails({
+          model: donePayload.model ?? model,
+          provider: selected?.provider ?? '',
+          requestId: donePayload.requestId ?? '',
+          usage: donePayload.usage
+            ? {
+                input_tokens: donePayload.usage.input_tokens,
+                output_tokens: donePayload.usage.output_tokens,
+                reasoning_tokens: donePayload.usage.reasoning_tokens,
+                cache_read_tokens: donePayload.usage.cache_read_tokens,
+              }
+            : null,
+          finishedAt: new Date().toISOString(),
+        });
+      }
       setRequestPhase('saving');
       if (assistantText) {
         await json(`/api/meo/conversations/${encodeURIComponent(conversationId)}/messages`, {

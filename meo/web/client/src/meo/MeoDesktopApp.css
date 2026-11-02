@@ -942,3 +942,12 @@
 .meo-work-recent-list span, .meo-work-recent-list small { font-size: 12px; color: rgb(var(--text-secondary)); overflow-wrap: anywhere; }
 .meo-work-recent button:disabled { opacity: .5; cursor: default; }
 .meo-work-recent button:focus-visible { outline: 2px solid rgb(var(--accent-primary)); outline-offset: 2px; }
+
+/* Response details panel inside the inspector */
+.meo-inspector-details { padding: 4px 16px 20px; }
+.meo-inspector-section { margin-top: 18px; }
+.meo-inspector-section-title { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: rgb(var(--text-secondary)); margin: 0 0 8px; }
+.meo-inspector-rows { display: grid; gap: 6px; margin: 0; }
+.meo-inspector-row { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; font-size: 13px; }
+.meo-inspector-row dt { color: rgb(var(--text-secondary)); white-space: nowrap; }
+.meo-inspector-row dd { margin: 0; font-weight: 500; text-align: end; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60%; }

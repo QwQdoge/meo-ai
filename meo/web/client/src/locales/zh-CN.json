@@ -272,5 +272,11 @@
   "meo.work.noRecentRuns": "账号中还没有任务。",
   "meo.skills.githubWorkflowTitle": "GitHub 开发工作流",
   "meo.skills.githubWorkflowScope": "预览 Meo 仓库里的代码审查、修改、测试、PR 和 CI 工作规范。导入不会授予 GitHub 权限，也不会直接执行代码。",
-  "meo.skills.previewGithubWorkflow": "预览 Meo GitHub Skill"
+  "meo.skills.previewGithubWorkflow": "预览 Meo GitHub Skill",
+  "meo_web_connection": "连接",
+  "meo_web_finished_at": "完成时间",
+  "meo_inspector_input_tokens": "输入 tokens",
+  "meo_inspector_output_tokens": "输出 tokens",
+  "meo_inspector_reasoning_tokens": "推理 tokens",
+  "meo_inspector_cache_read": "缓存读取"
 }
