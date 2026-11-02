@@ -255,7 +255,13 @@ const ChatMessage = memo(function ChatMessage({ message, waiting, onDelegateToWo
 
 function ChatMessageWaiting() {
   const { t } = useTranslation();
-  return <span className="meo-chat-streaming-indicator" role="status">{t('meo_web_thinking')}</span>;
+  return (
+    <span className="meo-chat-streaming-indicator" role="status" aria-label={t('meo_web_thinking')}>
+      <span className="meo-chat-streaming-dot" aria-hidden="true" />
+      <span className="meo-chat-streaming-dot" aria-hidden="true" />
+      <span className="meo-chat-streaming-dot" aria-hidden="true" />
+    </span>
+  );
 }
 
 const chatMarkdownComponents = {
@@ -354,6 +360,7 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
   const skipHistoryLoadRef = useRef('');
   const consentDecisionRef = useRef<((approved: boolean) => void) | null>(null);
   const filteredHistory = useMemo(() => history.filter((item) => item.title.toLocaleLowerCase().includes(historyQuery.trim().toLocaleLowerCase())), [history, historyQuery]);
+  const groupedHistory = useMemo(() => groupHistoryByDate(filteredHistory), [filteredHistory]);
 
   useEffect(() => onBusyChange(busy), [busy, onBusyChange]);
 
@@ -1128,7 +1135,7 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
             {historyLoading && <p role="status" className="meo-chat-history-muted">{t('meo_web_loading_more')}</p>}
             {!historyLoading && history.length === 0 && <p className="meo-chat-history-muted">{t('meo_web_no_history')}</p>}
             {!historyLoading && history.length > 0 && filteredHistory.length === 0 && <p className="meo-chat-history-muted">{t('meo_web_no_history_matches')}</p>}
-            {groupHistoryByDate(filteredHistory).map(({ key, labelKey, items }) => (
+            {groupedHistory.map(({ key, labelKey, items }) => (
               <div key={key} className="meo-chat-history-group">
                 <span className="meo-chat-history-group-label">{t(labelKey)}</span>
                 {items.map((conversation) => (
@@ -1329,7 +1336,7 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
           </button>
         ) : (
         <button
-          className="meo-chat-send"
+          className={`meo-chat-send${busy && !streamingActive ? ' is-loading' : ''}`}
           type="submit"
           aria-label={busy ? t('meo_web_thinking') : t('meo_web_send')}
           title={busy ? t('meo_web_thinking') : t('meo_web_send')}
