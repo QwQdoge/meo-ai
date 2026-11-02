@@ -956,3 +956,29 @@
 .meo-inspector-row { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; font-size: 13px; }
 .meo-inspector-row dt { color: rgb(var(--text-secondary)); white-space: nowrap; }
 .meo-inspector-row dd { margin: 0; font-weight: 500; text-align: end; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60%; }
+
+/* Controls row below the composer */
+.meo-chat-controls { display: flex; justify-content: space-between; align-items: center; width: min(850px, calc(100% - 36px)); margin: 4px auto 0; gap: 8px; flex-wrap: wrap; }
+.meo-chat-controls-left, .meo-chat-controls-right { display: flex; align-items: center; gap: 6px; }
+.meo-chat-ctrl-chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px 3px 7px; border: 1px solid transparent; border-radius: 20px; background: transparent; color: rgb(var(--text-secondary)); font-size: 12px; cursor: pointer; transition: background 0.1s, color 0.1s, border-color 0.1s; white-space: nowrap; }
+.meo-chat-ctrl-chip:hover:not(:disabled) { background: rgb(var(--surface-tertiary)); color: rgb(var(--text-primary)); }
+.meo-chat-ctrl-chip.is-on { color: rgb(var(--accent-primary)); border-color: rgb(var(--accent-primary) / 0.3); background: rgb(var(--accent-primary) / 0.07); }
+.meo-chat-ctrl-chip:disabled { opacity: 0.45; cursor: default; }
+.meo-chat-ctrl-chip:focus-visible { outline: 2px solid rgb(var(--accent-primary)); outline-offset: 2px; }
+.meo-chat-ctrl-chip select { border: 0; outline: none; background: transparent; color: inherit; font-size: inherit; font-family: inherit; cursor: pointer; padding-right: 2px; appearance: none; -webkit-appearance: none; }
+
+/* Improved MCP tool permission dialog */
+.meo-chat-mcp-permission { margin: 12px min(calc(50% - 425px + 18px), 18px) 0; padding: 14px 16px; border: 1px solid rgb(var(--accent-primary) / 0.4); border-radius: 16px; background: rgb(var(--surface-secondary)); }
+.meo-chat-mcp-permission-header { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; color: rgb(var(--accent-primary)); }
+.meo-chat-mcp-permission-tool { font-size: 14px; font-weight: 600; color: rgb(var(--text-primary)); font-family: monospace; }
+.meo-chat-mcp-permission-desc { margin: 0 0 10px; font-size: 13px; color: rgb(var(--text-secondary)); line-height: 1.5; }
+.meo-chat-mcp-args { margin-bottom: 12px; }
+.meo-chat-mcp-args summary { font-size: 12px; color: rgb(var(--text-secondary)); cursor: pointer; }
+.meo-chat-mcp-args pre { margin: 8px 0 0; font-size: 12px; background: rgb(var(--surface-tertiary)); border-radius: 8px; padding: 10px 12px; overflow-x: auto; max-height: 160px; }
+.meo-chat-mcp-permission-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.meo-chat-mcp-allow { padding: 6px 14px; border: 0; border-radius: 10px; background: rgb(var(--accent-primary)); color: rgb(var(--surface-primary)); font-size: 13px; font-weight: 500; cursor: pointer; }
+.meo-chat-mcp-allow:hover { opacity: 0.88; }
+.meo-chat-mcp-allow-always { padding: 6px 14px; border: 1px solid rgb(var(--accent-primary) / 0.5); border-radius: 10px; background: transparent; color: rgb(var(--accent-primary)); font-size: 13px; cursor: pointer; }
+.meo-chat-mcp-allow-always:hover { background: rgb(var(--accent-primary) / 0.08); }
+.meo-chat-mcp-deny { padding: 6px 14px; border: 1px solid rgb(var(--border-light)); border-radius: 10px; background: transparent; color: rgb(var(--text-secondary)); font-size: 13px; cursor: pointer; margin-left: auto; }
+.meo-chat-mcp-deny:hover { background: rgb(var(--surface-tertiary)); color: rgb(var(--text-primary)); }

@@ -325,7 +325,11 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
   const [agentWorkspaces, setAgentWorkspaces] = useState<AgentWorkspaceOption[]>([]);
   const [workAgentProjectId, setWorkAgentProjectId] = useState('');
   const [agentProposal, setAgentProposal] = useState<AgentProposal | null>(null);
-  const [mcpAutoEnabled, setMcpAutoEnabled] = useState(true);
+  const [permissionLevel, setPermissionLevel] = useState<'ask' | 'auto' | 'all'>('auto');
+  const [webSearchOn, setWebSearchOn] = useState(true);
+  const [thinkingLevel, setThinkingLevel] = useState<'low' | 'medium' | 'high' | 'max'>('medium');
+  const [subagentsOn, setSubagentsOn] = useState(false);
+  const mcpAutoEnabled = permissionLevel !== 'ask';
   const [mcpPending, setMcpPending] = useState<McpRequest | null>(null);
   const [mcpStatus, setMcpStatus] = useState('');
   const [mcpToolOutput, setMcpToolOutput] = useState('');
@@ -821,6 +825,14 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
     const nextMessages: Message[] = [...messages, { role: 'user', content: prompt }];
     const contextConversationId = activeConversationId || null;
     const requestedWorkProject = selected?.provider === 'gemini' ? null : workAgentProjectId || null;
+    const environment = {
+      client: 'web' as const,
+      thinking: thinkingLevel,
+      webSearch: webSearchOn,
+      subagents: subagentsOn,
+      locale: navigator.language,
+      timezone: (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return ''; } })(),
+    };
     try {
       const prepared = await json<{ consent: MeoConsent }>('/api/meo/chat/prepare', {
         method: 'POST',
@@ -831,7 +843,8 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
           prompt,
           ...(selectedSkillId ? { skillId: selectedSkillId } : {}),
           ...(requestedWorkProject ? { workAgentProjectId: requestedWorkProject } : {}),
-          mcpAuto:mcpAutoEnabled,
+          mcpAuto: mcpAutoEnabled,
+          environment,
         }),
       });
       const consent = prepared.consent;
@@ -854,7 +867,8 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
           prompt,
           ...(selectedSkillId ? { skillId: selectedSkillId } : {}),
           ...(requestedWorkProject ? { workAgentProjectId: requestedWorkProject } : {}),
-          mcpAuto:mcpAutoEnabled,
+          mcpAuto: mcpAutoEnabled,
+          environment,
           consent,
         }),
         signal: abortController.signal,
@@ -1080,11 +1094,6 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
               </option>
             ))}
           </select>
-          <label className="meo-chat-mcp-toggle" title="Agent can request account-approved tools. Unapproved tools require your permission.">
-            <input type="checkbox" checked={mcpAutoEnabled} disabled={busy}
-              onChange={(event)=>setMcpAutoEnabled(event.target.checked)} />
-            Auto tools
-          </label>
           <button type="button" className="meo-chat-export"
             onClick={exportVisibleChat} disabled={busy || messages.length === 0}
             title={t('meo_web_export_visible')}>
@@ -1193,16 +1202,28 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
             <pre>{mcpToolOutput}</pre></details>}
         </div>}
         {mcpPending && !busy && (
-          <div className="meo-chat-mcp-permission" role="group" aria-label="MCP tool authorization">
-            <strong>{mcpPending.toolName}</strong>
-            <p>Meo AI wants to use this tool to answer the current request. Review the arguments before allowing it.</p>
-            <details><summary>View tool parameters</summary>
-              <pre>{JSON.stringify(mcpPending.arguments,null,2)}</pre></details>
-            <div className="meo-chat-agent-proposal-actions">
-              <button type="button" onClick={()=>void respondToMcpPermission('once')}>Allow once</button>
-              {mcpPending.canAlwaysAllow && <button type="button"
-                onClick={()=>void respondToMcpPermission('always')}>Always allow this read-only tool</button>}
-              <button type="button" onClick={()=>void respondToMcpPermission('deny')}>Don't allow</button>
+          <div className="meo-chat-mcp-permission" role="group" aria-labelledby="mcp-perm-title">
+            <div className="meo-chat-mcp-permission-header">
+              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+              <span id="mcp-perm-title" className="meo-chat-mcp-permission-tool">{mcpPending.toolName}</span>
+            </div>
+            <p className="meo-chat-mcp-permission-desc">{t('meo_mcp_permission_desc')}</p>
+            <details className="meo-chat-mcp-args">
+              <summary>{t('meo_mcp_view_args')}</summary>
+              <pre>{JSON.stringify(mcpPending.arguments, null, 2)}</pre>
+            </details>
+            <div className="meo-chat-mcp-permission-actions">
+              <button type="button" className="meo-chat-mcp-allow" onClick={() => void respondToMcpPermission('once')}>
+                {t('meo_mcp_allow_once')}
+              </button>
+              {mcpPending.canAlwaysAllow && (
+                <button type="button" className="meo-chat-mcp-allow-always" onClick={() => void respondToMcpPermission('always')}>
+                  {t('meo_mcp_allow_always')}
+                </button>
+              )}
+              <button type="button" className="meo-chat-mcp-deny" onClick={() => void respondToMcpPermission('deny')}>
+                {t('meo_mcp_deny')}
+              </button>
             </div>
           </div>
         )}
@@ -1319,6 +1340,51 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
         )}
         </div>
       </form>
+      <div className="meo-chat-controls" aria-label={t('meo_ctrl_label')}>
+        <div className="meo-chat-controls-left">
+          <label className="meo-chat-ctrl-chip" title={t('meo_ctrl_permission_hint')}>
+            <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            <select value={permissionLevel} disabled={busy}
+              onChange={(e) => setPermissionLevel(e.target.value as 'ask' | 'auto' | 'all')}
+              aria-label={t('meo_ctrl_permission')}>
+              <option value="ask">{t('meo_ctrl_perm_ask')}</option>
+              <option value="auto">{t('meo_ctrl_perm_auto')}</option>
+              <option value="all">{t('meo_ctrl_perm_all')}</option>
+            </select>
+          </label>
+          <button type="button"
+            className={`meo-chat-ctrl-chip ${webSearchOn ? 'is-on' : ''}`}
+            onClick={() => setWebSearchOn((v) => !v)}
+            disabled={busy}
+            aria-pressed={webSearchOn}
+            title={t('meo_ctrl_search_hint')}>
+            <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/></svg>
+            {t('meo_ctrl_search')}
+          </button>
+        </div>
+        <div className="meo-chat-controls-right">
+          <label className="meo-chat-ctrl-chip" title={t('meo_ctrl_thinking_hint')}>
+            <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><circle cx="12" cy="17" r=".5" fill="currentColor"/><circle cx="12" cy="12" r="10"/></svg>
+            <select value={thinkingLevel} disabled={busy}
+              onChange={(e) => setThinkingLevel(e.target.value as 'low' | 'medium' | 'high' | 'max')}
+              aria-label={t('meo_ctrl_thinking')}>
+              <option value="low">{t('meo_ctrl_thinking_low')}</option>
+              <option value="medium">{t('meo_ctrl_thinking_medium')}</option>
+              <option value="high">{t('meo_ctrl_thinking_high')}</option>
+              <option value="max">{t('meo_ctrl_thinking_max')}</option>
+            </select>
+          </label>
+          <button type="button"
+            className={`meo-chat-ctrl-chip ${subagentsOn ? 'is-on' : ''}`}
+            onClick={() => setSubagentsOn((v) => !v)}
+            disabled={busy}
+            aria-pressed={subagentsOn}
+            title={t('meo_ctrl_subagents_hint')}>
+            <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="8" r="4"/><path d="M6 20v-2a6 6 0 0 1 12 0v2"/><path d="M18 12a3 3 0 0 1 3 3v1"/><path d="M6 12a3 3 0 0 0-3 3v1"/></svg>
+            {t('meo_ctrl_subagents')}
+          </button>
+        </div>
+      </div>
       <p className="meo-chat-composer-hint" id="meo-chat-input-hint">
         {t(preferences.general.enter_to_send ? 'meo_web_enter_to_send_hint' : 'meo_web_ctrl_enter_to_send_hint')}
       </p>
