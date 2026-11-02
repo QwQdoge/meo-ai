@@ -11,6 +11,7 @@ import {
 import type { BrowserPreferences } from "./browserPreferences";
 import MemorySettings from "./MemorySettings";
 import PluginLibrary from "./PluginLibrary";
+import RemoteHostSettings from "./RemoteHostSettings";
 import { settingsRequest } from "./settingsClient";
 import "./SettingsCenter.css";
 
@@ -360,10 +361,11 @@ export default function SettingsCenter({
             </div>
           )}
           {section === "connectors" && <PluginLibrary />}
-          {["devices", "usage"].includes(section) && (
+          {section === "devices" && <RemoteHostSettings />}
+          {section === "usage" && (
             <div className="empty-state">
               <h3>{t("meo.settings.serviceUnavailable")}</h3>
-              <p>{t(`meo.settings.${section}.unavailable`)}</p>
+              <p>{t("meo.settings.usage.unavailable")}</p>
             </div>
           )}
           {section === "general" && (

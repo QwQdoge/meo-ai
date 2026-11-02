@@ -352,3 +352,16 @@
 .meo-inspector-row dt { color: rgb(var(--text-secondary)); white-space: nowrap; }
 .meo-inspector-row dd { margin: 0; font-weight: 500; text-align: end; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60%; }
 
+/* Remote host indicator in sidebar */
+button.meo-desktop-remote-indicator {
+  cursor: pointer;
+  border: none;
+  text-align: left;
+  width: 100%;
+  color: rgb(var(--accent-primary));
+  border-radius: 10px;
+  background: rgb(var(--accent-primary) / 0.07);
+  transition: background 0.15s;
+}
+button.meo-desktop-remote-indicator:hover { background: rgb(var(--accent-primary) / 0.14); }
+

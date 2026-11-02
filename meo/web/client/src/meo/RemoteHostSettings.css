@@ -1,0 +1,215 @@
+.meo-remote-host-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.meo-remote-host-section-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.meo-remote-host-section-header h3 {
+  margin: 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: rgb(var(--text-primary));
+}
+
+.meo-remote-host-section-header p {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: rgb(var(--text-secondary));
+  line-height: 1.4;
+}
+
+.meo-remote-host-empty {
+  padding: 20px 16px;
+  text-align: center;
+  color: rgb(var(--text-secondary));
+  font-size: 0.8125rem;
+  background: rgb(var(--surface-raised));
+  border-radius: 8px;
+  border: 1px dashed rgb(var(--border-subtle));
+}
+
+.meo-remote-host-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.meo-remote-host-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: rgb(var(--surface-raised));
+  border: 1px solid rgb(var(--border-subtle));
+  border-radius: 8px;
+  transition: border-color 0.15s;
+}
+
+.meo-remote-host-card.is-active {
+  border-color: rgb(var(--accent-primary) / 0.6);
+  background: rgb(var(--accent-primary) / 0.05);
+}
+
+.meo-remote-host-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.meo-remote-host-name {
+  flex: 1;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: rgb(var(--text-primary));
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meo-remote-host-url {
+  font-size: 0.75rem;
+  color: rgb(var(--text-secondary));
+  font-family: var(--font-mono, monospace);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 260px;
+}
+
+.meo-remote-host-in-use {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: rgb(var(--accent-primary) / 0.15);
+  color: rgb(var(--accent-primary));
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.meo-remote-host-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.meo-remote-host-actions button {
+  padding: 4px 10px;
+  border: 1px solid rgb(var(--border-subtle));
+  border-radius: 6px;
+  background: transparent;
+  color: rgb(var(--text-secondary));
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+  white-space: nowrap;
+}
+
+.meo-remote-host-actions button:hover {
+  background: rgb(var(--surface-hover));
+  color: rgb(var(--text-primary));
+  border-color: rgb(var(--border-default));
+}
+
+.meo-remote-host-actions button.is-primary {
+  background: rgb(var(--accent-primary));
+  color: #fff;
+  border-color: transparent;
+}
+
+.meo-remote-host-actions button.is-primary:hover {
+  background: rgb(var(--accent-primary) / 0.85);
+}
+
+.meo-remote-host-actions button.is-danger:hover {
+  background: rgb(var(--error-bg, 255 59 48) / 0.1);
+  color: rgb(var(--error, 220 38 38));
+  border-color: rgb(var(--error, 220 38 38) / 0.3);
+}
+
+.meo-remote-host-test-ok {
+  font-size: 0.75rem;
+  color: rgb(34 197 94);
+  font-weight: 500;
+}
+
+.meo-remote-host-test-fail {
+  font-size: 0.75rem;
+  color: rgb(239 68 68);
+  font-weight: 500;
+}
+
+.meo-remote-host-edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.meo-remote-host-edit-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 0.75rem;
+  color: rgb(var(--text-secondary));
+}
+
+.meo-remote-host-edit-form input {
+  padding: 6px 10px;
+  border: 1px solid rgb(var(--border-default));
+  border-radius: 6px;
+  background: rgb(var(--surface-base));
+  color: rgb(var(--text-primary));
+  font-size: 0.8125rem;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.meo-remote-host-edit-form input:focus {
+  border-color: rgb(var(--accent-primary));
+}
+
+.meo-remote-host-edit-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.meo-remote-host-add-section {
+  padding: 12px;
+  border: 1px dashed rgb(var(--border-subtle));
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.meo-remote-host-add-trigger {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border: 1px dashed rgb(var(--border-subtle));
+  border-radius: 8px;
+  background: transparent;
+  color: rgb(var(--text-secondary));
+  font-size: 0.8125rem;
+  cursor: pointer;
+  width: 100%;
+  transition: background 0.1s, color 0.1s;
+}
+
+.meo-remote-host-add-trigger:hover {
+  background: rgb(var(--surface-hover));
+  color: rgb(var(--text-primary));
+}

@@ -6,6 +6,12 @@ import { useNavigate } from "react-router-dom";
 import { useMeoSession } from "./session";
 import MeoChat from "./MeoChat";
 import type { ChatResponseDetails } from "./MeoChat";
+import {
+  readRemoteHosts,
+  readActiveRemoteHostId,
+  setActiveRemoteHostId,
+  type RemoteHost,
+} from "./remoteHosts";
 const SettingsCenter = lazy(() => import("./SettingsCenter"));
 const PluginLibrary = lazy(() => import("./PluginLibrary"));
 const WorkSurface = lazy(() => import("./WorkSurface"));
@@ -122,6 +128,12 @@ export default function MeoDesktopApp() {
   );
   const [mobileOpen, setMobileOpen] = useState(false);
   const sidebarRef = useRef<HTMLElement>(null);
+  const [remoteHosts, setRemoteHosts] = useState<RemoteHost[]>(readRemoteHosts);
+  const [activeRemoteHostId, setActiveRemoteHostIdState] = useState<string>(readActiveRemoteHostId);
+  const activeRemoteHost = useMemo(
+    () => remoteHosts.find((h) => h.id === activeRemoteHostId) ?? null,
+    [remoteHosts, activeRemoteHostId],
+  );
   useEffect(() => {
     const media = window.matchMedia("(max-width: 759px)");
     const update = () => {
@@ -130,6 +142,15 @@ export default function MeoDesktopApp() {
     };
     media.addEventListener("change", update);
     return () => media.removeEventListener("change", update);
+  }, []);
+
+  useEffect(() => {
+    const sync = () => {
+      setRemoteHosts(readRemoteHosts());
+      setActiveRemoteHostIdState(readActiveRemoteHostId());
+    };
+    window.addEventListener("meo:remote-hosts-changed", sync);
+    return () => window.removeEventListener("meo:remote-hosts-changed", sync);
   }, []);
   useEffect(() => {
     if (!compact || !mobileOpen) return;
@@ -308,6 +329,22 @@ export default function MeoDesktopApp() {
           </div>
           <i aria-label="Connected" />
         </div>
+
+        {activeRemoteHost && (
+          <button
+            type="button"
+            className="meo-desktop-device-card meo-desktop-remote-indicator"
+            title={t("meo.remote.host.activeTitle", { defaultValue: "Active remote host — click to disconnect" })}
+            onClick={() => setActiveRemoteHostId("")}
+          >
+            <Icon name="computer" />
+            <div>
+              <strong>{activeRemoteHost.name || t("meo.remote.host.unnamed", { defaultValue: "Remote host" })}</strong>
+              <span>{activeRemoteHost.url.replace(/^https?:\/\//, "")}</span>
+            </div>
+            <i aria-label={t("meo.remote.host.active", { defaultValue: "Active" })} style={{ background: "rgb(var(--accent-primary))" }} />
+          </button>
+        )}
       </aside>
 
       {compact && mobileOpen && (
@@ -398,6 +435,7 @@ export default function MeoDesktopApp() {
                 setLastResponseDetails(details);
                 setInspectorOpen(true);
               }}
+              remoteHost={activeRemoteHost}
             />
           </div>
           <Suspense fallback={

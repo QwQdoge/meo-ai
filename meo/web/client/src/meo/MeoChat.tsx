@@ -1,4 +1,5 @@
 import './MeoChat.css';
+import type { RemoteHost } from './remoteHosts';
 import { useBrowserPreferences } from './browserPreferences';
 import { FormEvent, isValidElement, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
@@ -126,8 +127,8 @@ async function json<T>(url: string, init?: RequestInit): Promise<T> {
   if (init?.body != null && !headers.has('Content-Type'))
     headers.set('Content-Type', 'application/json');
   const response = await fetch(url, {
-    ...init,
     credentials: 'same-origin',
+    ...init,
     headers,
   });
   const value = await response.json().catch(() => ({}));
@@ -288,9 +289,10 @@ type MeoChatProps = {
   onDelegateToWork: (text: string, conversationId: string, projectId?: string) => void;
   onResponseDetails?: (details: ChatResponseDetails) => void;
   active: boolean;
+  remoteHost?: RemoteHost | null;
 };
 
-export default function MeoChat({ historyTarget, newChatRequest, searchRequest, onBusyChange, onSelectConversation, onDelegateToWork, onResponseDetails, active }: MeoChatProps) {
+export default function MeoChat({ historyTarget, newChatRequest, searchRequest, onBusyChange, onSelectConversation, onDelegateToWork, onResponseDetails, active, remoteHost }: MeoChatProps) {
   const preferences = useBrowserPreferences();
   const { t } = useTranslation();
   const { user } = useMeoSession();
@@ -347,7 +349,7 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
   const visibleRange = transcriptWindow(messages.length, visibleCount);
   const pendingOlderScrollRef = useRef<{ height: number; top: number } | null>(null);
   const [busy, setBusy] = useState(false);
-  const [requestPhase, setRequestPhase] = useState<'idle' | 'preparing' | 'approval' | 'connecting' | 'streaming' | 'saving'>('idle');
+  const [requestPhase, setRequestPhase] = useState<'idle' | 'preparing' | 'approval' | 'connecting' | 'reconnecting' | 'streaming' | 'saving'>('idle');
   const [streamingActive, setStreamingActive] = useState(false);
   const [stopNotice, setStopNotice] = useState(false);
   const [error, setError] = useState('');
@@ -362,6 +364,26 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
   const consentDecisionRef = useRef<((approved: boolean) => void) | null>(null);
   const filteredHistory = useMemo(() => history.filter((item) => item.title.toLocaleLowerCase().includes(historyQuery.trim().toLocaleLowerCase())), [history, historyQuery]);
   const groupedHistory = useMemo(() => groupHistoryByDate(filteredHistory), [filteredHistory]);
+
+  // Route API requests to the active remote host when one is set.
+  const api = useCallback(
+    (path: string) => remoteHost ? `${remoteHost.url}/api/meo${path}` : `/api/meo${path}`,
+    [remoteHost],
+  );
+  const apiInit = useCallback(
+    (extra?: RequestInit): RequestInit =>
+      remoteHost
+        ? {
+            ...extra,
+            credentials: 'omit',
+            headers: new Headers({
+              ...(extra?.headers ? Object.fromEntries(new Headers(extra.headers)) : {}),
+              ...(remoteHost.token ? { Authorization: `Bearer ${remoteHost.token}` } : {}),
+            }),
+          }
+        : (extra ?? {}),
+    [remoteHost],
+  );
 
   useEffect(() => onBusyChange(busy), [busy, onBusyChange]);
 
@@ -454,7 +476,7 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
   useEffect(() => {
     if (!active) return;
     let live = true;
-    json<{ plugins: SkillPlugin[] }>('/api/meo/ai/plugins')
+    json<{ plugins: SkillPlugin[] }>(api('/ai/plugins'), apiInit())
       .then(({ plugins }) => {
         if (!live) return;
         const enabled = (plugins || []).filter((plugin) => plugin.enabled);
@@ -466,12 +488,13 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
       })
       .catch(() => { if (live) setSkillPlugins([]); });
     return () => { live = false; };
-  }, [active]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, remoteHost?.id]);
 
   useEffect(() => {
     if (!active || !user?.id) return;
     let live = true;
-    json<{ workspaces: AgentWorkspaceOption[] }>('/api/meo/workspaces')
+    json<{ workspaces: AgentWorkspaceOption[] }>(api('/workspaces'), apiInit())
       .then(({ workspaces }) => {
         if (!live) return;
         const values = (workspaces || []).filter((item) => item.capabilities?.includes('agent.chat'));
@@ -482,12 +505,13 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
       })
       .catch(() => { if (live) { setAgentWorkspaces([]); setWorkAgentProjectId(''); } });
     return () => { live = false; };
-  }, [active, user?.id]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, user?.id, remoteHost?.id]);
 
   useEffect(() => {
     let active = true;
     setLoading(true);
-    json<{ credentials: Connection[] }>('/api/meo/connections')
+    json<{ credentials: Connection[] }>(api('/connections'), apiInit())
       .then(({ credentials: result }) => {
         if (!active) return;
         setConnections(result);
@@ -512,14 +536,23 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
     return () => {
       active = false;
     };
-  }, [requestedConnection, requestedModel, t, updateDeepLink]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestedConnection, requestedModel, t, updateDeepLink, remoteHost?.id]);
+
+  // Reset conversation state when the remote host changes so we load fresh data.
+  useEffect(() => {
+    setHistory([]);
+    setActiveConversationId('');
+    setMessages([]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [remoteHost?.id]);
 
   useEffect(() => {
     let active = true;
     historyGenerationRef.current += 1;
     setLoadingMore(false);
     setHistoryLoading(true);
-    json<{ conversations: ApiConversation[]; nextCursor: string | null }>('/api/meo/conversations')
+    json<{ conversations: ApiConversation[]; nextCursor: string | null }>(api('/conversations'), apiInit())
       .then(({ conversations: result, nextCursor }) => {
         if (!active) return;
         const normalized = result.map(normalizeConversation);
@@ -534,7 +567,8 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
     return () => {
       active = false;
     };
-  }, [selectedConversationKey]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedConversationKey, remoteHost?.id]);
 
   useEffect(() => {
     if (!credentialId) {
@@ -545,7 +579,8 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
     let active = true;
     setModelDiscovery('idle');
     json<{ supported: boolean; models: Model[] }>(
-      `/api/meo/connections/${encodeURIComponent(credentialId)}/models`,
+      api(`/connections/${encodeURIComponent(credentialId)}/models`),
+      apiInit(),
     )
       .then((result) => {
         if (!active) return;
@@ -587,7 +622,8 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
     }
     setMessages([]);
     json<{ messages: ApiMessage[] }>(
-      `/api/meo/conversations/${encodeURIComponent(activeConversationId)}/messages`,
+      api(`/conversations/${encodeURIComponent(activeConversationId)}/messages`),
+      apiInit(),
     )
       .then(({ messages: result }) => {
         if (!active) return;
@@ -678,7 +714,8 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
     setLoadingMore(true);
     try {
       const page = await json<{ conversations: ApiConversation[]; nextCursor: string | null }>(
-        `/api/meo/conversations?cursor=${encodeURIComponent(historyCursor)}`,
+        api(`/conversations?cursor=${encodeURIComponent(historyCursor)}`),
+        apiInit(),
       );
       if (generation !== historyGenerationRef.current) return;
       const normalized = page.conversations.map(normalizeConversation);
@@ -715,8 +752,8 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
       mcpContinuation: true, mcpAuto: false,
       ...(selectedSkillId ? { skillId: selectedSkillId } : {}),
     };
-    const prepared = await json<{ consent: MeoConsent }>('/api/meo/chat/prepare', {
-      method: 'POST', body: JSON.stringify(body),
+    const prepared = await json<{ consent: MeoConsent }>(api('/chat/prepare'), {
+      method: 'POST', body: JSON.stringify(body), ...apiInit(),
     });
     setRequestPhase('approval');
     if (!await requestConsent(prepared.consent)) {
@@ -727,14 +764,28 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
     const controller = new AbortController();
     streamAbortRef.current = controller;
     setStreamingActive(true);
-    const response = await fetch('/api/meo/chat/stream', {
-      method: 'POST', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-      body: JSON.stringify({ ...body, consent: prepared.consent }), signal: controller.signal,
-    });
-    if (!response.ok || !response.body) {
-      const errorBody = await response.json().catch(() => ({}));
-      throw new Error(requestError(errorBody, response.status));
+    let response: Response | null = null;
+    for (let attempt = 0; attempt <= 3; attempt++) {
+      try {
+        response = await fetch(api('/chat/stream'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+          body: JSON.stringify({ ...body, consent: prepared.consent }),
+          signal: controller.signal,
+          ...apiInit(),
+        });
+        break;
+      } catch (err) {
+        if (err instanceof DOMException && err.name === 'AbortError') throw err;
+        if (attempt === 3) throw err;
+        setRequestPhase('reconnecting');
+        await new Promise((resolve) => window.setTimeout(resolve, 1000 * Math.pow(2, attempt)));
+        setRequestPhase('connecting');
+      }
+    }
+    if (!response || !response.ok || !response.body) {
+      const errorBody = await response?.json().catch(() => ({}));
+      throw new Error(requestError(errorBody, response?.status ?? 0));
     }
     setRequestPhase('streaming');
     setMessages((current) => [...current, { role:'assistant', content:'' }]);
@@ -766,8 +817,8 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
       }
       if(!done)throw Error('The tool follow-up did not complete.');
       setMcpStatus('The AI used the approved MCP tool and completed its response.');
-      if(finalAnswer)await json('/api/meo/conversations/'+encodeURIComponent(request.conversationId)+'/messages',{
-        method:'POST',body:JSON.stringify({role:'assistant',content:finalAnswer}),
+      if(finalAnswer)await json(api('/conversations/'+encodeURIComponent(request.conversationId)+'/messages'),{
+        method:'POST',body:JSON.stringify({role:'assistant',content:finalAnswer}),...apiInit(),
       });
     } finally {
       streamAbortRef.current=null;
@@ -780,26 +831,26 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
     setMcpStatus('Using ' + request.toolName + '…');
     setMcpPending(null);
     if(approval==='always') {
-      await json('/api/meo/ai/plugins/grants',{
+      await json(api('/ai/plugins/grants'),{
         method:'PUT',
-        body:JSON.stringify({pluginId:request.pluginId,toolName:request.toolName,mode:'always'}),
+        body:JSON.stringify({pluginId:request.pluginId,toolName:request.toolName,mode:'always'}),...apiInit(),
       });
     }
     let data: McpCallResult;
     if(approval==='once') {
-      const prepared=await json<{approval:{approvalId:string}}>('/api/meo/ai/plugins/'+request.pluginId+'/tools/prepare',{
-        method:'POST',body:JSON.stringify({name:request.toolName,arguments:request.arguments}),
+      const prepared=await json<{approval:{approvalId:string}}>(api('/ai/plugins/'+request.pluginId+'/tools/prepare'),{
+        method:'POST',body:JSON.stringify({name:request.toolName,arguments:request.arguments}),...apiInit(),
       });
-      data=await json<McpCallResult>('/api/meo/ai/plugins/'+request.pluginId+'/tools/call',{
+      data=await json<McpCallResult>(api('/ai/plugins/'+request.pluginId+'/tools/call'),{
         method:'POST',body:JSON.stringify({
           name:request.toolName,arguments:request.arguments,approvalId:prepared.approval.approvalId,
-        }),
+        }),...apiInit(),
       });
     } else {
-      data=await json<McpCallResult>('/api/meo/ai/plugins/'+request.pluginId+'/tools/auto',{
+      data=await json<McpCallResult>(api('/ai/plugins/'+request.pluginId+'/tools/auto'),{
         method:'POST',body:JSON.stringify({
           name:request.toolName,arguments:request.arguments,requestId:crypto.randomUUID(),
-        }),
+        }),...apiInit(),
       });
     }
     await continueAfterMcp(request,data);
@@ -842,7 +893,7 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
       timezone: (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return ''; } })(),
     };
     try {
-      const prepared = await json<{ consent: MeoConsent }>('/api/meo/chat/prepare', {
+      const prepared = await json<{ consent: MeoConsent }>(api('/chat/prepare'), {
         method: 'POST',
         body: JSON.stringify({
           credentialId,
@@ -854,6 +905,7 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
           mcpAuto: mcpAutoEnabled,
           environment,
         }),
+        ...apiInit(),
       });
       const consent = prepared.consent;
       setRequestPhase('approval');
@@ -864,33 +916,47 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
       const abortController = new AbortController();
       streamAbortRef.current = abortController;
       setStreamingActive(true);
-      const response = await fetch('/api/meo/chat/stream', {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-        body: JSON.stringify({
-          credentialId,
-          model: model.trim(),
-          conversationId: contextConversationId,
-          prompt,
-          ...(selectedSkillId ? { skillId: selectedSkillId } : {}),
-          ...(requestedWorkProject ? { workAgentProjectId: requestedWorkProject } : {}),
-          mcpAuto: mcpAutoEnabled,
-          environment,
-          consent,
-        }),
-        signal: abortController.signal,
+      const streamBody = JSON.stringify({
+        credentialId,
+        model: model.trim(),
+        conversationId: contextConversationId,
+        prompt,
+        ...(selectedSkillId ? { skillId: selectedSkillId } : {}),
+        ...(requestedWorkProject ? { workAgentProjectId: requestedWorkProject } : {}),
+        mcpAuto: mcpAutoEnabled,
+        environment,
+        consent,
       });
-      if (!response.ok || !response.body) {
-        const body = await response.json().catch(() => ({}));
-        throw new Error(requestError(body, response.status));
+      let response: Response | null = null;
+      for (let attempt = 0; attempt <= 3; attempt++) {
+        try {
+          response = await fetch(api('/chat/stream'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+            body: streamBody,
+            signal: abortController.signal,
+            ...apiInit(),
+          });
+          break;
+        } catch (err) {
+          if (err instanceof DOMException && err.name === 'AbortError') throw err;
+          if (attempt === 3) throw err;
+          setRequestPhase('reconnecting');
+          await new Promise((resolve) => window.setTimeout(resolve, 1000 * Math.pow(2, attempt)));
+          setRequestPhase('connecting');
+        }
+      }
+      if (!response || !response.ok || !response.body) {
+        const errBody = await response?.json().catch(() => ({}));
+        throw new Error(requestError(errBody, response?.status ?? 0));
       }
 
       let conversationId = activeConversationId;
       if (!conversationId) {
-        const created = await json<{ conversation: ApiConversation }>('/api/meo/conversations', {
+        const created = await json<{ conversation: ApiConversation }>(api('/conversations'), {
           method: 'POST',
           body: JSON.stringify({ title: prompt.slice(0, 80) }),
+          ...apiInit(),
         });
         const normalized = normalizeConversation(created.conversation);
         conversationId = normalized.id;
@@ -899,9 +965,10 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
         setActiveConversationId(conversationId);
       }
 
-      await json(`/api/meo/conversations/${encodeURIComponent(conversationId)}/messages`, {
+      await json(api(`/conversations/${encodeURIComponent(conversationId)}/messages`), {
         method: 'POST',
         body: JSON.stringify({ role: 'user', content: prompt }),
+        ...apiInit(),
       });
       setMessages(nextMessages);
       setDraft('');
@@ -977,9 +1044,10 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
       }
       setRequestPhase('saving');
       if (assistantText) {
-        await json(`/api/meo/conversations/${encodeURIComponent(conversationId)}/messages`, {
+        await json(api(`/conversations/${encodeURIComponent(conversationId)}/messages`), {
           method: 'POST',
           body: JSON.stringify({ role: 'assistant', content: assistantText }),
+          ...apiInit(),
         });
       }
       if (mcpProposal && mcpAutoEnabled) {
@@ -993,7 +1061,7 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
             // this exact tool as an eligible read-only capability.
             try {
               const available = await json<{tools:Array<{name:string;canAlwaysAllow?:boolean}>}>(
-                '/api/meo/ai/plugins/'+toolRequest.pluginId+'/tools');
+                api('/ai/plugins/'+toolRequest.pluginId+'/tools'), apiInit());
               toolRequest.canAlwaysAllow = available.tools.some(
                 (tool)=>tool.name===toolRequest.toolName&&tool.canAlwaysAllow===true);
               setMcpPending(toolRequest);
