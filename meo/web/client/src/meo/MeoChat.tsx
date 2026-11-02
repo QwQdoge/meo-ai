@@ -1,3 +1,4 @@
+import './MeoChat.css';
 import { useBrowserPreferences } from './browserPreferences';
 import { FormEvent, isValidElement, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
