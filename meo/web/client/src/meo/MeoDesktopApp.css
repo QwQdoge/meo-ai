@@ -302,7 +302,10 @@
 .meo-chat-history-search:focus-within { outline: 2px solid rgb(var(--accent-primary)); outline-offset: 1px; }
 .meo-chat-history-search input { min-width: 0; width: 100%; border: 0; outline: none; background: transparent; color: rgb(var(--text-primary)); font-size: 13px; }
 .meo-chat-history-search input:focus-visible { outline: none; }
-.meo-chat-history-items { display: flex; flex-direction: column; gap: 2px; min-height: 0; overflow-y: auto; padding-right: 3px; scrollbar-width: thin; }
+.meo-chat-history-items { display: flex; flex-direction: column; gap: 0; min-height: 0; overflow-y: auto; padding-right: 3px; scrollbar-width: thin; }
+.meo-chat-history-group { display: flex; flex-direction: column; gap: 2px; }
+.meo-chat-history-group + .meo-chat-history-group { margin-top: 10px; }
+.meo-chat-history-group-label { padding: 2px 11px 4px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: rgb(var(--text-secondary)); }
 .meo-chat-history-item { display: block; width: 100%; min-height: 36px; flex-shrink: 0; padding: 8px 11px; border: 0; border-radius: 11px; background: transparent; color: rgb(var(--text-primary)); font-size: 13px; text-align: left; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; cursor: pointer; }
 .meo-chat-history-item:hover, .meo-chat-history-item.is-active { background: rgb(var(--surface-tertiary)); }
 .meo-chat-history-item.is-active { font-weight: 600; }
@@ -338,9 +341,12 @@
 .meo-chat-message-assistant ol { list-style: decimal; }
 .meo-chat-message-assistant a { text-decoration: underline; color: rgb(var(--accent-primary)); }
 .meo-chat-streaming-indicator { display: inline-block; color: rgb(var(--text-secondary)); font-size: 13px; }
-.meo-chat-composer { display: flex; align-items: flex-end; gap: 10px; width: min(850px, calc(100% - 36px)); margin: 10px auto 22px; padding: 9px 10px 9px 18px; min-height: 64px; border: 1px solid rgb(var(--border-light)); border-radius: 27px; background: rgb(var(--surface-secondary)); box-shadow: 0 4px 18px rgba(0,0,0,.035); }
+.meo-chat-composer { display: flex; flex-direction: column; align-items: stretch; gap: 0; width: min(850px, calc(100% - 36px)); margin: 10px auto 22px; padding: 4px 10px 9px 18px; min-height: 64px; border: 1px solid rgb(var(--border-light)); border-radius: 27px; background: rgb(var(--surface-secondary)); box-shadow: 0 4px 18px rgba(0,0,0,.035); }
 .meo-chat-composer:focus-within { border-color: rgb(var(--accent-primary)); }
-.meo-chat-textarea { display: block; flex: 1; min-width: 0; min-height: 43px; max-height: 180px; padding: 11px 0; resize: vertical; background: transparent; border: 0; outline: 0; color: rgb(var(--text-primary)); font-size: 15px; line-height: 1.45; }
+.meo-chat-composer-resize { align-self: center; width: 32px; height: 4px; border-radius: 2px; margin: 0 auto 6px; background: rgb(var(--border-light)); cursor: ns-resize; flex-shrink: 0; opacity: 0; transition: opacity 0.15s; }
+.meo-chat-composer:hover .meo-chat-composer-resize { opacity: 1; }
+.meo-chat-composer-row { display: flex; align-items: flex-end; gap: 10px; }
+.meo-chat-textarea { display: block; flex: 1; min-width: 0; min-height: 43px; padding: 11px 0; resize: none; background: transparent; border: 0; outline: 0; color: rgb(var(--text-primary)); font-size: 15px; line-height: 1.45; }
 .meo-chat-textarea:focus-visible { outline: none; }
 .meo-chat-textarea::placeholder { color: rgb(var(--text-secondary)); }
 .meo-chat-send { display: grid; place-items: center; flex: 0 0 42px; width: 42px; height: 42px; border: 0; border-radius: 50%; color: rgb(var(--surface-primary)); background: rgb(var(--accent-primary)); }
@@ -624,7 +630,6 @@
   box-sizing: border-box;
   resize: none;
   min-height: 43px;
-  max-height: 180px;
 }
 .meo-chat-composer-hint {
   flex-shrink: 0;

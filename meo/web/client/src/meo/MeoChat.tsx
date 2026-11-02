@@ -67,6 +67,29 @@ function normalizeConversation(value: ApiConversation): Conversation {
   };
 }
 
+type HistoryGroup = { key: string; labelKey: string; items: Conversation[] };
+function groupHistoryByDate(items: Conversation[]): HistoryGroup[] {
+  const now = Date.now();
+  const startOfToday = (() => { const d = new Date(); d.setHours(0,0,0,0); return d.getTime(); })();
+  const msDay = 86400000;
+  const groups: Record<string, Conversation[]> = { today: [], yesterday: [], week: [], month: [], older: [] };
+  for (const conv of items) {
+    const t = new Date(conv.updatedAt || conv.createdAt || now).getTime();
+    if (t >= startOfToday) groups.today.push(conv);
+    else if (t >= startOfToday - msDay) groups.yesterday.push(conv);
+    else if (t >= startOfToday - 6 * msDay) groups.week.push(conv);
+    else if (t >= startOfToday - 29 * msDay) groups.month.push(conv);
+    else groups.older.push(conv);
+  }
+  return [
+    { key: 'today', labelKey: 'meo_history_today', items: groups.today },
+    { key: 'yesterday', labelKey: 'meo_history_yesterday', items: groups.yesterday },
+    { key: 'week', labelKey: 'meo_history_week', items: groups.week },
+    { key: 'month', labelKey: 'meo_history_month', items: groups.month },
+    { key: 'older', labelKey: 'meo_history_older', items: groups.older },
+  ].filter((g) => g.items.length > 0);
+}
+
 function messageText(value: ApiMessage): string {
   if (typeof value.text === 'string') return value.text;
   if (typeof value.content === 'string') return value.content;
@@ -284,6 +307,7 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
     writeChatDraft(draftStorage(), user?.id, activeConversationId, text);
   };
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const composerMinHeightRef = useRef(0);
   const historySearchRef = useRef<HTMLInputElement>(null);
   const streamRef = useRef<HTMLElement>(null);
   const followOutputRef = useRef(true);
@@ -336,14 +360,16 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
     return () => window.cancelAnimationFrame(frame);
   }, [historyTarget, searchRequest]);
 
-  // Expand as the user types (including IME/paste) without growing beyond the viewport.
+  // Expand as the user types (including IME/paste) without growing beyond half the viewport.
   useEffect(() => {
     const field = textareaRef.current;
     if (!field) return;
+    const maxH = Math.floor(window.innerHeight * 0.5);
     field.style.height = 'auto';
-    const idealHeight = field.scrollHeight;
-    field.style.height = `${Math.min(Math.max(idealHeight, 43), 180)}px`;
-    field.style.overflowY = idealHeight > 180 ? 'auto' : 'hidden';
+    const idealHeight = Math.max(field.scrollHeight, composerMinHeightRef.current);
+    const clamped = Math.min(Math.max(idealHeight, 43), maxH);
+    field.style.height = `${clamped}px`;
+    field.style.overflowY = idealHeight > maxH ? 'auto' : 'hidden';
   }, [draft]);
 
   // Stream follow only while the user is near the latest message.
@@ -1089,20 +1115,24 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
               aria-keyshortcuts="Control+K Meta+K"
               title={t('meo_web_search_shortcut')} />
           </label>
-          <span className="meo-desktop-section-label">{t('meo_web_recent')}</span>
           <nav aria-label={t('meo_web_history')} className="meo-chat-history-items">
             {historyLoading && <p role="status" className="meo-chat-history-muted">{t('meo_web_loading_more')}</p>}
             {!historyLoading && history.length === 0 && <p className="meo-chat-history-muted">{t('meo_web_no_history')}</p>}
             {!historyLoading && history.length > 0 && filteredHistory.length === 0 && <p className="meo-chat-history-muted">{t('meo_web_no_history_matches')}</p>}
-            {filteredHistory.map((conversation) => (
-              <button key={conversation.id} type="button"
-                className={`meo-chat-history-item ${conversation.id === activeConversationId ? 'is-active' : ''}`}
-                aria-current={conversation.id === activeConversationId ? 'page' : undefined}
-                title={conversation.title || t('meo_web_untitled_chat')}
-                onClick={() => { openConversation(conversation); if (!busy) onSelectConversation(); }}
-                disabled={busy}>
-                {conversation.title || t('meo_web_untitled_chat')}
-              </button>
+            {groupHistoryByDate(filteredHistory).map(({ key, labelKey, items }) => (
+              <div key={key} className="meo-chat-history-group">
+                <span className="meo-chat-history-group-label">{t(labelKey)}</span>
+                {items.map((conversation) => (
+                  <button key={conversation.id} type="button"
+                    className={`meo-chat-history-item ${conversation.id === activeConversationId ? 'is-active' : ''}`}
+                    aria-current={conversation.id === activeConversationId ? 'page' : undefined}
+                    title={conversation.title || t('meo_web_untitled_chat')}
+                    onClick={() => { openConversation(conversation); if (!busy) onSelectConversation(); }}
+                    disabled={busy}>
+                    {conversation.title || t('meo_web_untitled_chat')}
+                  </button>
+                ))}
+              </div>
             ))}
             {historyCursor && <button type="button" className="meo-chat-history-more"
               onClick={loadMoreHistory} disabled={busy || loadingMore}>
@@ -1224,6 +1254,32 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
         onSubmit={submit}
         className="meo-chat-composer"
       >
+        <div
+          className="meo-chat-composer-resize"
+          role="separator"
+          aria-label={t('meo_web_resize_composer')}
+          onPointerDown={(event) => {
+            event.preventDefault();
+            const startY = event.clientY;
+            const field = textareaRef.current;
+            if (!field) return;
+            const startH = field.offsetHeight;
+            const onMove = (e: PointerEvent) => {
+              const maxH = Math.floor(window.innerHeight * 0.5);
+              const newH = Math.min(Math.max(startH + (startY - e.clientY), 43), maxH);
+              composerMinHeightRef.current = newH;
+              field.style.height = `${newH}px`;
+              field.style.overflowY = newH >= maxH ? 'auto' : 'hidden';
+            };
+            const onUp = () => {
+              window.removeEventListener('pointermove', onMove);
+              window.removeEventListener('pointerup', onUp);
+            };
+            window.addEventListener('pointermove', onMove);
+            window.addEventListener('pointerup', onUp);
+          }}
+        />
+        <div className="meo-chat-composer-row">
         <textarea
           ref={textareaRef}
           rows={1}
@@ -1261,6 +1317,7 @@ export default function MeoChat({ historyTarget, newChatRequest, searchRequest, 
           <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 19V5M6 11l6-6 6 6" /></svg>
         </button>
         )}
+        </div>
       </form>
       <p className="meo-chat-composer-hint" id="meo-chat-input-hint">
         {t(preferences.general.enter_to_send ? 'meo_web_enter_to_send_hint' : 'meo_web_ctrl_enter_to_send_hint')}
