@@ -744,124 +744,11 @@
 }
 .meo-chat-delegate-message:hover { background:rgb(var(--surface-tertiary)); color:rgb(var(--text-primary)); }
 
-.meo-work-surface {
-  width:100%; height:100%; min-height:0; overflow-y:auto;
-  padding:28px clamp(16px,4vw,52px) 64px;
-  color:rgb(var(--text-primary)); scrollbar-width:thin;
-}
-.meo-work-heading { display:flex; justify-content:space-between; align-items:start; gap:16px; margin-bottom:22px; }
-.meo-work-heading h1 { margin:0; font-weight:650; font-size:clamp(23px,3vw,31px); letter-spacing:-.02em; }
-.meo-work-heading p { margin:8px 0 0; color:rgb(var(--text-secondary)); font-size:14px; line-height:1.55; }
-.meo-work-heading button, .meo-work-form-actions button, .meo-work-run button {
-  min-height:37px; padding:7px 14px; border:1px solid rgb(var(--border-light));
-  border-radius:12px; background:rgb(var(--surface-secondary));
-  color:rgb(var(--text-primary)); font-size:13px;
-}
-.meo-work-heading button:not(:disabled):hover,
-.meo-work-form-actions button:not(:disabled):hover,
-.meo-work-run button:not(:disabled):hover { background:rgb(var(--surface-tertiary)); }
-.meo-work-heading, .meo-work-grid, .meo-work-form, .meo-work-run,
-.meo-work-surface > .meo-work-note, .meo-work-empty, .meo-work-error { max-width:980px; margin-inline:auto; }
-.meo-work-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,250px),1fr)); gap:13px; }
-.meo-work-card {
-  display:flex; align-items:start; flex-direction:column; gap:9px; min-width:0;
-  padding:19px; border:1px solid rgb(var(--border-light)); border-radius:18px;
-  color:rgb(var(--text-primary)); background:rgb(var(--surface-secondary));
-  text-align:left; cursor:pointer;
-}
-.meo-work-card:hover { background:rgb(var(--surface-tertiary)); }
-.meo-work-card.is-selected { outline:2px solid rgb(var(--accent-primary)); outline-offset:0; }
-.meo-work-card strong { font-size:16px; font-weight:650; overflow-wrap:anywhere; }
-.meo-work-card span { line-height:1.5; color:rgb(var(--text-secondary)); font-size:13px; overflow-wrap:anywhere; }
-.meo-work-card small { color:rgb(var(--text-secondary)); font-size:12px; line-height:1.45; overflow-wrap:anywhere; }
-.meo-work-empty { padding:35px 24px; border:1px dashed rgb(var(--border-light)); border-radius:18px; background:rgb(var(--surface-secondary)); }
-.meo-work-empty strong { font-size:16px; }
-.meo-work-empty p { margin-bottom:0; line-height:1.65; color:rgb(var(--text-secondary)); font-size:14px; }
-.meo-work-note { color:rgb(var(--text-secondary)); font-size:12px; line-height:1.6; margin-top:17px; margin-bottom:23px; }
-.meo-work-form { display:flex; flex-direction:column; gap:12px; padding:21px; border:1px solid rgb(var(--border-light)); border-radius:20px; }
-.meo-work-form label { font-size:14px; font-weight:600; }
-.meo-work-form textarea { width:100%; min-height:135px; max-height:420px; resize:vertical; padding:12px 14px; border:1px solid rgb(var(--border-light)); border-radius:13px; background:rgb(var(--surface-primary)); color:rgb(var(--text-primary)); font-size:14px; line-height:1.6; }
-.meo-work-form textarea:focus-visible { outline:2px solid rgb(var(--accent-primary)); }
-.meo-work-form-actions { display:flex; gap:9px; flex-wrap:wrap; align-items:center; }
-.meo-work-form-actions button[type="submit"] { background:rgb(var(--accent-primary)); color:rgb(var(--surface-primary)); border-color:transparent; font-weight:600; }
-.meo-work-form > p { margin:0; font-size:12px; line-height:1.5; color:rgb(var(--text-secondary)); }
-.meo-work-error { padding:12px 14px; margin-block:12px; border-radius:12px; background:rgb(var(--surface-secondary)); color:rgb(var(--status-error-strong)); font-size:13px; overflow-wrap:anywhere; }
-.meo-work-run { padding:22px; border:1px solid rgb(var(--border-light)); border-radius:18px; margin-top:18px; }
-.meo-work-run-head { display:flex; justify-content:space-between; align-items:center; gap:15px; margin-bottom:12px; font-size:14px; }
-.meo-work-run-head span { color:rgb(var(--text-secondary)); overflow-wrap:anywhere; font-size:12px; }
-.meo-work-output { padding:16px; overflow:auto; max-height:360px; white-space:pre-wrap; overflow-wrap:anywhere; border-radius:12px; background:rgb(var(--surface-secondary)); color:rgb(var(--text-primary)); font-size:13px; line-height:1.6; }
-.meo-work-events { display:flex; flex-direction:column; gap:5px; list-style:disc; padding-left:20px; max-height:260px; overflow:auto; }
-.meo-work-events li { font-size:12px; color:rgb(var(--text-secondary)); overflow-wrap:anywhere; }
-.meo-work-events li span + span { margin-left:8px; color:rgb(var(--text-primary)); }
-.meo-work-run small { display:block; margin-top:14px; color:rgb(var(--text-secondary)); line-height:1.5; }
-
 @media (max-width: 759px) {
   .meo-desktop-header-center { justify-content:center; gap:0; }
   .meo-desktop-header-center .meo-desktop-header-copy { display:none; }
   .meo-desktop-mode-switch button { min-width:63px; padding-inline:11px; }
-  .meo-work-surface { padding:22px 16px 60px; }
-  .meo-work-heading { align-items:start; }
-  .meo-work-heading p { font-size:13px; }
-  .meo-work-form { padding:16px; }
   .meo-chat-delegate-draft { min-height:35px; padding-inline:9px; }
-  .meo-work-approval { padding:12px; }
-  .meo-work-approval-actions { gap:6px; }
-  .meo-work-approval-btn { padding:6px 12px; }
-}
-
-
-.meo-work-approval {
-  display:flex; flex-direction:column; gap:10px;
-  margin:12px 0 18px; padding:18px;
-  border:1px solid rgb(var(--border-light)); border-radius:14px;
-  background:rgb(var(--surface-secondary));
-}
-.meo-work-approval-header { display:flex; align-items:center; gap:8px; }
-.meo-work-approval-header strong { font-size:14px; line-height:1.4; }
-.meo-work-approval-icon { font-size:17px; flex:0 0 auto; }
-.meo-work-approval-tool {
-  display:block; font-family:ui-monospace,'Cascadia Code','Fira Code','Courier New',monospace;
-  font-size:12px; padding:5px 10px; overflow-wrap:anywhere;
-  background:rgb(var(--surface-primary)); border-radius:7px;
-  border:1px solid rgb(var(--border-light));
-}
-.meo-work-approval-desc {
-  font-size:13px; line-height:1.6; color:rgb(var(--text-secondary));
-  white-space:pre-wrap; overflow-wrap:anywhere;
-}
-.meo-work-approval-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:2px; }
-.meo-work-approval-btn {
-  padding:7px 14px; border-radius:8px; font-size:13px; font-weight:500;
-  border:1px solid rgb(var(--border-light)); cursor:pointer; line-height:1.4;
-  background:rgb(var(--surface-primary)); color:rgb(var(--text-primary));
-  transition:opacity 120ms;
-}
-.meo-work-approval-btn--allow {
-  background:rgb(var(--text-primary)); color:rgb(var(--surface-primary));
-  border-color:transparent;
-}
-.meo-work-approval-btn--allow-always { border-color:rgb(var(--text-secondary)); }
-.meo-work-approval-btn--deny { background:transparent; color:rgb(var(--text-secondary)); border-color:transparent; }
-.meo-work-approval-btn:disabled { opacity:0.45; cursor:not-allowed; }
-.meo-work-event-name { font-size:12px; font-weight:500; }
-.meo-work-event-text { font-size:12px; color:rgb(var(--text-secondary)); overflow-wrap:anywhere; }
-.meo-work-controls { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-top:4px; }
-.meo-work-ctrl-chip {
-  display:inline-flex; align-items:center; gap:6px;
-  padding:5px 10px; border-radius:999px; font-size:12px;
-  border:1px solid rgb(var(--border-light));
-  background:rgb(var(--surface-primary));
-}
-.meo-work-ctrl-chip span { color:rgb(var(--text-secondary)); white-space:nowrap; }
-.meo-work-ctrl-chip select {
-  appearance:none; background:transparent; border:none;
-  font-size:12px; font-weight:500; color:rgb(var(--text-primary));
-  cursor:pointer; padding:0; outline:none;
-}
-.meo-work-new-task {
-  display:inline-flex; margin:12px 0 0; min-height:35px;
-  align-items:center; border:1px solid rgb(var(--border-light)); border-radius:11px;
-  padding:7px 13px; background:rgb(var(--surface-secondary)); color:rgb(var(--text-primary)); font-size:12px;
 }
 
 
@@ -953,43 +840,6 @@
   padding: 10px; font-size: 11px;
 }
 .meo-chat-mcp-permission button { cursor: pointer; }
-
-/* Account-owned Work history: read-only selection of durable AgentRun IDs. */
-.meo-work-recent {
-  max-width: 980px;
-  margin: 16px auto 24px;
-  padding: 18px;
-  border: 1px solid rgb(var(--border-light));
-  border-radius: 18px;
-  background: rgb(var(--surface-secondary));
-}
-.meo-work-recent-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
-.meo-work-recent-heading h2 { font-size: 17px; font-weight: 650; margin: 0; }
-.meo-work-recent-heading button {
-  color: rgb(var(--text-primary));
-  background: rgb(var(--surface-primary));
-  border: 1px solid rgb(var(--border-light));
-  border-radius: 10px;
-  padding: 8px 12px;
-}
-.meo-work-recent > p { color: rgb(var(--text-secondary)); font-size: 12px; line-height: 1.65; margin: 10px 0 14px; }
-.meo-work-recent-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr)); gap: 10px; }
-.meo-work-recent-list button {
-  display: grid;
-  text-align: start;
-  gap: 5px;
-  border: 1px solid rgb(var(--border-light));
-  border-radius: 12px;
-  padding: 13px;
-  color: rgb(var(--text-primary));
-  background: rgb(var(--surface-primary));
-  cursor: pointer;
-}
-.meo-work-recent-list button[aria-pressed="true"] { border-color: rgb(var(--accent-primary)); }
-.meo-work-recent-list strong { font-size: 14px; }
-.meo-work-recent-list span, .meo-work-recent-list small { font-size: 12px; color: rgb(var(--text-secondary)); overflow-wrap: anywhere; }
-.meo-work-recent button:disabled { opacity: .5; cursor: default; }
-.meo-work-recent button:focus-visible { outline: 2px solid rgb(var(--accent-primary)); outline-offset: 2px; }
 
 /* Response details panel inside the inspector */
 .meo-inspector-details { padding: 4px 16px 20px; }

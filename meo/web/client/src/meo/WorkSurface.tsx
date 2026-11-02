@@ -1,6 +1,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useMeoSession } from './session';
+import './WorkSurface.css';
 import AgentActivityPanel from './AgentActivityPanel';
 import type { AgentActivityEvent, AgentApproval, AgentTaskNode } from './AgentActivityPanel';
 import { readWorkRun, saveWorkRun, clearWorkRun } from './resumableWorkRun.mjs';
