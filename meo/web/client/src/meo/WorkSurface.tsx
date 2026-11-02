@@ -83,6 +83,7 @@ export default function WorkSurface({ handoff, onChat }: {
   const [projectId, setProjectId] = useState('');
   const [task, setTask] = useState('');
   const [handoffConversationId, setHandoffConversationId] = useState('');
+  const [permissionMode, setPermissionMode] = useState<'ask' | 'auto' | 'all'>('ask');
   const [busy, setBusy] = useState(false);
   const [run, setRun] = useState<SavedRun | null>(() => recoverRun(user?.id ?? ''));
   const [events, setEvents] = useState<AgentActivityEvent[]>([]);
@@ -360,7 +361,7 @@ export default function WorkSurface({ handoff, onChat }: {
           conversation_id: conversationId,
           project_id: projectId,
           text,
-          permission_mode: 'ask',
+          permission_mode: permissionMode,
         }),
       });
       if (!uuid.test(response.run_id)) throw new Error(t('meo.work.runFailed'));
@@ -502,6 +503,17 @@ export default function WorkSurface({ handoff, onChat }: {
         <textarea id="meo-work-task" value={task} maxLength={35000} rows={5}
           placeholder={t('meo.work.taskPlaceholder')} onChange={(event) => setTask(event.target.value)}
           disabled={busy} />
+        <div className="meo-work-controls">
+          <label className="meo-work-ctrl-chip" title={t('meo.work.permissionModeHint')}>
+            <span>{t('meo.work.permissionMode')}</span>
+            <select value={permissionMode} disabled={busy}
+              onChange={(e) => setPermissionMode(e.target.value as 'ask' | 'auto' | 'all')}>
+              <option value="ask">{t('meo.work.permission.ask')}</option>
+              <option value="auto">{t('meo.work.permission.auto')}</option>
+              <option value="all">{t('meo.work.permission.all')}</option>
+            </select>
+          </label>
+        </div>
         <div className="meo-work-form-actions">
           <button type="submit" disabled={!canDelegate || !agentConfigured || !task.trim() || busy ||
             Boolean(run && !terminalStatuses.has(runStatus))}>

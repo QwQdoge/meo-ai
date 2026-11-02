@@ -305,5 +305,22 @@
   "meo_inspector_input_tokens": "输入 tokens",
   "meo_inspector_output_tokens": "输出 tokens",
   "meo_inspector_reasoning_tokens": "推理 tokens",
-  "meo_inspector_cache_read": "缓存读取"
+  "meo_inspector_cache_read": "缓存读取",
+  "meo.work.permissionMode": "权限",
+  "meo.work.permissionModeHint": "控制 Agent 哪些工具操作可以自动执行",
+  "meo.work.permission.ask": "每次询问",
+  "meo.work.permission.auto": "自动批准安全操作",
+  "meo.work.permission.all": "全部批准",
+  "meo.work.approvalToolName": "工具：{{name}}",
+  "meo.agentActivity.event.tool_event": "工具活动",
+  "meo.agentActivity.event.text_delta": "生成输出中",
+  "meo.agentActivity.event.done": "任务完成",
+  "meo.agentActivity.event.error": "错误",
+  "meo.agentActivity.event.heartbeat": "心跳",
+  "meo.agentActivity.event.progress": "进度",
+  "meo.agentActivity.event.queued": "已排队",
+  "meo.agentActivity.event.dispatching": "正在连接 Agent",
+  "meo.agentActivity.event.running": "Agent 运行中",
+  "meo.agentActivity.event.awaiting_approval": "等待审批",
+  "meo.agentActivity.event.cancel_requested": "已请求取消"
 }

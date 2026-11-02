@@ -51,6 +51,26 @@ const knownStatuses = new Set([
   'cancel_requested', 'cancelled', 'completed', 'failed', 'disconnected',
 ]);
 
+const knownEventNames = new Set([
+  'tool_event', 'text_delta', 'done', 'error', 'heartbeat', 'progress',
+  'queued', 'dispatching', 'running', 'awaiting_approval', 'cancel_requested',
+]);
+
+function approvalButtonVariant(title: string): 'allow' | 'allow-always' | 'deny' {
+  const lower = title.toLowerCase();
+  if (lower.includes('always') || lower.includes('auto') || lower.includes('all')) return 'allow-always';
+  if (lower.includes('deny') || lower.includes("don't") || lower.includes('cancel') ||
+      lower.includes('block') || lower.includes('no ')) return 'deny';
+  return 'allow';
+}
+
+function eventDisplayName(name: string, t: (key: string) => string): string {
+  if (!knownEventNames.has(name)) return name;
+  const key = `meo.agentActivity.event.${name}`;
+  const result = t(key);
+  return result === key ? name : result;
+}
+
 function TaskNode({ task, depth = 0 }: { task: AgentTaskNode; depth?: number }) {
   const { t } = useTranslation();
   const status = knownStatuses.has(task.status) ? task.status : 'unknown';
@@ -106,14 +126,27 @@ export default function AgentActivityPanel({
 
       {approval && (
         <div className="meo-work-approval" role="group" aria-label={t('meo.work.approvalTitle')}>
-          <strong>{t('meo.work.approvalTitle')}</strong>
-          {approval.toolName && <p>{approval.toolName}</p>}
-          {approval.description && <p>{approval.description}</p>}
-          <div className="meo-work-form-actions">
-            {approval.options.map((option) => (
-              <button key={option.index} type="button" disabled={busy}
-                onClick={() => onDecision(option.index)}>{option.title}</button>
-            ))}
+          <div className="meo-work-approval-header">
+            <span className="meo-work-approval-icon" aria-hidden="true">⚙</span>
+            <strong>{t('meo.work.approvalTitle')}</strong>
+          </div>
+          {approval.toolName && (
+            <code className="meo-work-approval-tool">{approval.toolName}</code>
+          )}
+          {approval.description && (
+            <p className="meo-work-approval-desc">{approval.description}</p>
+          )}
+          <div className="meo-work-approval-actions">
+            {approval.options.map((option) => {
+              const variant = approvalButtonVariant(option.title);
+              return (
+                <button key={option.index} type="button" disabled={busy}
+                  className={`meo-work-approval-btn meo-work-approval-btn--${variant}`}
+                  onClick={() => onDecision(option.index)}>
+                  {option.title}
+                </button>
+              );
+            })}
           </div>
         </div>
       )}
@@ -130,7 +163,8 @@ export default function AgentActivityPanel({
         {events.length ? (
           <ol className="meo-work-events">
             {events.map((event) => <li key={event.seq}>
-              <span>{event.name}</span>{event.text && <span>{event.text}</span>}
+              <span className="meo-work-event-name">{eventDisplayName(event.name, t)}</span>
+              {event.text && <span className="meo-work-event-text">{event.text}</span>}
             </li>)}
           </ol>
         ) : <p>{t('meo.agentActivity.noEvents')}</p>}

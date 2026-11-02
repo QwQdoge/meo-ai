@@ -330,5 +330,22 @@
   "meo_inspector_input_tokens": "Input tokens",
   "meo_inspector_output_tokens": "Output tokens",
   "meo_inspector_reasoning_tokens": "Reasoning tokens",
-  "meo_inspector_cache_read": "Cache read"
+  "meo_inspector_cache_read": "Cache read",
+  "meo.work.permissionMode": "Permission",
+  "meo.work.permissionModeHint": "Controls which tool actions the agent may take automatically",
+  "meo.work.permission.ask": "Ask each time",
+  "meo.work.permission.auto": "Auto-approve safe",
+  "meo.work.permission.all": "Approve all",
+  "meo.work.approvalToolName": "Tool: {{name}}",
+  "meo.agentActivity.event.tool_event": "Tool activity",
+  "meo.agentActivity.event.text_delta": "Generating output",
+  "meo.agentActivity.event.done": "Task finished",
+  "meo.agentActivity.event.error": "Error",
+  "meo.agentActivity.event.heartbeat": "Heartbeat",
+  "meo.agentActivity.event.progress": "Progress",
+  "meo.agentActivity.event.queued": "Queued",
+  "meo.agentActivity.event.dispatching": "Connecting to agent",
+  "meo.agentActivity.event.running": "Agent running",
+  "meo.agentActivity.event.awaiting_approval": "Waiting for approval",
+  "meo.agentActivity.event.cancel_requested": "Cancellation requested"
 }
