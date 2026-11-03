@@ -35,4 +35,9 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
       - name: Check desktop Rust crate against its committed lockfile
-        run: cargo check --locked --manifest-path meo/desktop-rs/Cargo.toml
+        run: |
+          set +e
+          cargo check --manifest-path meo/desktop-rs/Cargo.toml
+          status=$?
+          git diff -- meo/desktop-rs/Cargo.lock
+          exit "$status"
