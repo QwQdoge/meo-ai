@@ -1,0 +1,46 @@
+name: Build Windows Desktop
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Install Qt 6
+        uses: jurplel/install-qt-action@b1f4e09a8ead1438c00a3f38703fcea42ee32a70 # v4.3.0
+        with:
+          version: '6.7.3'
+          target: 'desktop'
+          arch: 'win64_msvc2022_64'
+          modules: 'qtshadertools'
+          cache: true
+
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: meo/core-rs
+
+      - name: Build meo-ai-desktop (Windows)
+        env:
+          RUST_MIN_STACK: '33554432'
+        run: |
+          cargo build --frozen --release --manifest-path meo/desktop-rs/Cargo.toml
+
+      - name: Upload Windows exe
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: meo-ai-windows-x64
+          path: target\release\meo-ai-desktop.exe
+          if-no-files-found: error
