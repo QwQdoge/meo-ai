@@ -2,6 +2,11 @@ name: Build Windows Desktop
 
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (SemVer), e.g. 0.1.0-beta.10'
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -32,15 +37,49 @@ jobs:
         with:
           workspaces: meo/core-rs
 
+      - name: Check out MeoUI
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: QwQdoge/MeoUI
+          path: meoui
+          persist-credentials: false
+
+      - name: Build and install MeoUI (Windows)
+        run: |
+          cmake -S meoui -B meoui-build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DMEOUI_BUILD_SHOWCASE=OFF -DCMAKE_INSTALL_PREFIX="$env:RUNNER_TEMP\meoui-install"
+          cmake --build meoui-build --parallel 2
+          cmake --install meoui-build
+
       - name: Build meo-ai-desktop (Windows)
         env:
           RUST_MIN_STACK: '33554432'
         run: |
           cargo build --frozen --release --manifest-path meo/desktop-rs/Cargo.toml
 
+      - name: Pack with Velopack (Windows)
+        shell: pwsh
+        run: |
+          $meoui = "$env:RUNNER_TEMP\meoui-install"
+          ./meo/desktop-rs/scripts/package-windows.ps1 `
+            -Version "$env:MEO_AI_VERSION" `
+            -BinDir target\release `
+            -MeoUiQmlDir (Get-ChildItem -Path $meoui -Recurse -Directory -Filter MeoUI | Select-Object -First 1 | ForEach-Object { $_.Parent.FullName }) `
+            -MeoUiBinDir "$meoui\bin" `
+            -QtBinDir "$env:QT_ROOT_DIR\bin" `
+            -OutDir dist
+        env:
+          MEO_AI_VERSION: ${{ inputs.version }}
+
       - name: Upload Windows exe
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: meo-ai-windows-x64
           path: target\release\meo-ai-desktop.exe
+          if-no-files-found: error
+
+      - name: Upload Velopack packages
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: meo-ai-windows-velopack
+          path: dist
           if-no-files-found: error

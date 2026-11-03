@@ -10,15 +10,22 @@
 
 use std::{
     env,
-    io::{BufRead, BufReader, Read, Write},
+    io::{BufRead, BufReader, Write},
     net::TcpListener,
-    os::unix::net::{UnixListener, UnixStream},
     path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
     },
 };
+// Single-instance forwarding uses a Unix socket. Windows launches are separate instances for now.
+#[cfg(unix)]
+use std::{
+    io::Read,
+    os::unix::net::{UnixListener, UnixStream},
+};
+
+mod updater;
 
 use meo_ai_core::cloud::{
     self, Action, AppCore, FileStorage, OAuthConfig, PlatformHooks,
@@ -35,6 +42,7 @@ fn runtime() -> Runtime {
         .expect("failed to create Meo AI Tokio runtime")
 }
 
+#[cfg(unix)]
 fn socket_path() -> PathBuf {
     env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
@@ -202,19 +210,43 @@ fn qml_root() -> PathBuf {
     if let Some(dir) = env::var_os("MEO_AI_QML_DIR") {
         return PathBuf::from(dir);
     }
+    // Packaged Windows builds keep `qml/` beside the executable; Linux packages use the prefix layout.
     env::current_exe()
         .ok()
-        .and_then(|exe| Some(exe.parent()?.parent()?.join("share/meo-ai-desktop/qml")))
-        .filter(|dir| dir.join("Main.qml").is_file())
+        .and_then(|exe| {
+            let dir = exe.parent()?;
+            [dir.join("qml"), dir.parent()?.join("share/meo-ai-desktop/qml")]
+                .into_iter()
+                .find(|candidate| candidate.join("Main.qml").is_file())
+        })
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("qml"))
 }
 
 fn main() {
+    // Velopack must run before anything else: it handles install, uninstall and update hooks and
+    // may exit the process here.
+    velopack::VelopackApp::build().run();
+
     // `sudo`, `git` and `ssh` started by a Work command call this binary to ask for a password: it
     // only talks to the running app over the private socket and exits, it never opens a window.
     let args: Vec<String> = env::args().collect();
-    if let Some(code) = meo_ai_core::cloud::host::askpass_main(&args) {
-        std::process::exit(code);
+    #[cfg(unix)]
+    {
+        if let Some(code) = meo_ai_core::cloud::host::askpass_main(&args) {
+            std::process::exit(code);
+        }
+    }
+    if args.iter().any(|a| a == "--check-update") {
+        // Headless: check the GitHub Releases feed, install a newer build if there is one, exit.
+        match updater::check_and_apply() {
+            Ok(Some(version)) => println!("Meo AI {version} is installed; restarting into it."),
+            Ok(None) => println!("Meo AI is up to date."),
+            Err(error) => {
+                eprintln!("Update check failed: {error}");
+                std::process::exit(1);
+            }
+        }
+        return;
     }
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -225,13 +257,11 @@ fn main() {
 
     let callback = env::args().find(|a| a.starts_with("meoai://"));
     let (callback_tx, callback_rx) = std::sync::mpsc::channel::<String>();
-    let socket = socket_path();
-    if let Ok(mut stream) = UnixStream::connect(&socket) {
-        let _ = stream.write_all(callback.as_deref().unwrap_or("activate").as_bytes());
-        return;
-    }
-    let _ = std::fs::remove_file(&socket);
-    let listener = UnixListener::bind(&socket).expect("cannot create Meo AI instance socket");
+    #[cfg(unix)]
+    let listener = match claim_instance(callback.as_deref()) {
+        Some(listener) => listener,
+        None => return,
+    };
 
     let rt = runtime();
     let object = meo_core::MeoCore::default_with_attached_qobject();
@@ -259,22 +289,25 @@ fn main() {
         backend.view = core.view();
     }
 
-    let handle = rt.handle().clone();
-    let forwarded = core.clone();
-    let activator = Mutex::new(object.borrow().get_qml_method_invoker());
-    std::thread::spawn(move || {
-        for mut stream in listener.incoming().flatten() {
-            let mut message = String::new();
-            if stream.read_to_string(&mut message).is_err() {
-                continue;
+    #[cfg(unix)]
+    {
+        let handle = rt.handle().clone();
+        let forwarded = core.clone();
+        let activator = Mutex::new(object.borrow().get_qml_method_invoker());
+        std::thread::spawn(move || {
+            for mut stream in listener.incoming().flatten() {
+                let mut message = String::new();
+                if stream.read_to_string(&mut message).is_err() {
+                    continue;
+                }
+                if message.starts_with("meoai://auth/callback") {
+                    let core = forwarded.clone();
+                    handle.spawn(async move { core.dispatch(Action::AuthCallback { url: message }).await });
+                }
+                activator.lock().unwrap().invoke_method("activate");
             }
-            if message.starts_with("meoai://auth/callback") {
-                let core = forwarded.clone();
-                handle.spawn(async move { core.dispatch(Action::AuthCallback { url: message }).await });
-            }
-            activator.lock().unwrap().invoke_method("activate");
-        }
-    });
+        });
+    }
 
     let handle = rt.handle().clone();
     let signed_in = core.clone();
@@ -315,6 +348,20 @@ fn main() {
         }
     }
     app.load_qml_from_file(&main_url).run();
-    let _ = std::fs::remove_file(&socket);
+    #[cfg(unix)]
+    let _ = std::fs::remove_file(socket_path());
     drop(rt);
+}
+
+/// Hands this launch to the running instance and returns `None`, or claims the instance socket and
+/// returns the listener this process must serve.
+#[cfg(unix)]
+fn claim_instance(callback: Option<&str>) -> Option<UnixListener> {
+    let socket = socket_path();
+    if let Ok(mut stream) = UnixStream::connect(&socket) {
+        let _ = stream.write_all(callback.unwrap_or("activate").as_bytes());
+        return None;
+    }
+    let _ = std::fs::remove_file(&socket);
+    Some(UnixListener::bind(&socket).expect("cannot create Meo AI instance socket"))
 }
