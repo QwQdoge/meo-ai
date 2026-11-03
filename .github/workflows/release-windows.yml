@@ -16,7 +16,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Qt 6
-        uses: jurplel/install-qt-action@b1f4e09a8ead1438c00a3f38703fcea42ee32a70 # v4.3.0
+        uses: jurplel/install-qt-action@v4
         with:
           version: '6.7.3'
           target: 'desktop'
