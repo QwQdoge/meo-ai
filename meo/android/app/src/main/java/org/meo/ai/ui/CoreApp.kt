@@ -1013,7 +1013,7 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.label(text: String,
         textSize = 11.sp.toPx()
         textAlign = align
     }
-    drawContext.canvas.nativeCanvas.drawText(text, x, y, paint)
+    drawIntoCanvas { canvas -> canvas.nativeCanvas.drawText(text, x, y, paint) }
 }
 
 /** A formula the core already converted to readable Unicode text. */
