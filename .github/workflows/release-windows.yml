@@ -87,6 +87,28 @@ jobs:
         env:
           MEO_AI_VERSION: ${{ inputs.version }}
 
+      # Start the packed app for real. `--check-update` never loads the interface, so it cannot catch a
+      # window that fails to open (this once shipped: a malformed file URL, "Network error" and no window).
+      # The offscreen platform needs no desktop; Qt is told to log to stderr so the failure is visible.
+      - name: Start the packed app and check its interface loads
+        shell: pwsh
+        run: |
+          $stage = Resolve-Path 'dist\stage'
+          $err = Join-Path $env:RUNNER_TEMP 'meo-smoke.err'
+          $out = Join-Path $env:RUNNER_TEMP 'meo-smoke.out'
+          $env:QT_QPA_PLATFORM = 'offscreen'
+          $env:QT_FORCE_STDERR_LOGGING = '1'
+          $p = Start-Process -FilePath (Join-Path $stage 'meo-ai-desktop.exe') -PassThru -NoNewWindow `
+            -RedirectStandardError $err -RedirectStandardOutput $out -WorkingDirectory $stage
+          Start-Sleep -Seconds 15
+          $exited = $p.HasExited
+          if (-not $exited) { Stop-Process -Id $p.Id -Force }
+          $log = (Get-Content $err -Raw -ErrorAction SilentlyContinue) + (Get-Content $out -Raw -ErrorAction SilentlyContinue)
+          Write-Output "---- app output`n$log`n----"
+          if ($log -match 'failed to load component|Network error|is not installed|module ".*" is not installed') { throw 'The interface did not load.' }
+          if ($exited) { throw "The app exited within 15 seconds (code $($p.ExitCode))." }
+          Write-Output 'The interface loaded and the app kept running.'
+
       # vpk writes: <id>-win-Setup.exe (installer), <id>-win-Portable.zip (unzip and run, no install),
       # the .nupkg full package and the releases/assets feed files the in-app updater reads.
       - name: Upload Windows installer, portable build and update feed

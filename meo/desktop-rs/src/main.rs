@@ -25,6 +25,7 @@ use std::{
     os::unix::net::{UnixListener, UnixStream},
 };
 
+mod fileurl;
 mod updater;
 
 use meo_ai_core::cloud::{
@@ -338,7 +339,8 @@ fn main() {
     });
 
     let root = qml_root();
-    let main_url = format!("file://{}", root.join("Main.qml").display());
+    // Not `format!("file://{path}")`: that is wrong for Windows drive paths and the window never opens.
+    let main_url = fileurl::file_url(&root.join("Main.qml").to_string_lossy());
     let mut app = QApp::new();
     app.set_initial_object("core", object)
         .add_import_path(root.to_string_lossy().as_ref());
