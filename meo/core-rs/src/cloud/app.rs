@@ -3019,10 +3019,12 @@ impl AppCore {
     }
 
     fn device_name(&self) -> String {
-        let name = self
-            .state
-            .lock()
-            .unwrap()
+        self.device_name_in(&self.state.lock().unwrap())
+    }
+
+    /// The name this device shows to the others: the user's choice, else the platform and a short id.
+    fn device_name_in(&self, s: &State) -> String {
+        let name = s
             .prefs
             .get("remote.name")
             .and_then(Value::as_str)
@@ -3032,6 +3034,76 @@ impl AppCore {
             let tail: String = self.client_id.chars().take(4).collect();
             format!("{} {tail}", remote::platform())
         })
+    }
+
+    /// Settings > Devices & Work: this device, the other signed-in devices that announced themselves, and
+    /// where Work tasks run. Remote control only ever reaches the user's own account.
+    fn device_items(&self, s: &State) -> Vec<Value> {
+        let enabled = pref_bool(s, "remote.enabled", true);
+        let mut items = vec![
+            json!({
+                "id": "dev_this", "kind": "info", "label": "This device",
+                "value": format!(
+                    "{} · {} · {}",
+                    self.device_name_in(s),
+                    remote::platform(),
+                    if remote::can_host() { "can run tasks" } else { "controls other devices only" }
+                ),
+            }),
+            json!({
+                "id": "dev_name", "kind": "text", "label": "Device name", "binding": "remote.name",
+                "value": s.prefs.get("remote.name").and_then(Value::as_str).unwrap_or_default(),
+            }),
+            json!({
+                "id": "dev_enabled", "kind": "toggle", "binding": "remote.enabled", "value": enabled,
+                "label": "Remote control: show my other devices, and let them run tasks here",
+            }),
+            json!({
+                "id": "dev_sync", "kind": "info", "label": "Live sync",
+                "value": if s.sync_live { "Connected" } else { "Reconnecting…" },
+            }),
+        ];
+        if !enabled {
+            items.push(json!({
+                "id": "dev_off", "kind": "info", "label": "Remote control is off",
+                "value": "This device is hidden from your other devices and cannot be controlled from them.",
+            }));
+        } else {
+            items.push(json!({
+                "id": "dev_online", "kind": "info", "label": "Other devices online",
+                "value": if s.remote.devices.is_empty() {
+                    json!("None yet. Open Meo AI on another device that is signed in to this account.")
+                } else {
+                    json!(s.remote.devices.len())
+                },
+            }));
+            for d in s.remote.devices.values() {
+                items.push(item(
+                    format!("dev_{}", d.id),
+                    &d.name,
+                    &format!(
+                        "{} · {}",
+                        d.platform,
+                        if d.hosts {
+                            "can run tasks"
+                        } else {
+                            "controls other devices only"
+                        }
+                    ),
+                    vec![],
+                ));
+            }
+            items.push(json!({
+                "id": "dev_target", "kind": "select", "label": "Run Work tasks on", "binding": "remote.target",
+                "value": s.prefs.get("remote.target").and_then(Value::as_str).unwrap_or_default(),
+                "options": remote::run_on_options(&s.remote.devices),
+            }));
+        }
+        items.push(json!({
+            "id": "dev_safety", "kind": "info", "label": "Safety",
+            "value": "Only devices signed in to your own account can reach each other. Passwords never leave the device that runs the command. A task sent from another device never runs with Allow all: risky actions still need your approval on the controlling device.",
+        }));
+        items
     }
 
     async fn remote_send(&self, message: Value) {
@@ -4571,7 +4643,13 @@ impl AppCore {
 
     fn agent_permission(&self) -> agent::Permission {
         let s = self.state.lock().unwrap();
-        agent::Permission::parse(&permission_value(&s))
+        let level = agent::Permission::parse(&permission_value(&s));
+        // A task sent from another device never runs with full access, even when this device is set to
+        // Allow all: risky actions still reach the approver and the controlling device.
+        if s.remote.controller.is_some() && level == agent::Permission::All {
+            return agent::Permission::Smart;
+        }
+        level
     }
 
     /// The reply's first tool call: gate it, then run, ask the user, or refuse. One call per round.
@@ -5367,10 +5445,27 @@ impl AppCore {
             }
             return;
         }
+        // A device name is short plain text; the other devices cut it to the same length.
+        let value = if binding == "remote.name" {
+            json!(value
+                .as_str()
+                .unwrap_or_default()
+                .trim()
+                .chars()
+                .take(40)
+                .collect::<String>())
+        } else {
+            value
+        };
+        let announce = matches!(binding.as_str(), "remote.name" | "remote.enabled");
         self.update(|s| {
             s.prefs.insert(binding, value);
         });
         self.save_json(KEY_PREFS, &self.state.lock().unwrap().prefs.clone());
+        if announce {
+            // Tell the other devices the new name (or that this one is back) without waiting for a reconnect.
+            self.remote_announce(false, None).await;
+        }
     }
 
     // ---- view ----------------------------------------------------------
@@ -5543,6 +5638,7 @@ impl AppCore {
                     }
                     "usage" => items.extend(usage_items(s)),
                     "connectors" => items.extend(connector_items(s)),
+                    "devices" => items.extend(self.device_items(s)),
                     "account" => {
                         items.push(json!({
                             "id": "sync", "label": "Live sync", "kind": "info",
@@ -8326,6 +8422,95 @@ mod tests {
             .unwrap()["items"][0]["buttons"][0]["label"]
             .clone();
         assert_eq!(again, "Add new activity");
+    }
+
+    #[test]
+    fn settings_devices_page_names_this_device_and_lists_the_others() {
+        let device = |id: &str, name: &str, platform: &'static str, hosts: bool| remote::Device {
+            id: id.into(),
+            name: name.into(),
+            platform,
+            hosts,
+        };
+        let c = signed_in_core();
+        c.update(|s| {
+            s.route = "settings".into();
+            s.settings_section = "devices".into();
+            s.prefs.insert("remote.name".into(), json!("Studio"));
+            s.remote
+                .devices
+                .insert("pc".into(), device("pc", "Desk PC", "windows", true));
+            s.remote
+                .devices
+                .insert("phone".into(), device("phone", "Pixel", "android", false));
+        });
+        let section_of = |c: &AppCore| {
+            c.view()["page"]["sections"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|x| x["id"] == "devices")
+                .expect("the devices page is no longer dropped for lack of items")
+                .clone()
+        };
+        let section = section_of(&c);
+        let items = section["items"].as_array().unwrap();
+        let ids: Vec<&str> = items.iter().map(|i| i["id"].as_str().unwrap()).collect();
+        assert_eq!(
+            ids,
+            [
+                "dev_this",
+                "dev_name",
+                "dev_enabled",
+                "dev_sync",
+                "dev_online",
+                "dev_pc",
+                "dev_phone",
+                "dev_target",
+                "dev_safety"
+            ]
+        );
+        assert!(items[0]["value"].as_str().unwrap().starts_with("Studio · "));
+        assert_eq!(items[1]["binding"], "remote.name");
+        assert_eq!(items[4]["value"], 2);
+        assert_eq!(items[5]["value"], "windows · can run tasks");
+        assert_eq!(items[6]["value"], "android · controls other devices only");
+        // Only devices that can run tasks are offered as a place to run Work.
+        assert_eq!(items[7]["options"].as_array().unwrap().len(), 2);
+        c.update(|s| {
+            s.prefs.insert("remote.enabled".into(), json!(false));
+        });
+        let off = section_of(&c);
+        let off_ids: Vec<&str> = off["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| i["id"].as_str().unwrap())
+            .collect();
+        assert!(
+            off_ids.contains(&"dev_off")
+                && !off_ids.contains(&"dev_online")
+                && !off_ids.contains(&"dev_target")
+        );
+    }
+
+    #[test]
+    fn a_task_from_another_device_never_runs_with_full_access() {
+        let c = signed_in_core();
+        c.update(|s| {
+            s.prefs.insert("chat.permission".into(), json!("all"));
+        });
+        assert_eq!(c.agent_permission(), agent::Permission::All);
+        c.update(|s| s.remote.controller = Some("phone".into()));
+        assert_eq!(c.agent_permission(), agent::Permission::Smart);
+        c.update(|s| {
+            s.prefs.insert("chat.permission".into(), json!("ask"));
+        });
+        assert_eq!(
+            c.agent_permission(),
+            agent::Permission::Ask,
+            "stricter levels are kept"
+        );
     }
 
     #[test]
