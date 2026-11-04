@@ -137,6 +137,10 @@ pub enum Action {
         id: String,
         archived: bool,
     },
+    /// Saves the conversation as a Markdown file (a download in the browser).
+    ExportConversation {
+        id: String,
+    },
     BeginDelete {
         id: String,
     },
@@ -693,6 +697,7 @@ impl AppCore {
                 self.change_conversation(&id, json!({ "archived": archived }))
                     .await;
             }
+            Action::ExportConversation { id } => self.export_conversation(id).await,
             Action::BeginDelete { id } => self.begin_delete(id),
             Action::DeleteConversation { id } => self.delete_conversation(id).await,
             Action::CloseDialog => self.update(|s| s.dialog = None),
@@ -2236,7 +2241,12 @@ impl AppCore {
             return self.notice("error", "That file is no longer available.");
         };
         let bytes = docs::build_file(&name, &content);
-        if self.hooks.save_file(&name, &bytes) {
+        self.save_bytes(&name, &bytes);
+    }
+
+    /// Gives a file to the user: the host saves it (a browser download), else it goes to Downloads.
+    fn save_bytes(&self, name: &str, bytes: &[u8]) {
+        if self.hooks.save_file(name, bytes) {
             return;
         }
         #[cfg(not(target_arch = "wasm32"))]
@@ -2245,10 +2255,8 @@ impl AppCore {
                 .map(|h| std::path::PathBuf::from(h).join("Downloads"))
                 .unwrap_or_else(std::env::temp_dir);
             let _ = std::fs::create_dir_all(&dir);
-            let (stem, ext) = name
-                .rsplit_once('.')
-                .map_or((name.as_str(), ""), |(a, b)| (a, b));
-            let mut target = dir.join(&name);
+            let (stem, ext) = name.rsplit_once('.').map_or((name, ""), |(a, b)| (a, b));
+            let mut target = dir.join(name);
             let mut n = 1;
             while target.exists() {
                 target = dir.join(if ext.is_empty() {
@@ -2258,13 +2266,37 @@ impl AppCore {
                 });
                 n += 1;
             }
-            match std::fs::write(&target, &bytes) {
+            match std::fs::write(&target, bytes) {
                 Ok(()) => self.notice("info", format!("Saved {}", target.display())),
                 Err(e) => self.notice("error", format!("Could not save {name}: {e}")),
             }
         }
         #[cfg(target_arch = "wasm32")]
         self.notice("error", "This device cannot save files.");
+    }
+
+    /// Saves a conversation as a Markdown file ("Export" in its menu).
+    async fn export_conversation(&self, id: String) {
+        self.refresh_messages(&id).await;
+        let (title, date, messages) = {
+            let s = self.state.lock().unwrap();
+            let summary = s.conversations.iter().find(|c| c.id == id);
+            (
+                summary.map(|c| c.title.clone()).unwrap_or_default(),
+                summary
+                    .and_then(|c| c.updated_at.get(..10).map(str::to_owned))
+                    .unwrap_or_default(),
+                s.messages.get(&id).cloned().unwrap_or_default(),
+            )
+        };
+        if messages.is_empty() {
+            return self.notice("info", "There is nothing to export yet.");
+        }
+        let name = export_file_name(&title);
+        self.save_bytes(
+            &name,
+            conversation_markdown(&title, &date, &messages).as_bytes(),
+        );
     }
 
     async fn install_plugin(&self, id: String) {
@@ -5839,6 +5871,7 @@ fn shell_sidebar(s: &State) -> Value {
             "action": { "type": "select_conversation", "id": c.id },
             "menu": [
                 button("Rename", "secondary", json!({ "type": "begin_rename", "id": c.id })),
+                button("Export", "secondary", json!({ "type": "export_conversation", "id": c.id })),
                 button(if s.show_archived { "Restore" } else { "Archive" }, "secondary",
                     json!({ "type": "archive_conversation", "id": c.id, "archived": !s.show_archived })),
                 button("Delete", "danger", json!({ "type": "begin_delete", "id": c.id })),
@@ -6403,6 +6436,45 @@ fn using_label(s: &State) -> String {
         }
         _ => "no model yet — connect a provider in Meo Account".to_owned(),
     }
+}
+
+/// A conversation as Markdown: the title, then every turn under "You" or "Meo AI". Tool requests the
+/// assistant wrote for the harness are not part of what the user read, so they are left out.
+fn conversation_markdown(title: &str, date: &str, messages: &[ChatMessage]) -> String {
+    let title = title.trim();
+    let mut out = format!("# {}\n\n", if title.is_empty() { "Chat" } else { title });
+    if !date.is_empty() {
+        out.push_str(&format!("> Exported from Meo AI · last updated {date}\n\n"));
+    }
+    for m in messages {
+        let (who, text) = if m.role == "user" {
+            ("You", m.text.clone())
+        } else {
+            ("Meo AI", agent::visible_text(&m.text))
+        };
+        let text = text.trim();
+        if !text.is_empty() {
+            out.push_str(&format!("## {who}\n\n{text}\n\n"));
+        }
+    }
+    out
+}
+
+/// `meo-<title>.md` with only letters, digits and dashes (any script), at most 40 characters of title.
+fn export_file_name(title: &str) -> String {
+    let mut slug = String::new();
+    for ch in title.chars() {
+        if ch.is_alphanumeric() {
+            slug.extend(ch.to_lowercase());
+        } else if !slug.is_empty() && !slug.ends_with('-') {
+            slug.push('-');
+        }
+        if slug.chars().count() >= 40 {
+            break;
+        }
+    }
+    let slug = slug.trim_matches('-');
+    format!("meo-{}.md", if slug.is_empty() { "chat" } else { slug })
 }
 
 /// 12345 → "12K", 1_200_000 → "1.2M".
@@ -7987,7 +8059,11 @@ mod tests {
             item["menu"][0]["action"],
             json!({ "type": "begin_rename", "id": "c1" })
         );
-        assert_eq!(item["menu"][2]["style"], "danger");
+        assert_eq!(
+            item["menu"][1]["action"],
+            json!({ "type": "export_conversation", "id": "c1" })
+        );
+        assert_eq!(item["menu"][3]["style"], "danger");
 
         c.begin_rename("c1".into());
         let dialog = c.view()["dialog"].clone();
@@ -8422,6 +8498,45 @@ mod tests {
             .unwrap()["items"][0]["buttons"][0]["label"]
             .clone();
         assert_eq!(again, "Add new activity");
+    }
+
+    #[test]
+    fn a_conversation_exports_as_markdown_without_tool_blocks() {
+        let msg = |role: &str, text: &str| ChatMessage {
+            role: role.into(),
+            text: text.into(),
+            ..ChatMessage::default()
+        };
+        let messages = [
+            msg("user", "Look at main.rs"),
+            msg(
+                "assistant",
+                "I will look.\n```meo-tool\n{\"tool\":\"read_file\",\"args\":{\"path\":\"main.rs\"}}\n```",
+            ),
+            msg("assistant", "   "),
+            msg("assistant", "It prints hello."),
+        ];
+        let md = conversation_markdown(" Rust tour ", "2026-11-04", &messages);
+        assert_eq!(
+            md,
+            "# Rust tour\n\n> Exported from Meo AI · last updated 2026-11-04\n\n## You\n\nLook at main.rs\n\n## Meo AI\n\nI will look.\n\n## Meo AI\n\nIt prints hello.\n\n"
+        );
+        assert!(!md.contains("meo-tool"));
+        assert!(conversation_markdown("", "", &[]).starts_with("# Chat\n"));
+    }
+
+    #[test]
+    fn export_file_names_keep_letters_of_any_script_and_drop_the_rest() {
+        assert_eq!(
+            export_file_name("Fix: the /etc/passwd bug!"),
+            "meo-fix-the-etc-passwd-bug.md"
+        );
+        assert_eq!(export_file_name("你好 世界"), "meo-你好-世界.md");
+        assert_eq!(export_file_name("  ../.. "), "meo-chat.md");
+        assert_eq!(export_file_name(""), "meo-chat.md");
+        let long = export_file_name(&"a".repeat(200));
+        assert_eq!(long.chars().count(), "meo-.md".len() + 40);
+        assert!(!export_file_name("a/b\\c").contains(['/', '\\']));
     }
 
     #[test]
