@@ -5601,7 +5601,11 @@ impl AppCore {
         // Groups come from settings.json. Profiles and routes are split out of Models, so they
         // share its group.
         let group_of = |id: &str| {
-            let owner = if matches!(id, "profiles" | "routes") { "models" } else { id };
+            let owner = if matches!(id, "profiles" | "routes") {
+                "models"
+            } else {
+                id
+            };
             self.manifest
                 .settings
                 .iter()
