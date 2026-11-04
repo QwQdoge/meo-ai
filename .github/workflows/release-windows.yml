@@ -73,9 +73,13 @@ jobs:
         shell: pwsh
         run: |
           $meoui = "$env:RUNNER_TEMP\meoui-install"
+          # The crate lives in meo/desktop-rs, so its target directory is not the repository root's.
+          $target = (cargo metadata --no-deps --format-version 1 --manifest-path meo/desktop-rs/Cargo.toml | ConvertFrom-Json).target_directory
+          $bin = Join-Path $target 'release'
+          if (-not (Test-Path (Join-Path $bin 'meo-ai-desktop.exe'))) { throw "meo-ai-desktop.exe not found in $bin" }
           ./meo/desktop-rs/scripts/package-windows.ps1 `
             -Version "$env:MEO_AI_VERSION" `
-            -BinDir target\release `
+            -BinDir $bin `
             -MeoUiQmlDir (Get-ChildItem -Path $meoui -Recurse -Directory -Filter MeoUI | Select-Object -First 1 | ForEach-Object { $_.Parent.FullName }) `
             -MeoUiBinDir "$meoui\bin" `
             -QtBinDir "$env:QT_ROOT_DIR\bin" `
