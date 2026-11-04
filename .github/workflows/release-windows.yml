@@ -77,10 +77,13 @@ jobs:
           $target = (cargo metadata --no-deps --format-version 1 --manifest-path meo/desktop-rs/Cargo.toml | ConvertFrom-Json).target_directory
           $bin = Join-Path $target 'release'
           if (-not (Test-Path (Join-Path $bin 'meo-ai-desktop.exe'))) { throw "meo-ai-desktop.exe not found in $bin" }
+          # The module is the MeoUI folder that has a qmldir (include\MeoUI holds only headers).
+          $qmlDir = Get-ChildItem -Path $meoui -Recurse -File -Filter qmldir | Where-Object { $_.Directory.Name -eq 'MeoUI' } | Select-Object -First 1 | ForEach-Object { $_.Directory.Parent.FullName }
+          if (-not $qmlDir) { throw "MeoUI qmldir not found under $meoui" }
           ./meo/desktop-rs/scripts/package-windows.ps1 `
             -Version "$env:MEO_AI_VERSION" `
             -BinDir $bin `
-            -MeoUiQmlDir (Get-ChildItem -Path $meoui -Recurse -Directory -Filter MeoUI | Select-Object -First 1 | ForEach-Object { $_.Parent.FullName }) `
+            -MeoUiQmlDir $qmlDir `
             -MeoUiBinDir "$meoui\bin" `
             -QtBinDir "$env:QT_ROOT_DIR\bin" `
             -OutDir dist
