@@ -6,6 +6,7 @@
       "label": "General",
       "labelKey": "meo.settings.general",
       "owner": "client",
+      "group": "Preferences",
       "items": [
         {
           "id": "enter_to_send",
@@ -58,6 +59,7 @@
       "label": "Personalization & memory",
       "labelKey": "meo.settings.personalization",
       "owner": "core",
+      "group": "Preferences",
       "items": [
         {
           "id": "custom_instructions",
@@ -105,6 +107,7 @@
       "label": "Models & connections",
       "labelKey": "meo.settings.models",
       "owner": "account",
+      "group": "AI",
       "items": [],
       "keywords": [
         "provider",
@@ -119,6 +122,7 @@
       "label": "Apps & connectors",
       "labelKey": "meo.settings.connectors",
       "owner": "core",
+      "group": "AI",
       "items": [],
       "keywords": [
         "mcp",
@@ -133,6 +137,7 @@
       "label": "Devices & Work",
       "labelKey": "meo.settings.devices",
       "owner": "api",
+      "group": "Account",
       "items": [],
       "keywords": [
         "remote",
@@ -146,6 +151,7 @@
       "label": "Data & privacy",
       "labelKey": "meo.settings.privacy",
       "owner": "account",
+      "group": "Account",
       "items": [],
       "keywords": [
         "export",
@@ -159,6 +165,7 @@
       "label": "Usage",
       "labelKey": "meo.settings.usage",
       "owner": "api",
+      "group": "Account",
       "items": [],
       "keywords": [
         "activity",
@@ -172,6 +179,7 @@
       "label": "Account & security",
       "labelKey": "meo.settings.account",
       "owner": "account",
+      "group": "Account",
       "items": [],
       "keywords": [
         "sign in",

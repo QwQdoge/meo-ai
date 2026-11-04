@@ -242,8 +242,13 @@ const bindingIds = new Set();
 for (const section of settings.sections) {
   exactKeys(
     section,
-    ["id", "label", "labelKey", "owner", "items", "keywords"],
+    ["id", "label", "labelKey", "owner", "group", "items", "keywords"],
     "settings section",
+  );
+  // Sidebar-style groups shared by every client; the core builds the page nav from these.
+  requireValue(
+    ["Preferences", "AI", "Account"].includes(section.group),
+    "settings: invalid group",
   );
   requireValue(
     /^[a-z][a-z0-9_]*$/.test(section.id) && !sectionIds.has(section.id),

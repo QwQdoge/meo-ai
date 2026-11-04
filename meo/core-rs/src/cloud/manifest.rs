@@ -46,6 +46,8 @@ pub struct SettingSection {
     pub id: String,
     pub label: String,
     pub owner: String,
+    /// The settings page group this section sits under: "Preferences", "AI" or "Account".
+    pub group: String,
     #[serde(default)]
     pub items: Vec<SettingItem>,
     #[serde(default)]

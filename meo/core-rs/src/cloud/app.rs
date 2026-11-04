@@ -5598,10 +5598,16 @@ impl AppCore {
                 }
             }
         }
-        let group_of = |id: &str| match id {
-            "general" | "personalization" => "Preferences",
-            "models" | "profiles" | "routes" | "connectors" => "AI",
-            _ => "Account",
+        // Groups come from settings.json. Profiles and routes are split out of Models, so they
+        // share its group.
+        let group_of = |id: &str| {
+            let owner = if matches!(id, "profiles" | "routes") { "models" } else { id };
+            self.manifest
+                .settings
+                .iter()
+                .find(|section| section.id == owner)
+                .map(|section| section.group.clone())
+                .unwrap_or_else(|| "Account".to_owned())
         };
         let selected = if sections
             .iter()
