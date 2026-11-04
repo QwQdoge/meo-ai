@@ -1,0 +1,122 @@
+name: Meo AI Release
+
+# Builds the Windows installer, the portable Windows build and the Android APK, then puts them on one
+# GitHub Release (a Beta pre-release). The Arch Linux package is published separately through the
+# `meo-repo` release workflow; the release notes point to it. The release stays a draft unless `publish`
+# is set, so nothing becomes public by accident.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version, e.g. 0.1.0-beta.11 (the Git tag will be v<version>)'
+        required: true
+        type: string
+      publish:
+        description: 'Publish the GitHub Release now. Off leaves a draft to check first.'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: meo-ai-release
+  cancel-in-progress: false
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate the version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+)?$ ]] || { echo "Version must look like 0.1.0 or 0.1.0-beta.11, got: $VERSION"; exit 1; }
+
+  windows:
+    needs: check-version
+    uses: ./.github/workflows/release-windows.yml
+    with:
+      version: ${{ inputs.version }}
+
+  android:
+    needs: check-version
+    uses: ./.github/workflows/android.yml
+    with:
+      version: ${{ inputs.version }}
+
+  github-release:
+    needs: [windows, android]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ inputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: meo-ai-windows-velopack
+          path: assets/windows
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: meo-ai-android-debug
+          path: assets/android
+
+      - name: Name the files and write the checksums
+        run: |
+          set -euo pipefail
+          out=release
+          mkdir -p "$out"
+          one() { local n; n=$(ls $1 2>/dev/null | wc -l); [ "$n" -eq 1 ] || { echo "expected exactly one $1, found $n"; ls -R assets; exit 1; }; ls $1; }
+          cp "$(one 'assets/windows/*Setup.exe')"    "$out/Meo-AI-$VERSION-windows-x64-setup.exe"
+          cp "$(one 'assets/windows/*Portable.zip')" "$out/Meo-AI-$VERSION-windows-x64-portable.zip"
+          cp "$(one 'assets/android/*.apk')"         "$out/Meo-AI-$VERSION-android.apk"
+          # The update feed the installed Windows app reads (Velopack): names must stay as vpk wrote them.
+          cp assets/windows/*.nupkg assets/windows/releases*.json "$out/"
+          for f in assets/windows/assets*.json assets/windows/RELEASES*; do [ -e "$f" ] && cp "$f" "$out/"; done
+          (cd "$out" && sha256sum Meo-AI-* > SHA256SUMS.txt && cat SHA256SUMS.txt)
+
+      - name: Write the release notes
+        run: |
+          cat > notes.md <<EOF
+          ## Meo AI $VERSION (Beta)
+
+          **Beta / development preview.** Features and data handling are still incomplete and may change; keep your own backups. This is not a finished release.
+
+          ### Download
+
+          | Platform | File | Notes |
+          | --- | --- | --- |
+          | Windows 10/11 (x64) | \`Meo-AI-$VERSION-windows-x64-setup.exe\` | Installer. Installs for the current user and updates itself from these releases. |
+          | Windows 10/11 (x64) | \`Meo-AI-$VERSION-windows-x64-portable.zip\` | No install: unzip it and run \`meo-ai-desktop.exe\`. It does not auto-update. |
+          | Android 9+ | \`Meo-AI-$VERSION-android.apk\` | Beta test build signed with a debug key. Allow "install unknown apps" for your browser or file manager. |
+          | Arch Linux | \`yay -Syu meo-ai-beta\` | Beta channel of the signed Meo repository (\`[meo-beta]\`); not part of this page's files. |
+
+          Verify a download against \`SHA256SUMS.txt\`. The \`.nupkg\` and \`releases*.json\` files are the update feed the installed Windows app reads; you do not need them.
+
+          Windows may show a SmartScreen warning because the beta installer is not code-signed yet.
+          EOF
+
+      - name: Create or update the GitHub Release
+        run: |
+          set -euo pipefail
+          tag="v$VERSION"
+          draft=(--draft)
+          if [ "${{ inputs.publish }}" = "true" ]; then draft=(); fi
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" release/* --clobber
+            gh release edit "$tag" --prerelease --notes-file notes.md --title "Meo AI $VERSION (Beta)"
+          else
+            gh release create "$tag" release/* --target "$GITHUB_SHA" --prerelease "${draft[@]}" \
+              --title "Meo AI $VERSION (Beta)" --notes-file notes.md
+          fi
+          gh release view "$tag" --json isDraft,isPrerelease,url,assets --jq '{isDraft,isPrerelease,url,assets:[.assets[].name]}'

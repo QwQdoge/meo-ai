@@ -1,4 +1,6 @@
 # Meo AI — release gap audit and next implementation order
+
+> Historical (2026-10-18). The `meo-ai-web` repository named below was deleted on 2026-11-04; Web source is `meo/web/client`.
 **Audit date:** 2026-10-18  
 **Source:** current GitHub `main` of `meo-api`, `meo-ai-web`,
 `meo-ai` and `MeoArch-account`; Cloudflare deployed Worker; Neon AI schema.

@@ -99,8 +99,8 @@ External authorities (never re-implemented here):
 ## Web, cloud and device
 
 - `meo/web/` owns Web integration/upstream policy, never raw provider keys. The old
-  `meo-ai-web` repository is deployment rollback only; do not import its Express/Mongo
-  backend or generated artifacts.
+  `meo-ai-web` repository was deleted on 2026-11-04 (GitHub and local); do not recreate its
+  Express/Mongo backend. Any Web deployment must be built from `meo/web/client`.
 - `meo/cloud/` owns AI conversation/device/AgentRun contracts; Meo Account remains the
   authentication/session and BYOK authority.
 - `meo/device/` bridges authenticated remote work to the local AgentService. It must not
@@ -169,6 +169,8 @@ Run the narrowest set for what changed (mirrors `.github/workflows/`):
 | UI Schema | `node meo/ui-schema/generate.mjs --check` |
 | Web | in `meo/web/client`: `npm ci`; `npm run typecheck`; `npm test`; `npm run build` |
 | Android | in `meo/android`: `./gradlew :app:assembleDebug` |
+| Windows | `.github/workflows/release-windows.yml` (MSVC + Qt 6.9.1, `vpk pack`); the installed app updates from GitHub pre-releases (`desktop-rs/src/updater.rs`) |
+| Release | `.github/workflows/release.yml` builds Windows (installer + portable zip) and Android, attaches them to one Beta GitHub Release (draft unless `publish`); Linux goes through `meo-repo` |
 
 Report mock/protocol tests, builds, real provider/agent execution, live OAuth, real devices
 and live Plasma separately. No release, tag, signing or deployment is implied.

@@ -7,6 +7,12 @@ on:
         description: 'Release version (SemVer), e.g. 0.1.0-beta.10'
         required: true
         type: string
+  workflow_call:
+    inputs:
+      version:
+        description: 'Release version (SemVer), e.g. 0.1.0-beta.10'
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -44,9 +50,15 @@ jobs:
           path: meoui
           persist-credentials: false
 
+      # Qt above is the MSVC build. Without this step CMake finds the runner's MinGW first and the link fails.
+      - name: Activate the MSVC toolchain
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
       - name: Build and install MeoUI (Windows)
         run: |
-          cmake -S meoui -B meoui-build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DMEOUI_BUILD_SHOWCASE=OFF -DCMAKE_INSTALL_PREFIX="$env:RUNNER_TEMP\meoui-install"
+          cmake -S meoui -B meoui-build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl -DBUILD_TESTING=OFF -DMEOUI_BUILD_SHOWCASE=OFF -DCMAKE_INSTALL_PREFIX="$env:RUNNER_TEMP\meoui-install"
           cmake --build meoui-build --parallel 2
           cmake --install meoui-build
 
@@ -70,16 +82,17 @@ jobs:
         env:
           MEO_AI_VERSION: ${{ inputs.version }}
 
-      - name: Upload Windows exe
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: meo-ai-windows-x64
-          path: target\release\meo-ai-desktop.exe
-          if-no-files-found: error
-
-      - name: Upload Velopack packages
+      # vpk writes: <id>-win-Setup.exe (installer), <id>-win-Portable.zip (unzip and run, no install),
+      # the .nupkg full package and the releases/assets feed files the in-app updater reads.
+      - name: Upload Windows installer, portable build and update feed
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: meo-ai-windows-velopack
-          path: dist
+          path: |
+            dist/*.exe
+            dist/*.zip
+            dist/*.nupkg
+            dist/releases*.json
+            dist/assets*.json
+            dist/RELEASES*
           if-no-files-found: error

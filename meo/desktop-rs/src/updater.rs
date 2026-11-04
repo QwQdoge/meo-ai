@@ -15,7 +15,8 @@ pub const RELEASES_URL: &str = "https://github.com/QwQdoge/meo-ai";
 /// The app must be installed by Velopack (`Update.exe` beside it). A build run from a build folder
 /// returns an error that says so.
 pub fn check_and_apply() -> Result<Option<String>, String> {
-    let source = GithubSource::new(RELEASES_URL, None, false);
+    // Every release is a Beta (a GitHub pre-release), so pre-releases must be included or the app would never update.
+    let source = GithubSource::new(RELEASES_URL, None, true);
     let manager = UpdateManager::new(source, None, None).map_err(|error| error.to_string())?;
     match manager.check_for_updates().map_err(|error| error.to_string())? {
         UpdateCheck::UpdateAvailable(update) => {

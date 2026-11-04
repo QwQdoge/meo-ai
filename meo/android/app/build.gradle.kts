@@ -22,8 +22,9 @@ android {
         applicationId = "org.meo.ai"
         minSdk = 28
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        // The release workflow passes these; a plain build keeps the defaults.
+        versionCode = providers.gradleProperty("MEO_VERSION_CODE").map(String::toInt).orElse(1).get()
+        versionName = providers.gradleProperty("MEO_VERSION_NAME").orElse("0.1.0").get()
         buildConfigField("String", "MEO_OAUTH_CLIENT_ID", "\"$escapedOAuthClientId\"")
     }
 

@@ -2,6 +2,13 @@ name: Meo AI Android
 
 on:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      version:
+        description: 'Release version (SemVer), e.g. 0.1.0-beta.10; empty builds the default 0.1.0'
+        required: false
+        type: string
+        default: ''
   push:
     branches: [main]
     paths:
@@ -72,7 +79,13 @@ jobs:
 
       - name: Assemble Android debug APK
         working-directory: meo/android
-        run: gradle --no-daemon :app:assembleDebug
+        env:
+          MEO_VERSION: ${{ inputs.version }}
+        run: |
+          # The version name is the release version; the code only has to grow with every run.
+          gradle --no-daemon :app:assembleDebug \
+            -PMEO_VERSION_NAME="${MEO_VERSION:-0.1.0}" \
+            -PMEO_VERSION_CODE="${{ github.run_number }}"
 
       - name: Upload debug APK
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

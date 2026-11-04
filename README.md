@@ -27,7 +27,21 @@ For the full build, service, provider and live-acceptance workflow, see **[meo/R
 
 ### Web
 
-The React/TypeScript product source is now **[meo/web/client](meo/web/client/README.md)**, beside desktop, Android and Rust Core. The original `QwQdoge/meo-ai-web` repository remains deployment/rollback history until explicit cutover. See the [workspace source map](meo/workspace.json).
+The React/TypeScript product source is now **[meo/web/client](meo/web/client/README.md)**, beside desktop, Android and Rust Core. The former `QwQdoge/meo-ai-web` repository was deleted on 2026-11-04; Web source now lives only here. See the [workspace source map](meo/workspace.json).
+
+## Download (Beta)
+
+Every build is a **Beta** (a GitHub pre-release). Get the files from [GitHub Releases](https://github.com/QwQdoge/meo-ai/releases):
+
+| Platform | File | Notes |
+| --- | --- | --- |
+| Windows 10/11 (x64) | `Meo-AI-<version>-windows-x64-setup.exe` | Installer; updates itself from the releases. |
+| Windows 10/11 (x64) | `Meo-AI-<version>-windows-x64-portable.zip` | Unzip and run `meo-ai-desktop.exe`; no install, no auto-update. |
+| Android 9+ | `Meo-AI-<version>-android.apk` | Beta test build signed with a debug key. |
+| Arch Linux | `yay -Syu meo-ai-beta` | Beta channel of the signed Meo repository, released through `meo-repo`. |
+
+Releases are cut by the **Meo AI Release** workflow (`.github/workflows/release.yml`, run it by hand with the version): it builds the
+Windows installer and portable build and the Android APK, and attaches them with `SHA256SUMS.txt` to one draft Release; publish the draft once checked.
 
 ## Selected client architecture
 
