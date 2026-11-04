@@ -81,5 +81,6 @@ Behaviour wired: permission → provider consent (`chat.auto_consent`), thinking
 - [ ] Details card: tokens from provider usage, files changed, git status, environment
 - [ ] Right drawer: browser control, changed files, sub-agents; movable
 - [x] Settings > Usage: reads `GET /v1/usage-dashboard` (totals, 30-day bars, breakdown, models, sources). Codex/Claude rows appear once their local logs are synced to the account (`python -m meo.usage.cli sync` / Account broker); the core does not read local logs. TODO: in-app import trigger on desktop
+- [x] Settings > Apps & connectors (core, all three clients): one list of every installed app, skill and MCP server with its state (kind, on/off, signed in, tool count and how many are read-only) and the same actions as the store's Installed tab (switch, connect / reconnect / disconnect, API token, remove), a button to Apps & Skills, and a note on how approvals follow the composer's Permissions. Before this the section had no items and was dropped from the page. TODO: show each app's tool list with its read/write class, standing always-allow consents (Meo API only lets a browser session create or revoke them), and an "add MCP server" shortcut that opens the Import tab directly.
 - [ ] Code block highlighting polish
 - [ ] Sidebar tree drag/drop categories

@@ -83,6 +83,21 @@ pub enum Risk {
     Command,
 }
 
+/// True for a connected app's tool that only looks something up (by its name). Such a call needs no
+/// question from the "Low" permission level up; anything else asks like a command.
+pub fn is_lookup_tool(name: &str) -> bool {
+    const READ: [&str; 7] = [
+        "list_",
+        "get_",
+        "describe_",
+        "search",
+        "read_",
+        "fetch",
+        "explain_",
+    ];
+    READ.iter().any(|p| name.starts_with(p))
+}
+
 impl Tool {
     pub fn name(&self) -> &'static str {
         match self {
@@ -105,16 +120,7 @@ impl Tool {
             Tool::SearchReplace { .. } | Tool::ApplyPatch { .. } => Risk::Write,
             Tool::App { tool, .. } => {
                 // Looking things up needs no question; anything else asks like a command.
-                const READ: [&str; 7] = [
-                    "list_",
-                    "get_",
-                    "describe_",
-                    "search",
-                    "read_",
-                    "fetch",
-                    "explain_",
-                ];
-                if READ.iter().any(|p| tool.starts_with(p)) {
+                if is_lookup_tool(tool) {
                     Risk::Read
                 } else {
                     Risk::Command

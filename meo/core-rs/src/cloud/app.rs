@@ -728,7 +728,15 @@ impl AppCore {
                     None => self.notice("info", "You can have up to 5 custom routes."),
                 }
             }
-            Action::SelectSettingsSection { id } => self.update(|s| s.settings_section = id),
+            Action::SelectSettingsSection { id } => {
+                let connectors = id == "connectors";
+                self.update(|s| s.settings_section = id);
+                if connectors {
+                    // Read the installed apps, then what each enabled one offers, so the list is current.
+                    self.refresh_plugins().await;
+                    let _ = Box::pin(self.app_instructions()).await;
+                }
+            }
             Action::NewProfile => self.new_profile().await,
             Action::BeginGenerateProfile => self.prompt(
                 "Generate a profile",
@@ -5534,6 +5542,7 @@ impl AppCore {
                         }));
                     }
                     "usage" => items.extend(usage_items(s)),
+                    "connectors" => items.extend(connector_items(s)),
                     "account" => {
                         items.push(json!({
                             "id": "sync", "label": "Live sync", "kind": "info",
@@ -7259,6 +7268,176 @@ const OAUTH_ENDPOINTS: [&str; 8] = [
     "https://mcp.zapier.com/api/mcp/mcp",
 ];
 
+/// The buttons of one installed app: switch, the connect / token / disconnect set that fits its
+/// kind of sign-in, and remove. Used by the store's Installed tab and by Settings > Apps & connectors.
+fn plugin_buttons(p: &Value, id: &str, on: bool) -> Vec<Value> {
+    let url = p["remoteUrl"].as_str().unwrap_or_default();
+    let mut actions = vec![button(
+        if on { "On" } else { "Off" },
+        if on { "primary" } else { "secondary" },
+        json!({ "type": "toggle_plugin", "id": id, "enabled": !on }),
+    )];
+    if let Some(provider) = account_provider(url) {
+        if p["linkedAccount"] != true {
+            actions.insert(
+                0,
+                button(
+                    &format!("Connect {provider}"),
+                    "primary",
+                    json!({ "type": "connect_account", "provider": provider }),
+                ),
+            );
+        } else {
+            actions.insert(
+                0,
+                button(
+                    "More access",
+                    "secondary",
+                    json!({ "type": "connect_account", "provider": provider, "grant": true }),
+                ),
+            );
+        }
+    }
+    if TOKEN_ENDPOINTS.contains(&url) || OAUTH_ENDPOINTS.contains(&url) {
+        let has = p["manifest"]["hasToken"] == true;
+        actions.push(button(
+            if has { "Reconnect" } else { "Connect" },
+            if has { "secondary" } else { "primary" },
+            json!({ "type": "connect_plugin", "id": id }),
+        ));
+        if TOKEN_ENDPOINTS.contains(&url) {
+            actions.push(button(
+                "API token",
+                "secondary",
+                json!({ "type": "begin_plugin_token", "id": id }),
+            ));
+        }
+        if has {
+            actions.push(button(
+                "Disconnect",
+                "secondary",
+                json!({ "type": "disconnect_plugin", "id": id }),
+            ));
+        }
+    }
+    actions.push(button(
+        "Remove",
+        "secondary",
+        json!({ "type": "uninstall_plugin", "id": id }),
+    ));
+    actions
+}
+
+/// One line for an installed app: what it is, whether it is on, whether it is signed in, and how many
+/// tools it offers (when they have been read).
+fn plugin_status(s: &State, p: &Value) -> String {
+    let url = p["remoteUrl"].as_str().unwrap_or_default();
+    let mut parts: Vec<String> = vec![if !p["remoteUrl"].is_null() {
+        "MCP"
+    } else if p["kind"] == "skills" || p["kind"] == "bundle" {
+        "Skills"
+    } else {
+        "Plugin"
+    }
+    .to_owned()];
+    parts.push(
+        if p["enabled"].as_bool().unwrap_or(false) {
+            "On"
+        } else {
+            "Off"
+        }
+        .to_owned(),
+    );
+    if TOKEN_ENDPOINTS.contains(&url) || OAUTH_ENDPOINTS.contains(&url) {
+        parts.push(
+            if p["manifest"]["hasToken"] == true {
+                "Connected"
+            } else {
+                "Not connected"
+            }
+            .to_owned(),
+        );
+    } else if account_provider(url).is_some() {
+        parts.push(
+            if p["linkedAccount"] == true {
+                "Account linked"
+            } else {
+                "Account not linked"
+            }
+            .to_owned(),
+        );
+    }
+    match p["id"].as_str().and_then(|id| s.app_tools.get(id)) {
+        Some(Ok(tools)) => {
+            let reads = tools
+                .iter()
+                .filter(|t| t["name"].as_str().is_some_and(agent::is_lookup_tool))
+                .count();
+            parts.push(format!("{} tools ({reads} read-only)", tools.len()));
+        }
+        Some(Err(e)) => parts.push(format!(
+            "tools unavailable: {}",
+            e.chars().take(80).collect::<String>()
+        )),
+        None => {}
+    }
+    parts.join(" · ")
+}
+
+/// Settings > Apps & connectors: every installed app, skill and MCP server in one list, with its state
+/// and the same actions as the store's Installed tab.
+fn connector_items(s: &State) -> Vec<Value> {
+    let rows = match s.plugins.as_ref() {
+        None => {
+            return vec![
+                json!({ "id": "conn_loading", "kind": "info", "label": "Apps", "value": "Reading your apps…" }),
+            ];
+        }
+        Some(Err(e)) => {
+            return vec![
+                json!({ "id": "conn_error", "kind": "info", "label": "Apps could not be loaded", "value": e }),
+            ];
+        }
+        Some(Ok(rows)) => rows,
+    };
+    let on = rows
+        .iter()
+        .filter(|p| p["enabled"].as_bool().unwrap_or(false))
+        .count();
+    let mut items = vec![
+        json!({ "id": "conn_summary", "kind": "info", "label": "Installed", "value": format!("{} · {on} on", rows.len()) }),
+        item(
+            "conn_store".into(),
+            "Apps & Skills",
+            "Find, connect and import apps, skills and MCP servers.",
+            vec![button(
+                "Open",
+                "primary",
+                json!({ "type": "navigate", "route": "skills" }),
+            )],
+        ),
+    ];
+    let mut sorted: Vec<&Value> = rows.iter().collect();
+    sorted.sort_by_key(|p| p["name"].as_str().unwrap_or_default().to_lowercase());
+    for p in sorted {
+        let id = p["id"].as_str().unwrap_or_default();
+        items.push(item(
+            format!("conn_{id}"),
+            p["name"].as_str().unwrap_or("Unnamed"),
+            &plugin_status(s, p),
+            plugin_buttons(p, id, p["enabled"].as_bool().unwrap_or(false)),
+        ));
+    }
+    if rows.is_empty() {
+        items.push(json!({ "id": "conn_none", "kind": "info", "label": "Nothing installed yet", "value": "Open Apps & Skills to add an app, a skill or an MCP server." }));
+    }
+    items.push(json!({
+        "id": "conn_approvals", "kind": "info", "label": "Approvals",
+        "value": "A connected app follows the composer's Permissions. Looking things up (list, get, search, read, fetch) runs without asking from Low up. Anything else asks at Low, goes to the approver at Smart and runs at Allow all. Ask every time asks for all of it.",
+    }));
+    items
+}
+
 fn store_page(s: &State) -> Value {
     let store = plugin_store();
     let tab = if s.store.tab.is_empty() {
@@ -7343,59 +7522,7 @@ fn store_page(s: &State) -> Value {
                         &publisher,
                         badges,
                         if on { "on" } else { "off" },
-                        {
-                            let mut actions = vec![button(
-                                if on { "On" } else { "Off" },
-                                if on { "primary" } else { "secondary" },
-                                json!({ "type": "toggle_plugin", "id": id, "enabled": !on }),
-                            )];
-                            if let Some(provider) =
-                                account_provider(p["remoteUrl"].as_str().unwrap_or_default())
-                            {
-                                if p["linkedAccount"] != true {
-                                    actions.insert(0, button(
-                                        &format!("Connect {provider}"),
-                                        "primary",
-                                        json!({ "type": "connect_account", "provider": provider }),
-                                    ));
-                                } else {
-                                    actions.insert(0, button(
-                                        "More access",
-                                        "secondary",
-                                        json!({ "type": "connect_account", "provider": provider, "grant": true }),
-                                    ));
-                                }
-                            }
-                            let url = p["remoteUrl"].as_str().unwrap_or_default();
-                            if TOKEN_ENDPOINTS.contains(&url) || OAUTH_ENDPOINTS.contains(&url) {
-                                let has = p["manifest"]["hasToken"] == true;
-                                actions.push(button(
-                                    if has { "Reconnect" } else { "Connect" },
-                                    if has { "secondary" } else { "primary" },
-                                    json!({ "type": "connect_plugin", "id": id }),
-                                ));
-                                if TOKEN_ENDPOINTS.contains(&url) {
-                                    actions.push(button(
-                                        "API token",
-                                        "secondary",
-                                        json!({ "type": "begin_plugin_token", "id": id }),
-                                    ));
-                                }
-                                if has {
-                                    actions.push(button(
-                                        "Disconnect",
-                                        "secondary",
-                                        json!({ "type": "disconnect_plugin", "id": id }),
-                                    ));
-                                }
-                            }
-                            actions.push(button(
-                                "Remove",
-                                "secondary",
-                                json!({ "type": "uninstall_plugin", "id": id }),
-                            ));
-                            actions
-                        },
+                        plugin_buttons(p, id, on),
                     )
                 })
                 .collect();
@@ -8199,6 +8326,61 @@ mod tests {
             .unwrap()["items"][0]["buttons"][0]["label"]
             .clone();
         assert_eq!(again, "Add new activity");
+    }
+
+    #[test]
+    fn settings_connectors_lists_installed_apps_with_state_and_actions() {
+        let c = signed_in_core();
+        c.update(|s| {
+            s.route = "settings".into();
+            s.settings_section = "connectors".into();
+            s.plugins = Some(Ok(vec![
+                json!({ "id": "p2", "name": "Ops skills", "kind": "skills", "enabled": false }),
+                json!({ "id": "p1", "name": "Linear", "kind": "mcp", "enabled": true,
+                        "remoteUrl": "https://mcp.linear.app/mcp", "manifest": { "hasToken": true } }),
+            ]));
+            s.app_tools.insert(
+                "p1".into(),
+                Ok(vec![
+                    json!({ "name": "list_issues" }),
+                    json!({ "name": "get_issue" }),
+                    json!({ "name": "create_issue" }),
+                ]),
+            );
+        });
+        let page = c.view()["page"].clone();
+        let section = page["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|x| x["id"] == "connectors")
+            .expect("the connectors page is no longer dropped for lack of items")
+            .clone();
+        let items = section["items"].as_array().unwrap();
+        let ids: Vec<&str> = items.iter().map(|i| i["id"].as_str().unwrap()).collect();
+        assert_eq!(
+            ids,
+            [
+                "conn_summary",
+                "conn_store",
+                "conn_p1",
+                "conn_p2",
+                "conn_approvals"
+            ]
+        );
+        assert_eq!(items[0]["value"], "2 · 1 on");
+        assert_eq!(
+            items[2]["value"],
+            "MCP · On · Connected · 3 tools (2 read-only)"
+        );
+        let labels: Vec<&str> = items[2]["buttons"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|b| b["label"].as_str().unwrap())
+            .collect();
+        assert_eq!(labels, ["On", "Reconnect", "Disconnect", "Remove"]);
+        assert_eq!(items[3]["value"], "Skills · Off");
     }
 
     #[test]
