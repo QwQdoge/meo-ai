@@ -229,6 +229,14 @@ fn main() {
     if env::var_os("QT_QUICK_CONTROLS_STYLE").is_none() {
         // SAFETY: first statement of main, before any thread is started.
         unsafe { env::set_var("QT_QUICK_CONTROLS_STYLE", "Basic") };
+        // Qt reads the C runtime's copy of the environment, which std::env::set_var does not update on Windows.
+        #[cfg(windows)]
+        unsafe {
+            unsafe extern "C" {
+                fn _putenv_s(name: *const std::ffi::c_char, value: *const std::ffi::c_char) -> i32;
+            }
+            _putenv_s(c"QT_QUICK_CONTROLS_STYLE".as_ptr(), c"Basic".as_ptr());
+        }
     }
     // Velopack must run before anything else: it handles install, uninstall and update hooks and
     // may exit the process here.
