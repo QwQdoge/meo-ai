@@ -224,6 +224,12 @@ fn qml_root() -> PathBuf {
 }
 
 fn main() {
+    // MeoUI customizes control backgrounds, which the native Windows style refuses (blank, unstyled
+    // controls). Basic accepts it; an explicit user choice still wins.
+    if env::var_os("QT_QUICK_CONTROLS_STYLE").is_none() {
+        // SAFETY: first statement of main, before any thread is started.
+        unsafe { env::set_var("QT_QUICK_CONTROLS_STYLE", "Basic") };
+    }
     // Velopack must run before anything else: it handles install, uninstall and update hooks and
     // may exit the process here.
     velopack::VelopackApp::build().run();

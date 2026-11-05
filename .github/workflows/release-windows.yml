@@ -108,7 +108,8 @@ jobs:
           if (-not $exited) { Stop-Process -Id $p.Id -Force }
           $log = (Get-Content $err -Raw -ErrorAction SilentlyContinue) + (Get-Content $out -Raw -ErrorAction SilentlyContinue)
           Write-Output "---- app output`n$log`n----"
-          if ($log -match 'failed to load component|Network error|is not installed|module ".*" is not installed') { throw 'The interface did not load.' }
+          # Meo.System (the Meo desktop color provider) is optional and absent on Windows; every other missing module is fatal.
+          if (($log -split "`n" | Where-Object { $_ -notmatch 'Meo\.System' }) -match 'failed to load component|Network error|is not installed|does not support customization') { throw 'The interface did not load.' }
           if ($exited) { throw "The app exited within 15 seconds (code $($p.ExitCode))." }
           Write-Output 'The interface loaded and the app kept running.'
 

@@ -1,0 +1,1 @@
+../../../../../debug/build/qtbridge-type-lib-7ce5669d84aa07ba/out/cxxbridge/sources/qtbridge-type-lib/src/testlib/qsignalspy/mod.rs.cc

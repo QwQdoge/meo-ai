@@ -1,0 +1,10 @@
+/home/mingyue/projects/meo-ai/meo/desktop-rs/target/debug/deps/crc32fast-a6bd0fe2933de346.d: /home/mingyue/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crc32fast-1.5.3/src/lib.rs /home/mingyue/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crc32fast-1.5.3/src/baseline.rs /home/mingyue/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crc32fast-1.5.3/src/combine.rs /home/mingyue/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crc32fast-1.5.3/src/specialized/mod.rs /home/mingyue/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crc32fast-1.5.3/src/table.rs /home/mingyue/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crc32fast-1.5.3/src/specialized/pclmulqdq.rs
+
+/home/mingyue/projects/meo-ai/meo/desktop-rs/target/debug/deps/libcrc32fast-a6bd0fe2933de346.rmeta: /home/mingyue/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crc32fast-1.5.3/src/lib.rs /home/mingyue/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crc32fast-1.5.3/src/baseline.rs /home/mingyue/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crc32fast-1.5.3/src/combine.rs /home/mingyue/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crc32fast-1.5.3/src/specialized/mod.rs /home/mingyue/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crc32fast-1.5.3/src/table.rs /home/mingyue/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crc32fast-1.5.3/src/specialized/pclmulqdq.rs
+
+/home/mingyue/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crc32fast-1.5.3/src/lib.rs:
+/home/mingyue/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crc32fast-1.5.3/src/baseline.rs:
+/home/mingyue/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crc32fast-1.5.3/src/combine.rs:
+/home/mingyue/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crc32fast-1.5.3/src/specialized/mod.rs:
+/home/mingyue/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crc32fast-1.5.3/src/table.rs:
+/home/mingyue/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crc32fast-1.5.3/src/specialized/pclmulqdq.rs:

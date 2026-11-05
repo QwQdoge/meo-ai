@@ -1,0 +1,1 @@
+../../../debug/build/qtbridge-runtime-c784d93280eb523f/out/cxxbridge/sources/qtbridge-runtime/src/rustobjectgetter.rs.cc

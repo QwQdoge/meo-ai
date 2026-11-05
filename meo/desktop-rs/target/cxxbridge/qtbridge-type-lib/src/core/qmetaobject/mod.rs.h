@@ -1,0 +1,1 @@
+../../../../../debug/build/qtbridge-type-lib-7ce5669d84aa07ba/out/cxxbridge/include/qtbridge-type-lib/src/core/qmetaobject/mod.rs.h

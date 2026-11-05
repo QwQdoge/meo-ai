@@ -1,0 +1,1 @@
+../../../debug/build/qtbridge-runtime-c784d93280eb523f/out/cxxbridge/include/qtbridge-runtime/src/registry.rs.h

@@ -1,0 +1,1 @@
+../../../../debug/build/qtbridge-interfaces-f3fbba31a847f0cd/out/cxxbridge/include/qtbridge-interfaces/src/qabstract_item_model/proxy_cpp_bridge.rs.h
