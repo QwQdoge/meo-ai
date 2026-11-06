@@ -16,7 +16,7 @@ on:
       - '.github/workflows/rust-core.yml'
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: meo-rust-core-${{ github.workflow }}-${{ github.ref }}
@@ -31,17 +31,32 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          persist-credentials: false
+          persist-credentials: true
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: meo/core-rs
+      - name: Update cc in both committed lockfiles (temporary maintenance step)
+        run: |
+          cargo update -p cc
+          cargo update --manifest-path ../desktop-rs/Cargo.toml -p cc
       - run: cargo check --locked --all-features
       - run: cargo clippy --locked --all-features --all-targets -- -D warnings
       - run: cargo test --locked --all-features
       - run: cargo fmt --check
+      - name: Commit resolved Cargo lockfiles (temporary maintenance step)
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        working-directory: ${{ github.workspace }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add meo/core-rs/Cargo.lock meo/desktop-rs/Cargo.lock
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(deps): update cc lockfiles"
+            git push origin "HEAD:${GITHUB_HEAD_REF}"
+          fi
 
   android-project:
     runs-on: ubuntu-latest
