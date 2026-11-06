@@ -50,6 +50,10 @@ jobs:
         if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
         working-directory: ${{ github.workspace }}
         run: |
+          git fetch origin "refs/heads/${GITHUB_HEAD_REF}:refs/remotes/origin/${GITHUB_HEAD_REF}"
+          git checkout -B "${GITHUB_HEAD_REF}" "origin/${GITHUB_HEAD_REF}"
+          cargo update --manifest-path meo/core-rs/Cargo.toml -p cc
+          cargo update --manifest-path meo/desktop-rs/Cargo.toml -p cc
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add meo/core-rs/Cargo.lock meo/desktop-rs/Cargo.lock
