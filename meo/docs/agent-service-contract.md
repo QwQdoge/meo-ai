@@ -1,3 +1,5 @@
+> 📚 [MeoArch 主文档 / Master Doc](https://github.com/QwQdoge/MeoArch-os-workspace/blob/main/docs/MEOARCH_MASTER.md)：全部仓库地图、操作手册、Cloudflare 清单、全部文档链接。<!-- meoarch-master -->
+
 # Meo AgentService contract
 
 Status: Phase B contract with early Phase C typed-system, native-memory and response-observability surfaces. This document defines the stable frontend/runtime boundary before GTK removal.

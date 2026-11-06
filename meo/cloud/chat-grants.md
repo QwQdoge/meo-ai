@@ -1,3 +1,5 @@
+> 📚 [MeoArch 主文档 / Master Doc](https://github.com/QwQdoge/MeoArch-os-workspace/blob/main/docs/MEOARCH_MASTER.md)：全部仓库地图、操作手册、Cloudflare 清单、全部文档链接。<!-- meoarch-master -->
+
 # Meo AI chat grants
 
 The existing Meo Account provider broker intentionally uses payload-bound one-time consent for isolated inference and image-generation actions. That is too interruptive for an ordinary chat product, where a conversation may invoke the same approved provider dozens of times.

@@ -1,3 +1,5 @@
+> 📚 [MeoArch 主文档 / Master Doc](https://github.com/QwQdoge/MeoArch-os-workspace/blob/main/docs/MEOARCH_MASTER.md)：全部仓库地图、操作手册、Cloudflare 清单、全部文档链接。<!-- meoarch-master -->
+
 # Meo AI — release gap audit and next implementation order
 
 > Historical (2026-10-18). The `meo-ai-web` repository named below was deleted on 2026-11-04; Web source is `meo/web/client`.

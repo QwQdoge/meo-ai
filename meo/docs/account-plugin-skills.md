@@ -1,3 +1,5 @@
+> 📚 [MeoArch 主文档 / Master Doc](https://github.com/QwQdoge/MeoArch-os-workspace/blob/main/docs/MEOARCH_MASTER.md)：全部仓库地图、操作手册、Cloudflare 清单、全部文档链接。<!-- meoarch-master -->
+
 # Account-synced Plugins, MCP & Skills (Meo AI)
 
 Status: account-owned configuration, text-only selected Skill guidance, MCP Registry search, GitHub Skill import, operator-pinned MCP execution, and read-only agent tool proposals with standing grants are implemented **in code**. Production DB migrations, Worker/Web deployment, OAuth authorization, full native MCP execution parity and live cross-device QA are **not completed**. Android native Connectors now reads and periodically refreshes account-owned plugin/grant metadata, but does not execute MCP tools. A saved endpoint is not proof of a live or authorized connection.

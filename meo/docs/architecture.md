@@ -1,3 +1,5 @@
+> 📚 [MeoArch 主文档 / Master Doc](https://github.com/QwQdoge/MeoArch-os-workspace/blob/main/docs/MEOARCH_MASTER.md)：全部仓库地图、操作手册、Cloudflare 清单、全部文档链接。<!-- meoarch-master -->
+
 # Meo AI 架构与跨仓库实施计划
 
 日期：2026-10-08。本文是当前架构 source of truth，必须区分“仓库已实现”“兼容过渡层”“需要目标机 live acceptance”和“后续阶段”。

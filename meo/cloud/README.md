@@ -1,3 +1,5 @@
+> 📚 [MeoArch 主文档 / Master Doc](https://github.com/QwQdoge/MeoArch-os-workspace/blob/main/docs/MEOARCH_MASTER.md)：全部仓库地图、操作手册、Cloudflare 清单、全部文档链接。<!-- meoarch-master -->
+
 # Meo AI cloud
 
 `meo/cloud/` retains compatibility contracts for AI cloud state and the device relay while orchestration moves to the Rust core. Production versioned APIs and Neon migrations live in `meo-api`. It does not own Meo Account authentication or raw provider credentials.

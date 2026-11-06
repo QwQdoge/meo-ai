@@ -1,3 +1,5 @@
+> 📚 [MeoArch 主文档 / Master Doc](https://github.com/QwQdoge/MeoArch-os-workspace/blob/main/docs/MEOARCH_MASTER.md)：全部仓库地图、操作手册、Cloudflare 清单、全部文档链接。<!-- meoarch-master -->
+
 # Agent flow reference: what Meo adopts from Codex, Claude Code and open-source agents
 
 Status: research + adoption plan (2026-10-23). Nothing here is implemented yet unless marked **have**.

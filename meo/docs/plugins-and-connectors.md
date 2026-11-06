@@ -1,3 +1,5 @@
+> 📚 [MeoArch 主文档 / Master Doc](https://github.com/QwQdoge/MeoArch-os-workspace/blob/main/docs/MEOARCH_MASTER.md)：全部仓库地图、操作手册、Cloudflare 清单、全部文档链接。<!-- meoarch-master -->
+
 # Apps & Skills: plugins, connectors, skills
 
 This is how Meo AI's plugin store works end to end. The core (`core-rs/src/cloud`) owns all of it;

@@ -1,3 +1,5 @@
+> 📚 [MeoArch 主文档 / Master Doc](https://github.com/QwQdoge/MeoArch-os-workspace/blob/main/docs/MEOARCH_MASTER.md)：全部仓库地图、操作手册、Cloudflare 清单、全部文档链接。<!-- meoarch-master -->
+
 # Meo AI conversation content blocks
 
 Status: first service-side contract for moving the native product away from plain-string chat. The current QML frontend still renders the existing string stream; this document and `meo/service/content_blocks.py` define the safe typed representation that later transcript, attachment, artifact and tool-activity work will consume.

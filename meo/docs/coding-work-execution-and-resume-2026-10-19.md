@@ -1,3 +1,5 @@
+> 📚 [MeoArch 主文档 / Master Doc](https://github.com/QwQdoge/MeoArch-os-workspace/blob/main/docs/MEOARCH_MASTER.md)：全部仓库地图、操作手册、Cloudflare 清单、全部文档链接。<!-- meoarch-master -->
+
 # Coding Work and durable remote execution — 2026-10-19
 
 Meo AI can use the existing AgentService, Account plugin/MCP configuration, and the authenticated AgentRun bridge to assist with coding on a connected workspace. **It cannot yet claim full GitHub edit → tests → PR → CI → merge automation on its own.** In particular, the Web UI is an AgentRun controller, not a cloud shell or coding executor. GitHub operations must come from approved tool capabilities of the selected local Agent/Account connector, not LLM text alone.

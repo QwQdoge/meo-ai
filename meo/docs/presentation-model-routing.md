@@ -1,3 +1,5 @@
+> 📚 [MeoArch 主文档 / Master Doc](https://github.com/QwQdoge/MeoArch-os-workspace/blob/main/docs/MEOARCH_MASTER.md)：全部仓库地图、操作手册、Cloudflare 清单、全部文档链接。<!-- meoarch-master -->
+
 # Meo AI presentation blocks and model roles
 
 Status: first repo-side contract. The native UI and AgentService expose these concepts, while true multi-model execution remains gated on the UI-free AgentCore/provider-broker work.

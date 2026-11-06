@@ -1,3 +1,5 @@
+> 📚 [MeoArch 主文档 / Master Doc](https://github.com/QwQdoge/MeoArch-os-workspace/blob/main/docs/MEOARCH_MASTER.md)：全部仓库地图、操作手册、Cloudflare 清单、全部文档链接。<!-- meoarch-master -->
+
 > **Unified product source (2026-10-18):** Desktop is `app/` (C++/QML + MeoUI), Web is `web/client/` (React/TypeScript), Android is `android/` (Kotlin/Compose), shared Core is `core-rs/` (Rust), and design configuration is `ui-schema/`. Meo API and Meo Account remain separate. See [workspace.json](workspace.json). The old Web deployment has not been promoted to this source.
 
 # Meo AI preview

@@ -1,3 +1,5 @@
+> 📚 [MeoArch 主文档 / Master Doc](https://github.com/QwQdoge/MeoArch-os-workspace/blob/main/docs/MEOARCH_MASTER.md)：全部仓库地图、操作手册、Cloudflare 清单、全部文档链接。<!-- meoarch-master -->
+
 # Meo AI ownership and migration boundary
 
 This repository is a migration repository: the Newelle-derived upstream tree and the first Python/C++ Meo-native stack remain present while the product moves to its final architecture. These layers are not equal product authorities.

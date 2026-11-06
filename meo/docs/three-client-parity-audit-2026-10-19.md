@@ -1,3 +1,5 @@
+> 📚 [MeoArch 主文档 / Master Doc](https://github.com/QwQdoge/MeoArch-os-workspace/blob/main/docs/MEOARCH_MASTER.md)：全部仓库地图、操作手册、Cloudflare 清单、全部文档链接。<!-- meoarch-master -->
+
 # Three-client feature parity audit — 2026-10-19
 
 Scope: `meo-ai/main` at `db553f1fa1216cdf59dead1d3e82119ccca6ee49`, plus this PR's Projects changes. Source inspection only; **not** proof of production endpoint availability, live OAuth, desktop-to-cloud synchronization, on-device permissions, or physical Android/browser acceptance.
