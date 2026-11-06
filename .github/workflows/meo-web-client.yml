@@ -36,6 +36,15 @@ jobs:
           node-version: '24'
           cache: npm
           cache-dependency-path: meo/web/client/package-lock.json
+      - name: Resolve updated dependency lock (temporary maintenance step)
+        working-directory: meo/web/client
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+      - name: Upload resolved lock (temporary maintenance step)
+        uses: actions/upload-artifact@v4
+        with:
+          name: meo-web-client-resolved-lock
+          path: meo/web/client/package-lock.json
+          retention-days: 1
       - name: Install reproducible dependencies
         working-directory: meo/web/client
         run: npm ci
