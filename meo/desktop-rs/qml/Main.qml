@@ -112,6 +112,13 @@ ApplicationWindow {
         onAccepted: window.act({ type: "attach_path", path: selectedFile.toString() })
     }
 
+    // Folder picker for Work; the core opens and remembers the folder (`set_workspace`).
+    FolderDialog {
+        id: workspaceDialog
+        title: qsTr("Choose the folder Meo may work in")
+        onAccepted: window.act({ type: "set_workspace", path: selectedFolder.toString() })
+    }
+
     // Wallpaper-derived Material colors and light/dark mode from the Meo desktop, when present.
     Loader { source: "DynamicColors.qml" }
 
@@ -1049,7 +1056,20 @@ ApplicationWindow {
                     Rectangle {
                         id: inspectorCard
                         readonly property var info: window.page.inspector || ({})
-                        visible: !!info.visible
+                        // The card fades and settles in from the right edge (and back out);
+                        // the reading column reserves its space from the start (`shown`).
+                        readonly property bool shown: !!info.visible
+                        opacity: shown ? 1 : 0
+                        visible: opacity > 0
+                        transform: Translate {
+                            x: inspectorCard.shown ? 0 : 12
+                            Behavior on x {
+                                NumberAnimation { duration: MeoTheme.motionDurationMedium1; easing.type: Easing.BezierSpline; easing.bezierCurve: MeoTheme.motionEasingEmphasizedDecelerate }
+                            }
+                        }
+                        Behavior on opacity {
+                            NumberAnimation { duration: MeoTheme.motionDurationShort4; easing.type: Easing.BezierSpline; easing.bezierCurve: MeoTheme.motionEasingStandard }
+                        }
                         z: 2
                         anchors.top: parent.top
                         anchors.right: parent.right
@@ -1497,7 +1517,7 @@ ApplicationWindow {
                     ListView {
                         id: messages
                         // A centered reading column; the details card, when shown, sits to its right.
-                        readonly property real reserved: inspectorCard.visible ? 232 : 0
+                        readonly property real reserved: inspectorCard.shown ? 232 : 0
                         anchors.top: parent.top
                         anchors.bottom: parent.bottom
                         anchors.topMargin: 8
@@ -1506,11 +1526,43 @@ ApplicationWindow {
                         x: Math.max(16, (parent.width - reserved - width) / 2)
                         clip: true
                         spacing: 8
-                        model: window.page.messages || []
+                        // The core sends a whole new view on every change (each streamed token
+                        // included). Binding that array directly rebuilt every message delegate
+                        // and re-parsed every Markdown block per token. Keep a ListModel keyed
+                        // by message id instead: only rows whose content changed are updated,
+                        // and only new rows are inserted (and animate in).
+                        model: ListModel { id: messageModel }
+                        readonly property var source: window.page.messages || []
+                        onSourceChanged: syncMessages(source)
+                        Component.onCompleted: syncMessages(source)
+                        function syncMessages(list) {
+                            for (let i = 0; i < list.length; ++i) {
+                                const m = list[i]
+                                const key = m.id ? String(m.id) : "live:" + i
+                                const json = JSON.stringify(m)
+                                if (i < messageModel.count) {
+                                    const row = messageModel.get(i)
+                                    if (row.key === key) {
+                                        if (row.json !== json)
+                                            messageModel.set(i, { "key": key, "json": json })
+                                        continue
+                                    }
+                                    // A different message at this position (another chat, an edit,
+                                    // a stream that became a stored reply): rebuild from here.
+                                    messageModel.remove(i, messageModel.count - i)
+                                }
+                                messageModel.append({ "key": key, "json": json })
+                            }
+                            if (messageModel.count > list.length)
+                                messageModel.remove(list.length, messageModel.count - list.length)
+                        }
+                        add: MeoListTransitions.add
                         onCountChanged: positionViewAtEnd()
                         onContentHeightChanged: if (atYEnd || window.page.composer.busy) positionViewAtEnd()
                         delegate: Item {
                             id: messageItem
+                            // The message object of this row (see syncMessages).
+                            readonly property var modelData: JSON.parse(model.json)
                             readonly property bool streaming: !!modelData.streaming
                             width: ListView.view.width
                             implicitHeight: stepsBox.height + bubble.implicitHeight + pictures.height + (messageActions.visible ? messageActions.implicitHeight + 4 : 0)
@@ -1630,11 +1682,21 @@ ApplicationWindow {
                                     }
                                 }
                             }
+                            // Natural (unwrapped) width of the user's text. Sizing the bubble from
+                            // the wrapped TextEdit inside it was circular: the bubble started at 0,
+                            // the TextEdit wrapped to that width and reported it back, so a sent
+                            // message collapsed into a column a few letters wide.
+                            Text {
+                                id: userMeasure
+                                visible: false
+                                text: messageItem.mine ? (modelData.text || "") : ""
+                                font.pixelSize: 15
+                            }
                             Rectangle {
                                 id: bubble
                                 y: stepsBox.height
                                 anchors.right: parent.mine ? parent.right : undefined
-                                width: parent.mine ? Math.min(parent.width * 0.75, blocksColumn.implicitWidth + 32) : parent.width
+                                width: parent.mine ? Math.min(parent.width * 0.75, Math.ceil(userMeasure.implicitWidth) + 32) : parent.width
                                 implicitHeight: blocksColumn.implicitHeight + 24
                                 radius: 18
                                 color: parent.mine ? MeoTheme.secondaryContainer : "transparent"
@@ -1680,7 +1742,7 @@ ApplicationWindow {
                     readonly property real lift: Math.max(0, chatColumn.height - height / 2 - 8 - chatColumn.height * 0.5)
                     transform: Translate {
                         y: composerBox.fresh ? -composerBox.lift : 0
-                        Behavior on y { NumberAnimation { duration: MeoTheme.reduceMotion ? 0 : 240; easing.type: Easing.OutQuart } }
+                        Behavior on y { NumberAnimation { duration: MeoTheme.motionDurationMedium2; easing.type: Easing.BezierSpline; easing.bezierCurve: MeoTheme.motionEasingEmphasizedDecelerate } }
                     }
 
                     MeoBanner {
@@ -1743,7 +1805,7 @@ ApplicationWindow {
                         color: MeoTheme.surfaceContainerHigh
                         border.width: 1
                         border.color: input.activeFocus ? MeoTheme.primary : MeoTheme.outlineVariant
-                        Behavior on implicitHeight { NumberAnimation { duration: MeoTheme.reduceMotion ? 0 : 120; easing.type: Easing.OutCubic } }
+                        Behavior on implicitHeight { NumberAnimation { duration: MeoTheme.motionDurationShort3; easing.type: Easing.BezierSpline; easing.bezierCurve: MeoTheme.motionEasingStandardDecelerate } }
                         RowLayout {
                             anchors.fill: parent
                             anchors.leftMargin: 4
@@ -1802,6 +1864,18 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         spacing: 2
                         readonly property var items: composerBox.composer.toolbar || []
+                        // Work: the folder the task may read, edit and run commands in.
+                        MeoButton {
+                            readonly property var ws: composerBox.composer.workspace || null
+                            visible: !!ws
+                            type: ws && ws.open ? "text" : "tonal"
+                            size: "xs"
+                            icon.name: ws && ws.open ? "folder" : "folder_open"
+                            text: ws ? ws.label : ""
+                            ToolTip.visible: hovered && !!(ws && ws.path)
+                            ToolTip.text: ws && ws.path ? ws.path : ""
+                            onClicked: workspaceDialog.open()
+                        }
                         Repeater {
                             model: parent.items.filter(i => i.align !== "end")
                             ControlChip { required property var modelData; item: modelData }

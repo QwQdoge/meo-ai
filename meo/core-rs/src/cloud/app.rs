@@ -255,6 +255,11 @@ pub enum Action {
     AttachPath {
         path: String,
     },
+    /// Desktop: the folder (path or `file://` URL) Work may read, edit and run commands in, picked
+    /// with the composer's folder button (same as `/workspace <folder>`).
+    SetWorkspace {
+        path: String,
+    },
     RemoveFile {
         id: String,
     },
@@ -775,6 +780,7 @@ impl AppCore {
                 }
             }),
             Action::AttachPath { path } => self.attach_path(path).await,
+            Action::SetWorkspace { path } => self.set_workspace(path).await,
             Action::RemoveFile { id } => self.remove_file(id).await,
             Action::OpenProject { id } => self.open_project(id).await,
             Action::AttachDocument { name, data } => self.attach_document(name, data).await,
@@ -2060,6 +2066,23 @@ impl AppCore {
     #[cfg(target_arch = "wasm32")]
     async fn attach_path(&self, _path: String) {
         self.notice("error", "Attach a file with the file picker.");
+    }
+
+    /// The composer's folder button: a picked folder (path or `file://` URL) becomes the Work folder.
+    #[cfg(not(target_arch = "wasm32"))]
+    async fn set_workspace(&self, path: String) {
+        let local = url::Url::parse(&path)
+            .ok()
+            .and_then(|u| u.to_file_path().ok())
+            .unwrap_or_else(|| {
+                std::path::PathBuf::from(path.strip_prefix("file://").unwrap_or(&path))
+            });
+        self.agent_workspace(&local.to_string_lossy()).await;
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    async fn set_workspace(&self, _path: String) {
+        self.notice("error", "The web app cannot open a folder on this device.");
     }
 
     async fn remove_file(&self, id: String) {
@@ -6235,6 +6258,34 @@ fn composer_controls(s: &State) -> Vec<Value> {
 }
 
 /// Details card of the open chat: what this answer used. `None` until something was said.
+/// Where the conversation runs: plain cloud chat, or a Work task on this device and its folder.
+fn environment_row(s: &State) -> Value {
+    if s.route != "work" {
+        return json!({ "icon": "cloud", "label": "Cloud chat" });
+    }
+    let root = s
+        .agent
+        .host
+        .as_ref()
+        .map(|h| h.root().to_owned())
+        .or_else(|| {
+            s.prefs
+                .get("work.workspace")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        });
+    match root {
+        Some(root) => {
+            let name = std::path::Path::new(&root)
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| root.clone());
+            json!({ "icon": "computer", "label": format!("This device · {name}") })
+        }
+        None => json!({ "icon": "folder_off", "label": "This device · no folder open" }),
+    }
+}
+
 fn inspector(s: &State, messages: &[Value], active: Option<&String>) -> Value {
     let started = s.streaming.is_some()
         || messages
@@ -6258,9 +6309,17 @@ fn inspector(s: &State, messages: &[Value], active: Option<&String>) -> Value {
             Some(last.steps.iter().collect())
         })
         .unwrap_or_default();
+    // Web search, image generation and every Work tool round (`tool1`, `tool2`, ...).
     let tools = steps
         .iter()
-        .filter(|x| x["id"] == "search" || x["id"] == "image")
+        .filter(|x| {
+            x["id"] == "search"
+                || x["id"] == "image"
+                || x["id"].as_str().is_some_and(|id| {
+                    id.strip_prefix("tool")
+                        .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
+                })
+        })
         .count();
     let chars: usize = messages
         .iter()
@@ -6336,7 +6395,7 @@ fn inspector(s: &State, messages: &[Value], active: Option<&String>) -> Value {
     }
     let mut sections = vec![
         json!({ "id": "environment", "title": "Environment", "open": true, "rows": [
-            { "icon": "cloud", "label": "Cloud chat" },
+            environment_row(s),
             { "icon": "deployed_code", "label": model },
             { "icon": "tune", "label": profile.unwrap_or_else(|| "No profile".to_owned()) },
             { "icon": "psychology", "label": format!("Thinking · {level}") },
@@ -7059,7 +7118,7 @@ fn conversation_page(s: &State) -> Value {
     let using = using_label(s);
     json!({
         "kind": "conversation",
-        "title": active.as_ref().and_then(|id| s.conversations.iter().find(|c| &c.id == id)).map(|c| c.title.clone()).unwrap_or_else(|| "New chat".into()),
+        "title": active.as_ref().and_then(|id| s.conversations.iter().find(|c| &c.id == id)).map(|c| c.title.clone()).unwrap_or_else(|| if s.route == "work" { "New task".into() } else { "New chat".into() }),
         // The open chat's own menu (title ⋯): the same actions as its row in the sidebar.
         "menu": active.as_ref().map(|id| json!([
             button("Rename", "secondary", json!({ "type": "begin_rename", "id": id })),
@@ -7099,6 +7158,21 @@ fn conversation_page(s: &State) -> Value {
             "sendAction": { "type": "send" },
             "stopAction": { "type": "stop" },
             "toolbar": composer_controls(s),
+            // Work on a device that can run tasks: the folder Work reads, edits and runs commands in.
+            // `pick_workspace` is answered by the host's folder dialog with `set_workspace`.
+            "workspace": (s.route == "work" && remote::can_host()).then(|| {
+                let root = s.agent.host.as_ref().map(|h| h.root().to_owned())
+                    .or_else(|| s.prefs.get("work.workspace").and_then(Value::as_str).map(str::to_owned));
+                let name = root.as_deref().map(|r| {
+                    std::path::Path::new(r).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| r.to_owned())
+                });
+                json!({
+                    "label": name.clone().unwrap_or_else(|| "Open folder".to_owned()),
+                    "path": root,
+                    "open": name.is_some(),
+                    "action": { "type": "pick_workspace" },
+                })
+            }),
         },
         "consent": s.consent.as_ref().map(|p| json!({
             "title": "Send to AI provider?",
