@@ -16,7 +16,7 @@ on:
       - '.github/workflows/meo-web-client.yml'
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   client:
@@ -24,7 +24,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          persist-credentials: true
+          persist-credentials: false
       - uses: actions/checkout@v4
         with:
           repository: QwQdoge/MeoUI
@@ -36,15 +36,6 @@ jobs:
           node-version: '24'
           cache: npm
           cache-dependency-path: meo/web/client/package-lock.json
-      - name: Resolve updated dependency lock (temporary maintenance step)
-        working-directory: meo/web/client
-        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
-      - name: Upload resolved lock (temporary maintenance step)
-        uses: actions/upload-artifact@v4
-        with:
-          name: meo-web-client-resolved-lock
-          path: meo/web/client/package-lock.json
-          retention-days: 1
       - name: Install reproducible dependencies
         working-directory: meo/web/client
         run: npm ci
@@ -76,18 +67,3 @@ jobs:
           name: meo-web-site
           path: stage
           retention-days: 14
-      - name: Commit resolved lockfile (temporary maintenance step)
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
-        run: |
-          git fetch origin "refs/heads/${GITHUB_HEAD_REF}:refs/remotes/origin/${GITHUB_HEAD_REF}"
-          git checkout -B "${GITHUB_HEAD_REF}" "origin/${GITHUB_HEAD_REF}"
-          cd meo/web/client
-          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
-          cd "$GITHUB_WORKSPACE"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add meo/web/client/package-lock.json
-          if ! git diff --cached --quiet; then
-            git commit -m "chore(deps): resolve web client lock"
-            git push origin "HEAD:${GITHUB_HEAD_REF}"
-          fi
