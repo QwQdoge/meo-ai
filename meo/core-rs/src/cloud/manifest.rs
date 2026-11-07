@@ -39,6 +39,9 @@ pub struct SettingItem {
     pub binding: String,
     #[serde(default)]
     pub options: Vec<String>,
+    /// One line under the label on every client.
+    #[serde(default)]
+    pub description: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

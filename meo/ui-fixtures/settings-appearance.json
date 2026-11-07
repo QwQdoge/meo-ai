@@ -309,7 +309,8 @@
         "value": "dark",
         "label": "Dark"
        }
-      ]
+      ],
+      "description": "Light, dark, or the same as your system."
      },
      {
       "id": "text_size",
@@ -330,14 +331,16 @@
         "value": "large",
         "label": "Large"
        }
-      ]
+      ],
+      "description": "Makes the text in the app smaller or larger."
      },
      {
       "id": "reduce_motion",
       "label": "Reduce motion",
       "kind": "toggle",
       "binding": "appearance.reduce_motion",
-      "value": false
+      "value": false,
+      "description": "Turns off sliding and fading animations."
      }
     ]
    }

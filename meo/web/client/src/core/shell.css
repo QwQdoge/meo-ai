@@ -385,3 +385,41 @@
 /* Settings search box above the categories. */
 .core-app .core-settings-search { width: 100%; box-sizing: border-box; margin-bottom: 8px; padding: 7px 12px; border: 0; border-radius: 999px; background: var(--tonal); font-size: 13px; color: inherit; }
 .core-app .core-settings-search:focus { outline: 2px solid rgb(var(--accent-primary)); }
+
+/* ---------- Settings: grouped cards of rows (name left, control right) ---------- */
+.core-app .core-settings { padding: 12px; }
+.core-app .core-settings-nav { width: 224px; padding: 12px 10px; }
+.core-app .core-settings-body { padding: 18px 32px 40px; }
+.core-app .core-settings-body > .core-header { max-width: 640px; margin: 0 0 4px; }
+.core-app .core-settings-body > .core-header h1 { font-size: 22px; font-weight: 600; }
+.core-app .set-groups { max-width: 640px; display: flex; flex-direction: column; gap: 22px; margin-top: 14px; }
+.core-app .set-group { display: flex; flex-direction: column; gap: 8px; }
+.core-app .set-group > h3 { margin: 0 4px; font-size: 13px; font-weight: 600; color: rgb(var(--text-secondary)); }
+.core-app .set-card { border: 1px solid rgb(var(--border-light)); border-radius: 16px; background: var(--tonal); overflow: hidden; }
+.core-app .set-row { display: flex; align-items: center; gap: 16px; padding: 12px 16px; min-height: 52px; box-sizing: border-box; }
+.core-app .set-row + .set-row { border-top: 1px solid color-mix(in srgb, rgb(var(--border-light)) 70%, transparent); }
+.core-app .set-row.wrap { flex-wrap: wrap; }
+.core-app .set-row.stack { flex-direction: column; align-items: stretch; gap: 8px; }
+.core-app .set-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.core-app .set-text b { font-size: 14px; font-weight: 500; overflow-wrap: anywhere; }
+.core-app .set-text small { font-size: 12.5px; color: rgb(var(--text-secondary)); overflow-wrap: anywhere; }
+.core-app .set-note { margin: 0 4px; font-size: 12.5px; line-height: 1.5; color: rgb(var(--text-secondary)); }
+.core-app .set-value { font-size: 13px; color: rgb(var(--text-secondary)); }
+.core-app .set-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.core-app .set-buttons.full { flex-basis: 100%; }
+.core-app .set-select { position: relative; display: inline-flex; align-items: center; flex: none; }
+.core-app .set-select select { appearance: none; padding: 7px 32px 7px 14px; border: 1px solid rgb(var(--border-light)); border-radius: 999px; background: rgb(var(--surface-secondary));
+  color: inherit; font-size: 13px; font-weight: 500; cursor: pointer; transition: background-color .2s var(--ease); }
+.core-app .set-select select:hover { background: var(--tonal-2); }
+.core-app .set-select select:focus-visible { outline: 2px solid rgb(var(--accent-primary)); outline-offset: 2px; }
+.core-app .set-select svg { position: absolute; inset-inline-end: 10px; pointer-events: none; color: rgb(var(--text-secondary)); }
+.core-app .set-slider { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.core-app .set-slider small { font-size: 12px; color: rgb(var(--text-secondary)); }
+.core-app .set-slider input { width: 160px; accent-color: rgb(var(--accent-primary)); }
+.core-app .set-keys { display: inline-flex; gap: 4px; flex: none; }
+.core-app .set-keys kbd { min-width: 26px; box-sizing: border-box; padding: 3px 7px; border: 1px solid rgb(var(--border-light)); border-radius: 7px; background: rgb(var(--surface-secondary));
+  font-family: inherit; font-size: 12px; font-weight: 500; line-height: 1.4; text-align: center; }
+.core-app .set-row.stack input, .core-app .set-row.stack textarea { width: 100%; box-sizing: border-box; padding: 9px 12px; border: 1px solid rgb(var(--border-light)); border-radius: 12px;
+  background: rgb(var(--surface-secondary)); color: inherit; font-size: 14px; resize: vertical; }
+.core-app .set-row.stack input:focus, .core-app .set-row.stack textarea:focus { outline: 2px solid rgb(var(--accent-primary)); outline-offset: -1px; }
+@media (max-width: 839px) { .core-app .core-settings-body { padding: 12px 14px 28px; } }

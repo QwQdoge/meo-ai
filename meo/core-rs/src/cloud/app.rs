@@ -5845,6 +5845,7 @@ impl AppCore {
                             "label": item.label,
                             "kind": item.kind,
                             "binding": item.binding,
+                            "description": item.description,
                             "value": value,
                             "options": item.options.iter().map(|o| json!({ "value": o, "label": option_label(&item.binding, o) })).collect::<Vec<_>>(),
                         })
@@ -7538,6 +7539,13 @@ fn item(id: String, label: &str, value: &str, buttons: Vec<Value>) -> Value {
     json!({ "id": id, "kind": "item", "label": label, "value": value, "buttons": buttons })
 }
 
+/// Like [`item`], for rows whose texts are ours (not the user's content), so they are translated.
+fn own_item(id: String, label: &str, value: &str, buttons: Vec<Value>) -> Value {
+    let mut row = item(id, label, value, buttons);
+    row["translate"] = json!(true);
+    row
+}
+
 /// The detail page of one project, built only from generic settings controls.
 fn project_page(s: &State, id: &str) -> Value {
     let project = s
@@ -7976,7 +7984,12 @@ fn option_label(binding: &str, value: &str) -> String {
 /// Settings > Keyboard shortcuts: what is really bound, by client.
 fn shortcut_items(s: &State) -> Vec<Value> {
     let enter_sends = pref_bool(s, "general.enter_to_send", true);
-    let row = |id: &str, label: &str, keys: &str| item(format!("key_{id}"), label, keys, vec![]);
+    // `keys`: the value is a key combination, drawn as key caps.
+    let row = |id: &str, label: &str, keys: &str| {
+        let mut r = own_item(format!("key_{id}"), label, keys, vec![]);
+        r["keys"] = json!(true);
+        r
+    };
     vec![
         json!({ "id": "key_h_desktop", "kind": "heading", "label": "Desktop app" }),
         row("new", "New chat", "Ctrl+N"),
@@ -8003,7 +8016,7 @@ fn shortcut_items(s: &State) -> Vec<Value> {
 /// Settings > About: version, what Meo AI is made of, where the source and licenses are.
 fn about_items() -> Vec<Value> {
     let link = |id: &str, label: &str, value: &str, url: &str| {
-        item(
+        own_item(
             format!("about_{id}"),
             label,
             value,
@@ -8116,7 +8129,7 @@ fn permission_items(s: &State) -> Vec<Value> {
             "id": "perm_explain", "kind": "hint",
             "text": "This is the level the composer starts with. Looking things up (list, get, search, read, fetch) runs without asking from Allow low risk up. Anything that changes something asks at Allow low risk, goes to an approver model at Auto choose, and runs freely only at Full access. Commands such as sudo, git push or rm -rf, paths outside the open folder and credentials always ask unless you chose Full access. A task started from another device never runs above Auto choose.",
         }),
-        item(
+        own_item(
             "perm_plugins".into(),
             "Apps, skills and MCP servers",
             "Turn them on or off, sign in again, and see what each one may do on the Plugins page.",

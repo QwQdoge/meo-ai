@@ -272,6 +272,10 @@ for (const section of settings.sections) {
   );
   for (const item of section.items) {
     const fields = ["id", "label", "labelKey", "kind", "binding"];
+    if (item.description !== undefined) {
+      fields.push("description");
+      text(item.description, "settings item description");
+    }
     if (item.kind === "select") fields.push("options");
     if (item.kind === "text") fields.push("maxLength");
     exactKeys(item, fields, "settings item");

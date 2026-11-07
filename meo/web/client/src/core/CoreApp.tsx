@@ -53,7 +53,7 @@ export default function CoreApp() {
   const page: Spec = view.page;
   return (
     <div className={`core-app${drawer ? " drawer-open" : ""}`} data-mode={view.route === "work" ? "work" : "chat"}>
-      {view.sidebar && <Sidebar sidebar={view.sidebar} strings={strings} act={act} open={drawer} setOpen={setDrawer} />}
+      {view.sidebar && view.page?.kind !== "settings" && <Sidebar sidebar={view.sidebar} strings={strings} act={act} open={drawer} setOpen={setDrawer} />}
       {view.sidebar && drawer && <div className="core-drawer-scrim" onClick={() => setDrawer(false)} />}
       {view.dialog && <Dialog dialog={view.dialog} act={act} />}
       <div className="core-main">
@@ -302,8 +302,18 @@ function SettingsPage({ page, act }: { page: Spec; act: Act }) {
             <h1>{current?.label ?? page.title}</h1>
             {page.close && <button className="core-close" aria-label="Close" onClick={() => act(page.close)}>✕</button>}
           </header>
-          <div className="core-section">
-            {(current?.items ?? []).map((item: Spec) => <Control key={item.id} item={item} act={act} />)}
+          <div className="set-groups">
+            {settingGroups(current?.items ?? []).map((g, i) => (
+              <section key={i} className="set-group">
+                {g.title && <h3>{g.title}</h3>}
+                {g.rows.length > 0 && (
+                  <div className="set-card">
+                    {g.rows.map((item: Spec) => <SettingRow key={item.id} item={item} act={act} />)}
+                  </div>
+                )}
+                {g.notes.map((n: Spec) => <p key={n.id} className="set-note">{n.text}</p>)}
+              </section>
+            ))}
           </div>
         </div>
       </div>
@@ -331,6 +341,101 @@ function SettingsSearch({ search, act }: { search: Spec; act: Act }) {
       onKeyDown={(e) => e.key === "Escape" && setText("")}
     />
   );
+}
+
+/** Items split at each heading: a titled group is one rounded card of rows, hints are notes under it. */
+function settingGroups(items: Spec[]): { title: string; rows: Spec[]; notes: Spec[] }[] {
+  const out: { title: string; rows: Spec[]; notes: Spec[] }[] = [];
+  let g = { title: "", rows: [] as Spec[], notes: [] as Spec[] };
+  for (const it of items) {
+    if (it.kind === "heading") {
+      if (g.rows.length || g.notes.length || g.title) out.push(g);
+      g = { title: it.label ?? "", rows: [], notes: [] };
+    } else if (it.kind === "hint") g.notes.push(it);
+    else g.rows.push(it);
+  }
+  if (g.rows.length || g.notes.length) out.push(g);
+  return out;
+}
+
+/** A key combination drawn as key caps ("Ctrl+N" -> Ctrl N). */
+function KeyCaps({ combo }: { combo: string }) {
+  return <span className="set-keys">{combo.split("+").filter(Boolean).map((k, i) => <kbd key={i}>{k}</kbd>)}</span>;
+}
+
+/** One settings row: name and a quiet description on the left, the control on the right. */
+function SettingRow({ item, act }: { item: Spec; act: Act }) {
+  const [text, setText] = useState<string>(String(item.value ?? ""));
+  useEffect(() => setText(String(item.value ?? "")), [item.value]);
+  const commit = () => text !== String(item.value ?? "") && act(setting(item, text));
+  const description: string | undefined = item.keys ? undefined : item.description || (item.kind === "item" ? item.value : undefined);
+  const head = (
+    <div className="set-text">
+      <b>{item.label}</b>
+      {description && <small>{item.tone && <i className={`core-tone ${item.tone}`} aria-hidden />}{description}</small>}
+    </div>
+  );
+  switch (item.kind) {
+    case "toggle":
+      return <div className="set-row">{head}<Switch spec={{ on: item.value === true, label: item.label, action: setting(item, item.value !== true) }} act={act} /></div>;
+    case "select":
+      return (
+        <div className="set-row">
+          {head}
+          <span className="set-select">
+            <select aria-label={item.label} value={item.value ?? ""} onChange={(e) => act(setting(item, e.target.value))}>
+              {!(item.options ?? []).some((o: Spec) => o.value === item.value) && <option value="">—</option>}
+              {(item.options ?? []).map((o: Spec) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+            <Icon name="expand_more" size={16} />
+          </span>
+        </div>
+      );
+    case "slider": {
+      const options: Spec[] = item.options ?? [];
+      const index = Math.max(0, options.findIndex((o) => o.value === item.value));
+      return (
+        <div className="set-row">
+          {head}
+          <span className="set-slider">
+            <small>{options[index]?.label}</small>
+            <input type="range" aria-label={item.label} min={0} max={options.length - 1} step={1} value={index} aria-valuetext={options[index]?.label}
+              onChange={(e) => act(setting(item, options[Number(e.target.value)].value))} />
+          </span>
+        </div>
+      );
+    }
+    case "info":
+      return <div className="set-row">{head}{item.keys ? <KeyCaps combo={String(item.value ?? "")} /> : <span className="set-value">{String(item.value ?? "")}</span>}</div>;
+    case "item": {
+      const buttons: Spec[] = item.buttons ?? [];
+      const below = buttons.length > 2;
+      const list = buttons.map((b, i) => <Button key={i} spec={b} act={act} />);
+      return (
+        <div className="set-row wrap">
+          {head}
+          {item.keys && <KeyCaps combo={String(item.value ?? "")} />}
+          {item.switch && <Switch spec={item.switch} act={act} />}
+          {!below && list.length > 0 && <span className="set-buttons">{list}</span>}
+          {below && <div className="set-buttons full">{list}</div>}
+        </div>
+      );
+    }
+    case "text":
+      return (
+        <div className="set-row stack">
+          {head}
+          {item.single_line ? (
+            <input value={text} placeholder={item.placeholder} onChange={(e) => setText(e.target.value)} onBlur={commit}
+              onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && commit()} />
+          ) : (
+            <textarea rows={4} value={text} onChange={(e) => setText(e.target.value)} onBlur={commit} />
+          )}
+        </div>
+      );
+    default:
+      return <div className="set-row stack"><Control item={item} act={act} /></div>;
+  }
 }
 
 const setting = (item: Spec, value: unknown): Action => ({ type: "set_setting", binding: item.binding, value });

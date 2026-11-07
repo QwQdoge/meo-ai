@@ -62,16 +62,19 @@ fn buttons(c: &HashMap<String, String>, value: &mut Value, key: &str) {
 fn control(c: &HashMap<String, String>, item: &mut Value) {
     if item["kind"] == "item" {
         // Chat titles, memories and the like are the user's own content; generated profiles are ours.
-        if item["id"]
-            .as_str()
-            .is_some_and(|id| id.starts_with("profile-req:"))
+        if item["translate"] == true
+            || item["id"]
+                .as_str()
+                .is_some_and(|id| id.starts_with("profile-req:"))
         {
             field(c, item, "label");
+            field(c, item, "value");
         }
         buttons(c, item, "buttons");
         return;
     }
     field(c, item, "label");
+    field(c, item, "description");
     field(c, item, "placeholder");
     // Tiles and bars carry their own labels.
     for entry in each(item, "items") {

@@ -300,35 +300,40 @@
       "kind": "item",
       "label": "New chat",
       "value": "Ctrl+N",
-      "buttons": []
+      "buttons": [],
+      "keys": true
      },
      {
       "id": "key_find",
       "kind": "item",
       "label": "Search chats",
       "value": "Ctrl+F",
-      "buttons": []
+      "buttons": [],
+      "keys": true
      },
      {
       "id": "key_settings",
       "kind": "item",
       "label": "Open settings",
       "value": "Ctrl+,",
-      "buttons": []
+      "buttons": [],
+      "keys": true
      },
      {
       "id": "key_sidebar",
       "kind": "item",
       "label": "Show or hide the sidebar",
       "value": "Ctrl+B",
-      "buttons": []
+      "buttons": [],
+      "keys": true
      },
      {
       "id": "key_quit",
       "kind": "item",
       "label": "Quit",
       "value": "Ctrl+Q",
-      "buttons": []
+      "buttons": [],
+      "keys": true
      },
      {
       "id": "key_note",

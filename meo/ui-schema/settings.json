@@ -13,7 +13,8 @@
           "label": "Enter to send",
           "labelKey": "meo.settings.enterToSend",
           "kind": "toggle",
-          "binding": "general.enter_to_send"
+          "binding": "general.enter_to_send",
+          "description": "Press Enter to send a message. Shift+Enter starts a new line."
         },
         {
           "id": "language",
@@ -25,7 +26,8 @@
             "system",
             "en",
             "zh-CN"
-          ]
+          ],
+          "description": "The language of menus and buttons."
         }
       ],
       "keywords": [
@@ -53,7 +55,8 @@
             "system",
             "light",
             "dark"
-          ]
+          ],
+          "description": "Light, dark, or the same as your system."
         },
         {
           "id": "text_size",
@@ -65,14 +68,16 @@
             "small",
             "default",
             "large"
-          ]
+          ],
+          "description": "Makes the text in the app smaller or larger."
         },
         {
           "id": "reduce_motion",
           "label": "Reduce motion",
           "labelKey": "meo.settings.reduceMotion",
           "kind": "toggle",
-          "binding": "appearance.reduce_motion"
+          "binding": "appearance.reduce_motion",
+          "description": "Turns off sliding and fading animations."
         }
       ],
       "keywords": [
@@ -99,7 +104,8 @@
           "labelKey": "meo.settings.instructions",
           "kind": "text",
           "binding": "personalization.custom_instructions",
-          "maxLength": 8000
+          "maxLength": 8000,
+          "description": "Tell Meo how you like answers: tone, format, anything it should always keep in mind."
         },
         {
           "id": "response_language",
@@ -117,14 +123,16 @@
             "es",
             "fr",
             "de"
-          ]
+          ],
+          "description": "The language Meo answers in, whatever language you write in."
         },
         {
           "id": "memory_enabled",
           "label": "Use saved memories",
           "labelKey": "meo.settings.memoryEnabled",
           "kind": "toggle",
-          "binding": "memory.enabled"
+          "binding": "memory.enabled",
+          "description": "Let Meo remember useful facts about you between chats."
         }
       ],
       "keywords": [
@@ -146,7 +154,8 @@
           "label": "Notify me when an answer is ready in the background",
           "labelKey": "meo.settings.notifyAnswers",
           "kind": "toggle",
-          "binding": "notifications.answers"
+          "binding": "notifications.answers",
+          "description": "A system notification when an answer finishes while Meo is in the background."
         }
       ],
       "keywords": [

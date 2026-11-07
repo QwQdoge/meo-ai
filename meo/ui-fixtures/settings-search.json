@@ -300,7 +300,8 @@
       "label": "Reduce motion",
       "kind": "toggle",
       "binding": "appearance.reduce_motion",
-      "value": false
+      "value": false,
+      "description": "Turns off sliding and fading animations."
      },
      {
       "id": "res_n",
@@ -312,7 +313,8 @@
       "label": "Notify me when an answer is ready in the background",
       "kind": "toggle",
       "binding": "notifications.answers",
-      "value": true
+      "value": true,
+      "description": "A system notification when an answer finishes while Meo is in the background."
      }
     ]
    }

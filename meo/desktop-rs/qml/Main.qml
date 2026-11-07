@@ -317,7 +317,7 @@ ApplicationWindow {
         // projects tree and chats; collapses to an icon rail.
         ColumnLayout {
             id: sidebar
-            visible: !!window.v.sidebar
+            visible: !!window.v.sidebar && window.page.kind !== "settings"
             readonly property var sb: window.v.sidebar || ({})
             readonly property bool collapsed: !!sb.collapsed
             readonly property var rows: {
@@ -519,7 +519,7 @@ ApplicationWindow {
             }
         }
 
-        Rectangle { visible: !!window.v.sidebar; Layout.fillHeight: true; width: 1; color: MeoTheme.outlineVariant }
+        Rectangle { visible: !!window.v.sidebar && window.page.kind !== "settings"; Layout.fillHeight: true; width: 1; color: MeoTheme.outlineVariant }
 
         ColumnLayout {
             Layout.fillWidth: true
@@ -998,28 +998,167 @@ ApplicationWindow {
                     }
                     Rectangle { Layout.fillHeight: true; width: 1; color: MeoTheme.outlineVariant }
                     Flickable {
+                        id: settingsFlick
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        contentHeight: settingsColumn.implicitHeight + 48
+                        contentHeight: settingsColumn.implicitHeight + 56
                         clip: true
+                        boundsBehavior: Flickable.StopAtBounds
+                        ScrollBar.vertical: ScrollBar {}
+                        // Items split at each heading: a titled group is one rounded card of rows;
+                        // hints are quiet notes under the card.
+                        readonly property var groups: {
+                            const out = []
+                            let g = { title: "", rows: [], notes: [] }
+                            for (const it of (current.items || [])) {
+                                if (it.kind === "heading") {
+                                    if (g.rows.length || g.notes.length || g.title) out.push(g)
+                                    g = { title: it.label || "", rows: [], notes: [] }
+                                } else if (it.kind === "hint") {
+                                    g.notes.push(it)
+                                } else {
+                                    g.rows.push(it)
+                                }
+                            }
+                            if (g.rows.length || g.notes.length) out.push(g)
+                            return out
+                        }
                         ColumnLayout {
                             id: settingsColumn
-                            x: 28
-                            y: 20
-                            width: Math.min(parent.width - 56, 680)
-                            spacing: 16
+                            x: 32
+                            y: 24
+                            width: Math.min(settingsFlick.width - 64, 640)
+                            spacing: 20
                             RowLayout {
                                 Layout.fillWidth: true
                                 MeoText { text: current.label || window.page.title || ""; typeRole: "title"; typeSize: "medium"; Layout.fillWidth: true }
-                                MeoIconButton { visible: !!window.page.close; type: "standard"; icon.name: "close"; onClicked: window.act(window.page.close) }
+                                MeoIconButton { visible: !!window.page.close; type: "standard"; icon.name: "close"; toolTipText: qsTr("Close settings"); onClicked: window.act(window.page.close) }
                             }
                             Repeater {
-                                model: current.items || []
-                                SettingControl { required property var modelData; item: modelData; Layout.fillWidth: true }
+                                model: settingsFlick.groups
+                                delegate: ColumnLayout {
+                                    id: group
+                                    required property var modelData
+                                    Layout.fillWidth: true
+                                    spacing: 8
+                                    MeoText {
+                                        visible: !!group.modelData.title
+                                        Layout.leftMargin: 4
+                                        text: group.modelData.title
+                                        typeRole: "label"
+                                        font.weight: Font.DemiBold
+                                        color: MeoTheme.onSurfaceVariant
+                                    }
+                                    Rectangle {
+                                        visible: group.modelData.rows.length > 0
+                                        Layout.fillWidth: true
+                                        implicitHeight: rowsColumn.implicitHeight
+                                        radius: 16
+                                        color: MeoTheme.surfaceContainerLow
+                                        border.width: 1
+                                        border.color: MeoTheme.outlineVariant
+                                        ColumnLayout {
+                                            id: rowsColumn
+                                            width: parent.width
+                                            spacing: 0
+                                            Repeater {
+                                                model: group.modelData.rows
+                                                delegate: ColumnLayout {
+                                                    required property var modelData
+                                                    required property int index
+                                                    Layout.fillWidth: true
+                                                    spacing: 0
+                                                    SettingControl { item: modelData; Layout.fillWidth: true }
+                                                    Rectangle {
+                                                        visible: index < group.modelData.rows.length - 1
+                                                        Layout.fillWidth: true
+                                                        Layout.leftMargin: 16
+                                                        implicitHeight: 1
+                                                        color: MeoTheme.outlineVariant
+                                                        opacity: 0.6
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Repeater {
+                                        model: group.modelData.notes
+                                        MeoText {
+                                            required property var modelData
+                                            Layout.fillWidth: true
+                                            Layout.leftMargin: 4
+                                            Layout.rightMargin: 4
+                                            text: modelData.text || ""
+                                            wrapMode: Text.Wrap
+                                            typeRole: "label"
+                                            font.weight: Font.Normal
+                                            color: MeoTheme.onSurfaceVariant
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
                 }
+            }
+        }
+    }
+
+    // A compact dropdown for a setting with a few named choices: current choice and a caret,
+    // opening a MeoUI menu (not a full-width text field).
+    component SelectPill: Item {
+        id: pillRoot
+        property var item: ({})
+        readonly property var options: item.options || []
+        readonly property var current: options.find(o => o.value === item.value) || ({ label: "—" })
+        implicitWidth: pill.width
+        implicitHeight: 36
+        Rectangle {
+            id: pill
+            width: pillRow.implicitWidth + 28
+            height: parent.height
+            radius: height / 2
+            color: pillTap.pressed ? MeoTheme.surfaceContainerHighest : pillHover.hovered || menu.visible ? MeoTheme.surfaceContainerHigh : MeoTheme.surfaceContainer
+            border.width: 1
+            border.color: MeoTheme.outlineVariant
+            Behavior on color { ColorAnimation { duration: MeoTheme.motionDurationShort2 } }
+            RowLayout {
+                id: pillRow
+                anchors.centerIn: parent
+                spacing: 6
+                MeoText { text: pillRoot.current.label; typeRole: "label"; font.weight: Font.Medium }
+                MeoIcon { icon: "expand_more"; size: 18; color: MeoTheme.onSurfaceVariant }
+            }
+            HoverHandler { id: pillHover; cursorShape: Qt.PointingHandCursor }
+            TapHandler { id: pillTap; onTapped: menu.popupFor(pill) }
+            activeFocusOnTab: true
+            Keys.onReturnPressed: menu.popupFor(pill)
+            Keys.onSpacePressed: menu.popupFor(pill)
+            Accessible.role: Accessible.ComboBox
+            Accessible.name: (pillRoot.item.label || "") + ": " + pillRoot.current.label
+        }
+        AppMenu {
+            id: menu
+            entries: pillRoot.options.map(o => ({ label: o.label, value: o.value, checked: o.value === pillRoot.item.value }))
+            onPicked: entry => window.act({ type: "set_setting", binding: pillRoot.item.binding, value: entry.value })
+        }
+    }
+
+    // A key combination drawn as key caps ("Ctrl+N" -> [Ctrl] [N]).
+    component KeyCaps: Row {
+        property string combo: ""
+        spacing: 4
+        Repeater {
+            model: String(combo).split("+").filter(x => x.length > 0)
+            Rectangle {
+                required property string modelData
+                implicitWidth: Math.max(26, capText.implicitWidth + 14)
+                implicitHeight: 26
+                radius: 7
+                color: MeoTheme.surfaceContainerHighest
+                border.width: 1
+                border.color: MeoTheme.outlineVariant
+                MeoText { id: capText; anchors.centerIn: parent; text: modelData; typeRole: "label"; font.weight: Font.Medium }
             }
         }
     }
@@ -1114,89 +1253,147 @@ ApplicationWindow {
         }
     }
 
+    // One settings row. Rows live inside a rounded group card: the name (and a quiet description)
+    // on the left, the control on the right; long inputs and charts go below the name.
     component SettingControl: ColumnLayout {
+        id: setting
         property var item: ({})
-        spacing: 4
+        readonly property bool rowKind: ["toggle", "select", "slider", "info", "item"].indexOf(item.kind) >= 0
+        readonly property bool buttonsBelow: (item.buttons || []).length > 2
+        readonly property real pad: 16
+        spacing: 0
 
-        MeoSwitch {
-            visible: item.kind === "toggle"
+        RowLayout {
+            visible: setting.rowKind
             Layout.fillWidth: true
-            text: item.label || ""
-            checked: item.value === true
-            onToggled: checked => window.act({ type: "set_setting", binding: item.binding, value: checked })
-        }
-        ColumnLayout {
-            visible: item.kind === "slider"
-            spacing: 0
-            readonly property int index: Math.max(0, (item.options || []).findIndex(o => o.value === item.value))
+            Layout.leftMargin: setting.pad
+            Layout.rightMargin: setting.pad
+            Layout.topMargin: 12
+            Layout.bottomMargin: setting.buttonsBelow ? 4 : 12
+            spacing: 16
+            ColumnLayout {
+                Layout.fillWidth: true
+                Layout.alignment: Qt.AlignVCenter
+                spacing: 2
+                MeoText { text: setting.item.label || ""; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                RowLayout {
+                    visible: !setting.item.keys && !!(setting.item.description || (setting.item.kind === "item" && setting.item.value))
+                    Layout.fillWidth: true
+                    spacing: 6
+                    Rectangle {
+                        visible: !!setting.item.tone
+                        Layout.alignment: Qt.AlignTop
+                        Layout.topMargin: 5
+                        implicitWidth: 8; implicitHeight: 8; radius: 4
+                        color: setting.item.tone === "ok" ? MeoTheme.success : setting.item.tone === "error" ? MeoTheme.error : MeoTheme.warning
+                    }
+                    MeoText {
+                        text: setting.item.description || String(setting.item.value || "")
+                        color: MeoTheme.onSurfaceVariant
+                        typeRole: "label"
+                        font.weight: Font.Normal
+                        wrapMode: Text.Wrap
+                        Layout.fillWidth: true
+                    }
+                }
+            }
+            MeoSwitch {
+                visible: setting.item.kind === "toggle" || (setting.item.kind === "item" && !!setting.item.switch)
+                checked: setting.item.kind === "toggle" ? setting.item.value === true : !!(setting.item.switch && setting.item.switch.on)
+                Accessible.name: setting.item.label || ""
+                onToggled: checked => setting.item.kind === "toggle"
+                    ? window.act({ type: "set_setting", binding: setting.item.binding, value: checked })
+                    : window.act(setting.item.switch.action)
+            }
+            SelectPill { visible: setting.item.kind === "select"; item: setting.item }
+            ColumnLayout {
+                visible: setting.item.kind === "slider"
+                spacing: 0
+                readonly property int index: Math.max(0, (setting.item.options || []).findIndex(o => o.value === setting.item.value))
+                MeoText {
+                    Layout.alignment: Qt.AlignRight
+                    text: (((setting.item.options || [])[parent.index]) || {}).label || ""
+                    typeRole: "label"
+                    color: MeoTheme.onSurfaceVariant
+                }
+                MeoSlider {
+                    Layout.preferredWidth: 160
+                    from: 0
+                    to: Math.max(1, (setting.item.options || []).length - 1)
+                    stepSize: 1
+                    discrete: true
+                    value: parent.index
+                    onMoved: v => window.act({ type: "set_setting", binding: setting.item.binding, value: setting.item.options[Math.round(v)].value })
+                }
+            }
+            KeyCaps { visible: setting.item.kind === "info" && !!setting.item.keys || setting.item.kind === "item" && !!setting.item.keys; combo: String(setting.item.value || "") }
             MeoText {
-                text: (item.label || "") + " · " + (((item.options || [])[parent.index] || {}).label || "")
-                typeRole: "label"
+                visible: setting.item.kind === "info" && !setting.item.keys
+                text: String(setting.item.value || "")
                 color: MeoTheme.onSurfaceVariant
+                horizontalAlignment: Text.AlignRight
             }
-            MeoSlider {
-                Layout.preferredWidth: 110
-                from: 0
-                to: Math.max(1, (item.options || []).length - 1)
-                stepSize: 1
-                discrete: true
-                value: parent.index
-                onMoved: v => window.act({ type: "set_setting", binding: item.binding, value: item.options[Math.round(v)].value })
+            Row {
+                visible: setting.item.kind === "item" && !setting.buttonsBelow && (setting.item.buttons || []).length > 0
+                spacing: 8
+                Repeater { model: setting.item.buttons || []; ActionButton { spec: modelData } }
             }
         }
-        MeoExposedDropdown {
-            visible: item.kind === "select"
+        Flow {
+            visible: setting.item.kind === "item" && setting.buttonsBelow
             Layout.fillWidth: true
-            label: item.label || ""
-            model: item.options || []
-            textRole: "label"
-            valueRole: "value"
-            currentIndex: (item.options || []).findIndex(o => o.value === item.value)
-            onSelected: (index, value) => window.act({ type: "set_setting", binding: item.binding, value: item.options[index].value })
+            Layout.leftMargin: setting.pad
+            Layout.rightMargin: setting.pad
+            Layout.bottomMargin: 12
+            spacing: 8
+            Repeater { model: setting.item.buttons || []; ActionButton { spec: modelData } }
         }
-        MeoTextField {
-            visible: item.kind === "text" && !!item.single_line
+
+        // Inputs that need width sit under their name.
+        ColumnLayout {
+            visible: setting.item.kind === "text"
             Layout.fillWidth: true
-            label: item.label || ""
-            placeholder: item.placeholder || ""
-            text: item.value || ""
-            onEditingFinished: if (text !== (item.value || "")) window.act({ type: "set_setting", binding: item.binding, value: text })
+            Layout.margins: setting.pad
+            spacing: 8
+            ColumnLayout {
+                spacing: 2
+                MeoText { text: setting.item.label || ""; Layout.fillWidth: true }
+                MeoText {
+                    visible: !!setting.item.description
+                    text: setting.item.description || ""
+                    typeRole: "label"
+                    font.weight: Font.Normal
+                    wrapMode: Text.Wrap
+                    color: MeoTheme.onSurfaceVariant
+                    Layout.fillWidth: true
+                }
+            }
+            MeoTextField {
+                visible: !!setting.item.single_line
+                Layout.fillWidth: true
+                placeholder: setting.item.placeholder || ""
+                text: setting.item.value || ""
+                onEditingFinished: if (text !== (setting.item.value || "")) window.act({ type: "set_setting", binding: setting.item.binding, value: text })
+            }
+            MeoTextArea {
+                visible: !setting.item.single_line
+                Layout.fillWidth: true
+                Layout.preferredHeight: 110
+                placeholder: setting.item.placeholder || ""
+                text: setting.item.value || ""
+                onEditingFinished: if (text !== (setting.item.value || "")) window.act({ type: "set_setting", binding: setting.item.binding, value: text })
+            }
         }
-        MeoTextArea {
-            id: textField
-            visible: item.kind === "text" && !item.single_line
-            Layout.fillWidth: true
-            Layout.preferredHeight: 96
-            label: item.label || ""
-            text: item.value || ""
-            onEditingFinished: if (text !== (item.value || "")) window.act({ type: "set_setting", binding: item.binding, value: text })
-        }
-        MeoText {
-            visible: item.kind === "hint"
-            Layout.fillWidth: true
-            text: item.text || ""
-            wrapMode: Text.Wrap
-            typeRole: "label"
-            color: MeoTheme.onSurfaceVariant
-            font.weight: Font.Normal
-        }
-        MeoText {
-            visible: item.kind === "heading"
-            Layout.fillWidth: true
-            Layout.topMargin: 6
-            text: item.label || ""
-            typeRole: "label"
-            font.bold: true
-            color: MeoTheme.onSurfaceVariant
-        }
+
         GridLayout {
-            visible: item.kind === "stats"
+            visible: setting.item.kind === "stats"
             Layout.fillWidth: true
-            columns: Math.max(1, Math.min(3, (item.items || []).length))
+            Layout.margins: setting.pad
+            columns: Math.max(1, Math.min(3, (setting.item.items || []).length))
             columnSpacing: 8
             rowSpacing: 8
             Repeater {
-                model: item.kind === "stats" ? (item.items || []) : []
+                model: setting.item.kind === "stats" ? (setting.item.items || []) : []
                 Rectangle {
                     required property var modelData
                     Layout.fillWidth: true
@@ -1218,20 +1415,21 @@ ApplicationWindow {
             }
         }
         ColumnLayout {
-            visible: item.kind === "bars"
+            visible: setting.item.kind === "bars"
             Layout.fillWidth: true
+            Layout.margins: setting.pad
             spacing: 6
-            readonly property real peak: Math.max(1, ...((item.items || []).map(b => b.value)))
-            MeoText { text: item.label || ""; typeRole: "label"; color: MeoTheme.onSurfaceVariant }
+            readonly property real peak: Math.max(1, ...((setting.item.items || []).map(b => b.value)))
+            MeoText { text: setting.item.label || ""; typeRole: "label"; color: MeoTheme.onSurfaceVariant }
             Row {
                 Layout.fillWidth: true
                 height: 72
                 spacing: 3
                 Repeater {
-                    model: item.kind === "bars" ? (item.items || []) : []
+                    model: setting.item.kind === "bars" ? (setting.item.items || []) : []
                     Item {
                         required property var modelData
-                        width: Math.max(3, (parent.width - 3 * ((item.items || []).length - 1)) / Math.max(1, (item.items || []).length))
+                        width: Math.max(3, (parent.width - 3 * ((setting.item.items || []).length - 1)) / Math.max(1, (setting.item.items || []).length))
                         height: 72
                         Rectangle {
                             anchors.bottom: parent.bottom
@@ -1245,66 +1443,10 @@ ApplicationWindow {
                 }
             }
         }
-        RowLayout {
-            visible: item.kind === "info"
-            Layout.fillWidth: true
-            MeoText { text: item.label || ""; Layout.fillWidth: true }
-            MeoText { text: String(item.value || ""); color: MeoTheme.onSurfaceVariant }
-        }
         ActionButton {
-            visible: item.kind === "button"
-            spec: ({ label: item.label, style: item.style, action: item.action })
-        }
-        // An app / setting row: text (with a coloured status dot), the on / off switch beside it,
-        // and the buttons wrapped underneath so a long status never runs under them.
-        ColumnLayout {
-            visible: item.kind === "item"
-            Layout.fillWidth: true
-            spacing: 8
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: 12
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    spacing: 2
-                    MeoText { text: item.label || ""; wrapMode: Text.Wrap; Layout.fillWidth: true }
-                    RowLayout {
-                        visible: !!item.value
-                        Layout.fillWidth: true
-                        spacing: 6
-                        Rectangle {
-                            visible: !!item.tone
-                            Layout.alignment: Qt.AlignTop
-                            Layout.topMargin: 5
-                            implicitWidth: 8; implicitHeight: 8; radius: 4
-                            color: item.tone === "ok" ? MeoTheme.success : item.tone === "error" ? MeoTheme.error : MeoTheme.warning
-                        }
-                        MeoText {
-                            text: String(item.value || "")
-                            color: MeoTheme.onSurfaceVariant
-                            typeRole: "label"
-                            font.weight: Font.Normal
-                            wrapMode: Text.Wrap
-                            Layout.fillWidth: true
-                        }
-                    }
-                }
-                MeoSwitch {
-                    visible: !!item.switch
-                    checked: !!(item.switch && item.switch.on)
-                    Accessible.name: (item.switch && item.switch.label) || ""
-                    onToggled: window.act(item.switch.action)
-                }
-            }
-            Flow {
-                visible: (item.buttons || []).length > 0
-                Layout.fillWidth: true
-                spacing: 8
-                Repeater {
-                    model: item.buttons || []
-                    ActionButton { spec: modelData }
-                }
-            }
+            visible: setting.item.kind === "button"
+            Layout.margins: setting.pad
+            spec: ({ label: setting.item.label, style: setting.item.style, action: setting.item.action })
         }
     }
 
