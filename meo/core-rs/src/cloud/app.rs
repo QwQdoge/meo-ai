@@ -30,7 +30,7 @@ use super::{
     host::Host,
     locale,
     manifest::Manifest,
-    orchestration, remote, richtext,
+    orchestration, project_env, remote, richtext,
     router::{self, Choice, Router},
     storage::Storage,
     usage,
@@ -124,6 +124,44 @@ pub enum Action {
     Refresh,
     /// Reads the installed apps again (after authorizing one elsewhere).
     RefreshPlugins,
+    /// The host's folder dialog for a project (desktop); it answers with `set_project_folder`.
+    PickProjectFolder {
+        id: String,
+    },
+    /// Links a project to a folder on this device (a path or `file://` URL).
+    SetProjectFolder {
+        id: String,
+        path: String,
+    },
+    ClearProjectFolder {
+        id: String,
+    },
+    BeginLinkRepo {
+        id: String,
+    },
+    /// Links a project to a GitHub repository (`owner/name` or its address).
+    LinkRepo {
+        id: String,
+        text: String,
+    },
+    UnlinkRepo {
+        id: String,
+    },
+    /// Creates `.agent/` (goal, to-do, notes) in the project folder where it is missing.
+    InitProjectAgent {
+        id: String,
+    },
+    BeginAddTodo {
+        id: String,
+    },
+    AddTodo {
+        id: String,
+        text: String,
+    },
+    /// Starts a Work task in a project: its folder is the Work folder.
+    StartProjectWork {
+        id: String,
+    },
     DismissNotice,
     /// Filters the chat list by title and message text (empty clears it).
     Search {
@@ -512,6 +550,10 @@ struct State {
     app_auth_issues: HashMap<String, bool>,
     /// What the settings search box holds.
     settings_query: String,
+    /// Per project, on this device: its folder and GitHub repository.
+    project_env: HashMap<String, project_env::ProjectEnv>,
+    /// The `.agent/` state of each project folder, as last read (shown on the project page).
+    project_agent: HashMap<String, project_env::AgentState>,
     /// Apps the user was sent off to authorize; checked when the window comes back to the front.
     awaiting_auth: Vec<String>,
     store: StoreUi,
@@ -538,6 +580,7 @@ pub struct AppCore {
 }
 
 const KEY_SESSION: &str = "session";
+const KEY_PROJECT_ENV: &str = "project-envs";
 /// Set once the Essentials skills were offered to this account on this device.
 const KEY_ESSENTIALS_OFFERED: &str = "essentials-offered";
 const KEY_PREFS: &str = "prefs";
@@ -697,6 +740,45 @@ impl AppCore {
             }
             Action::SetSetting { binding, value } => self.set_setting(binding, value).await,
             Action::Refresh => self.load_all().await,
+            Action::PickProjectFolder { .. } => {}
+            Action::SetProjectFolder { id, path } => self.set_project_folder(id, path).await,
+            Action::ClearProjectFolder { id } => self.set_project_env(&id, |e| e.folder = None),
+            Action::BeginLinkRepo { id } => self.prompt(
+                "Link a GitHub repository",
+                "Type owner/name or paste the repository's address. Meo uses the GitHub app for issues, pull requests and files that are not in the folder.",
+                "",
+                false,
+                input_button("Link", "primary", json!({ "type": "link_repo", "id": id })),
+            ),
+            Action::LinkRepo { id, text } => {
+                self.update(|s| s.dialog = None);
+                match project_env::parse_repo(&text) {
+                    Some(repo) => {
+                        self.set_project_env(&id, |e| e.repo = Some(repo.clone()));
+                        self.notice("info", format!("Linked to {repo}."));
+                    }
+                    None => self.notice("error", "That is not a GitHub repository. Use owner/name."),
+                }
+            }
+            Action::UnlinkRepo { id } => self.set_project_env(&id, |e| e.repo = None),
+            Action::InitProjectAgent { id } => self.init_project_agent(&id),
+            Action::BeginAddTodo { id } => self.prompt(
+                "Add a to-do",
+                "It goes under Next in .agent/TODO.md; Meo keeps the list up to date as it works.",
+                "",
+                false,
+                input_button("Add", "primary", json!({ "type": "add_todo", "id": id })),
+            ),
+            Action::AddTodo { id, text } => {
+                self.update(|s| s.dialog = None);
+                self.project_agent_write(&id, |root| project_env::add_todo(root, &text));
+            }
+            Action::StartProjectWork { id } => self.update(|s| {
+                s.files.clear();
+                s.active = None;
+                s.route = "work".into();
+                s.new_chat_project = Some(id);
+            }),
             Action::RefreshPlugins => {
                 self.refresh_plugins().await;
                 self.check_pending_auth().await;
@@ -919,6 +1001,8 @@ impl AppCore {
         let conversations: Vec<ConversationSummary> =
             self.load_json(KEY_CONVERSATIONS).unwrap_or_default();
         let work_ids: Vec<String> = self.load_json(KEY_WORK).unwrap_or_default();
+        let project_env: HashMap<String, project_env::ProjectEnv> =
+            self.load_json(KEY_PROJECT_ENV).unwrap_or_default();
         let credentials: Vec<Credential> = self.load_json(KEY_CREDENTIALS).unwrap_or_default();
         let catalogue: HashMap<String, Vec<Model>> = self.load_json(KEY_MODELS).unwrap_or_default();
         let selected = prefs
@@ -937,6 +1021,7 @@ impl AppCore {
             s.prefs = prefs;
             s.conversations = conversations;
             s.work_ids = work_ids;
+            s.project_env = project_env;
             s.credentials = credentials;
             s.catalogue = catalogue;
             s.selected = selected;
@@ -2140,21 +2225,146 @@ impl AppCore {
         self.notice("error", "Attach a file with the file picker.");
     }
 
-    /// The composer's folder button: a picked folder (path or `file://` URL) becomes the Work folder.
+    /// The composer's folder button: a picked folder (path or `file://` URL) becomes the Work folder,
+    /// or the project's folder when a project is open.
     #[cfg(not(target_arch = "wasm32"))]
     async fn set_workspace(&self, path: String) {
-        let local = url::Url::parse(&path)
-            .ok()
-            .and_then(|u| u.to_file_path().ok())
-            .unwrap_or_else(|| {
-                std::path::PathBuf::from(path.strip_prefix("file://").unwrap_or(&path))
-            });
-        self.agent_workspace(&local.to_string_lossy()).await;
+        let project = project_of_view(&self.state.lock().unwrap());
+        if let Some(project) = project {
+            return self.set_project_folder(project, path).await;
+        }
+        self.agent_workspace(&folder_from_path(&path)).await;
     }
 
     #[cfg(target_arch = "wasm32")]
     async fn set_workspace(&self, _path: String) {
         self.notice("error", "The web app cannot open a folder on this device.");
+    }
+
+    /// Links a project to a folder on this device; Work in that project then runs there.
+    #[cfg(not(target_arch = "wasm32"))]
+    async fn set_project_folder(&self, id: String, path: String) {
+        match Host::open(&folder_from_path(&path)) {
+            Ok(host) => {
+                let root = host.root().to_owned();
+                self.set_project_env(&id, |e| e.folder = Some(root.clone()));
+                self.notice("info", format!("{root} is now this project's folder."));
+            }
+            Err(e) => self.notice("error", e),
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    async fn set_project_folder(&self, _id: String, _path: String) {
+        self.notice("error", "The web app cannot open a folder on this device.");
+    }
+
+    /// Changes what a project is linked to on this device, keeps it, and reads its `.agent/` again.
+    fn set_project_env(&self, id: &str, change: impl FnOnce(&mut project_env::ProjectEnv)) {
+        self.update(|s| {
+            let entry = s.project_env.entry(id.to_owned()).or_default();
+            change(entry);
+            if entry.is_empty() {
+                s.project_env.remove(id);
+            }
+        });
+        let all = self.state.lock().unwrap().project_env.clone();
+        self.save_json(KEY_PROJECT_ENV, &all);
+        self.refresh_project_agent(id);
+    }
+
+    /// Reads the project folder's `.agent/` (goal, to-do, notes) for the project page and the prompt.
+    fn refresh_project_agent(&self, id: &str) {
+        let folder = self
+            .state
+            .lock()
+            .unwrap()
+            .project_env
+            .get(id)
+            .and_then(|e| e.folder.clone());
+        self.update(|s| match folder {
+            Some(f) => {
+                s.project_agent.insert(
+                    id.to_owned(),
+                    project_env::read_state(std::path::Path::new(&f)),
+                );
+            }
+            None => {
+                s.project_agent.remove(id);
+            }
+        });
+    }
+
+    /// Runs a change of the project's `.agent/` files and shows the result; a failure is told as is.
+    fn project_agent_write<T>(
+        &self,
+        id: &str,
+        change: impl FnOnce(&std::path::Path) -> std::io::Result<T>,
+    ) -> Option<T> {
+        let folder = self
+            .state
+            .lock()
+            .unwrap()
+            .project_env
+            .get(id)
+            .and_then(|e| e.folder.clone());
+        let Some(folder) = folder else {
+            self.notice("error", "Choose a folder for this project first.");
+            return None;
+        };
+        let result = change(std::path::Path::new(&folder));
+        self.refresh_project_agent(id);
+        match result {
+            Ok(value) => Some(value),
+            Err(e) => {
+                self.notice("error", format!("Could not update .agent/: {e}"));
+                None
+            }
+        }
+    }
+
+    fn init_project_agent(&self, id: &str) {
+        if let Some(created) = self.project_agent_write(id, project_env::init) {
+            self.notice(
+                "info",
+                if created.is_empty() {
+                    ".agent/ is already set up.".to_owned()
+                } else {
+                    format!("Created .agent/ with {}.", created.join(", "))
+                },
+            );
+        }
+    }
+
+    /// What the model is told about the open project: where it lives, its repository, and the goal,
+    /// to-do and notes kept in `.agent/` (read fresh, so edits by hand and by earlier turns show).
+    fn project_context(&self, folder: Option<&str>) -> String {
+        let s = self.state.lock().unwrap();
+        let Some(id) = project_of_view(&s) else {
+            return String::new();
+        };
+        let name = s
+            .projects
+            .as_ref()
+            .and_then(|r| r.as_ref().ok())
+            .and_then(|list| list.iter().find(|p| p["id"] == id.as_str()))
+            .and_then(|p| p["name"].as_str())
+            .unwrap_or("this project")
+            .to_owned();
+        let env = s.project_env.get(&id).cloned().unwrap_or_default();
+        let mut out = format!("Project: {name}.");
+        if let Some(repo) = &env.repo {
+            out.push_str(&format!(
+                "\nGitHub repository: {repo}. For its issues, pull requests and files that are not in the folder, use the GitHub app (it only works while the app is connected); the folder, if open, is a checkout of it."
+            ));
+        }
+        if let Some(root) = folder {
+            out.push('\n');
+            out.push_str(&project_env::prompt_block(&project_env::read_state(
+                std::path::Path::new(root),
+            )));
+        }
+        out
     }
 
     async fn remove_file(&self, id: String) {
@@ -2278,6 +2488,7 @@ impl AppCore {
             s.project_memories.clear();
             s.project_chats.clear();
         });
+        self.refresh_project_agent(&id);
         self.refresh_open_project().await;
     }
 
@@ -4825,14 +5036,7 @@ impl AppCore {
 
     /// Starts the tool loop of a new user message: a fresh checkpoint, and the folder from `/workspace`.
     fn agent_begin(&self, text: &str) {
-        let wanted = self
-            .state
-            .lock()
-            .unwrap()
-            .prefs
-            .get("work.workspace")
-            .and_then(Value::as_str)
-            .map(str::to_owned);
+        let wanted = effective_workspace(&self.state.lock().unwrap());
         let host = wanted.and_then(|path| {
             let current = self.state.lock().unwrap().agent.host.clone();
             match current {
@@ -4887,6 +5091,11 @@ impl AppCore {
             return;
         };
         self.update(|s| s.agent.round += 1);
+        // The previous round may have updated .agent/: the project page and the next prompt follow.
+        let open = project_of_view(&self.state.lock().unwrap());
+        if let Some(project) = open {
+            self.refresh_project_agent(&project);
+        }
         let call = match first {
             Ok(call) => call,
             Err(problem) => {
@@ -5076,10 +5285,23 @@ impl AppCore {
             } else {
                 format!("\n\n{mcp}")
             };
+            let context = self.project_context(tools_root.as_deref());
+            let context = if context.is_empty() {
+                context
+            } else {
+                format!("\n\n{context}")
+            };
             request["prompt"] = json!(format!(
-                "{}{mcp}\n\n{current}",
+                "{}{mcp}{context}\n\n{current}",
                 agent::tool_instructions_with_apps(tools_root.as_deref(), subagents, web, &apps)
             ));
+        } else {
+            // No tools, but the project's repository still tells the model where its work lives.
+            let context = self.project_context(None);
+            if !context.is_empty() {
+                let current = request["prompt"].as_str().unwrap_or_default().to_owned();
+                request["prompt"] = json!(format!("{context}\n\n{current}"));
+            }
         }
     }
 
@@ -5589,6 +5811,24 @@ impl AppCore {
         if binding.starts_with("project:") {
             return self.edit_project_field(&binding, value).await;
         }
+        if let Some(rest) = binding.strip_prefix("agent:") {
+            // agent:<project id>:goal, agent:<project id>:todo:<line of TODO.md>
+            let mut parts = rest.splitn(3, ':');
+            let (Some(id), Some(what)) = (parts.next(), parts.next()) else {
+                return;
+            };
+            match (what, parts.next().and_then(|l| l.parse::<usize>().ok())) {
+                ("goal", _) => {
+                    let text = value.as_str().unwrap_or_default().to_owned();
+                    self.project_agent_write(id, |root| project_env::set_goal(root, &text));
+                }
+                ("todo", Some(line)) => {
+                    self.project_agent_write(id, |root| project_env::toggle_todo(root, line));
+                }
+                _ => {}
+            }
+            return;
+        }
         if let Some(rest) = binding.strip_prefix("pr:") {
             // pr:<profile id>:<role> — one role of a profile; an empty value clears it.
             if let Some((id, role)) = rest.split_once(':') {
@@ -6014,7 +6254,7 @@ impl AppCore {
             None => sections,
         };
         json!({
-            "kind": "settings", "title": "Settings", "sections": sections, "nav": nav, "selected": selected,
+            "kind": "settings", "standalone": true, "title": "Settings", "sections": sections, "nav": nav, "selected": selected,
             "search": { "placeholder": "Search settings", "value": s.settings_query,
                         "action": { "type": "search_settings" }, "field": "text" },
             "close": { "type": "navigate", "route": "chat" },
@@ -7383,8 +7623,8 @@ fn conversation_page(s: &State) -> Value {
             // Work on a device that can run tasks: the folder Work reads, edits and runs commands in.
             // `pick_workspace` is answered by the host's folder dialog with `set_workspace`.
             "workspace": (s.route == "work" && remote::can_host()).then(|| {
-                let root = s.agent.host.as_ref().map(|h| h.root().to_owned())
-                    .or_else(|| s.prefs.get("work.workspace").and_then(Value::as_str).map(str::to_owned));
+                let root = effective_workspace(s)
+                    .or_else(|| s.agent.host.as_ref().map(|h| h.root().to_owned()));
                 let name = root.as_deref().map(|r| {
                     std::path::Path::new(r).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| r.to_owned())
                 });
@@ -7547,6 +7787,44 @@ fn own_item(id: String, label: &str, value: &str, buttons: Vec<Value>) -> Value 
 }
 
 /// The detail page of one project, built only from generic settings controls.
+/// The project the open conversation belongs to, or the one a new chat or task will be filed under.
+fn project_of_view(s: &State) -> Option<String> {
+    match &s.active {
+        Some(id) => s
+            .conversations
+            .iter()
+            .find(|c| &c.id == id)
+            .and_then(|c| c.project_id.clone()),
+        None => s.new_chat_project.clone(),
+    }
+}
+
+/// The folder Work runs in: the open project's folder when it has one on this device, else the folder
+/// chosen for Work in general.
+fn effective_workspace(s: &State) -> Option<String> {
+    if let Some(folder) = project_of_view(s)
+        .and_then(|id| s.project_env.get(&id).and_then(|e| e.folder.clone()))
+        .filter(|f| std::path::Path::new(f).is_dir())
+    {
+        return Some(folder);
+    }
+    s.prefs
+        .get("work.workspace")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+}
+
+/// A folder from a path or a `file://` URL (what the system folder dialog returns).
+#[cfg(not(target_arch = "wasm32"))]
+fn folder_from_path(path: &str) -> String {
+    url::Url::parse(path)
+        .ok()
+        .and_then(|u| u.to_file_path().ok())
+        .unwrap_or_else(|| std::path::PathBuf::from(path.strip_prefix("file://").unwrap_or(path)))
+        .to_string_lossy()
+        .into_owned()
+}
+
 fn project_page(s: &State, id: &str) -> Value {
     let project = s
         .projects
@@ -7562,6 +7840,9 @@ fn project_page(s: &State, id: &str) -> Value {
             "binding": format!("project:{id}:{name}"), "value": field(key), "placeholder": placeholder,
         })
     };
+    let env = s.project_env.get(id).cloned().unwrap_or_default();
+    // Only the desktop app has a folder dialog (Android can run tasks but cannot pick a folder).
+    let can_host = remote::can_host() && !cfg!(target_os = "android");
     let chats: Vec<Value> = s
         .project_chats
         .iter()
@@ -7608,22 +7889,224 @@ fn project_page(s: &State, id: &str) -> Value {
         "action": { "type": "begin_add_project_memory", "id": id },
     })];
     memory_items.extend(memories);
+
+    // ---- Environment: where the work happens (a folder here, a repository online).
+    let mut environment: Vec<Value> =
+        vec![json!({ "id": "env_h_folder", "kind": "heading", "label": "Folder" })];
+    let folder_buttons = match (&env.folder, can_host) {
+        (Some(_), true) => vec![
+            button(
+                "Work here",
+                "primary",
+                json!({ "type": "start_project_work", "id": id }),
+            ),
+            button(
+                "Change",
+                "secondary",
+                json!({ "type": "pick_project_folder", "id": id }),
+            ),
+            button(
+                "Remove",
+                "secondary",
+                json!({ "type": "clear_project_folder", "id": id }),
+            ),
+        ],
+        (None, true) => vec![button(
+            "Choose folder",
+            "primary",
+            json!({ "type": "pick_project_folder", "id": id }),
+        )],
+        _ => vec![],
+    };
+    environment.push(own_item(
+        "env_folder".into(),
+        "Folder on this device",
+        env.folder.as_deref().unwrap_or(if can_host {
+            "Not set. Work in this project has no files to read or change."
+        } else {
+            "Folders are only available in the desktop app."
+        }),
+        folder_buttons,
+    ));
+    environment.push(json!({ "id": "env_folder_note", "kind": "hint",
+        "text": "A project's folder is remembered on this device only. Starting Work in the project opens this folder, so Meo can read it, change it and run commands there, within your Permissions." }));
+    environment.push(json!({ "id": "env_h_repo", "kind": "heading", "label": "GitHub" }));
+    let repo_buttons = match &env.repo {
+        Some(_) => vec![
+            button(
+                "Change",
+                "secondary",
+                json!({ "type": "begin_link_repo", "id": id }),
+            ),
+            button(
+                "Unlink",
+                "secondary",
+                json!({ "type": "unlink_repo", "id": id }),
+            ),
+        ],
+        None => vec![button(
+            "Link repository",
+            "primary",
+            json!({ "type": "begin_link_repo", "id": id }),
+        )],
+    };
+    environment.push(own_item(
+        "env_repo".into(),
+        "Repository",
+        env.repo.as_deref().unwrap_or("Not linked"),
+        repo_buttons,
+    ));
+    // The GitHub app is what lets Meo reach the repository online; say where it stands.
+    let github = s
+        .plugins
+        .as_ref()
+        .and_then(|r| r.as_ref().ok())
+        .and_then(|rows| {
+            rows.iter()
+                .find(|p| p["remoteUrl"] == "https://api.githubcopilot.com/mcp/")
+        });
+    environment.push(match github {
+        None => own_item(
+            "env_github".into(),
+            "GitHub app",
+            "Not installed. Install it so Meo can read issues, pull requests and files online.",
+            vec![button(
+                "Install",
+                "primary",
+                json!({ "type": "install_plugin", "id": "github" }),
+            )],
+        ),
+        Some(p) => {
+            let auth = app_auth(s, p);
+            let mut buttons = Vec::new();
+            if p["enabled"] != true {
+                buttons.push(button(
+                    "Turn on",
+                    "primary",
+                    json!({ "type": "toggle_plugin", "id": p["id"], "enabled": true }),
+                ));
+            }
+            if let Some((label, action)) = connect_action(p) {
+                let fix = matches!(auth.state, "needs_connect" | "needs_reauth");
+                buttons.push(button(
+                    &label,
+                    if fix { "primary" } else { "secondary" },
+                    action,
+                ));
+            }
+            let mut row = own_item(
+                "env_github".into(),
+                "GitHub app",
+                &if p["enabled"] != true {
+                    "Off".to_owned()
+                } else if auth.label.is_empty() {
+                    "Ready".to_owned()
+                } else {
+                    auth.label.to_owned()
+                },
+                buttons,
+            );
+            row["tone"] = json!(auth_tone(&auth, p["enabled"] == true));
+            row
+        }
+    });
+    environment.push(json!({ "id": "env_repo_note", "kind": "hint",
+        "text": "Online, Meo works on the repository through the GitHub app. With a folder as well, the folder is treated as a checkout of it." }));
+
+    // ---- Goal and to-do: persistent, kept in <folder>/.agent/ so they travel with the code.
+    let mut goal: Vec<Value> = Vec::new();
+    match (&env.folder, s.project_agent.get(id)) {
+        (None, _) => goal.push(json!({ "id": "goal_none", "kind": "hint",
+            "text": "Choose a folder under Environment to keep a goal, a to-do list and notes with the project. They are stored as Markdown in the folder's .agent/ directory, next to AGENTS.md, so they survive restarts and can be committed." })),
+        (Some(_), Some(state)) if state.exists => {
+            goal.push(json!({
+                "id": "goal_text", "label": "Goal", "kind": "text", "single_line": false,
+                "binding": format!("agent:{id}:goal"), "value": state.goal,
+                "description": "What the project is for and when it is done. Meo reads this at the start of every task and updates it when the goal changes.",
+                "placeholder": "Describe the goal",
+            }));
+            goal.push(json!({ "id": "goal_h_todo", "kind": "heading", "label": "To-do" }));
+            if state.todos.is_empty() {
+                goal.push(json!({ "id": "todo_empty", "kind": "hint", "text": "Nothing on the list yet. Meo adds the plan here when it starts a larger task." }));
+            }
+            for todo in &state.todos {
+                let mut row = json!({
+                    "id": format!("todo_{}", todo.line), "label": todo.text, "kind": "toggle",
+                    "binding": format!("agent:{id}:todo:{}", todo.line), "value": todo.done(),
+                });
+                if todo.mark == '~' {
+                    row["description"] = json!("In progress");
+                }
+                goal.push(row);
+            }
+            goal.push(json!({ "id": "todo_add", "kind": "button", "label": "Add a to-do", "style": "secondary",
+                "action": { "type": "begin_add_todo", "id": id } }));
+            goal.push(json!({ "id": "goal_note", "kind": "hint",
+                "text": "Meo keeps .agent/GOAL.md, TODO.md and NOTES.md up to date while it works. You can edit them by hand too; AGENTS.md stays where it is and holds the rules." }));
+        }
+        (Some(_), _) => {
+            goal.push(json!({ "id": "goal_setup", "kind": "hint",
+                "text": "This folder has no .agent/ yet. Set it up to give the project a goal, a to-do list and notes that Meo keeps up to date." }));
+            goal.push(json!({ "id": "goal_init", "kind": "button", "label": "Set up .agent", "style": "primary",
+                "action": { "type": "init_project_agent", "id": id } }));
+        }
+    }
+
+    let mut overview = vec![json!({
+        "id": "start_work", "kind": "button", "label": "Start Work in this project", "style": "primary",
+        "action": { "type": "start_project_work", "id": id },
+    })];
+    overview.extend([
+        text("name", "Name", "name", true, ""),
+        text("description", "Description", "description", false, ""),
+        text(
+            "instructions",
+            "Instructions",
+            "instructions",
+            false,
+            "How Meo should behave in this project",
+        ),
+    ]);
+    let sections = [
+        ("project", "Overview", overview),
+        ("environment", "Environment", environment),
+        ("goal", "Goal & to-do", goal),
+        ("project_chats", "Chats", chat_items),
+        ("project_memory", "Memory", memory_items),
+        (
+            "project_danger",
+            "Danger zone",
+            vec![json!({
+                "id": "delete_project", "kind": "button", "label": "Delete project", "style": "danger",
+                "action": { "type": "begin_delete_project", "id": id },
+            })],
+        ),
+    ];
+    let selected = if sections
+        .iter()
+        .any(|(sid, _, _)| *sid == s.settings_section)
+    {
+        s.settings_section.clone()
+    } else {
+        "project".to_owned()
+    };
+    let nav_entry = |(sid, label, _): &(&str, &str, Vec<Value>)| {
+        json!({ "id": sid, "label": label, "selected": *sid == selected,
+                "action": { "type": "select_settings_section", "id": sid } })
+    };
+    let (main, more): (Vec<_>, Vec<_>) = sections
+        .iter()
+        .partition(|(sid, _, _)| *sid != "project_danger");
     json!({
         "kind": "settings",
         "title": if field("name").is_empty() { "Project".to_owned() } else { field("name") },
-        "sections": [
-            { "id": "project", "label": "Project", "items": [
-                text("name", "Name", "name", true, ""),
-                text("description", "Description", "description", false, ""),
-                text("instructions", "Instructions", "instructions", false, "How Meo should behave in this project"),
-            ]},
-            { "id": "project_chats", "label": "Chats", "items": chat_items },
-            { "id": "project_memory", "label": "Project memory", "items": memory_items },
-            { "id": "project_danger", "label": "Danger zone", "items": [{
-                "id": "delete_project", "kind": "button", "label": "Delete project", "style": "danger",
-                "action": { "type": "begin_delete_project", "id": id },
-            }]},
+        "sections": sections.iter().map(|(sid, label, items)| json!({ "id": sid, "label": label, "items": items })).collect::<Vec<_>>(),
+        "nav": [
+            { "label": if field("name").is_empty() { "Project".to_owned() } else { field("name") },
+              "items": main.iter().map(|x| nav_entry(x)).collect::<Vec<_>>() },
+            { "label": "More", "items": more.iter().map(|x| nav_entry(x)).collect::<Vec<_>>() },
         ],
+        "selected": selected,
     })
 }
 
@@ -9785,6 +10268,219 @@ mod tests {
         assert_eq!(dialog["actions"][0]["withInput"], true);
     }
 
+    fn project_dir(name: &str) -> std::path::PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("meo-core-project-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn project_core(folder: Option<&std::path::Path>) -> AppCore {
+        let c = signed_in_core();
+        c.update(|s| {
+            s.route = "projects".into();
+            s.open_project = Some("p1".into());
+            s.projects = Some(Ok(vec![
+                json!({ "id": "p1", "name": "Trip", "description": "", "instructions": "" }),
+            ]));
+        });
+        if let Some(f) = folder {
+            futures_executor::block_on(c.dispatch(Action::SetProjectFolder {
+                id: "p1".into(),
+                path: f.to_string_lossy().into_owned(),
+            }));
+        }
+        c
+    }
+
+    fn page_items(c: &AppCore, section: &str) -> Vec<Value> {
+        c.update(|s| s.settings_section = section.into());
+        let page = c.view()["page"].clone();
+        page["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|x| x["id"] == section)
+            .unwrap()["items"]
+            .as_array()
+            .unwrap()
+            .clone()
+    }
+
+    #[test]
+    fn a_project_folder_becomes_the_work_folder_of_its_chats() {
+        let dir = project_dir("workfolder");
+        let other = project_dir("otherfolder");
+        let c = project_core(Some(&dir));
+        c.update(|s| {
+            s.prefs
+                .insert("work.workspace".into(), json!(other.to_string_lossy()));
+            s.conversations = vec![{
+                let mut x = conversation("c1", "Plan");
+                x.project_id = Some("p1".into());
+                x
+            }];
+        });
+        let root = std::fs::canonicalize(&dir)
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        // A project chat works in the project's folder, any other chat in the general Work folder.
+        c.update(|s| s.active = Some("c1".into()));
+        assert_eq!(
+            effective_workspace(&c.state.lock().unwrap()),
+            Some(root.clone())
+        );
+        c.update(|s| s.active = None);
+        assert_eq!(
+            effective_workspace(&c.state.lock().unwrap()),
+            Some(other.to_string_lossy().into_owned())
+        );
+        // "Start Work" in the project: a new task filed under it, in its folder.
+        futures_executor::block_on(c.dispatch(Action::StartProjectWork { id: "p1".into() }));
+        assert_eq!(c.view()["route"].as_str().unwrap_or("work"), "work");
+        assert_eq!(effective_workspace(&c.state.lock().unwrap()), Some(root));
+        // Removing the folder falls back.
+        futures_executor::block_on(c.dispatch(Action::ClearProjectFolder { id: "p1".into() }));
+        assert_eq!(
+            effective_workspace(&c.state.lock().unwrap()),
+            Some(other.to_string_lossy().into_owned())
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&other);
+    }
+
+    #[test]
+    fn links_survive_a_restart() {
+        let dir = project_dir("restart");
+        let c = project_core(Some(&dir));
+        futures_executor::block_on(c.dispatch(Action::LinkRepo {
+            id: "p1".into(),
+            text: "https://github.com/QwQdoge/meo-ai.git".into(),
+        }));
+        let saved = c.storage.load(KEY_PROJECT_ENV).expect("saved");
+        let again: HashMap<String, project_env::ProjectEnv> = serde_json::from_str(&saved).unwrap();
+        assert_eq!(again["p1"].repo.as_deref(), Some("QwQdoge/meo-ai"));
+        assert!(again["p1"].folder.is_some());
+        // Nonsense is refused and changes nothing.
+        futures_executor::block_on(c.dispatch(Action::LinkRepo {
+            id: "p1".into(),
+            text: "not a repo".into(),
+        }));
+        assert_eq!(
+            c.state.lock().unwrap().project_env["p1"].repo.as_deref(),
+            Some("QwQdoge/meo-ai")
+        );
+        futures_executor::block_on(c.dispatch(Action::UnlinkRepo { id: "p1".into() }));
+        assert!(c.state.lock().unwrap().project_env["p1"].repo.is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn goal_and_todo_are_kept_in_the_folder_and_edited_from_the_page() {
+        let dir = project_dir("agentdir");
+        let c = project_core(Some(&dir));
+        // Folder set, no .agent yet: the page offers to set it up.
+        let items = page_items(&c, "goal");
+        assert!(items
+            .iter()
+            .any(|i| i["id"] == "goal_init" && i["action"]["type"] == "init_project_agent"));
+        futures_executor::block_on(c.dispatch(Action::InitProjectAgent { id: "p1".into() }));
+        assert!(dir.join(".agent/TODO.md").is_file());
+        futures_executor::block_on(c.dispatch(Action::SetSetting {
+            binding: "agent:p1:goal".into(),
+            value: json!("Ship the beta"),
+        }));
+        futures_executor::block_on(c.dispatch(Action::AddTodo {
+            id: "p1".into(),
+            text: "write docs".into(),
+        }));
+        let items = page_items(&c, "goal");
+        let goal = items.iter().find(|i| i["id"] == "goal_text").unwrap();
+        assert_eq!(goal["value"], "Ship the beta");
+        let todo = items
+            .iter()
+            .find(|i| i["kind"] == "toggle")
+            .unwrap()
+            .clone();
+        assert_eq!(todo["label"], "write docs");
+        assert_eq!(todo["value"], false);
+        // Ticking it writes `[x]` into the file.
+        futures_executor::block_on(c.dispatch(Action::SetSetting {
+            binding: todo["binding"].as_str().unwrap().into(),
+            value: json!(true),
+        }));
+        assert!(std::fs::read_to_string(dir.join(".agent/TODO.md"))
+            .unwrap()
+            .contains("- [x] write docs"));
+        // Edits made on disk (by hand or by the model) show after the state is read again.
+        std::fs::write(dir.join(".agent/GOAL.md"), "# Goal\n\nChanged outside\n").unwrap();
+        c.refresh_project_agent("p1");
+        let items = page_items(&c, "goal");
+        assert_eq!(
+            items.iter().find(|i| i["id"] == "goal_text").unwrap()["value"],
+            "Changed outside"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn without_a_folder_the_page_says_how_to_get_a_goal_and_never_writes() {
+        let c = project_core(None);
+        let items = page_items(&c, "goal");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["kind"], "hint");
+        // Adding a to-do without a folder is a clear error, not a write somewhere.
+        futures_executor::block_on(c.dispatch(Action::AddTodo {
+            id: "p1".into(),
+            text: "x".into(),
+        }));
+        assert!(c.view()["notice"]["text"]
+            .as_str()
+            .unwrap()
+            .contains("folder"));
+        // The environment page offers the repository link and the GitHub app state.
+        let env = page_items(&c, "environment");
+        assert!(env.iter().any(
+            |i| i["id"] == "env_repo" && i["buttons"][0]["action"]["type"] == "begin_link_repo"
+        ));
+        let github = env.iter().find(|i| i["id"] == "env_github").unwrap();
+        assert_eq!(github["buttons"][0]["action"]["id"], "github");
+    }
+
+    #[test]
+    fn the_model_is_told_the_project_state_and_how_to_keep_it() {
+        let dir = project_dir("prompt");
+        let c = project_core(Some(&dir));
+        futures_executor::block_on(c.dispatch(Action::InitProjectAgent { id: "p1".into() }));
+        futures_executor::block_on(c.dispatch(Action::SetSetting {
+            binding: "agent:p1:goal".into(),
+            value: json!("Ship the beta"),
+        }));
+        futures_executor::block_on(c.dispatch(Action::LinkRepo {
+            id: "p1".into(),
+            text: "QwQdoge/meo-ai".into(),
+        }));
+        c.update(|s| {
+            s.active = None;
+            s.new_chat_project = Some("p1".into());
+        });
+        let root = dir.to_string_lossy().into_owned();
+        let context = c.project_context(Some(&root));
+        assert!(context.contains("Project: Trip."));
+        assert!(context.contains("QwQdoge/meo-ai"));
+        assert!(context.contains("Ship the beta"));
+        // The static rules mention the directory, keep AGENTS.md in place, and are the same every time.
+        let rules = agent::tool_instructions(Some(&root), false, false);
+        assert!(rules.contains(".agent/") && rules.contains("AGENTS.md stays where it is"));
+        assert_eq!(rules, agent::tool_instructions(Some(&root), false, false));
+        // Chat without a folder still learns the repository.
+        let chat = c.project_context(None);
+        assert!(chat.contains("QwQdoge/meo-ai") && !chat.contains("Project state"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn a_project_page_edits_through_generic_controls() {
         let c = signed_in_core();
@@ -9810,10 +10506,39 @@ mod tests {
             (page["kind"].as_str(), page["title"].as_str()),
             (Some("settings"), Some("Trip"))
         );
-        let controls = &page["sections"][0]["items"];
-        assert_eq!(controls[2]["binding"], "project:p1:instructions");
-        assert_eq!(controls[2]["value"], "Be brief");
-        let chats = &page["sections"][1]["items"];
+        let by_id = |id: &str| {
+            page["sections"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|x| x["id"] == id)
+                .unwrap_or_else(|| panic!("no section {id}"))["items"]
+                .clone()
+        };
+        let controls = by_id("project");
+        assert_eq!(controls[0]["action"]["type"], "start_project_work");
+        assert_eq!(controls[3]["binding"], "project:p1:instructions");
+        assert_eq!(controls[3]["value"], "Be brief");
+        // Every section is reachable from the page's own navigation.
+        let nav_ids: Vec<&str> = page["nav"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|g| g["items"].as_array().unwrap())
+            .map(|e| e["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            nav_ids,
+            [
+                "project",
+                "environment",
+                "goal",
+                "project_chats",
+                "project_memory",
+                "project_danger"
+            ]
+        );
+        let chats = &by_id("project_chats");
         assert_eq!(
             chats[0]["action"],
             json!({ "type": "new_chat_in_project", "id": "p1" })
@@ -9823,7 +10548,7 @@ mod tests {
             chats[1]["buttons"][0]["action"],
             json!({ "type": "select_conversation", "id": "c9" })
         );
-        let memory = &page["sections"][2]["items"][1];
+        let memory = &by_id("project_memory")[1];
         assert_eq!(
             (
                 memory["label"].as_str(),

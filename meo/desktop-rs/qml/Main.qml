@@ -45,6 +45,11 @@ ApplicationWindow {
     onActiveChanged: core.dispatch(JSON.stringify({ type: "set_foreground", visible: active }))
 
     function act(action) {
+        if (action && action.type === "pick_project_folder") {
+            projectFolderDialog.projectId = action.id
+            projectFolderDialog.open()
+            return
+        }
         if (action && action.type === "open_link") {
             if (/^https:\/\//.test(action.url || "")) Qt.openUrlExternally(action.url)
             return
@@ -117,6 +122,14 @@ ApplicationWindow {
         property string actionType: "attach_path"
         nameFilters: [qsTr("Text, code and pictures (*.png *.jpg *.jpeg *.webp *.gif *.txt *.md *.markdown *.csv *.json *.py *.rs *.js *.ts *.tsx *.jsx *.java *.kt *.c *.h *.cpp *.go *.sh *.toml *.yaml *.yml *.html *.css *.sql *.log)"), qsTr("All files (*)")]
         onAccepted: window.act({ type: "attach_path", path: selectedFile.toString() })
+    }
+
+    // Folder picker for a project; the core links the folder to it (`set_project_folder`).
+    FolderDialog {
+        id: projectFolderDialog
+        property string projectId: ""
+        title: qsTr("Choose this project's folder")
+        onAccepted: window.act({ type: "set_project_folder", id: projectId, path: selectedFolder.toString() })
     }
 
     // Folder picker for Work; the core opens and remembers the folder (`set_workspace`).
@@ -317,7 +330,7 @@ ApplicationWindow {
         // projects tree and chats; collapses to an icon rail.
         ColumnLayout {
             id: sidebar
-            visible: !!window.v.sidebar && window.page.kind !== "settings"
+            visible: !!window.v.sidebar && window.page.standalone !== true
             readonly property var sb: window.v.sidebar || ({})
             readonly property bool collapsed: !!sb.collapsed
             readonly property var rows: {
@@ -519,7 +532,7 @@ ApplicationWindow {
             }
         }
 
-        Rectangle { visible: !!window.v.sidebar && window.page.kind !== "settings"; Layout.fillHeight: true; width: 1; color: MeoTheme.outlineVariant }
+        Rectangle { visible: !!window.v.sidebar && window.page.standalone !== true; Layout.fillHeight: true; width: 1; color: MeoTheme.outlineVariant }
 
         ColumnLayout {
             Layout.fillWidth: true

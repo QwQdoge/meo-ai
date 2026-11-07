@@ -334,7 +334,8 @@
      }
     ]
    }
-  ]
+  ],
+  "standalone": true
  },
  "prefs": {},
  "online": true,
