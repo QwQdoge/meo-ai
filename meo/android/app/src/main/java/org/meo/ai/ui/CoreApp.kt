@@ -1626,14 +1626,34 @@ private fun StorePage(page: JSONObject, act: Act) {
                     Row(Modifier.padding(14.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         AppIcon(card.obj("icon"), card.str("title"))
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text(card.str("title"), style = MaterialTheme.typography.titleSmall)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(card.str("title"), Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+                                card.obj("switch")?.let { sw ->
+                                    androidx.compose.material3.Switch(checked = sw.optBoolean("on"), onCheckedChange = { run(sw.obj("action")) })
+                                }
+                            }
                             Text(card.str("publisher"), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Text(card.str("subtitle"), style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                            card.str("detail").takeIf { it.isNotEmpty() }?.let {
+                                Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
                             val badges = (0 until (card.optJSONArray("badges")?.length() ?: 0)).map { card.optJSONArray("badges")!!.optString(it) } +
                                 if (card.str("state") == "installed") listOf("✓ Installed") else emptyList()
-                            Text(badges.joinToString("  ·  "), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                val tone = card.str("tone")
+                                if (tone.isNotEmpty()) Box(
+                                    Modifier.size(8.dp).clip(RoundedCornerShape(50)).background(
+                                        when (tone) {
+                                            "ok" -> androidx.compose.ui.graphics.Color(0xFF2E7D32)
+                                            "error" -> MaterialTheme.colorScheme.error
+                                            else -> androidx.compose.ui.graphics.Color(0xFFB26A00)
+                                        },
+                                    ),
+                                )
+                                Text(badges.joinToString("  ·  "), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                            }
                             val actions = card.list("actions")
-                            if (actions.isNotEmpty()) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
+                            if (actions.isNotEmpty()) FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
                                 actions.forEach { a ->
                                     val click = { run(a.obj("action")) }
                                     if (a.str("style") == "primary") Button(onClick = click) { Text(a.str("label")) }

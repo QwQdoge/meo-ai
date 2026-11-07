@@ -118,18 +118,18 @@
       ]
     },
     {
-      "id": "connectors",
-      "label": "Apps & connectors",
-      "labelKey": "meo.settings.connectors",
+      "id": "permissions",
+      "label": "Permissions",
+      "labelKey": "meo.settings.permissions",
       "owner": "core",
       "group": "AI",
       "items": [],
       "keywords": [
-        "mcp",
-        "plugins",
-        "skills",
-        "插件",
-        "连接器"
+        "permission",
+        "approve",
+        "ask",
+        "权限",
+        "授权"
       ]
     },
     {

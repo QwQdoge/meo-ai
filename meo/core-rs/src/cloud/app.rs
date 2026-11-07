@@ -118,6 +118,8 @@ pub enum Action {
         value: Value,
     },
     Refresh,
+    /// Reads the installed apps again (after authorizing one elsewhere).
+    RefreshPlugins,
     DismissNotice,
     /// Filters the chat list by title and message text (empty clears it).
     Search {
@@ -501,6 +503,11 @@ struct State {
     plugins: Option<Result<Vec<Value>, String>>,
     /// Tools of the connected apps by plugin id (a failed listing is kept as its message).
     app_tools: HashMap<String, Result<Vec<Value>, String>>,
+    /// Apps whose sign-in failed at use: `true` = no longer accepted (expired, revoked, more access
+    /// needed), `false` = never connected. Cleared when the apps are read again.
+    app_auth_issues: HashMap<String, bool>,
+    /// Apps the user was sent off to authorize; checked when the window comes back to the front.
+    awaiting_auth: Vec<String>,
     store: StoreUi,
     prefs: Map<String, Value>,
     cloud_settings: Option<Value>,
@@ -525,6 +532,8 @@ pub struct AppCore {
 }
 
 const KEY_SESSION: &str = "session";
+/// Set once the Essentials skills were offered to this account on this device.
+const KEY_ESSENTIALS_OFFERED: &str = "essentials-offered";
 const KEY_PREFS: &str = "prefs";
 const KEY_CONVERSATIONS: &str = "conversations";
 /// Ids of the conversations that are Work tasks (a cache of the server's `mode`; older apps kept
@@ -682,6 +691,10 @@ impl AppCore {
             }
             Action::SetSetting { binding, value } => self.set_setting(binding, value).await,
             Action::Refresh => self.load_all().await,
+            Action::RefreshPlugins => {
+                self.refresh_plugins().await;
+                self.check_pending_auth().await;
+            }
             Action::DismissNotice => self.update(|s| s.notice = None),
             Action::Realtime => self.realtime().await,
             Action::Search { text } => {
@@ -738,15 +751,7 @@ impl AppCore {
                     None => self.notice("info", "You can have up to 5 custom routes."),
                 }
             }
-            Action::SelectSettingsSection { id } => {
-                let connectors = id == "connectors";
-                self.update(|s| s.settings_section = id);
-                if connectors {
-                    // Read the installed apps, then what each enabled one offers, so the list is current.
-                    self.refresh_plugins().await;
-                    let _ = Box::pin(self.app_instructions()).await;
-                }
-            }
+            Action::SelectSettingsSection { id } => self.update(|s| s.settings_section = id),
             Action::NewProfile => self.new_profile().await,
             Action::BeginGenerateProfile => self.prompt(
                 "Generate a profile",
@@ -771,7 +776,12 @@ impl AppCore {
                 self.update(|s| s.router.custom.retain(|c| c.id != id));
                 self.persist_router().await;
             }
-            Action::SetForeground { visible } => self.update(|s| s.foreground = visible),
+            Action::SetForeground { visible } => {
+                self.update(|s| s.foreground = visible);
+                if visible {
+                    Box::pin(self.check_pending_auth()).await;
+                }
+            }
             Action::AttachText { name, text } => self.attach_text(name, text).await,
             Action::AttachImage { name, mime, data } => self.attach_image(name, mime, data),
             Action::RemoveImage { index } => self.update(|s| {
@@ -810,7 +820,28 @@ impl AppCore {
                         "https://account.meoarch.org/account/sign-in-methods".to_owned(),
                     )
                 };
-                self.notice("info", message);
+                self.notice("info", format!("{message} Come back here when you are done."));
+                self.update(|s| {
+                    let ids: Vec<String> = s
+                        .plugins
+                        .as_ref()
+                        .and_then(|r| r.as_ref().ok())
+                        .map(|rows| {
+                            rows.iter()
+                                .filter(|p| {
+                                    account_provider(p["remoteUrl"].as_str().unwrap_or_default())
+                                        == Some(provider.as_str())
+                                })
+                                .filter_map(|p| p["id"].as_str().map(str::to_owned))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    for id in ids {
+                        if !s.awaiting_auth.contains(&id) {
+                            s.awaiting_auth.push(id);
+                        }
+                    }
+                });
                 self.hooks.open_url(&url);
             }
             Action::DisconnectPlugin { id } => Box::pin(self.disconnect_plugin(id)).await,
@@ -1097,8 +1128,33 @@ impl AppCore {
         // The sidebar's Projects tree needs the list on every page.
         self.update(|s| s.projects = Some(projects.map_err(|e| e.to_string())));
         self.bootstrap_router().await;
+        self.offer_essentials();
         let route = self.state.lock().unwrap().route.clone();
         self.load_route(&route).await;
+    }
+
+    /// A new account has no skills at all: offer the Essentials bundle once, with a button, instead
+    /// of leaving the user to find it in the store.
+    fn offer_essentials(&self) {
+        if self
+            .load_json::<bool>(KEY_ESSENTIALS_OFFERED)
+            .unwrap_or(false)
+        {
+            return;
+        }
+        let empty = matches!(
+            self.state.lock().unwrap().plugins.as_ref(),
+            Some(Ok(rows)) if rows.is_empty()
+        );
+        if !empty {
+            return;
+        }
+        self.save_json(KEY_ESSENTIALS_OFFERED, &true);
+        self.notice_with_action(
+            "Add the Meo Essentials skills? They teach Meo to write documents, spreadsheets and PDFs, design web pages and debug carefully.",
+            "Add Essentials",
+            json!({ "type": "install_plugin", "id": "essentials" }),
+        );
     }
 
     // ---- multi-call answers ----------------------------------------------
@@ -1794,7 +1850,13 @@ impl AppCore {
                 let r = self
                     .call(|api, t| async move { api.list_plugins(&t).await })
                     .await;
-                self.update(|s| s.plugins = Some(r.map_err(|e| e.to_string())));
+                self.update(|s| {
+                    s.plugins = Some(r.map_err(|e| e.to_string()));
+                    s.app_tools.clear();
+                    s.app_auth_issues.clear();
+                });
+                // What each enabled app offers, and whether its sign-in still works, shown on its card.
+                let _ = Box::pin(self.app_instructions()).await;
                 if self.state.lock().unwrap().store.registry.is_none() {
                     self.store_search(String::new()).await;
                 }
@@ -2423,7 +2485,15 @@ impl AppCore {
             .await
         {
             Ok(url) if url.starts_with("https://") => {
-                self.notice("info", "Opening the service to authorize Meo AI…");
+                self.notice(
+                    "info",
+                    "Opening the service to authorize Meo AI… Come back here when you are done.",
+                );
+                self.update(|s| {
+                    if !s.awaiting_auth.contains(&id) {
+                        s.awaiting_auth.push(id.clone());
+                    }
+                });
                 self.hooks.open_url(&url);
             }
             Ok(_) => self.notice("error", "The service did not give an authorization page."),
@@ -2711,7 +2781,29 @@ impl AppCore {
             })
             .await
         {
-            Ok(()) => self.refresh_plugins().await,
+            Ok(()) => {
+                self.refresh_plugins().await;
+                if enabled {
+                    let row = {
+                        let s = self.state.lock().unwrap();
+                        s.plugins
+                            .as_ref()
+                            .and_then(|r| r.as_ref().ok())
+                            .and_then(|rows| rows.iter().find(|p| p["id"] == id.as_str()).cloned())
+                            .filter(|p| app_auth(&s, p).state == "needs_connect")
+                    };
+                    if let Some(p) = row {
+                        if let Some((label, action)) = connect_action(&p) {
+                            let text = format!(
+                                "{} is on but not connected yet.",
+                                p["name"].as_str().unwrap_or("The app")
+                            );
+                            self.notice("info", &text);
+                            self.update(|s| s.notice_action = Some((text.clone(), label, action)));
+                        }
+                    }
+                }
+            }
             Err(e) => self.notice("error", e.to_string()),
         }
     }
@@ -2723,7 +2815,72 @@ impl AppCore {
         self.update(|s| {
             s.plugins = Some(r.map_err(|e| e.to_string()));
             s.app_tools.clear();
+            s.app_auth_issues.clear();
         });
+    }
+
+    /// After the user was sent to authorize an app: read the apps again and say so when it worked.
+    /// Nothing is said while it has not (they may still be signing in).
+    async fn check_pending_auth(&self) {
+        let waiting = self.state.lock().unwrap().awaiting_auth.clone();
+        if waiting.is_empty() {
+            return;
+        }
+        self.refresh_plugins().await;
+        let mut done = Vec::new();
+        {
+            let s = self.state.lock().unwrap();
+            if let Some(Ok(rows)) = s.plugins.as_ref() {
+                for id in &waiting {
+                    match rows.iter().find(|p| p["id"] == id.as_str()) {
+                        Some(p) if app_auth(&s, p).state == "connected" => {
+                            done.push((
+                                id.clone(),
+                                p["name"].as_str().unwrap_or("The app").to_owned(),
+                            ));
+                        }
+                        // Removed meanwhile: stop waiting.
+                        None => done.push((id.clone(), String::new())),
+                        _ => {}
+                    }
+                }
+            }
+        }
+        if done.is_empty() {
+            return;
+        }
+        self.update(|s| {
+            s.awaiting_auth
+                .retain(|id| !done.iter().any(|(d, _)| d == id))
+        });
+        if let Some((_, name)) = done.iter().find(|(_, n)| !n.is_empty()) {
+            self.notice("info", format!("{name} is connected."));
+        }
+    }
+
+    /// An app call failed because of its sign-in: remember it (the card changes to Reconnect) and
+    /// offer the button that fixes it, instead of leaving only a message.
+    fn mark_auth_issue(&self, plugin: &Value, expired: bool) {
+        let id = plugin["id"].as_str().unwrap_or_default().to_owned();
+        let name = plugin["name"].as_str().unwrap_or("The app").to_owned();
+        self.update(|s| {
+            s.app_auth_issues.insert(id, expired);
+        });
+        let text = if expired {
+            format!("{name} no longer accepts your sign-in. Reconnect it to keep using it.")
+        } else {
+            format!("{name} is not connected yet.")
+        };
+        match connect_action(plugin) {
+            Some((label, action)) => {
+                self.notice("error", &text);
+                self.update(|s| s.notice_action = Some((text.clone(), label, action)));
+            }
+            None => self.notice(
+                "error",
+                format!("{text} Meo AI cannot sign in to this server yet."),
+            ),
+        }
     }
 
     async fn create_project(&self, text: String) {
@@ -4959,6 +5116,16 @@ impl AppCore {
         .await;
         self.update(|s| {
             for (id, r) in fetched {
+                match &r {
+                    Err(e) => {
+                        if let Some(expired) = auth_problem(e) {
+                            s.app_auth_issues.insert(id.clone(), expired);
+                        }
+                    }
+                    Ok(_) => {
+                        s.app_auth_issues.remove(&id);
+                    }
+                }
                 s.app_tools.insert(id, r);
             }
         });
@@ -5054,12 +5221,21 @@ impl AppCore {
                     text
                 };
                 if r["isError"] == true {
+                    if let Some(expired) = auth_problem(&text) {
+                        self.mark_auth_issue(&plugin, expired);
+                    }
                     agent::Outcome::fail(text)
                 } else {
                     agent::Outcome::done(text)
                 }
             }
-            Err(e) => agent::Outcome::fail(app_error_hint(&e.to_string())),
+            Err(e) => {
+                let message = e.to_string();
+                if let Some(expired) = auth_problem(&message) {
+                    self.mark_auth_issue(&plugin, expired);
+                }
+                agent::Outcome::fail(app_error_hint(&message))
+            }
         }
     }
 
@@ -5700,7 +5876,7 @@ impl AppCore {
                         }));
                     }
                     "usage" => items.extend(usage_items(s)),
-                    "connectors" => items.extend(connector_items(s)),
+                    "permissions" => items.extend(permission_items(s)),
                     "devices" => items.extend(self.device_items(s)),
                     "account" => {
                         items.push(json!({
@@ -7523,43 +7699,166 @@ const OAUTH_ENDPOINTS: [&str; 8] = [
     "https://mcp.zapier.com/api/mcp/mcp",
 ];
 
-/// The buttons of one installed app: switch, the connect / token / disconnect set that fits its
-/// kind of sign-in, and remove. Used by the store's Installed tab and by Settings > Apps & connectors.
-fn plugin_buttons(p: &Value, id: &str, on: bool) -> Vec<Value> {
+/// How an installed app signs in.
+#[derive(Clone, Copy, PartialEq)]
+enum SignIn {
+    /// Nothing to sign in to (docs servers, skills).
+    None,
+    /// The linked GitHub / Google account in Meo Account.
+    Account(&'static str),
+    /// The service's own authorization page and/or a pasted token, kept in Meo API.
+    Service,
+}
+
+fn sign_in_of(p: &Value) -> SignIn {
     let url = p["remoteUrl"].as_str().unwrap_or_default();
-    let mut actions = vec![button(
-        if on { "On" } else { "Off" },
-        if on { "primary" } else { "secondary" },
-        json!({ "type": "toggle_plugin", "id": id, "enabled": !on }),
-    )];
     if let Some(provider) = account_provider(url) {
-        if p["linkedAccount"] != true {
-            actions.insert(
-                0,
-                button(
-                    &format!("Connect {provider}"),
-                    "primary",
-                    json!({ "type": "connect_account", "provider": provider }),
-                ),
-            );
-        } else {
-            actions.insert(
-                0,
-                button(
-                    "More access",
-                    "secondary",
-                    json!({ "type": "connect_account", "provider": provider, "grant": true }),
-                ),
-            );
-        }
+        SignIn::Account(provider)
+    } else if TOKEN_ENDPOINTS.contains(&url) || OAUTH_ENDPOINTS.contains(&url) {
+        SignIn::Service
+    } else {
+        SignIn::None
     }
-    if TOKEN_ENDPOINTS.contains(&url) || OAUTH_ENDPOINTS.contains(&url) {
-        let has = p["manifest"]["hasToken"] == true;
-        actions.push(button(
-            if has { "Reconnect" } else { "Connect" },
-            if has { "secondary" } else { "primary" },
+}
+
+/// Does an app failure come from its sign-in? `Some(true)`: the sign-in is no longer accepted
+/// (expired, revoked, more access needed); `Some(false)`: there is none yet; `None`: something else.
+fn auth_problem(error: &str) -> Option<bool> {
+    let e = error.to_lowercase();
+    if e.contains("not_linked") || e.contains("token_required") {
+        Some(false)
+    } else if e.contains("reauthorization")
+        || e.contains("external_authorization_required")
+        || e.contains("invalid_token")
+        || e.contains("unauthorized")
+    {
+        Some(true)
+    } else {
+        None
+    }
+}
+
+/// Where an installed app stands: `ready` (nothing to sign in to), `connected`, `needs_connect`
+/// (never signed in) or `needs_reauth` (signed in, but the service no longer accepts it). One place
+/// decides this, so the status line, the badge and the buttons always agree.
+struct AppAuth {
+    state: &'static str,
+    label: &'static str,
+    sign_in: SignIn,
+}
+
+fn app_auth(s: &State, p: &Value) -> AppAuth {
+    let sign_in = sign_in_of(p);
+    let id = p["id"].as_str().unwrap_or_default();
+    let issue = s.app_auth_issues.get(id).copied();
+    let has = match sign_in {
+        SignIn::Account(_) => p["linkedAccount"] == true,
+        SignIn::Service => p["manifest"]["hasToken"] == true,
+        SignIn::None => {
+            return match issue {
+                // A server we cannot sign in to answered that it needs it: say so instead of "ready".
+                Some(_) => AppAuth {
+                    state: "unsupported",
+                    label: "Needs sign-in (not supported yet)",
+                    sign_in,
+                },
+                None => AppAuth {
+                    state: "ready",
+                    label: "",
+                    sign_in,
+                },
+            };
+        }
+    };
+    let account = matches!(sign_in, SignIn::Account(_));
+    match (has, issue) {
+        (_, Some(true)) | (true, Some(false)) => AppAuth {
+            state: "needs_reauth",
+            label: "Sign-in expired",
+            sign_in,
+        },
+        (false, _) => AppAuth {
+            state: "needs_connect",
+            label: if account {
+                "Account not linked"
+            } else {
+                "Not connected"
+            },
+            sign_in,
+        },
+        (true, None) => AppAuth {
+            state: "connected",
+            label: if account {
+                "Account linked"
+            } else {
+                "Connected"
+            },
+            sign_in,
+        },
+    }
+}
+
+/// The button that signs an app in (or in again), with its label; `None` when Meo AI cannot.
+fn connect_action(p: &Value) -> Option<(String, Value)> {
+    let id = p["id"].as_str().unwrap_or_default();
+    let has_token = p["manifest"]["hasToken"] == true;
+    match sign_in_of(p) {
+        SignIn::Account(provider) => Some((
+            if p["linkedAccount"] == true {
+                format!("Reconnect {provider}")
+            } else {
+                format!("Connect {provider}")
+            },
+            json!({ "type": "connect_account", "provider": provider, "grant": p["linkedAccount"] == true }),
+        )),
+        SignIn::Service => Some((
+            if has_token {
+                "Reconnect".to_owned()
+            } else {
+                "Connect".to_owned()
+            },
             json!({ "type": "connect_plugin", "id": id }),
-        ));
+        )),
+        SignIn::None => None,
+    }
+}
+
+/// The on / off switch of an installed app (a generic `switch` the clients draw as a switch).
+fn plugin_switch(id: &str, on: bool) -> Value {
+    json!({ "on": on, "label": if on { "On" } else { "Off" },
+            "action": { "type": "toggle_plugin", "id": id, "enabled": !on } })
+}
+
+/// A colour for the sign-in state next to an app's status line: `ok`, `warn`, `error` or none.
+fn auth_tone(auth: &AppAuth, on: bool) -> &'static str {
+    match (on, auth.state) {
+        (true, "connected") => "ok",
+        (true, "needs_connect" | "unsupported") => "warn",
+        (true, "needs_reauth") => "error",
+        _ => "",
+    }
+}
+
+/// The buttons of one installed app: the one that fixes its sign-in state first (primary while
+/// something is wrong, quiet otherwise), then token / disconnect, then remove. The on / off switch
+/// is separate (see [`plugin_switch`]). Used by the store's Installed tab and Settings.
+fn plugin_buttons(s: &State, p: &Value, id: &str) -> Vec<Value> {
+    let url = p["remoteUrl"].as_str().unwrap_or_default();
+    let auth = app_auth(s, p);
+    let fix = matches!(auth.state, "needs_connect" | "needs_reauth");
+    let style = if fix { "primary" } else { "secondary" };
+    let mut actions: Vec<Value> = Vec::new();
+    match (auth.sign_in, connect_action(p)) {
+        // A linked account that works can still be asked for more access.
+        (SignIn::Account(provider), _) if auth.state == "connected" => actions.push(button(
+            "More access",
+            "secondary",
+            json!({ "type": "connect_account", "provider": provider, "grant": true }),
+        )),
+        (_, Some((label, action))) => actions.push(button(&label, style, action)),
+        _ => {}
+    }
+    if matches!(auth.sign_in, SignIn::Service) {
         if TOKEN_ENDPOINTS.contains(&url) {
             actions.push(button(
                 "API token",
@@ -7567,13 +7866,20 @@ fn plugin_buttons(p: &Value, id: &str, on: bool) -> Vec<Value> {
                 json!({ "type": "begin_plugin_token", "id": id }),
             ));
         }
-        if has {
+        if p["manifest"]["hasToken"] == true {
             actions.push(button(
                 "Disconnect",
                 "secondary",
                 json!({ "type": "disconnect_plugin", "id": id }),
             ));
         }
+    }
+    if s.awaiting_auth.iter().any(|a| a == id) {
+        actions.push(button(
+            "Check again",
+            "secondary",
+            json!({ "type": "refresh_plugins" }),
+        ));
     }
     actions.push(button(
         "Remove",
@@ -7583,114 +7889,68 @@ fn plugin_buttons(p: &Value, id: &str, on: bool) -> Vec<Value> {
     actions
 }
 
-/// One line for an installed app: what it is, whether it is on, whether it is signed in, and how many
-/// tools it offers (when they have been read).
-fn plugin_status(s: &State, p: &Value) -> String {
-    let url = p["remoteUrl"].as_str().unwrap_or_default();
-    let mut parts: Vec<String> = vec![if !p["remoteUrl"].is_null() {
-        "MCP"
-    } else if p["kind"] == "skills" || p["kind"] == "bundle" {
-        "Skills"
-    } else {
-        "Plugin"
+/// What a connected app may do, and what asks first: the permission the user is granting it.
+fn tool_permissions(s: &State, p: &Value) -> Option<String> {
+    if p["enabled"] != true {
+        return None;
     }
-    .to_owned()];
-    parts.push(
-        if p["enabled"].as_bool().unwrap_or(false) {
-            "On"
+    let Some(Ok(tools)) = p["id"].as_str().and_then(|id| s.app_tools.get(id)) else {
+        return None;
+    };
+    let names = |read: bool| -> Vec<&str> {
+        tools
+            .iter()
+            .filter_map(|t| t["name"].as_str())
+            .filter(|n| agent::is_lookup_tool(n) == read)
+            .collect()
+    };
+    let list = |v: Vec<&str>| {
+        let shown: Vec<&str> = v.iter().take(6).copied().collect();
+        let more = v.len().saturating_sub(shown.len());
+        if more > 0 {
+            format!("{}, +{more} more", shown.join(", "))
         } else {
-            "Off"
+            shown.join(", ")
         }
-        .to_owned(),
-    );
-    if TOKEN_ENDPOINTS.contains(&url) || OAUTH_ENDPOINTS.contains(&url) {
-        parts.push(
-            if p["manifest"]["hasToken"] == true {
-                "Connected"
-            } else {
-                "Not connected"
-            }
-            .to_owned(),
-        );
-    } else if account_provider(url).is_some() {
-        parts.push(
-            if p["linkedAccount"] == true {
-                "Account linked"
-            } else {
-                "Account not linked"
-            }
-            .to_owned(),
-        );
+    };
+    let (reads, writes) = (names(true), names(false));
+    let mut parts = Vec::new();
+    if !reads.is_empty() {
+        parts.push(format!("Runs on its own: {}", list(reads)));
     }
-    match p["id"].as_str().and_then(|id| s.app_tools.get(id)) {
-        Some(Ok(tools)) => {
-            let reads = tools
-                .iter()
-                .filter(|t| t["name"].as_str().is_some_and(agent::is_lookup_tool))
-                .count();
-            parts.push(format!("{} tools ({reads} read-only)", tools.len()));
-        }
-        Some(Err(e)) => parts.push(format!(
-            "tools unavailable: {}",
-            e.chars().take(80).collect::<String>()
-        )),
-        None => {}
+    if !writes.is_empty() {
+        parts.push(format!("Asks first: {}", list(writes)));
     }
-    parts.join(" · ")
+    (!parts.is_empty()).then(|| parts.join(" · "))
 }
 
-/// Settings > Apps & connectors: every installed app, skill and MCP server in one list, with its state
-/// and the same actions as the store's Installed tab.
-fn connector_items(s: &State) -> Vec<Value> {
-    let rows = match s.plugins.as_ref() {
-        None => {
-            return vec![
-                json!({ "id": "conn_loading", "kind": "info", "label": "Apps", "value": "Reading your apps…" }),
-            ];
-        }
-        Some(Err(e)) => {
-            return vec![
-                json!({ "id": "conn_error", "kind": "info", "label": "Apps could not be loaded", "value": e }),
-            ];
-        }
-        Some(Ok(rows)) => rows,
-    };
-    let on = rows
-        .iter()
-        .filter(|p| p["enabled"].as_bool().unwrap_or(false))
-        .count();
-    let mut items = vec![
-        json!({ "id": "conn_summary", "kind": "info", "label": "Installed", "value": format!("{} · {on} on", rows.len()) }),
+/// Settings > Permissions: only what applies to everything. Installing, switching on and signing in
+/// to apps, skills and MCP servers all live on the Plugins page.
+fn permission_items(s: &State) -> Vec<Value> {
+    vec![
+        slider(
+            "permission",
+            "Default approval level",
+            "chat.permission",
+            &permission_value(s),
+            PERMISSIONS,
+            false,
+        ),
+        json!({
+            "id": "perm_explain", "kind": "hint",
+            "text": "This is the level the composer starts with. Looking things up (list, get, search, read, fetch) runs without asking from Allow low risk up. Anything that changes something asks at Allow low risk, goes to an approver model at Auto choose, and runs freely only at Full access. Commands such as sudo, git push or rm -rf, paths outside the open folder and credentials always ask unless you chose Full access. A task started from another device never runs above Auto choose.",
+        }),
         item(
-            "conn_store".into(),
-            "Apps & Skills",
-            "Find, connect and import apps, skills and MCP servers.",
+            "perm_plugins".into(),
+            "Apps, skills and MCP servers",
+            "Turn them on or off, sign in again, and see what each one may do on the Plugins page.",
             vec![button(
-                "Open",
+                "Open Plugins",
                 "primary",
                 json!({ "type": "navigate", "route": "skills" }),
             )],
         ),
-    ];
-    let mut sorted: Vec<&Value> = rows.iter().collect();
-    sorted.sort_by_key(|p| p["name"].as_str().unwrap_or_default().to_lowercase());
-    for p in sorted {
-        let id = p["id"].as_str().unwrap_or_default();
-        items.push(item(
-            format!("conn_{id}"),
-            p["name"].as_str().unwrap_or("Unnamed"),
-            &plugin_status(s, p),
-            plugin_buttons(p, id, p["enabled"].as_bool().unwrap_or(false)),
-        ));
-    }
-    if rows.is_empty() {
-        items.push(json!({ "id": "conn_none", "kind": "info", "label": "Nothing installed yet", "value": "Open Apps & Skills to add an app, a skill or an MCP server." }));
-    }
-    items.push(json!({
-        "id": "conn_approvals", "kind": "info", "label": "Approvals",
-        "value": "A connected app follows the composer's Permissions. Looking things up (list, get, search, read, fetch) runs without asking from Low up. Anything else asks at Low, goes to the approver at Smart and runs at Allow all. Ask every time asks for all of it.",
-    }));
-    items
+    ]
 }
 
 fn store_page(s: &State) -> Value {
@@ -7753,23 +8013,12 @@ fn store_page(s: &State) -> Value {
                     if p["kind"] == "skills" || p["kind"] == "bundle" {
                         badges.push("Skills");
                     }
-                    let account = account_provider(p["remoteUrl"].as_str().unwrap_or_default());
-                    let token_app = p["remoteUrl"].as_str().is_some_and(|u| {
-                        TOKEN_ENDPOINTS.contains(&u) || OAUTH_ENDPOINTS.contains(&u)
-                    });
-                    if token_app || account.is_some() {
-                        let connected = if token_app {
-                            p["manifest"]["hasToken"] == true
-                        } else {
-                            p["linkedAccount"] == true
-                        };
-                        badges.push(if connected {
-                            "Connected"
-                        } else {
-                            "Not connected"
-                        });
+                    let auth = app_auth(s, p);
+                    if !auth.label.is_empty() {
+                        badges.push(auth.label);
                     }
-                    store_card(
+                    let on_now = on;
+                    let mut card = store_card(
                         id.to_owned(),
                         p["name"].as_str().unwrap_or_default(),
                         p["description"].as_str().unwrap_or_default(),
@@ -7777,8 +8026,14 @@ fn store_page(s: &State) -> Value {
                         &publisher,
                         badges,
                         if on { "on" } else { "off" },
-                        plugin_buttons(p, id, on),
-                    )
+                        plugin_buttons(s, p, id),
+                    );
+                    card["switch"] = plugin_switch(id, on);
+                    card["tone"] = json!(auth_tone(&app_auth(s, p), on_now));
+                    if let Some(detail) = tool_permissions(s, p) {
+                        card["detail"] = json!(detail);
+                    }
+                    card
                 })
                 .collect();
             sections.push(json!({ "id": "installed", "title": format!("Installed · {}", cards.len()), "cards": cards,
@@ -8715,12 +8970,59 @@ mod tests {
         );
     }
 
+    fn installed_cards(c: &AppCore) -> Vec<Value> {
+        c.update(|s| {
+            s.route = "skills".into();
+            s.store.tab = "installed".into();
+        });
+        let page = c.view()["page"].clone();
+        page["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|x| x["id"] == "installed")
+            .expect("the Installed tab lists the apps")["cards"]
+            .as_array()
+            .unwrap()
+            .clone()
+    }
+
     #[test]
-    fn settings_connectors_lists_installed_apps_with_state_and_actions() {
+    fn settings_has_only_general_permissions_and_points_to_plugins() {
         let c = signed_in_core();
         c.update(|s| {
             s.route = "settings".into();
-            s.settings_section = "connectors".into();
+            s.settings_section = "permissions".into();
+        });
+        let page = c.view()["page"].clone();
+        let section = page["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|x| x["id"] == "permissions")
+            .expect("the permissions page exists")
+            .clone();
+        let ids: Vec<&str> = section["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| i["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, ["permission", "perm_explain", "perm_plugins"]);
+        assert!(
+            page["sections"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|x| x["id"] != "connectors"),
+            "apps are managed on the Plugins page, not in Settings"
+        );
+    }
+
+    #[test]
+    fn installed_cards_carry_switch_state_permissions_and_the_fixing_button() {
+        let c = signed_in_core();
+        c.update(|s| {
             s.plugins = Some(Ok(vec![
                 json!({ "id": "p2", "name": "Ops skills", "kind": "skills", "enabled": false }),
                 json!({ "id": "p1", "name": "Linear", "kind": "mcp", "enabled": true,
@@ -8735,39 +9037,145 @@ mod tests {
                 ]),
             );
         });
-        let page = c.view()["page"].clone();
-        let section = page["sections"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|x| x["id"] == "connectors")
-            .expect("the connectors page is no longer dropped for lack of items")
-            .clone();
-        let items = section["items"].as_array().unwrap();
-        let ids: Vec<&str> = items.iter().map(|i| i["id"].as_str().unwrap()).collect();
+        let cards = installed_cards(&c);
+        let linear = cards.iter().find(|x| x["id"] == "p1").unwrap();
+        assert_eq!(linear["switch"]["on"], true);
+        assert_eq!(linear["tone"], "ok");
         assert_eq!(
-            ids,
-            [
-                "conn_summary",
-                "conn_store",
-                "conn_p1",
-                "conn_p2",
-                "conn_approvals"
-            ]
+            linear["detail"],
+            "Runs on its own: list_issues, get_issue · Asks first: create_issue"
         );
-        assert_eq!(items[0]["value"], "2 · 1 on");
-        assert_eq!(
-            items[2]["value"],
-            "MCP · On · Connected · 3 tools (2 read-only)"
-        );
-        let labels: Vec<&str> = items[2]["buttons"]
+        let labels: Vec<&str> = linear["actions"]
             .as_array()
             .unwrap()
             .iter()
             .map(|b| b["label"].as_str().unwrap())
             .collect();
-        assert_eq!(labels, ["On", "Reconnect", "Disconnect", "Remove"]);
-        assert_eq!(items[3]["value"], "Skills · Off");
+        assert_eq!(labels, ["Reconnect", "Disconnect", "Remove"]);
+        let skills = cards.iter().find(|x| x["id"] == "p2").unwrap();
+        assert_eq!(skills["switch"]["on"], false);
+        assert!(skills.get("detail").is_none());
+    }
+
+    fn row_state(c: &AppCore, row: Value) -> (String, Vec<(String, String)>) {
+        let s = c.state.lock().unwrap();
+        let buttons = plugin_buttons(&s, &row, "p")
+            .iter()
+            .map(|b| {
+                (
+                    b["label"].as_str().unwrap().to_owned(),
+                    b["style"].as_str().unwrap().to_owned(),
+                )
+            })
+            .collect();
+        (app_auth(&s, &row).state.to_owned(), buttons)
+    }
+
+    #[test]
+    fn an_app_that_needs_signing_in_always_has_the_button_that_fixes_it() {
+        let c = signed_in_core();
+        let linear = |token: bool| json!({ "id": "p", "name": "Linear", "remoteUrl": "https://mcp.linear.app/mcp", "manifest": { "hasToken": token } });
+        // Never connected: Connect is the primary button.
+        let (state, buttons) = row_state(&c, linear(false));
+        assert_eq!(state, "needs_connect");
+        assert!(buttons.contains(&("Connect".into(), "primary".into())));
+        // Connected: Reconnect stays available, quietly.
+        let (state, buttons) = row_state(&c, linear(true));
+        assert_eq!(state, "connected");
+        assert!(buttons.contains(&("Reconnect".into(), "secondary".into())));
+        // The service rejected the sign-in at use: still "has a token", but now it says so and
+        // Reconnect becomes the primary button.
+        c.update(|s| {
+            s.app_auth_issues.insert("p".into(), true);
+        });
+        let (state, buttons) = row_state(&c, linear(true));
+        assert_eq!(state, "needs_reauth");
+        assert!(buttons.contains(&("Reconnect".into(), "primary".into())));
+        // Linked account (GitHub): reconnecting goes back to Meo Account.
+        let github = json!({ "id": "p", "name": "GitHub", "remoteUrl": "https://api.githubcopilot.com/mcp/", "linkedAccount": true });
+        let (state, buttons) = row_state(&c, github.clone());
+        assert_eq!(state, "needs_reauth");
+        assert!(buttons.contains(&("Reconnect GitHub".into(), "primary".into())));
+        c.update(|s| s.app_auth_issues.clear());
+        let (state, buttons) = row_state(&c, github);
+        assert_eq!(state, "connected");
+        assert!(buttons.contains(&("More access".into(), "secondary".into())));
+    }
+
+    #[test]
+    fn a_server_without_sign_in_support_never_claims_to_be_ready_after_an_auth_error() {
+        let c = signed_in_core();
+        let custom =
+            json!({ "id": "p", "name": "example.com", "remoteUrl": "https://example.com/mcp" });
+        assert_eq!(row_state(&c, custom.clone()).0, "ready");
+        c.update(|s| {
+            s.app_auth_issues.insert("p".into(), true);
+        });
+        assert_eq!(row_state(&c, custom).0, "unsupported");
+    }
+
+    #[test]
+    fn a_new_account_is_offered_the_essentials_once() {
+        let c = signed_in_core();
+        c.update(|s| s.plugins = Some(Ok(vec![])));
+        c.offer_essentials();
+        let v = c.view();
+        assert_eq!(v["notice"]["actionLabel"], "Add Essentials");
+        assert_eq!(v["notice"]["action"]["id"], "essentials");
+        c.update(|s| s.notice = None);
+        c.offer_essentials();
+        assert!(c.view()["notice"].is_null(), "offered only once");
+        // An account that already has something is never nagged.
+        let d = signed_in_core();
+        d.update(|s| s.plugins = Some(Ok(vec![json!({ "id": "x", "name": "X" })])));
+        d.offer_essentials();
+        assert!(d.view()["notice"].is_null());
+    }
+
+    #[test]
+    fn authorization_failures_are_told_apart_from_other_failures() {
+        assert_eq!(auth_problem("mcp_github_not_linked"), Some(false));
+        assert_eq!(auth_problem("mcp_token_required"), Some(false));
+        assert_eq!(
+            auth_problem("mcp_github_reauthorization_required"),
+            Some(true)
+        );
+        assert_eq!(
+            auth_problem("mcp_external_authorization_required"),
+            Some(true)
+        );
+        assert_eq!(auth_problem("HTTP 503 upstream down"), None);
+    }
+
+    #[test]
+    fn failed_tool_listing_with_a_bad_sign_in_flips_the_card_to_reconnect() {
+        let c = signed_in_core();
+        c.update(|s| {
+            s.plugins = Some(Ok(vec![
+                json!({ "id": "p1", "name": "Linear", "kind": "mcp", "enabled": true,
+                "remoteUrl": "https://mcp.linear.app/mcp", "manifest": { "hasToken": true } }),
+            ]));
+            s.app_tools.insert(
+                "p1".into(),
+                Err("mcp_external_authorization_required".into()),
+            );
+            s.app_auth_issues.insert("p1".into(), true);
+        });
+        let cards = installed_cards(&c);
+        let card = &cards[0];
+        assert!(card["badges"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|b| b == "Sign-in expired"));
+        assert_eq!(card["tone"], "error");
+        let reconnect = card["actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|b| b["label"] == "Reconnect")
+            .unwrap();
+        assert_eq!(reconnect["style"], "primary");
     }
 
     #[test]

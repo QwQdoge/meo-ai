@@ -787,16 +787,42 @@ ApplicationWindow {
                                             id: cardCol
                                             Layout.fillWidth: true
                                             spacing: 4
-                                            MeoText { text: card.modelData.title || ""; typeRole: "title"; typeSize: "small"; Layout.fillWidth: true; wrapMode: Text.Wrap }
+                                            RowLayout {
+                                                Layout.fillWidth: true
+                                                MeoText { text: card.modelData.title || ""; typeRole: "title"; typeSize: "small"; Layout.fillWidth: true; wrapMode: Text.Wrap }
+                                                MeoSwitch {
+                                                    visible: !!card.modelData.switch
+                                                    checked: !!(card.modelData.switch && card.modelData.switch.on)
+                                                    Accessible.name: (card.modelData.switch && card.modelData.switch.label) || ""
+                                                    onToggled: window.act(card.modelData.switch.action)
+                                                }
+                                            }
                                             MeoText { text: card.modelData.publisher || ""; color: MeoTheme.onSurfaceVariant; Layout.fillWidth: true; elide: Text.ElideRight }
                                             MeoText { text: card.modelData.subtitle || ""; Layout.fillWidth: true; wrapMode: Text.Wrap; maximumLineCount: 3; elide: Text.ElideRight }
                                             MeoText {
-                                                text: (card.modelData.badges || []).concat(card.modelData.state === "installed" ? ["✓ Installed"] : []).join("  ·  ")
-                                                color: MeoTheme.primary
+                                                visible: !!card.modelData.detail
+                                                Layout.fillWidth: true
+                                                text: card.modelData.detail || ""
+                                                typeRole: "label"
+                                                color: MeoTheme.onSurfaceVariant
+                                                wrapMode: Text.Wrap
                                             }
                                             RowLayout {
+                                                spacing: 6
+                                                Rectangle {
+                                                    visible: !!card.modelData.tone
+                                                    implicitWidth: 8; implicitHeight: 8; radius: 4
+                                                    color: card.modelData.tone === "ok" ? MeoTheme.success : card.modelData.tone === "error" ? MeoTheme.error : MeoTheme.warning
+                                                }
+                                                MeoText {
+                                                    text: (card.modelData.badges || []).concat(card.modelData.state === "installed" ? ["✓ Installed"] : []).join("  ·  ")
+                                                    color: MeoTheme.primary
+                                                }
+                                            }
+                                            Flow {
                                                 visible: (card.modelData.actions || []).length > 0
-                                                Layout.alignment: Qt.AlignRight
+                                                Layout.fillWidth: true
+                                                spacing: 8
                                                 Repeater { model: card.modelData.actions || []; ActionButton { spec: modelData } }
                                             }
                                         }
@@ -1166,25 +1192,55 @@ ApplicationWindow {
             visible: item.kind === "button"
             spec: ({ label: item.label, style: item.style, action: item.action })
         }
-        RowLayout {
+        // An app / setting row: text (with a coloured status dot), the on / off switch beside it,
+        // and the buttons wrapped underneath so a long status never runs under them.
+        ColumnLayout {
             visible: item.kind === "item"
             Layout.fillWidth: true
-            spacing: 12
-            ColumnLayout {
+            spacing: 8
+            RowLayout {
                 Layout.fillWidth: true
-                spacing: 2
-                MeoText { text: item.label || ""; wrapMode: Text.Wrap; Layout.fillWidth: true }
-                MeoText {
-                    visible: !!item.value
-                    text: String(item.value || "")
-                    color: MeoTheme.onSurfaceVariant
-                    typeRole: "label"
+                spacing: 12
+                ColumnLayout {
                     Layout.fillWidth: true
+                    spacing: 2
+                    MeoText { text: item.label || ""; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                    RowLayout {
+                        visible: !!item.value
+                        Layout.fillWidth: true
+                        spacing: 6
+                        Rectangle {
+                            visible: !!item.tone
+                            Layout.alignment: Qt.AlignTop
+                            Layout.topMargin: 5
+                            implicitWidth: 8; implicitHeight: 8; radius: 4
+                            color: item.tone === "ok" ? MeoTheme.success : item.tone === "error" ? MeoTheme.error : MeoTheme.warning
+                        }
+                        MeoText {
+                            text: String(item.value || "")
+                            color: MeoTheme.onSurfaceVariant
+                            typeRole: "label"
+                            font.weight: Font.Normal
+                            wrapMode: Text.Wrap
+                            Layout.fillWidth: true
+                        }
+                    }
+                }
+                MeoSwitch {
+                    visible: !!item.switch
+                    checked: !!(item.switch && item.switch.on)
+                    Accessible.name: (item.switch && item.switch.label) || ""
+                    onToggled: window.act(item.switch.action)
                 }
             }
-            Repeater {
-                model: item.buttons || []
-                ActionButton { spec: modelData }
+            Flow {
+                visible: (item.buttons || []).length > 0
+                Layout.fillWidth: true
+                spacing: 8
+                Repeater {
+                    model: item.buttons || []
+                    ActionButton { spec: modelData }
+                }
             }
         }
     }

@@ -1,3 +1,4 @@
+import { Switch } from "./Switch";
 import React, { useEffect, useRef, useState, type ReactNode } from "react";
 import { Blocks } from "./rich";
 import { Icon, hasIcon } from "./icons";
@@ -395,11 +396,23 @@ function Control({ item, act }: { item: Spec; act: Act }) {
     case "item":
       return (
         <div className="core-item">
-          <div className="core-item-text">
-            <span>{item.label}</span>
-            {item.value && <small className="core-muted">{item.value}</small>}
+          <div className="core-item-row">
+            <div className="core-item-text">
+              <span>{item.label}</span>
+              {item.value && (
+                <small className="core-muted">
+                  {item.tone && <i className={`core-tone ${item.tone}`} aria-hidden />}
+                  {item.value}
+                </small>
+              )}
+            </div>
+            {item.switch && <Switch spec={item.switch} act={act} />}
           </div>
-          {(item.buttons ?? []).map((b: Spec, i: number) => <Button key={i} spec={b} act={act} />)}
+          {(item.buttons ?? []).length > 0 && (
+            <div className="core-item-buttons">
+              {item.buttons.map((b: Spec, i: number) => <Button key={i} spec={b} act={act} />)}
+            </div>
+          )}
         </div>
       );
     case "button":

@@ -66,7 +66,6 @@
   "Response language": "回复语言",
   "Use saved memories": "使用已保存的记忆",
   "Models & connections": "模型与连接",
-  "Apps & connectors": "应用与连接器",
   "Devices & Work": "设备与工作",
   "Data & privacy": "数据与隐私",
   "Usage": "用量",
@@ -273,5 +272,16 @@
   "Hand a task to Meo and follow it from any device.": "把任务交给 Meo，在任何设备上查看进度。",
   "Skills and apps": "技能与应用",
   "Add an app or skill once and use it everywhere.": "添加一次应用或技能，处处可用。",
-  "Jump to the latest message": "回到最新消息"
+  "Jump to the latest message": "回到最新消息",
+  "Check connections": "检查连接",
+  "Add Essentials": "添加必备包",
+  "Sign-in expired": "登录已过期",
+  "Needs sign-in (not supported yet)": "需要登录（暂不支持）",
+  "Add the Meo Essentials skills? They teach Meo to write documents, spreadsheets and PDFs, design web pages and debug carefully.": "添加 Meo 必备技能包？它让 Meo 会写文档、表格和 PDF，设计网页，并谨慎调试。",
+  "Opening the service to authorize Meo AI… Come back here when you are done.": "正在打开服务的授权页面…完成后回到这里。",
+  "Default approval level": "默认审批级别",
+  "Open Plugins": "打开插件",
+  "Apps, skills and MCP servers": "应用、技能与 MCP 服务器",
+  "Check again": "再检查一次",
+  "Turn them on or off, sign in again, and see what each one may do on the Plugins page.": "在“插件”页开关它们、重新授权，并查看每个能做什么。"
 }
