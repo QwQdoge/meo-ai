@@ -7772,8 +7772,17 @@ fn conversation_page(s: &State) -> Value {
     }
     let busy = s.streaming.is_some();
     let using = using_label(s);
+    // ↑ in an empty composer edits the last message you sent (when there is one to edit).
+    let edit_last = messages
+        .iter()
+        .rev()
+        .find(|m| m["role"] == "user" && m["id"].as_str().is_some_and(|id| !id.is_empty()))
+        .filter(|_| !busy)
+        .map(|m| json!({ "type": "begin_edit", "id": m["id"] }));
     json!({
         "kind": "conversation",
+        // Which chat this is (empty for a new one): clients keep one unsent draft per chat.
+        "id": active,
         "title": active.as_ref().and_then(|id| s.conversations.iter().find(|c| &c.id == id)).map(|c| c.title.clone()).unwrap_or_else(|| if s.route == "work" { "New task".into() } else { "New chat".into() }),
         // The open chat's own menu (title ⋯): the same actions as its row in the sidebar.
         "menu": active.as_ref().map(|id| json!([
@@ -7813,6 +7822,7 @@ fn conversation_page(s: &State) -> Value {
             "busy": busy,
             "sendAction": { "type": "send" },
             "stopAction": { "type": "stop" },
+            "editLast": edit_last,
             "toolbar": composer_controls(s),
             // Work on a device that can run tasks: the folder Work reads, edits and runs commands in.
             // `pick_workspace` is answered by the host's folder dialog with `set_workspace`.
@@ -10839,6 +10849,45 @@ mod tests {
             start.elapsed() / n,
             bytes / 1024
         );
+    }
+
+    #[test]
+    fn the_page_names_its_chat_and_offers_to_edit_the_last_message() {
+        let c = signed_in_core();
+        c.update(|s| {
+            s.messages.insert(
+                "c1".into(),
+                vec![
+                    ChatMessage {
+                        id: "m1".into(),
+                        role: "user".into(),
+                        text: "hi".into(),
+                        steps: vec![],
+                    },
+                    ChatMessage {
+                        id: "m2".into(),
+                        role: "assistant".into(),
+                        text: "hello".into(),
+                        steps: vec![],
+                    },
+                ],
+            );
+        });
+        let page = c.view()["page"].clone();
+        assert_eq!(page["id"], "c1");
+        assert_eq!(
+            page["composer"]["editLast"],
+            json!({ "type": "begin_edit", "id": "m1" })
+        );
+        // While an answer streams there is nothing to edit; a new chat has no id and nothing to edit.
+        c.update(|s| s.streaming = Some(("c1".into(), "typing".into())));
+        assert!(c.view()["page"]["composer"]["editLast"].is_null());
+        c.update(|s| {
+            s.streaming = None;
+            s.active = None;
+        });
+        let fresh = c.view()["page"].clone();
+        assert!(fresh["id"].is_null() && fresh["composer"]["editLast"].is_null());
     }
 
     #[test]

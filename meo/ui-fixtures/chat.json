@@ -276,7 +276,11 @@
      "id": "toolbar-4"
     }
    ],
-   "commands": []
+   "commands": [],
+   "editLast": {
+    "type": "begin_edit",
+    "id": "m1"
+   }
   },
   "messages": [
    {
@@ -357,7 +361,34 @@
      "id": "sections-1"
     }
    ]
-  }
+  },
+  "files": [
+   {
+    "id": "f1",
+    "name": "report-final-v2.pdf",
+    "subtitle": "1.2 MB",
+    "remove": {
+     "label": "Remove",
+     "action": {
+      "type": "remove_file",
+      "id": "f1"
+     }
+    }
+   },
+   {
+    "id": "f2",
+    "name": "screenshot.png",
+    "subtitle": "340 KB",
+    "remove": {
+     "label": "Remove",
+     "action": {
+      "type": "remove_file",
+      "id": "f2"
+     }
+    }
+   }
+  ],
+  "id": "c2"
  },
  "prefs": {},
  "online": true,

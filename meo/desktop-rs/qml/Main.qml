@@ -19,6 +19,8 @@ ApplicationWindow {
     title: "Meo AI"
 
     required property var core
+    // One unsent draft per chat, so switching chats never mixes them up.
+    property var drafts: ({})
     color: MeoTheme.background
 
     readonly property var v: (core && core.view) || ({})
@@ -1832,6 +1834,8 @@ ApplicationWindow {
                             wrapMode: Text.Wrap
                             textFormat: TextEdit.MarkdownText
                             text: part.text + (live && isLast ? " ▍" : "")
+                            onLinkActivated: link => { if (/^https?:\/\//.test(link)) Qt.openUrlExternally(link) }
+                            HoverHandler { cursorShape: parent.hoveredLink ? Qt.PointingHandCursor : Qt.IBeamCursor }
                             color: MeoTheme.contentOnSurface
                             selectionColor: MeoTheme.primaryContainer
                             selectedTextColor: MeoTheme.contentOnPrimaryContainer
@@ -2512,6 +2516,16 @@ ApplicationWindow {
                     spacing: 4
                     readonly property var composer: window.page.composer || ({})
                     readonly property bool fresh: !!window.page.empty
+                    // Another chat: keep the draft of the one left, restore this one's, and be ready to type.
+                    readonly property string chatId: window.page.id || ""
+                    property string shownId: chatId
+                    onChatIdChanged: {
+                        window.drafts[shownId] = input.text
+                        shownId = chatId
+                        input.text = window.drafts[chatId] || ""
+                        input.forceActiveFocus()
+                    }
+                    Component.onCompleted: input.forceActiveFocus()
                     readonly property real lift: Math.max(0, chatColumn.height - height / 2 - 8 - chatColumn.height * 0.5)
                     transform: Translate {
                         y: composerBox.fresh ? -composerBox.lift : 0
@@ -2529,18 +2543,39 @@ ApplicationWindow {
                         onCancelled: window.act(window.page.consent.actions[1].action)
                     }
 
+                    // Attached files: a chip each, with a way to take it off again.
                     Flow {
                         visible: (window.page.files || []).length > 0
                         Layout.fillWidth: true
-                        spacing: 6
+                        spacing: 8
                         Repeater {
                             model: window.page.files || []
-                            MeoButton {
+                            Rectangle {
+                                id: fileChip
                                 required property var modelData
-                                text: modelData.name + "  ✕"
-                                type: "tonal"
-                                size: "xs"
-                                onClicked: window.act(modelData.remove.action)
+                                implicitHeight: 34
+                                implicitWidth: chipRow.implicitWidth + 12
+                                radius: 12
+                                color: MeoTheme.surfaceContainerHigh
+                                border.width: 1
+                                border.color: MeoTheme.outlineVariant
+                                RowLayout {
+                                    id: chipRow
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    anchors.left: parent.left
+                                    anchors.leftMargin: 10
+                                    spacing: 6
+                                    MeoIcon { icon: /\.(png|jpe?g|gif|webp)$/i.test(fileChip.modelData.name || "") ? "image" : "description"; size: 18; color: MeoTheme.contentOnSurfaceVariant }
+                                    Txt { text: fileChip.modelData.name || ""; elide: Text.ElideMiddle; Layout.maximumWidth: 220; typeRole: "label"; font.weight: Font.Medium }
+                                    Txt { visible: !!fileChip.modelData.subtitle; text: fileChip.modelData.subtitle || ""; typeRole: "label"; font.weight: Font.Normal; color: MeoTheme.contentOnSurfaceVariant }
+                                    MeoIconButton {
+                                        type: "standard"
+                                        size: "xs"
+                                        icon.name: "close"
+                                        toolTipText: qsTr("Remove")
+                                        onClicked: window.act(fileChip.modelData.remove.action)
+                                    }
+                                }
                             }
                         }
                     }
@@ -2604,6 +2639,16 @@ ApplicationWindow {
                                     topPadding: 8
                                     bottomPadding: 6
                                     Accessible.name: composerBox.composer.placeholder || qsTr("Message")
+                                    Keys.onEscapePressed: if (composerBox.composer.busy) window.act(composerBox.composer.stopAction)
+                                    // ↑ in an empty box edits the last message you sent.
+                                    Keys.onUpPressed: event => {
+                                        if (text.length === 0 && composerBox.composer.editLast) {
+                                            window.act(composerBox.composer.editLast)
+                                            event.accepted = true
+                                        } else {
+                                            event.accepted = false
+                                        }
+                                    }
                                     Keys.onReturnPressed: event => {
                                         const enterSends = window.prefs["general.enter_to_send"] !== false
                                         if (enterSends !== !!(event.modifiers & Qt.ShiftModifier)) {

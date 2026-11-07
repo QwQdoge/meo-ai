@@ -121,3 +121,7 @@ Measured on a 300-message chat (about 600 KB of view JSON, 200 chats in the side
 
 Scrolling: a reader who scrolled up is no longer pulled to the bottom by the stream (web and desktop); sending a message follows again.
 Measure again with `meo-ai-demo --view <fixture> --bench 30` (desktop, `MEO_BENCH_DELTA=1` for the placeholder path), `?perf=300&stream=40` on the web demo and `cargo test --release -- --ignored view_cost --nocapture` (core).
+
+## Chat details (2026-11-07)
+
+The composer is focused whenever a chat opens (new chat, switching chats), and each chat keeps its own unsent draft (`page.id` names the chat; web and desktop). Esc stops a running answer and ↑ in an empty box edits the last message you sent (`composer.editLast`). Links in answers open in the browser on desktop. Attached files are chips with a type icon, size and a remove button. A reader who scrolled up is not pulled down by the stream; sending a message follows the end again.

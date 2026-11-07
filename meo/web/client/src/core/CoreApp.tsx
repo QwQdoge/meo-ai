@@ -938,6 +938,20 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
   const stick = useRef(true);
   const fileInput = useRef<HTMLInputElement>(null);
   const [input, setInput] = useState("");
+  // One unsent draft per chat; the box is focused when a chat opens so you can just type.
+  const inputNow = useRef("");
+  inputNow.current = input;
+  const drafts = useRef<Record<string, string>>({});
+  const shownChat = useRef<string>(page.id ?? "");
+  useEffect(() => {
+    const id: string = page.id ?? "";
+    if (shownChat.current !== id) {
+      drafts.current[shownChat.current] = inputNow.current;
+      shownChat.current = id;
+      setInput(drafts.current[id] ?? "");
+    }
+    area.current?.focus();
+  }, [page.id]);
   const [dragging, setDragging] = useState(false);
   const [attachNote, setAttachNote] = useState("");
   const note = (text: string) => { setAttachNote(text); window.setTimeout(() => setAttachNote(""), 4000); };
@@ -1088,6 +1102,10 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
               }}
               onKeyDown={(e) => {
                 if (e.key === "Escape" && composer.busy) act(composer.stopAction);
+                if (e.key === "ArrowUp" && input === "" && composer.editLast) {
+                  e.preventDefault();
+                  act(composer.editLast);
+                }
                 if (e.key === "Tab" && matches.length > 0) {
                   e.preventDefault();
                   setInput(matches[0].name + " ");
