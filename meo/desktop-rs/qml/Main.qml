@@ -43,6 +43,15 @@ ApplicationWindow {
     Shortcut { sequences: [StandardKey.Find]; onActivated: searchField.forceActiveFocus() }
     Shortcut { sequences: [StandardKey.Quit]; onActivated: Qt.quit() }
 
+    // Craft tokens. A hairline is one device pixel whatever the screen scale (0.5 logical px at 2x),
+    // and motion has five lengths only; MeoTheme drops them all to zero for reduced motion.
+    readonly property real hairline: 1 / Math.max(1, Screen.devicePixelRatio)
+    readonly property int tTick: MeoTheme.motionDurationFor(60)
+    readonly property int tFast: MeoTheme.motionDurationFor(120)
+    readonly property int tBase: MeoTheme.motionDurationFor(200)
+    readonly property int tSlow: MeoTheme.motionDurationFor(300)
+    readonly property int tSlower: MeoTheme.motionDurationFor(450)
+
     // Tell the core whether the window is in front, so it only notifies from the background.
     onActiveChanged: core.dispatch(JSON.stringify({ type: "set_foreground", visible: active }))
 
@@ -196,7 +205,7 @@ ApplicationWindow {
         color: selected ? MeoTheme.secondaryContainer
                         : linkTap.pressed ? MeoTheme.surfaceContainerHighest
                         : (linkHover.hovered ? MeoTheme.surfaceContainerHigh : "transparent")
-        Behavior on color { ColorAnimation { duration: MeoTheme.motionDurationShort2 } }
+        Behavior on color { ColorAnimation { duration: window.tFast } }
         activeFocusOnTab: true
         Keys.onReturnPressed: link.clicked()
         Keys.onSpacePressed: link.clicked()
@@ -261,10 +270,10 @@ ApplicationWindow {
             height: parent.height - 6
             radius: height / 2
             color: MeoTheme.surface
-            border.width: 1
+            border.width: window.hairline
             border.color: MeoTheme.outlineVariant
             Behavior on x {
-                NumberAnimation { duration: MeoTheme.motionDurationShort4; easing.type: Easing.BezierSpline; easing.bezierCurve: MeoTheme.motionEasingStandard }
+                NumberAnimation { duration: window.tBase; easing.type: Easing.BezierSpline; easing.bezierCurve: MeoTheme.motionEasingStandard }
             }
         }
         Row {
@@ -310,6 +319,37 @@ ApplicationWindow {
     // text here follows the theme unless it sets its own color.
     component Txt: MeoText { color: MeoTheme.contentOnSurface }
 
+    // The edge of a scrolling area fades out through seven stops (an eased ramp, not a straight
+    // line), so content slides under the edge instead of being cut. Shown only once there is more
+    // to scroll in that direction.
+    component EdgeFade: Rectangle {
+        id: fade
+        property bool atTop: true
+        property bool shown: true
+        property color tone: MeoTheme.background
+        readonly property var ramp: [1.0, 0.94, 0.79, 0.5, 0.21, 0.06, 0.0]
+        height: 28
+        color: "transparent"
+        opacity: shown ? 1 : 0
+        visible: opacity > 0
+        enabled: false
+        z: 3
+        Behavior on opacity { NumberAnimation { duration: window.tFast } }
+        gradient: Gradient {
+            GradientStop { position: 0 / 6; color: Qt.alpha(fade.tone, fade.atTop ? fade.ramp[0] : fade.ramp[6]) }
+            GradientStop { position: 1 / 6; color: Qt.alpha(fade.tone, fade.atTop ? fade.ramp[1] : fade.ramp[5]) }
+            GradientStop { position: 2 / 6; color: Qt.alpha(fade.tone, fade.atTop ? fade.ramp[2] : fade.ramp[4]) }
+            GradientStop { position: 3 / 6; color: Qt.alpha(fade.tone, fade.atTop ? fade.ramp[3] : fade.ramp[3]) }
+            GradientStop { position: 4 / 6; color: Qt.alpha(fade.tone, fade.atTop ? fade.ramp[4] : fade.ramp[2]) }
+            GradientStop { position: 5 / 6; color: Qt.alpha(fade.tone, fade.atTop ? fade.ramp[5] : fade.ramp[1]) }
+            GradientStop { position: 6 / 6; color: Qt.alpha(fade.tone, fade.atTop ? fade.ramp[6] : fade.ramp[0]) }
+        }
+    }
+
+    // Numbers that change while you look (counts, tokens, to-do progress) use tabular digits so
+    // they do not make the text around them jump.
+    component Num: Txt { font.features: ({ "tnum": 1 }) }
+
     // A quiet sidebar row for a project or chat: small plain text, selection tint, menu on hover.
     component NavRow: Item {
         id: nav
@@ -333,7 +373,7 @@ ApplicationWindow {
                  : (navHover.hovered ? MeoTheme.surfaceContainerHigh : "transparent")
             border.width: nav.activeFocus && MeoTheme.focusVisible ? 2 : 0
             border.color: MeoTheme.primary
-            Behavior on color { ColorAnimation { duration: MeoTheme.motionDurationShort2 } }
+            Behavior on color { ColorAnimation { duration: window.tFast } }
         }
         Txt {
             anchors.verticalCenter: parent.verticalCenter
@@ -366,11 +406,48 @@ ApplicationWindow {
         anchors.fill: parent
         spacing: 0
 
+        // While the saved session is being read: the sidebar as the last run left it (open or
+        // collapsed), with placeholders for its rows, so the real content lands in the same place.
+        ColumnLayout {
+            id: skeletonSidebar
+            visible: !!window.v.sidebar && !!window.v.sidebar.skeleton
+            readonly property bool collapsed: !!(window.v.sidebar || {}).collapsed
+            Layout.preferredWidth: collapsed ? 52 : 224
+            Layout.minimumWidth: Layout.preferredWidth
+            Layout.maximumWidth: Layout.preferredWidth
+            Layout.fillHeight: true
+            Layout.margins: 8
+            spacing: 8
+            // [height, width as a share of the column, gap before] of each placeholder
+            readonly property var bars: collapsed
+                ? [[30, 1, 0], [30, 1, 0], [30, 1, 8], [30, 1, 0], [30, 1, 0]]
+                : [[30, 1, 0], [34, 1, 0], [30, 0.5, 4], [28, 0.7, 12], [28, 0.55, 0], [28, 0.8, 12], [28, 0.65, 0], [28, 0.75, 0], [28, 0.5, 0]]
+            Repeater {
+                model: skeletonSidebar.bars
+                Rectangle {
+                    required property var modelData
+                    Layout.topMargin: modelData[2]
+                    Layout.preferredHeight: modelData[0]
+                    Layout.preferredWidth: skeletonSidebar.width * modelData[1]
+                    radius: 8
+                    color: MeoTheme.surfaceContainerHigh
+                    SequentialAnimation on opacity {
+                        running: skeletonSidebar.visible && !MeoTheme.reduceMotion
+                        loops: Animation.Infinite
+                        NumberAnimation { to: 0.45; duration: window.tSlower * 2; easing.type: Easing.InOutSine }
+                        NumberAnimation { to: 1; duration: window.tSlower * 2; easing.type: Easing.InOutSine }
+                    }
+                }
+            }
+            Item { Layout.fillHeight: true }
+        }
+        Rectangle { visible: skeletonSidebar.visible; Layout.fillHeight: true; width: window.hairline; color: MeoTheme.outlineVariant }
+
         // Claude-style left column from `view.sidebar`: Chat | Work, search, new chat, plugins,
         // projects tree and chats; collapses to an icon rail.
         ColumnLayout {
             id: sidebar
-            visible: !!window.v.sidebar && window.page.standalone !== true
+            visible: !!window.v.sidebar && !window.v.sidebar.skeleton && window.page.standalone !== true
             readonly property var sb: window.v.sidebar || ({})
             readonly property bool collapsed: !!sb.collapsed
             readonly property var rows: {
@@ -432,8 +509,8 @@ ApplicationWindow {
                 implicitHeight: 34
                 radius: height / 2
                 color: MeoTheme.surfaceContainerHigh
-                border.width: 1
-                border.color: searchField.activeFocus ? MeoTheme.primary : "transparent"
+                border.width: searchField.activeFocus ? 1.5 : 0
+                border.color: MeoTheme.primary
                 RowLayout {
                     anchors.fill: parent
                     anchors.leftMargin: 12
@@ -572,7 +649,7 @@ ApplicationWindow {
             }
         }
 
-        Rectangle { visible: !!window.v.sidebar && window.page.standalone !== true; Layout.fillHeight: true; width: 1; color: MeoTheme.outlineVariant }
+        Rectangle { visible: !!window.v.sidebar && window.page.standalone !== true; Layout.fillHeight: true; width: window.hairline; color: MeoTheme.outlineVariant }
 
         ColumnLayout {
             Layout.fillWidth: true
@@ -605,6 +682,7 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 sourceComponent: ({
+                    loading: loadingPage,
                     sign_in: signInPage,
                     conversation: conversationPage,
                     list: listPage,
@@ -621,6 +699,12 @@ ApplicationWindow {
         text: spec.label || ""
         type: spec.style === "primary" ? "filled" : spec.style === "danger" ? "outlined" : "tonal"
         onClicked: window.act(spec.action)
+    }
+
+    // Nothing but the base color while the saved session is read (no sign-in page flash).
+    Component {
+        id: loadingPage
+        Item {}
     }
 
     Component {
@@ -818,7 +902,7 @@ ApplicationWindow {
                                 radius: 1
                                 color: MeoTheme.primary
                                 opacity: tab.modelData.selected ? 1 : 0
-                                Behavior on opacity { NumberAnimation { duration: MeoTheme.motionDurationShort3 } }
+                                Behavior on opacity { NumberAnimation { duration: window.tFast } }
                             }
                             HoverHandler { cursorShape: Qt.PointingHandCursor }
                             TapHandler { onTapped: window.act(tab.modelData.action) }
@@ -830,8 +914,8 @@ ApplicationWindow {
                         implicitHeight: 34
                         radius: height / 2
                         color: MeoTheme.surfaceContainerHigh
-                        border.width: 1
-                        border.color: storeSearch.activeFocus ? MeoTheme.primary : "transparent"
+                        border.width: storeSearch.activeFocus ? 1.5 : 0
+                        border.color: MeoTheme.primary
                         RowLayout {
                             anchors.fill: parent
                             anchors.leftMargin: 12
@@ -1066,8 +1150,8 @@ ApplicationWindow {
                             implicitHeight: 34
                             radius: height / 2
                             color: MeoTheme.surfaceContainerHigh
-                            border.width: 1
-                            border.color: settingsSearchField.activeFocus ? MeoTheme.primary : "transparent"
+                            border.width: settingsSearchField.activeFocus ? 1.5 : 0
+                            border.color: MeoTheme.primary
                             readonly property string stored: (window.page.search || {}).value || ""
                             onStoredChanged: if (settingsSearchField.text !== stored) settingsSearchField.text = stored
                             RowLayout {
@@ -1131,7 +1215,7 @@ ApplicationWindow {
                         }
                     }
                     }
-                    Rectangle { Layout.fillHeight: true; width: 1; color: MeoTheme.outlineVariant }
+                    Rectangle { Layout.fillHeight: true; width: window.hairline; color: MeoTheme.outlineVariant }
                     Flickable {
                         id: settingsFlick
                         Layout.fillWidth: true
@@ -1190,8 +1274,6 @@ ApplicationWindow {
                                         implicitHeight: rowsColumn.implicitHeight
                                         radius: 16
                                         color: MeoTheme.surfaceContainerLow
-                                        border.width: 1
-                                        border.color: MeoTheme.outlineVariant
                                         ColumnLayout {
                                             id: rowsColumn
                                             width: parent.width
@@ -1208,7 +1290,7 @@ ApplicationWindow {
                                                         visible: index < group.modelData.rows.length - 1
                                                         Layout.fillWidth: true
                                                         Layout.leftMargin: 16
-                                                        implicitHeight: 1
+                                                        implicitHeight: window.hairline
                                                         color: MeoTheme.outlineVariant
                                                         opacity: 0.6
                                                     }
@@ -1254,9 +1336,7 @@ ApplicationWindow {
             height: parent.height
             radius: height / 2
             color: pillTap.pressed ? MeoTheme.surfaceContainerHighest : pillHover.hovered || menu.visible ? MeoTheme.surfaceContainerHigh : MeoTheme.surfaceContainer
-            border.width: 1
-            border.color: MeoTheme.outlineVariant
-            Behavior on color { ColorAnimation { duration: MeoTheme.motionDurationShort2 } }
+            Behavior on color { ColorAnimation { duration: window.tFast } }
             RowLayout {
                 id: pillRow
                 anchors.centerIn: parent
@@ -1291,7 +1371,7 @@ ApplicationWindow {
                 implicitHeight: 26
                 radius: 7
                 color: MeoTheme.surfaceContainerHighest
-                border.width: 1
+                border.width: window.hairline
                 border.color: MeoTheme.outlineVariant
                 Txt { id: capText; anchors.centerIn: parent; text: modelData; typeRole: "label"; font.weight: Font.Medium }
             }
@@ -1342,16 +1422,16 @@ ApplicationWindow {
             dim: false
             closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
             enter: Transition {
-                NumberAnimation { property: "opacity"; from: 0; to: 1; duration: MeoTheme.motionDurationShort3; easing.type: Easing.BezierSpline; easing.bezierCurve: MeoTheme.motionEasingStandardDecelerate }
-                NumberAnimation { property: "scale"; from: 0.96; to: 1; duration: MeoTheme.motionDurationShort3; easing.type: Easing.BezierSpline; easing.bezierCurve: MeoTheme.motionEasingEmphasizedDecelerate }
+                NumberAnimation { property: "opacity"; from: 0; to: 1; duration: window.tFast; easing.type: Easing.BezierSpline; easing.bezierCurve: MeoTheme.motionEasingStandardDecelerate }
+                NumberAnimation { property: "scale"; from: 0.96; to: 1; duration: window.tFast; easing.type: Easing.BezierSpline; easing.bezierCurve: MeoTheme.motionEasingEmphasizedDecelerate }
             }
             exit: Transition {
-                NumberAnimation { property: "opacity"; to: 0; duration: MeoTheme.motionDurationShort2; easing.type: Easing.BezierSpline; easing.bezierCurve: MeoTheme.motionEasingStandardAccelerate }
+                NumberAnimation { property: "opacity"; to: 0; duration: window.tFast; easing.type: Easing.BezierSpline; easing.bezierCurve: MeoTheme.motionEasingStandardAccelerate }
             }
             background: Rectangle {
                 radius: 16
                 color: MeoTheme.surfaceContainer
-                border.width: 1
+                border.width: window.hairline
                 border.color: MeoTheme.outlineVariant
             }
             ColumnLayout {
@@ -1661,11 +1741,11 @@ ApplicationWindow {
                         transform: Translate {
                             x: inspectorCard.shown ? 0 : 12
                             Behavior on x {
-                                NumberAnimation { duration: MeoTheme.motionDurationMedium1; easing.type: Easing.BezierSpline; easing.bezierCurve: MeoTheme.motionEasingEmphasizedDecelerate }
+                                NumberAnimation { duration: window.tSlow; easing.type: Easing.BezierSpline; easing.bezierCurve: MeoTheme.motionEasingEmphasizedDecelerate }
                             }
                         }
                         Behavior on opacity {
-                            NumberAnimation { duration: MeoTheme.motionDurationShort4; easing.type: Easing.BezierSpline; easing.bezierCurve: MeoTheme.motionEasingStandard }
+                            NumberAnimation { duration: window.tBase; easing.type: Easing.BezierSpline; easing.bezierCurve: MeoTheme.motionEasingStandard }
                         }
                         z: 2
                         anchors.top: parent.top
@@ -1848,8 +1928,6 @@ ApplicationWindow {
                             radius: 12
                             clip: true
                             color: MeoTheme.surfaceContainerLow
-                            border.width: 1
-                            border.color: MeoTheme.outlineVariant
                             implicitHeight: codeColumn.implicitHeight
                             Column {
                                 id: codeColumn
@@ -2245,7 +2323,7 @@ ApplicationWindow {
                         z: 3
                         visible: opacity > 0
                         opacity: !messages.atYEnd && messages.count > 0 ? 1 : 0
-                        Behavior on opacity { NumberAnimation { duration: MeoTheme.motionDurationShort3 } }
+                        Behavior on opacity { NumberAnimation { duration: window.tFast } }
                         anchors.bottom: parent.bottom
                         anchors.bottomMargin: 14
                         x: messages.x + (messages.width - width) / 2
@@ -2255,6 +2333,9 @@ ApplicationWindow {
                         toolTipText: (window.v.strings || {}).jump || qsTr("Jump to the latest message")
                         onClicked: messages.positionViewAtEnd()
                     }
+
+                    EdgeFade { atTop: true; shown: !messages.atYBeginning; anchors.top: parent.top; anchors.topMargin: 8; x: messages.x; width: messages.width }
+                    EdgeFade { atTop: false; shown: !messages.atYEnd; anchors.bottom: parent.bottom; anchors.bottomMargin: 8; x: messages.x; width: messages.width }
 
                     ListView {
                         id: messages
@@ -2424,7 +2505,7 @@ ApplicationWindow {
                                 id: messageActions
                                 // Quiet until the pointer is on the message (the newest one stays visible).
                                 opacity: messageHover.hovered || (messageItem.ListView.view && index === messageItem.ListView.view.count - 1) ? 1 : 0
-                                Behavior on opacity { NumberAnimation { duration: MeoTheme.motionDurationShort3 } }
+                                Behavior on opacity { NumberAnimation { duration: window.tFast } }
                                 visible: !modelData.streaming && !!modelData.text
                                 y: stepsBox.height + bubble.implicitHeight + pictures.height + 4
                                 anchors.right: parent.mine ? parent.right : undefined
@@ -2529,7 +2610,7 @@ ApplicationWindow {
                     readonly property real lift: Math.max(0, chatColumn.height - height / 2 - 8 - chatColumn.height * 0.5)
                     transform: Translate {
                         y: composerBox.fresh ? -composerBox.lift : 0
-                        Behavior on y { NumberAnimation { duration: MeoTheme.motionDurationMedium2; easing.type: Easing.BezierSpline; easing.bezierCurve: MeoTheme.motionEasingEmphasizedDecelerate } }
+                        Behavior on y { NumberAnimation { duration: window.tSlow; easing.type: Easing.BezierSpline; easing.bezierCurve: MeoTheme.motionEasingEmphasizedDecelerate } }
                     }
 
                     MeoBanner {
@@ -2557,8 +2638,6 @@ ApplicationWindow {
                                 implicitWidth: chipRow.implicitWidth + 12
                                 radius: 12
                                 color: MeoTheme.surfaceContainerHigh
-                                border.width: 1
-                                border.color: MeoTheme.outlineVariant
                                 RowLayout {
                                     id: chipRow
                                     anchors.verticalCenter: parent.verticalCenter
@@ -2613,8 +2692,10 @@ ApplicationWindow {
                         implicitHeight: inputColumn.implicitHeight + 12
                         radius: 20
                         color: MeoTheme.surfaceContainerHigh
-                        border.width: 1
-                        border.color: input.activeFocus ? MeoTheme.primary : MeoTheme.outlineVariant
+                        // A soft ring while typing (the box is focused whenever a chat opens), not a hard outline.
+                        border.width: input.activeFocus ? 1 : 0
+                        border.color: Qt.alpha(MeoTheme.primary, 0.5)
+                        Behavior on border.width { NumberAnimation { duration: window.tFast } }
                         ColumnLayout {
                             id: inputColumn
                             anchors.left: parent.left
@@ -2626,7 +2707,7 @@ ApplicationWindow {
                                 id: inputScroll
                                 Layout.fillWidth: true
                                 Layout.preferredHeight: Math.min(Math.max(window.height / 2, 120), Math.max(36, input.contentHeight + 14))
-                                Behavior on Layout.preferredHeight { NumberAnimation { duration: MeoTheme.motionDurationShort3; easing.type: Easing.BezierSpline; easing.bezierCurve: MeoTheme.motionEasingStandardDecelerate } }
+                                Behavior on Layout.preferredHeight { NumberAnimation { duration: window.tFast; easing.type: Easing.BezierSpline; easing.bezierCurve: MeoTheme.motionEasingStandardDecelerate } }
                                 TextArea {
                                     id: input
                                     background: null

@@ -6,6 +6,12 @@
     <title>Meo AI</title>
     <link rel="icon" type="image/svg+xml" href="/meo-ai.svg" />
     <link rel="apple-touch-icon" href="/meo-ai.svg" />
+    <meta name="color-scheme" content="light dark" />
+    <!-- The base color is painted before the script runs, so the page never flashes white. -->
+    <style>
+      html, body { background: #fdf7ff; margin: 0; }
+      @media (prefers-color-scheme: dark) { html, body { background: #141218; } }
+    </style>
   </head>
   <body>
     <div id="root"></div>

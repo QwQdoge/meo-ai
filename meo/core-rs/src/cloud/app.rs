@@ -554,6 +554,9 @@ struct State {
     app_auth_issues: HashMap<String, bool>,
     /// What the settings search box holds.
     settings_query: String,
+    /// The host has created the core and will dispatch `start`, which has not read the saved session
+    /// yet: until then the view is a loading state, not a sign-in page for someone who is signed in.
+    starting: bool,
     /// Per project, on this device: its folder and GitHub repository.
     project_env: HashMap<String, project_env::ProjectEnv>,
     /// The `.agent/` state of each project folder, as last read (shown on the project page).
@@ -1028,6 +1031,7 @@ impl AppCore {
             };
             s.prefs = prefs;
             s.conversations = conversations;
+            s.starting = false;
             s.work_ids = work_ids;
             s.project_env = project_env;
             s.credentials = credentials;
@@ -6022,9 +6026,32 @@ impl AppCore {
 
     // ---- view ----------------------------------------------------------
 
+    /// Hosts call this right after creating the core and before the first `view()`, when they will
+    /// dispatch `start`: the view is then a loading state (with the sidebar as it was last time)
+    /// until the saved session has been read.
+    pub fn expect_start(&self) {
+        self.update(|s| s.starting = true);
+    }
+
     pub fn view(&self) -> Value {
         let s = self.state.lock().unwrap();
         let signed_in = s.auth == AuthState::SignedIn;
+        if s.starting {
+            // Same layout as the real sidebar (open or collapsed, as the last run left it), with
+            // placeholders where its rows will be, so the content lands in place.
+            let collapsed = self
+                .load_json::<Map<String, Value>>(KEY_PREFS)
+                .and_then(|p| p.get("ui.sidebar_collapsed").and_then(Value::as_bool))
+                .unwrap_or(false);
+            return json!({
+                "schema": VIEW_SCHEMA,
+                "auth": { "state": "signed_out", "email": "" },
+                "online": true,
+                "page": { "kind": "loading" },
+                "sidebar": { "skeleton": true, "collapsed": collapsed },
+                "prefs": self.load_json::<Map<String, Value>>(KEY_PREFS).unwrap_or_default(),
+            });
+        }
         let page = if !signed_in {
             sign_in_page(&s)
         } else {
@@ -10888,6 +10915,27 @@ mod tests {
         });
         let fresh = c.view()["page"].clone();
         assert!(fresh["id"].is_null() && fresh["composer"]["editLast"].is_null());
+    }
+
+    #[test]
+    fn a_starting_core_shows_loading_in_the_last_sidebar_shape_not_a_sign_in_page() {
+        let c = core();
+        c.storage
+            .save(KEY_PREFS, r#"{"ui.sidebar_collapsed": true}"#);
+        c.expect_start();
+        let view = c.view();
+        assert_eq!(view["page"]["kind"], "loading");
+        assert_eq!(view["sidebar"]["skeleton"], true);
+        assert_eq!(
+            view["sidebar"]["collapsed"], true,
+            "the sidebar is drawn as the last run left it"
+        );
+        // Once `start` has read the saved state, the real view takes over (here: not signed in).
+        futures_executor::block_on(c.dispatch(Action::Start));
+        assert_eq!(c.view()["page"]["kind"], "sign_in");
+        assert!(c.view()["sidebar"].is_null());
+        // A host that never calls expect_start (tests, other hosts) is unaffected.
+        assert_eq!(core().view()["page"]["kind"], "sign_in");
     }
 
     #[test]

@@ -1,0 +1,15 @@
+{
+ "schema": 1,
+ "auth": {
+  "state": "signed_out"
+ },
+ "online": true,
+ "page": {
+  "kind": "loading"
+ },
+ "sidebar": {
+  "skeleton": true,
+  "collapsed": false
+ },
+ "prefs": {}
+}

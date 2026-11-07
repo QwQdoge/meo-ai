@@ -82,6 +82,18 @@ const glyph = (name: string, size = 18): ReactNode => (hasIcon(name) ? <Icon nam
 function Sidebar({ sidebar, strings, act, open, setOpen }: { sidebar: Spec; strings: Spec; act: Act; open: boolean; setOpen: (v: boolean) => void }) {
   const go = (a: Action | undefined) => { setOpen(false); act(a); };
   const collapsed = !!sidebar.collapsed;
+  const sideScroll = useRef<HTMLDivElement>(null);
+  useEffect(() => fadeEdges(sideScroll.current));
+  // While the saved session is read: the sidebar as the last run left it, with placeholders for its rows.
+  if (sidebar.skeleton) {
+    const bars = collapsed ? [30, 30, 30, 30, 30] : [30, 34, 30, 28, 28, 28, 28, 28, 28];
+    const widths = [100, 100, 50, 70, 55, 80, 65, 75, 50];
+    return (
+      <aside className={`core-sidebar skeleton${collapsed ? " collapsed" : ""}`} aria-hidden>
+        {bars.map((h, i) => <i key={i} className="core-bar" style={{ height: h, width: collapsed ? 40 : `${widths[i]}%`, marginBlockStart: i === 3 || i === 5 ? 10 : 0 }} />)}
+      </aside>
+    );
+  }
   const row = (item: Spec, depth = 0): ReactNode => (
     <li key={item.id} className="core-chat-row" style={{ paddingInlineStart: depth * 14 }}>
       <button aria-current={item.selected ? "true" : undefined} onClick={() => go(item.action)}>
@@ -109,7 +121,7 @@ function Sidebar({ sidebar, strings, act, open, setOpen }: { sidebar: Spec; stri
           {glyph("add", 20)}{!collapsed && <span>{sidebar.newChat.label}</span>}
         </button>
       )}
-      <div className="core-side-scroll">
+      <div className="core-side-scroll" ref={sideScroll} onScroll={(e) => fadeEdges(e.currentTarget)}>
         {(sidebar.sections ?? []).map((sec: Spec) => (
           <section key={sec.id} className="core-side-section">
             {sec.kind === "list" ? (
@@ -202,6 +214,8 @@ function Dialog({ dialog, act }: { dialog: Spec; act: Act }) {
 
 function Page({ page, prefs, strings, act, work }: { page: Spec; prefs: Spec; strings: Spec; act: Act; work?: boolean }) {
   switch (page.kind) {
+    case "loading":
+      return <main className="core-loading" aria-busy="true" />;
     case "sign_in":
       return <SignIn page={page} act={act} />;
     case "conversation":
@@ -927,12 +941,20 @@ const MessageView = React.memo(
   (a, b) => sameMessage(a.m, b.m) && a.strings.copy === b.strings.copy && a.strings.copied === b.strings.copied,
 );
 
+/** The edge of a scrolling area fades only while there is more to scroll in that direction (see shell.css). */
+function fadeEdges(el: HTMLElement | null) {
+  if (!el) return;
+  el.toggleAttribute("data-fade-top", el.scrollTop > 4);
+  el.toggleAttribute("data-fade-bottom", el.scrollHeight - el.scrollTop - el.clientHeight > 4);
+}
+
 function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: Spec; strings: Spec; act: Act; work?: boolean }) {
   const inspector: Spec = page.inspector ?? {};
   const area = useRef<HTMLTextAreaElement>(null);
   const messages: Spec[] = page.messages ?? [];
   const composer: Spec = page.composer ?? {};
   const end = useRef<HTMLDivElement>(null);
+  const list = useRef<HTMLDivElement>(null);
   const [atEnd, setAtEnd] = useState(true);
   // Follow the stream only while the reader is at the bottom; scrolling up to read stays put.
   const stick = useRef(true);
@@ -986,6 +1008,7 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
     const frame = requestAnimationFrame(() => stick.current && end.current?.scrollIntoView({ block: "end" }));
     return () => cancelAnimationFrame(frame);
   }, [messages.length, last]);
+  useEffect(() => fadeEdges(list.current), [messages.length, last, page.id]);
   // Another chat opens at its end.
   const firstId = messages[0]?.id;
   useEffect(() => { stick.current = true; }, [firstId]);
@@ -1025,7 +1048,13 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
             <button className="core-chip" onClick={() => act(inspector.show)}>{inspector.title}</button>
           )}
         </header>
-        <div className="core-messages" onScroll={(e) => { const el = e.currentTarget; const near = el.scrollHeight - el.scrollTop - el.clientHeight < 80; stick.current = near; setAtEnd(near); }}>
+        <div className="core-messages" ref={list} onScroll={(e) => {
+          const el = e.currentTarget;
+          const near = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+          stick.current = near;
+          setAtEnd(near);
+          fadeEdges(el);
+        }}>
           {page.empty && (
             <div className="core-empty">
               <img src="/meo-ai.svg" alt="" width={48} height={48} />

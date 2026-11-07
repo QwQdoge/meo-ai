@@ -303,6 +303,8 @@ fn main() {
         Arc::new(FileStorage::default_location()),
         hooks,
     );
+    // Until `start` has read the saved session the view is a loading state, not a sign-in page.
+    core.expect_start();
     {
         let mut backend = object.borrow_mut();
         backend.core = Some(core.clone());

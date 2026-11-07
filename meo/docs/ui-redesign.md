@@ -125,3 +125,17 @@ Measure again with `meo-ai-demo --view <fixture> --bench 30` (desktop, `MEO_BENC
 ## Chat details (2026-11-07)
 
 The composer is focused whenever a chat opens (new chat, switching chats), and each chat keeps its own unsent draft (`page.id` names the chat; web and desktop). Esc stops a running answer and ↑ in an empty box edits the last message you sent (`composer.editLast`). Links in answers open in the browser on desktop. Attached files are chips with a type icon, size and a remove button. A reader who scrolled up is not pulled down by the stream; sending a message follows the end again.
+
+## Craft details (2026-11-07)
+
+Taken from a teardown of Claude's desktop client that was passed to us (a video script, not something we verified ourselves), applied where it fits:
+
+| Detail | What we do |
+| --- | --- |
+| Layers by lightness, not outlines | Cards, code blocks, chips and selects sit on the canvas with a tonal step and no border; a border remains only on popups (a hairline) and as a soft ring on the focused composer and search fields |
+| Hairlines are one device pixel | Desktop: `window.hairline = 1 / devicePixelRatio`; web: `--hair` is 1 / 0.5 / 0.333 / 0.25 px at 1x / 2x / 3x / 4x |
+| Scroll edges fade through seven eased stops | `EdgeFade` (QML) and a seven-stop `mask-image` (web) on the message list and the sidebar, shown only while there is more to scroll that way |
+| Type | No synthetic bold or italic (`font-synthesis: none`), tabular digits for numbers that change (`Num` in QML, `font-variant-numeric` on the web), grayscale smoothing and a lighter weight (400 to 360, only effective with a variable font) in dark mode. Not done in QML: MeoUI's Roboto files are static, so there is no 360 to ask for |
+| Five lengths of motion | 60, 120, 200, 300, 450 ms (`tTick` ... `tSlower`, `--t1` ... `--t5`); the waiting dots only change brightness; the system setting or Settings > Appearance > Reduce motion stops all animation (QML through `MeoTheme.motionDurationFor`, web through a global rule) |
+| Opening the window | The base color is painted first (web: inline in `index.html`); while the saved session is read the view is a loading state (`page.kind = "loading"`, `sidebar.skeleton`) with the sidebar drawn as the last run left it, open or collapsed, so a signed-in user no longer sees the sign-in page flash and the real content lands in place. Hosts call `AppCore::expect_start()` after creating the core. Not done: the first native frame of the desktop window before QML loads |
+| Not done | Search-bar buttons sized from their height with a 1 px inset on each side; per-theme font weights in QML |
