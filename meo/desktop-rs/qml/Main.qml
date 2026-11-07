@@ -34,6 +34,13 @@ ApplicationWindow {
         }
     }
 
+    // Standard desktop shortcuts (Qt maps them per platform: Ctrl on Linux/Windows, Cmd on macOS).
+    Shortcut { sequences: [StandardKey.New]; onActivated: window.act(((window.v.sidebar || {}).newChat || {}).action) }
+    Shortcut { sequences: [StandardKey.Preferences, "Ctrl+,"]; onActivated: window.act(((window.v.sidebar || {}).footer || [])[0] ? window.v.sidebar.footer[0].action : null) }
+    Shortcut { sequence: "Ctrl+B"; onActivated: window.act((window.v.sidebar || {}).toggle) }
+    Shortcut { sequences: [StandardKey.Find]; onActivated: searchField.forceActiveFocus() }
+    Shortcut { sequences: [StandardKey.Quit]; onActivated: Qt.quit() }
+
     // Tell the core whether the window is in front, so it only notifies from the background.
     onActiveChanged: core.dispatch(JSON.stringify({ type: "set_foreground", visible: active }))
 
@@ -129,8 +136,9 @@ ApplicationWindow {
         property string label: ""
         property bool selected: false
         property bool compact: false
+        property bool accent: false
         signal clicked()
-        implicitHeight: 36
+        implicitHeight: 34
         radius: 10
         color: selected ? MeoTheme.secondaryContainer
                         : (linkHover.hovered ? MeoTheme.surfaceContainerHigh : "transparent")
@@ -142,12 +150,13 @@ ApplicationWindow {
             MeoIcon {
                 icon: link.symbol
                 size: 20
-                color: link.selected ? MeoTheme.contentOnSecondaryContainer : MeoTheme.onSurfaceVariant
+                color: link.accent ? MeoTheme.primary : link.selected ? MeoTheme.contentOnSecondaryContainer : MeoTheme.onSurfaceVariant
                 Layout.alignment: Qt.AlignVCenter
                 verticalAlignment: Text.AlignVCenter
             }
             MeoText {
                 visible: !link.compact
+                color: link.accent ? MeoTheme.primary : MeoTheme.onSurface
                 text: link.label
                 elide: Text.ElideRight
                 font.weight: link.selected ? Font.DemiBold : Font.Normal
@@ -158,6 +167,102 @@ ApplicationWindow {
         }
         HoverHandler { id: linkHover }
         TapHandler { onTapped: link.clicked() }
+    }
+
+    // The Chat | Work switch: one small pill whose thumb slides between the two labels, like
+    // a switch with two positions (not two separate buttons).
+    component ModeSwitch: Item {
+        id: modeSwitch
+        property var modes: []
+        signal chose(int index)
+        readonly property int current: Math.max(0, modes.findIndex(m => m.selected))
+        readonly property real cell: (width - 6) / Math.max(1, modes.length)
+        implicitHeight: 30
+        Rectangle {
+            anchors.fill: parent
+            radius: height / 2
+            color: MeoTheme.surfaceContainerHigh
+        }
+        Rectangle {
+            x: 3 + modeSwitch.current * modeSwitch.cell
+            y: 3
+            width: modeSwitch.cell
+            height: parent.height - 6
+            radius: height / 2
+            color: MeoTheme.surface
+            border.width: 1
+            border.color: MeoTheme.outlineVariant
+            Behavior on x {
+                NumberAnimation { duration: MeoTheme.motionDurationShort4; easing.type: Easing.BezierSpline; easing.bezierCurve: MeoTheme.motionEasingStandard }
+            }
+        }
+        Row {
+            x: 3
+            height: parent.height
+            Repeater {
+                model: modeSwitch.modes
+                Item {
+                    id: seg
+                    required property var modelData
+                    required property int index
+                    width: modeSwitch.cell
+                    height: modeSwitch.height
+                    activeFocusOnTab: true
+                    Accessible.role: Accessible.RadioButton
+                    Accessible.name: modelData.label
+                    Accessible.checked: index === modeSwitch.current
+                    Keys.onSpacePressed: modeSwitch.chose(index)
+                    MeoText {
+                        anchors.centerIn: parent
+                        text: seg.modelData.label
+                        typeRole: "label"
+                        font.weight: seg.index === modeSwitch.current ? Font.DemiBold : Font.Normal
+                        color: seg.index === modeSwitch.current ? MeoTheme.onSurface : MeoTheme.onSurfaceVariant
+                    }
+                    TapHandler { onTapped: modeSwitch.chose(seg.index) }
+                    HoverHandler { cursorShape: Qt.PointingHandCursor }
+                }
+            }
+        }
+    }
+
+    // A quiet sidebar row for a project or chat: small plain text, selection tint, menu on hover.
+    component NavRow: Item {
+        id: nav
+        property string title: ""
+        property bool selected: false
+        property int depth: 0
+        property var menu: []
+        signal clicked()
+        signal menuRequested()
+        implicitHeight: 30
+        Rectangle {
+            anchors.fill: parent
+            radius: 8
+            color: nav.selected ? MeoTheme.secondaryContainer : (navHover.hovered ? MeoTheme.surfaceContainerHigh : "transparent")
+        }
+        MeoText {
+            anchors.verticalCenter: parent.verticalCenter
+            x: 12 + Math.max(0, nav.depth - 1) * 14
+            width: parent.width - x - (nav.menu.length > 0 ? 30 : 8)
+            text: nav.title
+            typeRole: "body"
+            typeSize: "small"
+            elide: Text.ElideRight
+            font.weight: nav.selected ? Font.DemiBold : Font.Normal
+        }
+        HoverHandler { id: navHover }
+        TapHandler { onTapped: nav.clicked() }
+        MeoIconButton {
+            visible: nav.menu.length > 0 && (navHover.hovered || hovered)
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            type: "standard"
+            size: "xs"
+            icon.name: "more_horiz"
+            toolTipText: qsTr("More")
+            onClicked: nav.menuRequested()
+        }
     }
 
     // QML has no direct clipboard API: select and copy from an invisible field.
@@ -202,17 +307,17 @@ ApplicationWindow {
 
             RowLayout {
                 Layout.fillWidth: true
-                MeoSegmentedButtons {
+                ModeSwitch {
                     visible: !sidebar.collapsed
                     Layout.fillWidth: true
-                    size: "xs"
-                    model: (sidebar.sb.modes || []).map(m => m.label)
-                    currentIndex: Math.max(0, (sidebar.sb.modes || []).findIndex(m => m.selected))
-                    onSelected: (index, data) => window.act(sidebar.sb.modes[index].action)
+                    modes: sidebar.sb.modes || []
+                    onChose: index => window.act(sidebar.sb.modes[index].action)
                 }
                 MeoIconButton {
                     type: "standard"
-                    icon.name: sidebar.collapsed ? "chevron_right" : "chevron_left"
+                    size: "xs"
+                    icon.name: "dock_to_right"
+                    toolTipText: sidebar.collapsed ? qsTr("Show sidebar") : qsTr("Hide sidebar")
                     onClicked: window.act(sidebar.sb.toggle)
                 }
             }
@@ -267,12 +372,13 @@ ApplicationWindow {
                     }
                 }
             }
-            MeoButton {
+            SideLink {
                 Layout.fillWidth: true
                 visible: !!sidebar.sb.newChat
-                type: "text"
-                size: "xs"
-                text: sidebar.collapsed ? "+" : "+  " + ((sidebar.sb.newChat || {}).label || "")
+                symbol: "add"
+                accent: true
+                label: (sidebar.sb.newChat || {}).label || ""
+                compact: sidebar.collapsed
                 onClicked: window.act((sidebar.sb.newChat || {}).action)
             }
             ListView {
@@ -302,7 +408,7 @@ ApplicationWindow {
                         visible: sideRow.modelData.kind === "header"
                         width: parent.width
                         spacing: 4
-                        MeoText { text: sideRow.modelData.label || ""; typeRole: "label"; color: MeoTheme.onSurfaceVariant }
+                        MeoText { Layout.topMargin: 10; Layout.leftMargin: 12; text: sideRow.modelData.label || ""; typeRole: "label"; color: MeoTheme.onSurfaceVariant }
                         RowLayout {
                             spacing: 8
                             Repeater {
@@ -322,24 +428,15 @@ ApplicationWindow {
                         visible: sideRow.modelData.kind === "item"
                         width: parent.width
                         implicitHeight: row.implicitHeight
-                        MeoListItem {
+                        NavRow {
                             id: row
-                            x: ((sideRow.modelData.depth || 0) > 0 ? (sideRow.modelData.depth - 1) * 16 : 0)
-                            width: parent.width - x
-                            headline: (sideRow.modelData.data || {}).title || ""
-                            isDense: true
+                            width: parent.width
+                            depth: sideRow.modelData.depth || 0
+                            title: (sideRow.modelData.data || {}).title || ""
                             selected: !!(sideRow.modelData.data || {}).selected
+                            menu: (sideRow.modelData.data || {}).menu || []
                             onClicked: window.act(sideRow.modelData.data.action)
-                        }
-                        HoverHandler { id: rowHover }
-                        MeoIconButton {
-                            visible: ((sideRow.modelData.data || {}).menu || []).length > 0 && (rowHover.hovered || chatMenu.visible)
-                            anchors.right: parent.right
-                            anchors.verticalCenter: parent.verticalCenter
-                            type: "standard"
-                            size: "xs"
-                            icon.name: "more_vert"
-                            onClicked: chatMenu.popup()
+                            onMenuRequested: chatMenu.popup()
                         }
                         Menu {
                             id: chatMenu
@@ -738,11 +835,10 @@ ApplicationWindow {
                             width: ListView.view.width
                             height: modelData.header ? 28 : 36
                             MeoText { visible: !!modelData.header; text: modelData.header || ""; typeRole: "label"; color: MeoTheme.onSurfaceVariant; anchors.bottom: parent.bottom; x: 10 }
-                            MeoListItem {
+                            NavRow {
                                 visible: !!modelData.entry
                                 anchors.fill: parent
-                                isDense: true
-                                headline: modelData.entry ? modelData.entry.label : ""
+                                title: modelData.entry ? modelData.entry.label : ""
                                 selected: modelData.entry ? !!modelData.entry.selected : false
                                 onClicked: window.act(modelData.entry.action)
                             }
@@ -1047,7 +1143,7 @@ ApplicationWindow {
                         visible: !!window.page.empty
                         anchors.horizontalCenter: parent.horizontalCenter
                         anchors.verticalCenter: parent.verticalCenter
-                        anchors.verticalCenterOffset: -110
+                        anchors.verticalCenterOffset: -165
                         icon: "chat"
                         title: window.page.empty ? window.page.empty.title : ""
                         description: window.page.empty ? window.page.empty.text : ""
@@ -1162,14 +1258,15 @@ ApplicationWindow {
                             }
                         }
                     }
-                    MeoButton {
+                    MeoIconButton {
                         visible: !!(window.page.inspector || {}).title && !(window.page.inspector || {}).visible
                         anchors.top: parent.top
                         anchors.right: parent.right
-                        anchors.margins: 16
-                        type: "tonal"
+                        anchors.margins: 12
+                        type: "standard"
                         size: "xs"
-                        text: (window.page.inspector || {}).title || ""
+                        icon.name: "dock_to_left"
+                        toolTipText: (window.page.inspector || {}).title || ""
                         onClicked: window.act(window.page.inspector.show)
                     }
 
@@ -1796,34 +1893,29 @@ ApplicationWindow {
                         }
                     }
 
-                    // A thin pill that grows with the text, up to half the window.
+                    // One rounded card like Claude's: the text grows up to half the window, and the
+                    // controls (attach, permissions, model, thinking) sit in a quiet row inside it
+                    // with the send button at the end.
                     Rectangle {
                         id: inputPill
                         Layout.fillWidth: true
-                        implicitHeight: Math.min(Math.max(window.height / 2, 120), Math.max(40, inputScroll.textHeight + 14))
-                        radius: Math.min(height / 2, 20)
+                        implicitHeight: inputColumn.implicitHeight + 12
+                        radius: 20
                         color: MeoTheme.surfaceContainerHigh
                         border.width: 1
                         border.color: input.activeFocus ? MeoTheme.primary : MeoTheme.outlineVariant
-                        Behavior on implicitHeight { NumberAnimation { duration: MeoTheme.motionDurationShort3; easing.type: Easing.BezierSpline; easing.bezierCurve: MeoTheme.motionEasingStandardDecelerate } }
-                        RowLayout {
-                            anchors.fill: parent
-                            anchors.leftMargin: 4
-                            anchors.rightMargin: 5
-                            spacing: 2
-                            MeoIconButton {
-                                visible: !!composerBox.composer.attach
-                                Layout.alignment: Qt.AlignBottom
-                                type: "standard"
-                                size: "xs"
-                                icon.name: "attach_file"
-                                onClicked: attachDialog.open()
-                            }
+                        ColumnLayout {
+                            id: inputColumn
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.top: parent.top
+                            anchors.margins: 6
+                            spacing: 0
                             ScrollView {
                                 id: inputScroll
                                 Layout.fillWidth: true
-                                Layout.fillHeight: true
-                                readonly property real textHeight: input.contentHeight
+                                Layout.preferredHeight: Math.min(Math.max(window.height / 2, 120), Math.max(36, input.contentHeight + 14))
+                                Behavior on Layout.preferredHeight { NumberAnimation { duration: MeoTheme.motionDurationShort3; easing.type: Easing.BezierSpline; easing.bezierCurve: MeoTheme.motionEasingStandardDecelerate } }
                                 TextArea {
                                     id: input
                                     background: null
@@ -1832,8 +1924,10 @@ ApplicationWindow {
                                     color: MeoTheme.onSurface
                                     placeholderTextColor: MeoTheme.onSurfaceVariant
                                     font.pixelSize: 15
-                                    topPadding: 7
-                                    bottomPadding: 7
+                                    leftPadding: 10
+                                    topPadding: 8
+                                    bottomPadding: 6
+                                    Accessible.name: composerBox.composer.placeholder || qsTr("Message")
                                     Keys.onReturnPressed: event => {
                                         const enterSends = window.prefs["general.enter_to_send"] !== false
                                         if (enterSends !== !!(event.modifiers & Qt.ShiftModifier)) {
@@ -1851,39 +1945,47 @@ ApplicationWindow {
                                     }
                                 }
                             }
-                            MeoIconButton {
-                                Layout.alignment: Qt.AlignBottom
-                                size: "xs"
-                                icon.name: composerBox.composer.busy ? "stop" : "arrow_upward"
-                                onClicked: composerBox.composer.busy ? window.act(composerBox.composer.stopAction) : input.send()
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 0
+                                readonly property var items: composerBox.composer.toolbar || []
+                                MeoIconButton {
+                                    visible: !!composerBox.composer.attach
+                                    type: "standard"
+                                    size: "xs"
+                                    icon.name: "add"
+                                    toolTipText: qsTr("Attach a file")
+                                    onClicked: attachDialog.open()
+                                }
+                                // Work: the folder the task may read, edit and run commands in.
+                                MeoButton {
+                                    readonly property var ws: composerBox.composer.workspace || null
+                                    visible: !!ws
+                                    type: "text"
+                                    size: "xs"
+                                    icon.name: ws && ws.open ? "folder" : "folder_open"
+                                    text: ws ? ws.label : ""
+                                    ToolTip.visible: hovered && !!(ws && ws.path)
+                                    ToolTip.text: ws && ws.path ? ws.path : ""
+                                    onClicked: workspaceDialog.open()
+                                }
+                                Repeater {
+                                    model: parent.items.filter(i => i.align !== "end")
+                                    ControlChip { required property var modelData; item: modelData }
+                                }
+                                Item { Layout.fillWidth: true }
+                                Repeater {
+                                    model: parent.items.filter(i => i.align === "end")
+                                    ControlChip { required property var modelData; item: modelData }
+                                }
+                                MeoIconButton {
+                                    Layout.leftMargin: 4
+                                    size: "xs"
+                                    icon.name: composerBox.composer.busy ? "stop" : "arrow_upward"
+                                    toolTipText: composerBox.composer.busy ? qsTr("Stop") : qsTr("Send")
+                                    onClicked: composerBox.composer.busy ? window.act(composerBox.composer.stopAction) : input.send()
+                                }
                             }
-                        }
-                    }
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 2
-                        readonly property var items: composerBox.composer.toolbar || []
-                        // Work: the folder the task may read, edit and run commands in.
-                        MeoButton {
-                            readonly property var ws: composerBox.composer.workspace || null
-                            visible: !!ws
-                            type: ws && ws.open ? "text" : "tonal"
-                            size: "xs"
-                            icon.name: ws && ws.open ? "folder" : "folder_open"
-                            text: ws ? ws.label : ""
-                            ToolTip.visible: hovered && !!(ws && ws.path)
-                            ToolTip.text: ws && ws.path ? ws.path : ""
-                            onClicked: workspaceDialog.open()
-                        }
-                        Repeater {
-                            model: parent.items.filter(i => i.align !== "end")
-                            ControlChip { required property var modelData; item: modelData }
-                        }
-                        Item { Layout.fillWidth: true }
-                        Repeater {
-                            model: parent.items.filter(i => i.align === "end")
-                            ControlChip { required property var modelData; item: modelData }
                         }
                     }
 

@@ -1,0 +1,276 @@
+{
+ "sidebar": {
+  "modes": [
+   {
+    "label": "Chat",
+    "icon": "chat",
+    "selected": true,
+    "action": {
+     "type": "set_mode",
+     "mode": "chat"
+    }
+   },
+   {
+    "label": "Work",
+    "icon": "work",
+    "selected": false,
+    "action": {
+     "type": "set_mode",
+     "mode": "work"
+    }
+   }
+  ],
+  "toggle": {
+   "type": "toggle_sidebar"
+  },
+  "collapsed": false,
+  "search": {
+   "placeholder": "Search",
+   "value": "",
+   "action": {
+    "type": "search"
+   }
+  },
+  "newChat": {
+   "label": "New chat",
+   "action": {
+    "type": "new_chat"
+   }
+  },
+  "sections": [
+   {
+    "kind": "link",
+    "label": "Plugins",
+    "icon": "skills",
+    "action": {
+     "type": "open_store"
+    }
+   },
+   {
+    "kind": "tree",
+    "label": "Projects",
+    "icon": "projects",
+    "action": {
+     "type": "open_projects"
+    },
+    "items": [
+     {
+      "title": "MeoArch",
+      "action": {
+       "type": "open_project",
+       "id": "1"
+      },
+      "children": [
+       {
+        "title": "Design review",
+        "action": {
+         "type": "open_chat",
+         "id": "c1"
+        }
+       }
+      ]
+     },
+     {
+      "title": "Research",
+      "action": {
+       "type": "open_project",
+       "id": "2"
+      },
+      "children": []
+     }
+    ]
+   },
+   {
+    "kind": "list",
+    "label": "Chats",
+    "tabs": [],
+    "items": [
+     {
+      "title": "Explain the router plan",
+      "selected": false,
+      "action": {
+       "type": "open_chat",
+       "id": "c2"
+      },
+      "menu": [
+       {
+        "label": "Rename",
+        "action": {
+         "type": "rename",
+         "id": "c2"
+        }
+       },
+       {
+        "label": "Delete",
+        "action": {
+         "type": "delete",
+         "id": "c2"
+        }
+       }
+      ]
+     },
+     {
+      "title": "Rust lifetimes question",
+      "action": {
+       "type": "open_chat",
+       "id": "c3"
+      },
+      "menu": []
+     },
+     {
+      "title": "Trip ideas",
+      "action": {
+       "type": "open_chat",
+       "id": "c4"
+      },
+      "menu": []
+     }
+    ]
+   }
+  ],
+  "footer": [
+   {
+    "label": "Settings",
+    "selected": false,
+    "action": {
+     "type": "open_settings"
+    }
+   }
+  ],
+  "status": {
+   "kind": "live",
+   "label": "Live sync"
+  }
+ },
+ "page": {
+  "kind": "conversation",
+  "title": "New chat",
+  "menu": [
+   {
+    "label": "Export",
+    "action": {
+     "type": "export"
+    }
+   }
+  ],
+  "composer": {
+   "placeholder": "Message Meo",
+   "attach": true,
+   "sendAction": {
+    "type": "send"
+   },
+   "stopAction": {
+    "type": "stop"
+   },
+   "busy": false,
+   "toolbar": [
+    {
+     "kind": "select",
+     "label": "Permissions",
+     "binding": "chat.permission",
+     "value": "low",
+     "icon": "shield",
+     "options": [
+      {
+       "label": "Ask every time",
+       "value": "ask"
+      },
+      {
+       "label": "Allow low risk",
+       "value": "low"
+      },
+      {
+       "label": "Auto choose",
+       "value": "smart"
+      },
+      {
+       "label": "Allow all",
+       "value": "all"
+      }
+     ]
+    },
+    {
+     "kind": "toggle",
+     "label": "Search",
+     "binding": "chat.search",
+     "value": true
+    },
+    {
+     "kind": "toggle",
+     "label": "Sub-agents",
+     "binding": "chat.subagents",
+     "value": false,
+     "icon": "hub"
+    },
+    {
+     "kind": "select",
+     "label": "Model",
+     "binding": "chat.profile",
+     "value": "auto",
+     "align": "end",
+     "options": [
+      {
+       "label": "Auto",
+       "value": "auto"
+      },
+      {
+       "label": "Fast",
+       "value": "fast"
+      }
+     ]
+    },
+    {
+     "kind": "slider",
+     "label": "Thinking",
+     "binding": "chat.thinking",
+     "value": "medium",
+     "align": "end",
+     "options": [
+      {
+       "label": "Low",
+       "value": "low"
+      },
+      {
+       "label": "Medium",
+       "value": "medium"
+      },
+      {
+       "label": "High",
+       "value": "high"
+      },
+      {
+       "label": "Max",
+       "value": "max"
+      }
+     ]
+    }
+   ],
+   "commands": []
+  },
+  "messages": [],
+  "inspector": {},
+  "empty": {
+   "title": "How can I help?",
+   "text": "Ask anything, or start a task.",
+   "suggestions": [
+    {
+     "label": "Plan a trip",
+     "action": {
+      "type": "send",
+      "text": "Plan a trip"
+     }
+    },
+    {
+     "label": "Explain code",
+     "action": {
+      "type": "send",
+      "text": "Explain code"
+     }
+    }
+   ]
+  }
+ },
+ "prefs": {},
+ "online": true,
+ "strings": {}
+}

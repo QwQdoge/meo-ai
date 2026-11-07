@@ -1,0 +1,226 @@
+{
+ "sidebar": {
+  "modes": [
+   {
+    "label": "Chat",
+    "icon": "chat",
+    "selected": true,
+    "action": {
+     "type": "set_mode",
+     "mode": "chat"
+    }
+   },
+   {
+    "label": "Work",
+    "icon": "work",
+    "selected": false,
+    "action": {
+     "type": "set_mode",
+     "mode": "work"
+    }
+   }
+  ],
+  "toggle": {
+   "type": "toggle_sidebar"
+  },
+  "collapsed": false,
+  "search": {
+   "placeholder": "Search",
+   "value": "",
+   "action": {
+    "type": "search"
+   }
+  },
+  "newChat": {
+   "label": "New chat",
+   "action": {
+    "type": "new_chat"
+   }
+  },
+  "sections": [
+   {
+    "kind": "link",
+    "label": "Plugins",
+    "icon": "skills",
+    "action": {
+     "type": "open_store"
+    }
+   },
+   {
+    "kind": "tree",
+    "label": "Projects",
+    "icon": "projects",
+    "action": {
+     "type": "open_projects"
+    },
+    "items": [
+     {
+      "title": "MeoArch",
+      "action": {
+       "type": "open_project",
+       "id": "1"
+      },
+      "children": [
+       {
+        "title": "Design review",
+        "action": {
+         "type": "open_chat",
+         "id": "c1"
+        }
+       }
+      ]
+     },
+     {
+      "title": "Research",
+      "action": {
+       "type": "open_project",
+       "id": "2"
+      },
+      "children": []
+     }
+    ]
+   },
+   {
+    "kind": "list",
+    "label": "Chats",
+    "tabs": [],
+    "items": [
+     {
+      "title": "Explain the router plan",
+      "selected": false,
+      "action": {
+       "type": "open_chat",
+       "id": "c2"
+      },
+      "menu": [
+       {
+        "label": "Rename",
+        "action": {
+         "type": "rename",
+         "id": "c2"
+        }
+       },
+       {
+        "label": "Delete",
+        "action": {
+         "type": "delete",
+         "id": "c2"
+        }
+       }
+      ]
+     },
+     {
+      "title": "Rust lifetimes question",
+      "action": {
+       "type": "open_chat",
+       "id": "c3"
+      },
+      "menu": []
+     },
+     {
+      "title": "Trip ideas",
+      "action": {
+       "type": "open_chat",
+       "id": "c4"
+      },
+      "menu": []
+     }
+    ]
+   }
+  ],
+  "footer": [
+   {
+    "label": "Settings",
+    "selected": false,
+    "action": {
+     "type": "open_settings"
+    }
+   }
+  ],
+  "status": {
+   "kind": "live",
+   "label": "Live sync"
+  }
+ },
+ "page": {
+  "kind": "settings",
+  "title": "Settings",
+  "close": {
+   "type": "close_settings"
+  },
+  "selected": "general",
+  "nav": [
+   {
+    "label": "Preferences",
+    "items": [
+     {
+      "label": "General",
+      "selected": true,
+      "action": {
+       "type": "select_settings_section",
+       "id": "general"
+      }
+     },
+     {
+      "label": "Personalization",
+      "selected": false,
+      "action": {
+       "type": "select_settings_section",
+       "id": "p"
+      }
+     }
+    ]
+   },
+   {
+    "label": "Account",
+    "items": [
+     {
+      "label": "Usage",
+      "selected": false,
+      "action": {
+       "type": "select_settings_section",
+       "id": "usage"
+      }
+     }
+    ]
+   }
+  ],
+  "sections": [
+   {
+    "id": "general",
+    "label": "General",
+    "items": [
+     {
+      "kind": "toggle",
+      "label": "Send with Enter",
+      "binding": "general.enter_to_send",
+      "value": true
+     },
+     {
+      "kind": "select",
+      "label": "Language",
+      "binding": "general.lang",
+      "value": "auto",
+      "options": [
+       {
+        "label": "Follow system",
+        "value": "auto"
+       },
+       {
+        "label": "English",
+        "value": "en"
+       }
+      ]
+     },
+     {
+      "kind": "hint",
+      "text": "Theme and accent follow the system."
+     }
+    ]
+   }
+  ]
+ },
+ "prefs": {},
+ "online": true,
+ "strings": {}
+}

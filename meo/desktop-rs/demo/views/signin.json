@@ -1,0 +1,17 @@
+{
+ "page": {
+  "kind": "sign_in",
+  "title": "Welcome to Meo AI",
+  "text": "Sign in with your Meo Account.",
+  "actions": [
+   {
+    "label": "Sign in",
+    "style": "primary",
+    "action": {
+     "type": "sign_in"
+    }
+   }
+  ]
+ },
+ "prefs": {}
+}

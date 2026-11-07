@@ -168,20 +168,13 @@ impl PlatformHooks for DesktopHooks {
     }
 
     fn notify(&self, title: &str, text: &str) {
-        let sent = if cfg!(target_os = "macos") {
-            let quote = |t: &str| t.replace('\\', "\\\\").replace('"', "\\\"");
-            std::process::Command::new("osascript")
-                .args([
-                    "-e",
-                    &format!("display notification \"{}\" with title \"{}\"", quote(text), quote(title)),
-                ])
-                .spawn()
-        } else {
-            std::process::Command::new("notify-send")
-                .args(["--app-name=Meo AI", "--icon=org.meo.AI", title, text])
-                .spawn()
-        };
-        if let Err(error) = sent {
+        // The platform's own notification service: freedesktop D-Bus (KDE Plasma, GNOME, ...),
+        // Windows toast, macOS Notification Center. No shelling out to helper programs.
+        let mut notification = notify_rust::Notification::new();
+        notification.appname("Meo AI").summary(title).body(text).icon("org.meo.AI");
+        #[cfg(windows)]
+        notification.app_id("org.meo.AI");
+        if let Err(error) = notification.show() {
             tracing::warn!(%error, "could not show a desktop notification");
         }
     }

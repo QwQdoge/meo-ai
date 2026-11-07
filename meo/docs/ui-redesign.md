@@ -71,6 +71,19 @@ flag, model), details card data, Web + desktop + Android renderers.
 Behaviour wired: permission → provider consent (`chat.auto_consent`), thinking level → route
 (`fast` / `thinking`) in Auto mode. Everything else below is stored but has no effect yet.
 
+## Compared with Claude desktop (2026-11-07)
+
+Checked against Claude's desktop docs and layout; done in `desktop-rs/qml/Main.qml`:
+
+- The Chat | Work choice is one small pill with a sliding thumb (`ModeSwitch`), not two buttons.
+- New chat is a plain accent row; projects and chats are quiet 13px rows (`NavRow`) with a hover menu.
+- The composer is one rounded card: text on top, one control row inside (attach `+`, folder, permissions, search, sub-agents, model, thinking) and the send button at its end. The details card button is an icon.
+- Standard shortcuts: New, Preferences (`Ctrl+,`), `Ctrl+B` sidebar, Find (search), Quit.
+- Native platform parts only: the window keeps the system title bar (no frameless window), notifications use the platform service (`notify-rust`: freedesktop D-Bus on KDE/GNOME, Windows toast, macOS Notification Center), file and folder pickers are the system dialogs.
+
+Offline check without the core, network or account: `desktop-rs/demo` builds `meo-ai-demo`, which loads the real `Main.qml` with canned views (`views/*.json`: chat, new chat, Work, collapsed rail, offline banner, sign-in, settings) and can save screenshots:
+`cmake -S meo/desktop-rs/demo -B build/demo -DCMAKE_PREFIX_PATH=<Qt> -DMEO_UI_ROOT=<MeoUI>` then `QT_QPA_PLATFORM=offscreen build/demo/meo-ai-demo --view meo/desktop-rs/demo/views/chat.json --shot chat.png`.
+
 ## TODO
 
 - [x] Work mode (cloud): a Work task is a conversation marked as Work (ids kept on the device, `move_to_work` / `move_to_chat` / `new_task`). Work page = the conversation page with its own sidebar list "Tasks" and starters. Every Work message is routed and planned (steps: low 1, medium 3, high 6, max 10), judged from medium up, and the model gets the Work guide. Prompts for both workspaces live in meo-api `src/ai-prompts.mjs` (samples in `docs/ai-prompts.md`). TODO: local desktop executor / remote devices, Work tasks synced across devices (today the marker is per device), sub-agent execution
