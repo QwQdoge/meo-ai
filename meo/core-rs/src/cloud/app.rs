@@ -3778,8 +3778,15 @@ impl AppCore {
         if continuing {
             judge = self.state.lock().unwrap().agent.judge.clone();
         }
-        // A Work task is always planned (even at Low: one step), a chat only above Low.
-        if mode == "auto" && (level != "low" || work) && !has_pictures && !continuing {
+        // Every planning stage is an extra round trip before the first word of the answer, so it
+        // is opt-in by effort: Work plans from Medium up, Chat only at High and Max. At the default
+        // Medium a chat is answered by one call, like Claude Code and Codex do.
+        let plans = if work {
+            level != "low"
+        } else {
+            matches!(level.as_str(), "high" | "max")
+        };
+        if mode == "auto" && plans && !has_pictures && !continuing {
             if auto_consent {
                 let o = self.orchestrate(&text, &level, search, work).await;
                 if let Some(chosen) = o.route {
