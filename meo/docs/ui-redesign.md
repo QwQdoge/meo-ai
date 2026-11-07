@@ -80,10 +80,11 @@ Checked against Claude's desktop docs and layout; done in `desktop-rs/qml/Main.q
 - The composer is one rounded card: text on top, one control row inside (attach `+`, folder, permissions, search, sub-agents, model, thinking) and the send button at its end. The details card button is an icon.
 - Standard shortcuts: New, Preferences (`Ctrl+,`), `Ctrl+B` sidebar, Find (search), Quit.
 - Polish pass: MeoUI menus (motion popup) replace the plain Qt menus; the slider popup names every stop; message actions appear on hover (newest stays visible); pulsing dots while waiting for the first token; a jump-to-latest button; pressed and keyboard-focus states on sidebar rows and the mode pill; tooltips use the MeoUI delay; the sign-in page lists what Chat, Work and Skills do (`page.features`, from the core, translated in `ui-schema/locales`).
+- One core, three thin renderers: the product view (including the sign-in feature list and the short UI strings) comes from `core-rs/src/cloud`; QML, the Web page and Compose only draw it. Web and Android got the same pass (sliding Chat | Work pill, plain New chat row, typing dots, jump-to-latest, Meo mark on the empty chat, sign-in features). The old second React client (`web/client/src/meo`, unreachable from `main.tsx`) was deleted. Canned views for offline checks are shared in `meo/ui-fixtures`; `web/client/demo` serves them through a stub of the WASM core.
 - Native platform parts only: the window keeps the system title bar (no frameless window), notifications use the platform service (`notify-rust`: freedesktop D-Bus on KDE/GNOME, Windows toast, macOS Notification Center), file and folder pickers are the system dialogs.
 
-Offline check without the core, network or account: `desktop-rs/demo` builds `meo-ai-demo`, which loads the real `Main.qml` with canned views (`views/*.json`: chat, new chat, Work, collapsed rail, offline banner, sign-in, settings) and can save screenshots:
-`cmake -S meo/desktop-rs/demo -B build/demo -DCMAKE_PREFIX_PATH=<Qt> -DMEO_UI_ROOT=<MeoUI>` then `QT_QPA_PLATFORM=offscreen build/demo/meo-ai-demo --view meo/desktop-rs/demo/views/chat.json --shot chat.png`.
+Offline check without the core, network or account: `desktop-rs/demo` builds `meo-ai-demo`, which loads the real `Main.qml` with canned views (`meo/ui-fixtures/*.json`, shared with the web demo: chat, new chat, Work, collapsed rail, offline banner, sign-in, settings) and can save screenshots:
+`cmake -S meo/desktop-rs/demo -B build/demo -DCMAKE_PREFIX_PATH=<Qt> -DMEO_UI_ROOT=<MeoUI>` then `QT_QPA_PLATFORM=offscreen build/demo/meo-ai-demo --view meo/ui-fixtures/chat.json --shot chat.png`.
 
 ## TODO
 

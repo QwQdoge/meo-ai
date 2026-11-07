@@ -16,6 +16,9 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.material.icons.rounded.AccountTree
+import androidx.compose.material.icons.rounded.ArrowDownward
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.Edit
@@ -327,8 +330,84 @@ private fun SignInPage(page: JSONObject, act: Act) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
         )
+        page.list("features").forEach { feature ->
+            Row(Modifier.fillMaxWidth().widthIn(max = 420.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.secondaryContainer, modifier = Modifier.size(40.dp)) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            navigationIcon(feature.str("icon").let { if (it == "skills") "extension" else it }),
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                        )
+                    }
+                }
+                Column {
+                    Text(feature.str("title"), style = MaterialTheme.typography.titleSmall)
+                    Text(feature.str("text"), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
         if (page.optBoolean("busy")) CircularProgressIndicator()
         page.list("actions").forEach { ActionButton(it, act) }
+    }
+}
+
+/** Chat | Work as one pill: the thumb slides between the labels (not two separate buttons). */
+@Composable
+private fun ModeSwitch(modes: List<JSONObject>, act: Act, modifier: Modifier = Modifier) {
+    val selected = modes.indexOfFirst { it.optBoolean("selected") }.coerceAtLeast(0)
+    val count = modes.size.coerceAtLeast(1)
+    BoxWithConstraints(
+        modifier.height(36.dp).clip(RoundedCornerShape(50)).background(MaterialTheme.colorScheme.surfaceContainerHigh).padding(3.dp),
+    ) {
+        val cell = maxWidth / count
+        val thumbX by androidx.compose.animation.core.animateDpAsState(
+            cell * selected,
+            androidx.compose.animation.core.tween(200, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+            label = "modeThumb",
+        )
+        Surface(
+            Modifier.offset(x = thumbX).width(cell).fillMaxHeight(),
+            shape = RoundedCornerShape(50),
+            color = MaterialTheme.colorScheme.surface,
+            shadowElevation = 1.dp,
+        ) {}
+        Row(Modifier.fillMaxSize()) {
+            modes.forEachIndexed { index, mode ->
+                Box(
+                    Modifier.weight(1f).fillMaxHeight().clip(RoundedCornerShape(50))
+                        .clickable(role = androidx.compose.ui.semantics.Role.Tab) { act.send(mode.obj("action")) },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        mode.str("label"),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = if (index == selected) FontWeight.SemiBold else FontWeight.Normal,
+                        color = if (index == selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Three pulsing dots while the answer has not started. */
+@Composable
+private fun TypingDots() {
+    val transition = androidx.compose.animation.core.rememberInfiniteTransition(label = "typing")
+    Row(Modifier.padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+        repeat(3) { i ->
+            val alpha by transition.animateFloat(
+                initialValue = 0.35f,
+                targetValue = 1f,
+                animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+                    androidx.compose.animation.core.tween(480, delayMillis = i * 160, easing = androidx.compose.animation.core.LinearEasing),
+                    androidx.compose.animation.core.RepeatMode.Reverse,
+                ),
+                label = "dot$i",
+            )
+            Box(Modifier.size(7.dp).clip(RoundedCornerShape(50)).background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha)))
+        }
     }
 }
 
@@ -559,14 +638,7 @@ private fun ShellSidebar(sb: JSONObject, act: Act, modifier: Modifier, forceExpa
     Column(modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             if (!collapsed) {
-                Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    sb.list("modes").forEach { mode ->
-                        val on = mode.optBoolean("selected")
-                        val click = { act.send(mode.obj("action")) }
-                        if (on) FilledTonalButton(onClick = click, modifier = Modifier.weight(1f)) { Text(mode.str("label")) }
-                        else OutlinedButton(onClick = click, modifier = Modifier.weight(1f)) { Text(mode.str("label")) }
-                    }
-                }
+                ModeSwitch(sb.list("modes"), act, Modifier.weight(1f))
             }
             if (!forceExpanded) {
                 IconButton(onClick = { act.send(sb.obj("toggle")) }) {
@@ -752,6 +824,7 @@ private fun ChatPane(page: JSONObject, prefs: JSONObject?, strings: JSONObject, 
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
+                    Image(painterResource(R.mipmap.ic_launcher), contentDescription = null, modifier = Modifier.size(48.dp))
                     Text(empty.str("title"), style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center)
                     Text(
                         empty.str("text"),
@@ -787,6 +860,16 @@ private fun ChatPane(page: JSONObject, prefs: JSONObject?, strings: JSONObject, 
             ) {
                 items(messages) { MessageBubble(it, strings, act) }
             }
+            val scope = rememberCoroutineScope()
+            val showJump by remember { androidx.compose.runtime.derivedStateOf { messages.isNotEmpty() && listState.canScrollForward } }
+            if (showJump) {
+                androidx.compose.material3.SmallFloatingActionButton(
+                    onClick = { scope.launch { listState.animateScrollToItem(messages.size - 1) } },
+                    modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = composerDp + 12.dp),
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    contentColor = MaterialTheme.colorScheme.onSurface,
+                ) { Icon(Icons.Rounded.ArrowDownward, contentDescription = strings.str("jump").ifEmpty { "Jump to the latest message" }) }
+            }
             Column(
                 Modifier.align(Alignment.BottomCenter)
                     .widthIn(max = 720.dp)
@@ -821,7 +904,7 @@ private fun ChatPane(page: JSONObject, prefs: JSONObject?, strings: JSONObject, 
 private fun MessageBubble(message: JSONObject, strings: JSONObject, act: Act) {
     val mine = message.str("role") == "user"
     val streaming = message.optBoolean("streaming")
-    val text = message.str("text") + if (streaming) " ▍" else ""
+    val text = message.str("text") + if (streaming && message.str("text").isNotEmpty()) " ▍" else ""
     val clipboard = LocalClipboardManager.current
     Column(Modifier.fillMaxWidth(), horizontalAlignment = if (mine) Alignment.End else Alignment.Start) {
         if (mine) {
@@ -839,6 +922,7 @@ private fun MessageBubble(message: JSONObject, strings: JSONObject, act: Act) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (message.has("steps")) Steps(message, act)
                     val blocks = message.list("blocks")
+                    if (streaming && message.str("text").isEmpty() && blocks.isEmpty()) TypingDots()
                     if (blocks.isEmpty()) MarkdownText(stripIcons(text), Modifier.fillMaxWidth())
                     else blocks.forEachIndexed { i, block ->
                         val cursor = if (streaming && i == blocks.lastIndex) " ▍" else ""

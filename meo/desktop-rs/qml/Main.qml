@@ -1753,7 +1753,7 @@ ApplicationWindow {
                         type: "tonal"
                         size: "s"
                         icon.name: "arrow_downward"
-                        toolTipText: qsTr("Jump to the latest message")
+                        toolTipText: (window.v.strings || {}).jump || qsTr("Jump to the latest message")
                         onClicked: messages.positionViewAtEnd()
                     }
 

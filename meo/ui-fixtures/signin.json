@@ -30,5 +30,9 @@
    }
   ]
  },
- "prefs": {}
+ "prefs": {},
+ "strings": {
+  "jump": "Jump to the latest message",
+  "thinking": "Thinking"
+ }
 }

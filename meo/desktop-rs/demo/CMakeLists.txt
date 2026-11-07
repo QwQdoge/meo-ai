@@ -1,6 +1,6 @@
 # Offline UI host: build with
 #   cmake -S meo/desktop-rs/demo -B build/demo -DCMAKE_PREFIX_PATH=<Qt> -DMEO_UI_ROOT=<MeoUI checkout>
-#   QT_QPA_PLATFORM=offscreen build/demo/meo-ai-demo --view meo/desktop-rs/demo/views/chat.json --shot chat.png
+#   QT_QPA_PLATFORM=offscreen build/demo/meo-ai-demo --view meo/desktop-rs/demo/../../ui-fixtures/chat.json --shot chat.png
 cmake_minimum_required(VERSION 3.21)
 project(MeoAIDemo LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)

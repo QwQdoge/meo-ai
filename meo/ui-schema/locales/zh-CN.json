@@ -168,7 +168,7 @@
   "Allow low risk": "允许低风险",
   "Auto choose": "自动选择",
   "Allow all": "全部允许",
-  "Thinking": "思考",
+  "Thinking": "思考中",
   "Low": "低",
   "Medium": "中",
   "High": "高",
@@ -272,5 +272,6 @@
   "Ask anything and get answers with sources.": "随便问，答案附带来源。",
   "Hand a task to Meo and follow it from any device.": "把任务交给 Meo，在任何设备上查看进度。",
   "Skills and apps": "技能与应用",
-  "Add an app or skill once and use it everywhere.": "添加一次应用或技能，处处可用。"
+  "Add an app or skill once and use it everywhere.": "添加一次应用或技能，处处可用。",
+  "Jump to the latest message": "回到最新消息"
 }

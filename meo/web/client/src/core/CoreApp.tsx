@@ -228,6 +228,16 @@ function SignIn({ page, act }: { page: Spec; act: Act }) {
       <img src="/meo-ai.svg" alt="" width={72} height={72} />
       <h1>{page.title}</h1>
       <p>{page.text}</p>
+      {(page.features ?? []).length > 0 && (
+        <ul className="core-features">
+          {page.features.map((f: Spec, i: number) => (
+            <li key={i}>
+              <span className="core-feature-icon" aria-hidden>{glyph(f.icon, 22)}</span>
+              <span><b>{f.title}</b><small>{f.text}</small></span>
+            </li>
+          ))}
+        </ul>
+      )}
       {page.busy && <div className="core-spinner" role="progressbar" aria-label="Signing in" />}
       {(page.actions ?? []).map((a: Spec, i: number) => <Button key={i} spec={a} act={act} />)}
     </main>
@@ -703,6 +713,7 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
   const messages: Spec[] = page.messages ?? [];
   const composer: Spec = page.composer ?? {};
   const end = useRef<HTMLDivElement>(null);
+  const [atEnd, setAtEnd] = useState(true);
   const fileInput = useRef<HTMLInputElement>(null);
   const [input, setInput] = useState("");
   const [dragging, setDragging] = useState(false);
@@ -770,9 +781,10 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
             <button className="core-chip" onClick={() => act(inspector.show)}>{inspector.title}</button>
           )}
         </header>
-        <div className="core-messages">
+        <div className="core-messages" onScroll={(e) => { const el = e.currentTarget; setAtEnd(el.scrollHeight - el.scrollTop - el.clientHeight < 80); }}>
           {page.empty && (
             <div className="core-empty">
+              <img src="/meo-ai.svg" alt="" width={48} height={48} />
               <h2>{page.empty.title}</h2>
               <p className="core-muted">{page.empty.text}</p>
               <div className="core-chips">
@@ -815,6 +827,9 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
                       </ol>
                     </details>
                   )}
+                  {m.streaming && !m.text && !(m.blocks ?? []).length && (
+                    <span className="core-typing" role="status" aria-label={strings.thinking ?? "Thinking"}><i /><i /><i /></span>
+                  )}
                   <Blocks
                     blocks={m.blocks?.length ? m.blocks : [{ type: "markdown", text: m.text }]}
                     streaming={!!m.streaming}
@@ -843,6 +858,11 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
           ))}
           <div ref={end} />
         </div>
+        {!atEnd && messages.length > 0 && (
+          <button className="core-jump" aria-label={strings.jump ?? "Jump to the latest message"} title={strings.jump ?? "Jump to the latest message"} onClick={() => end.current?.scrollIntoView({ block: "end", behavior: "smooth" })}>
+            <Icon name="arrow_down" size={18} />
+          </button>
+        )}
         {page.consent && (
           <div className="core-banner" role="alertdialog" aria-label={page.consent.title}>
             <span><strong>{page.consent.title}</strong> {page.consent.text}</span>

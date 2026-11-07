@@ -320,3 +320,44 @@
 .core-app .core-bars-axis { display: flex; justify-content: space-between; font-size: 11px; color: rgb(var(--text-secondary)); }
 .core-app .core-subhead { margin: 10px 0 0; font-size: 12px; font-weight: 600; letter-spacing: .04em; color: rgb(var(--text-secondary)); }
 @media (max-width: 520px) { .core-app .core-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* ---------- Polish: one quiet language shared with the desktop and Android clients ---------- */
+/* Chat | Work: one pill, the thumb slides between the two labels. */
+.core-app .core-modes { position: relative; padding: 3px; border: 0; background: var(--tonal); gap: 0; overflow: visible; }
+.core-app .core-modes::before { content: ""; position: absolute; inset-block: 3px; inset-inline-start: 3px; width: calc((100% - 6px) / 2); border-radius: 999px;
+  background: rgb(var(--surface-secondary)); box-shadow: var(--elev-1); transition: transform .2s var(--ease); }
+.core-app .core-modes:has(button:nth-child(2)[aria-selected="true"])::before { transform: translateX(100%); }
+:root[dir="rtl"] .core-app .core-modes:has(button:nth-child(2)[aria-selected="true"])::before { transform: translateX(-100%); }
+.core-app .core-modes button { position: relative; border-radius: 999px; padding: 5px 8px; }
+.core-app .core-modes button + button { border-inline-start: 0; }
+.core-app .core-modes button[aria-selected="true"] { background: none; }
+.core-app .collapsed .core-modes::before { display: none; }
+.core-app .collapsed .core-modes button + button { border-block-start: 0; }
+.core-app .collapsed .core-modes button[aria-selected="true"] { background: rgb(var(--surface-secondary)); box-shadow: var(--elev-1); }
+/* New chat is a plain accent row, not a loud button. */
+.core-app .core-newchat { background: none; color: rgb(var(--accent-primary)); box-shadow: none; font-weight: 500; padding: 6px 10px; border-radius: 10px; }
+.core-app .core-newchat:hover { background: var(--tonal); box-shadow: none; }
+.core-app .collapsed .core-newchat { width: 40px; height: 40px; }
+/* Quiet rows: pressed feedback and a visible keyboard focus. */
+.core-app .core-side-link:active, .core-app .core-chat-row > button:active { background: var(--tonal-2); }
+.core-app .core-side-link:focus-visible, .core-app .core-chat-row > button:focus-visible, .core-app .core-modes button:focus-visible { outline: 2px solid rgb(var(--accent-primary)); outline-offset: -2px; }
+/* Empty chat: Meo mark above the greeting. */
+.core-app .core-empty img { display: block; margin: 0 0 10px; }
+/* Waiting for the first token: three pulsing dots. */
+.core-typing { display: inline-flex; gap: 5px; padding: 6px 2px; }
+.core-typing i { width: 7px; height: 7px; border-radius: 50%; background: rgb(var(--text-secondary)); opacity: .35; animation: core-pulse 1s infinite ease-in-out; }
+.core-typing i:nth-child(2) { animation-delay: .16s; } .core-typing i:nth-child(3) { animation-delay: .32s; }
+@keyframes core-pulse { 0%, 60%, 100% { opacity: .35; } 30% { opacity: 1; } }
+/* Jump to the latest message. */
+.core-app .core-jump { position: absolute; inset-inline-start: 50%; transform: translateX(-50%); bottom: 132px; z-index: 3; display: grid; place-items: center; width: 36px; height: 36px; padding: 0;
+  border: 1px solid rgb(var(--border-light)); border-radius: 50%; background: rgb(var(--surface-secondary)); color: rgb(var(--text-primary)); box-shadow: var(--elev-2); animation: core-fade .15s var(--ease); }
+.core-app .core-jump:hover { background: var(--tonal-2); }
+.core-app .core-thread { position: relative; }
+@keyframes core-fade { from { opacity: 0; transform: translateX(-50%) translateY(4px); } }
+/* Sign-in: what Chat, Work and Skills do. */
+.core-features { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; max-width: 420px; width: 100%; text-align: start; }
+.core-features li { display: flex; gap: 14px; align-items: flex-start; }
+.core-features b { display: block; font-size: 14px; }
+.core-features small { display: block; color: rgb(var(--text-secondary)); font-size: 13px; }
+.core-feature-icon { display: grid; place-items: center; flex: none; width: 40px; height: 40px; border-radius: 12px; background: var(--tonal-2); color: rgb(var(--accent-primary)); }
+@media (prefers-reduced-motion: reduce) { .core-typing i { animation: none; opacity: .7; } .core-app .core-modes::before, .core-app .core-jump { transition: none; animation: none; } }

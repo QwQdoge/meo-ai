@@ -5594,6 +5594,7 @@ impl AppCore {
             "strings": {
                 "copy": "Copy", "copied": "Copied", "dismiss": "Dismiss", "more": "More",
                 "send": "Send", "stop": "Stop", "offline": "Offline — showing saved data",
+                "jump": "Jump to the latest message", "thinking": "Thinking",
             },
             "auth": {
                 "state": s.auth,
