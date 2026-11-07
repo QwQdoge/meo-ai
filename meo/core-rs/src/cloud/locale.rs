@@ -265,6 +265,10 @@ pub fn localize(view: &mut Value, locale: &str) {
             field(c, page, "title");
             field(c, page, "text");
             buttons(c, page, "actions");
+            for feature in each(page, "features") {
+                field(c, feature, "title");
+                field(c, feature, "text");
+            }
             if let Some(empty) = page.get_mut("empty").filter(|e| e.is_object()) {
                 field(c, empty, "title");
             }

@@ -141,7 +141,16 @@ ApplicationWindow {
         implicitHeight: 34
         radius: 10
         color: selected ? MeoTheme.secondaryContainer
+                        : linkTap.pressed ? MeoTheme.surfaceContainerHighest
                         : (linkHover.hovered ? MeoTheme.surfaceContainerHigh : "transparent")
+        Behavior on color { ColorAnimation { duration: MeoTheme.motionDurationShort2 } }
+        activeFocusOnTab: true
+        Keys.onReturnPressed: link.clicked()
+        Keys.onSpacePressed: link.clicked()
+        Accessible.role: Accessible.Button
+        Accessible.name: label
+        border.width: activeFocus && MeoTheme.focusVisible ? 2 : 0
+        border.color: MeoTheme.primary
         RowLayout {
             anchors.fill: parent
             anchors.leftMargin: 10
@@ -165,8 +174,17 @@ ApplicationWindow {
                 Layout.alignment: Qt.AlignVCenter
             }
         }
-        HoverHandler { id: linkHover }
-        TapHandler { onTapped: link.clicked() }
+        HoverHandler { id: linkHover; cursorShape: Qt.PointingHandCursor }
+        TapHandler { id: linkTap; onTapped: link.clicked() }
+    }
+
+    // A MeoUI menu fed from `[{label, action}]` core entries; `picked(entry)` fires on choice.
+    component AppMenu: MeoMenu {
+        id: appMenu
+        property var entries: []
+        signal picked(var entry)
+        model: entries.map(e => ({ label: e.label, icon: e.icon || "", checked: !!e.checked, action: () => appMenu.picked(e) }))
+        function popupFor(anchor) { openAt(anchor, 0, anchor.height + 4) }
     }
 
     // The Chat | Work switch: one small pill whose thumb slides between the two labels, like
@@ -212,6 +230,15 @@ ApplicationWindow {
                     Accessible.name: modelData.label
                     Accessible.checked: index === modeSwitch.current
                     Keys.onSpacePressed: modeSwitch.chose(index)
+                    Keys.onReturnPressed: modeSwitch.chose(index)
+                    Rectangle {
+                        anchors.fill: parent
+                        anchors.margins: 3
+                        radius: height / 2
+                        color: "transparent"
+                        border.width: seg.activeFocus && MeoTheme.focusVisible ? 2 : 0
+                        border.color: MeoTheme.primary
+                    }
                     MeoText {
                         anchors.centerIn: parent
                         text: seg.modelData.label
@@ -236,10 +263,20 @@ ApplicationWindow {
         signal clicked()
         signal menuRequested()
         implicitHeight: 30
+        activeFocusOnTab: true
+        Keys.onReturnPressed: nav.clicked()
+        Keys.onSpacePressed: nav.clicked()
+        Accessible.role: Accessible.Button
+        Accessible.name: title
         Rectangle {
             anchors.fill: parent
             radius: 8
-            color: nav.selected ? MeoTheme.secondaryContainer : (navHover.hovered ? MeoTheme.surfaceContainerHigh : "transparent")
+            color: nav.selected ? MeoTheme.secondaryContainer
+                 : navTap.pressed ? MeoTheme.surfaceContainerHighest
+                 : (navHover.hovered ? MeoTheme.surfaceContainerHigh : "transparent")
+            border.width: nav.activeFocus && MeoTheme.focusVisible ? 2 : 0
+            border.color: MeoTheme.primary
+            Behavior on color { ColorAnimation { duration: MeoTheme.motionDurationShort2 } }
         }
         MeoText {
             anchors.verticalCenter: parent.verticalCenter
@@ -251,8 +288,8 @@ ApplicationWindow {
             elide: Text.ElideRight
             font.weight: nav.selected ? Font.DemiBold : Font.Normal
         }
-        HoverHandler { id: navHover }
-        TapHandler { onTapped: nav.clicked() }
+        HoverHandler { id: navHover; cursorShape: Qt.PointingHandCursor }
+        TapHandler { id: navTap; onTapped: nav.clicked() }
         MeoIconButton {
             visible: nav.menu.length > 0 && (navHover.hovered || hovered)
             anchors.right: parent.right
@@ -436,18 +473,12 @@ ApplicationWindow {
                             selected: !!(sideRow.modelData.data || {}).selected
                             menu: (sideRow.modelData.data || {}).menu || []
                             onClicked: window.act(sideRow.modelData.data.action)
-                            onMenuRequested: chatMenu.popup()
+                            onMenuRequested: chatMenu.popupFor(row)
                         }
-                        Menu {
+                        AppMenu {
                             id: chatMenu
-                            Repeater {
-                                model: (sideRow.modelData.data || {}).menu || []
-                                MenuItem {
-                                    required property var modelData
-                                    text: modelData.label
-                                    onTriggered: window.act(modelData.action)
-                                }
-                            }
+                            entries: (sideRow.modelData.data || {}).menu || []
+                            onPicked: entry => window.act(entry.action)
                         }
                     }
                 }
@@ -476,6 +507,7 @@ ApplicationWindow {
                     radius: 5
                     color: (sidebar.sb.status || {}).kind === "live" ? MeoTheme.success
                          : (sidebar.sb.status || {}).kind === "offline" ? MeoTheme.error : MeoTheme.outline
+                    ToolTip.delay: MeoTheme.tooltipShowDelay
                     ToolTip.visible: statusHover.hovered
                     ToolTip.text: (sidebar.sb.status || {}).label || ""
                     HoverHandler { id: statusHover }
@@ -549,6 +581,38 @@ ApplicationWindow {
                     horizontalAlignment: Text.AlignHCenter
                     Layout.fillWidth: true
                     color: MeoTheme.onSurfaceVariant
+                }
+                ColumnLayout {
+                    visible: (window.page.features || []).length > 0
+                    Layout.fillWidth: true
+                    Layout.topMargin: 4
+                    spacing: 14
+                    Repeater {
+                        model: window.page.features || []
+                        RowLayout {
+                            required property var modelData
+                            Layout.fillWidth: true
+                            spacing: 14
+                            Rectangle {
+                                Layout.alignment: Qt.AlignTop
+                                implicitWidth: 40; implicitHeight: 40
+                                radius: 12
+                                color: MeoTheme.secondaryContainer
+                                MeoIcon {
+                                    anchors.centerIn: parent
+                                    icon: modelData.icon === "skills" ? "extension" : modelData.icon === "work" ? "work" : "chat"
+                                    size: 22
+                                    color: MeoTheme.contentOnSecondaryContainer
+                                }
+                            }
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 2
+                                MeoText { text: modelData.title || ""; typeRole: "title"; typeSize: "small" }
+                                MeoText { text: modelData.text || ""; Layout.fillWidth: true; wrapMode: Text.Wrap; color: MeoTheme.onSurfaceVariant }
+                            }
+                        }
+                    }
                 }
                 MeoLoadingIndicator { visible: !!window.page.busy; Layout.alignment: Qt.AlignHCenter }
                 Repeater {
@@ -887,6 +951,7 @@ ApplicationWindow {
             type: item.value === true ? "tonal" : "standard"
             size: "xs"
             icon.name: item.icon || ""
+            ToolTip.delay: MeoTheme.tooltipShowDelay
             ToolTip.visible: hovered
             ToolTip.text: item.label || ""
             onClicked: chipRoot.choose(item.value !== true)
@@ -900,30 +965,62 @@ ApplicationWindow {
             text: item.kind === "toggle" ? ((item.value === true ? "● " : "○ ") + (item.label || ""))
                                           : (((options[index] || {}).label || item.label || "") + " ▾")
             onClicked: item.kind === "toggle" ? chipRoot.choose(item.value !== true)
-                       : item.kind === "select" ? selectMenu.popup() : sliderPopup.open()
+                       : item.kind === "select" ? selectMenu.popupFor(chip) : sliderPopup.open()
         }
-        Menu {
+        AppMenu {
             id: selectMenu
-            Repeater {
-                model: chipRoot.item.kind === "select" ? chipRoot.options : []
-                MenuItem { required property var modelData; text: modelData.label; onTriggered: chipRoot.choose(modelData.value) }
-            }
+            entries: chipRoot.item.kind === "select" ? chipRoot.options.map(o => ({ label: o.label, value: o.value, checked: o.value === chipRoot.item.value })) : []
+            onPicked: entry => chipRoot.choose(entry.value)
         }
         Popup {
             id: sliderPopup
-            y: -height - 4
-            padding: 12
+            y: -height - 6
+            padding: 14
+            modal: false
+            dim: false
+            closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+            enter: Transition {
+                NumberAnimation { property: "opacity"; from: 0; to: 1; duration: MeoTheme.motionDurationShort3; easing.type: Easing.BezierSpline; easing.bezierCurve: MeoTheme.motionEasingStandardDecelerate }
+                NumberAnimation { property: "scale"; from: 0.96; to: 1; duration: MeoTheme.motionDurationShort3; easing.type: Easing.BezierSpline; easing.bezierCurve: MeoTheme.motionEasingEmphasizedDecelerate }
+            }
+            exit: Transition {
+                NumberAnimation { property: "opacity"; to: 0; duration: MeoTheme.motionDurationShort2; easing.type: Easing.BezierSpline; easing.bezierCurve: MeoTheme.motionEasingStandardAccelerate }
+            }
+            background: Rectangle {
+                radius: 16
+                color: MeoTheme.surfaceContainer
+                border.width: 1
+                border.color: MeoTheme.outlineVariant
+            }
             ColumnLayout {
-                spacing: 4
-                MeoText { text: (chipRoot.item.label || "") + " · " + ((chipRoot.options[chipRoot.index] || {}).label || ""); typeRole: "label"; color: MeoTheme.onSurfaceVariant }
+                spacing: 8
+                MeoText { text: chipRoot.item.label || ""; typeRole: "label"; color: MeoTheme.onSurfaceVariant }
                 MeoSlider {
-                    Layout.preferredWidth: 160
+                    Layout.preferredWidth: 200
                     from: 0
                     to: Math.max(1, chipRoot.options.length - 1)
                     stepSize: 1
                     discrete: true
                     value: chipRoot.index
                     onMoved: v => chipRoot.choose(chipRoot.options[Math.round(v)].value)
+                }
+                // Every stop is named, the current one is emphasised.
+                RowLayout {
+                    Layout.preferredWidth: 200
+                    spacing: 0
+                    Repeater {
+                        model: chipRoot.options
+                        MeoText {
+                            required property var modelData
+                            required property int index
+                            Layout.fillWidth: true
+                            horizontalAlignment: index === 0 ? Text.AlignLeft : index === chipRoot.options.length - 1 ? Text.AlignRight : Text.AlignHCenter
+                            text: modelData.label
+                            typeRole: "label"
+                            font.weight: index === chipRoot.index ? Font.DemiBold : Font.Normal
+                            color: index === chipRoot.index ? MeoTheme.primary : MeoTheme.onSurfaceVariant
+                        }
+                    }
                 }
             }
         }
@@ -1119,17 +1216,11 @@ ApplicationWindow {
                         type: "standard"
                         size: "xs"
                         icon.name: "more_horiz"
-                        onClicked: pageMenu.popup()
-                        Menu {
+                        onClicked: pageMenu.popupFor(parent)
+                        AppMenu {
                             id: pageMenu
-                            Repeater {
-                                model: window.page.menu || []
-                                MenuItem {
-                                    required property var modelData
-                                    text: modelData.label
-                                    onTriggered: window.act(modelData.action)
-                                }
-                            }
+                            entries: window.page.menu || []
+                            onPicked: entry => window.act(entry.action)
                         }
                     }
                     Item { Layout.fillWidth: true }
@@ -1139,14 +1230,28 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
 
-                    MeoEmptyState {
+                    ColumnLayout {
                         visible: !!window.page.empty
                         anchors.horizontalCenter: parent.horizontalCenter
                         anchors.verticalCenter: parent.verticalCenter
                         anchors.verticalCenterOffset: -165
-                        icon: "chat"
-                        title: window.page.empty ? window.page.empty.title : ""
-                        description: window.page.empty ? window.page.empty.text : ""
+                        width: Math.min(parent.width - 48, 520)
+                        spacing: 10
+                        MeoAiMark { Layout.alignment: Qt.AlignHCenter; implicitWidth: 48; implicitHeight: 48 }
+                        MeoText {
+                            Layout.fillWidth: true
+                            horizontalAlignment: Text.AlignHCenter
+                            text: window.page.empty ? window.page.empty.title : ""
+                            typeRole: "title"
+                            typeSize: "large"
+                        }
+                        MeoText {
+                            Layout.fillWidth: true
+                            horizontalAlignment: Text.AlignHCenter
+                            wrapMode: Text.Wrap
+                            text: window.page.empty ? window.page.empty.text : ""
+                            color: MeoTheme.onSurfaceVariant
+                        }
                     }
 
                     Rectangle {
@@ -1271,6 +1376,28 @@ ApplicationWindow {
                     }
 
 
+                    // Three pulsing dots while the answer has not started yet.
+                    component TypingDots: Row {
+                        spacing: 5
+                        Repeater {
+                            model: 3
+                            Rectangle {
+                                id: dot
+                                required property int index
+                                width: 7; height: 7; radius: 4
+                                color: MeoTheme.onSurfaceVariant
+                                opacity: 0.35
+                                SequentialAnimation on opacity {
+                                    running: !MeoTheme.reduceMotion
+                                    loops: Animation.Infinite
+                                    PauseAnimation { duration: dot.index * 160 }
+                                    NumberAnimation { to: 1; duration: 320; easing.type: Easing.InOutQuad }
+                                    NumberAnimation { to: 0.35; duration: 320; easing.type: Easing.InOutQuad }
+                                    PauseAnimation { duration: (2 - dot.index) * 160 }
+                                }
+                            }
+                        }
+                    }
                     Component {
                         id: markdownBlock
                         TextEdit {
@@ -1278,9 +1405,12 @@ ApplicationWindow {
                             selectByMouse: true
                             wrapMode: Text.Wrap
                             textFormat: TextEdit.MarkdownText
-                            text: (block.text || "").replace(/:icon\[[^\]]*\]:/g, "") + (streaming ? " ▍" : "")
+                            text: (block.text || "").replace(/:icon\[[^\]]*\]:/g, "") + (streaming && block.text ? " ▍" : "")
                             color: MeoTheme.onSurface
                             font.pixelSize: 15
+                            // Waiting for the first token: pulsing dots instead of an empty gap.
+                            height: streaming && !block.text ? 24 : implicitHeight
+                            TypingDots { visible: streaming && !block.text; y: 8 }
                         }
                     }
                     Component {
@@ -1611,6 +1741,22 @@ ApplicationWindow {
                         }
                     }
 
+                    MeoIconButton {
+                        id: toBottom
+                        z: 3
+                        visible: opacity > 0
+                        opacity: !messages.atYEnd && messages.count > 0 ? 1 : 0
+                        Behavior on opacity { NumberAnimation { duration: MeoTheme.motionDurationShort3 } }
+                        anchors.bottom: parent.bottom
+                        anchors.bottomMargin: 14
+                        x: messages.x + (messages.width - width) / 2
+                        type: "tonal"
+                        size: "s"
+                        icon.name: "arrow_downward"
+                        toolTipText: qsTr("Jump to the latest message")
+                        onClicked: messages.positionViewAtEnd()
+                    }
+
                     ListView {
                         id: messages
                         // A centered reading column; the details card, when shown, sits to its right.
@@ -1747,8 +1893,12 @@ ApplicationWindow {
                                     }
                                 }
                             }
+                            HoverHandler { id: messageHover }
                             Row {
                                 id: messageActions
+                                // Quiet until the pointer is on the message (the newest one stays visible).
+                                opacity: messageHover.hovered || (messageItem.ListView.view && index === messageItem.ListView.view.count - 1) ? 1 : 0
+                                Behavior on opacity { NumberAnimation { duration: MeoTheme.motionDurationShort3 } }
                                 visible: !modelData.streaming && !!modelData.text
                                 y: stepsBox.height + bubble.implicitHeight + pictures.height + 4
                                 anchors.right: parent.mine ? parent.right : undefined
@@ -1757,6 +1907,7 @@ ApplicationWindow {
                                     type: "standard"
                                     size: "xs"
                                     icon.name: "content_copy"
+                                    ToolTip.delay: MeoTheme.tooltipShowDelay
                                     ToolTip.visible: hovered
                                     ToolTip.text: (window.v.strings || {}).copy || qsTr("Copy")
                                     onClicked: {
@@ -1773,6 +1924,7 @@ ApplicationWindow {
                                         size: "xs"
                                         // Edit / retry / regenerate: an icon each, the name in the tooltip.
                                         icon.name: modelData.action.type === "begin_edit" ? "edit" : "refresh"
+                                        ToolTip.delay: MeoTheme.tooltipShowDelay
                                         ToolTip.visible: hovered
                                         ToolTip.text: modelData.label
                                         onClicked: window.act(modelData.action)
@@ -1965,6 +2117,7 @@ ApplicationWindow {
                                     size: "xs"
                                     icon.name: ws && ws.open ? "folder" : "folder_open"
                                     text: ws ? ws.label : ""
+                                    ToolTip.delay: MeoTheme.tooltipShowDelay
                                     ToolTip.visible: hovered && !!(ws && ws.path)
                                     ToolTip.text: ws && ws.path ? ws.path : ""
                                     onClicked: workspaceDialog.open()

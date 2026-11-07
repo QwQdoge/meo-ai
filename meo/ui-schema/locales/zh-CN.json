@@ -268,5 +268,9 @@
   "Streak": "连续使用",
   "Tokens by type": "按类型的 tokens",
   "Top models": "常用模型",
-  "Sources": "来源"
+  "Sources": "来源",
+  "Ask anything and get answers with sources.": "随便问，答案附带来源。",
+  "Hand a task to Meo and follow it from any device.": "把任务交给 Meo，在任何设备上查看进度。",
+  "Skills and apps": "技能与应用",
+  "Add an app or skill once and use it everywhere.": "添加一次应用或技能，处处可用。"
 }

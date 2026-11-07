@@ -7029,6 +7029,11 @@ fn sign_in_page(s: &State) -> Value {
             "Sign in with your Meo Account to use Meo AI on every device."
         },
         "busy": busy,
+        "features": [
+            { "icon": "chat", "title": "Chat", "text": "Ask anything and get answers with sources." },
+            { "icon": "work", "title": "Work", "text": "Hand a task to Meo and follow it from any device." },
+            { "icon": "skills", "title": "Skills and apps", "text": "Add an app or skill once and use it everywhere." },
+        ],
         "actions": [button(if busy { "Open sign-in page again" } else { "Sign in with Meo Account" }, "primary", json!({ "type": "sign_in" }))],
     })
 }

@@ -11,6 +11,23 @@
      "type": "sign_in"
     }
    }
+  ],
+  "features": [
+   {
+    "icon": "chat",
+    "title": "Chat",
+    "text": "Ask anything and get answers with sources."
+   },
+   {
+    "icon": "work",
+    "title": "Work",
+    "text": "Hand a task to Meo and follow it from any device."
+   },
+   {
+    "icon": "skills",
+    "title": "Skills and apps",
+    "text": "Add an app or skill once and use it everywhere."
+   }
   ]
  },
  "prefs": {}

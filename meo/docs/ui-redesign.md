@@ -79,6 +79,7 @@ Checked against Claude's desktop docs and layout; done in `desktop-rs/qml/Main.q
 - New chat is a plain accent row; projects and chats are quiet 13px rows (`NavRow`) with a hover menu.
 - The composer is one rounded card: text on top, one control row inside (attach `+`, folder, permissions, search, sub-agents, model, thinking) and the send button at its end. The details card button is an icon.
 - Standard shortcuts: New, Preferences (`Ctrl+,`), `Ctrl+B` sidebar, Find (search), Quit.
+- Polish pass: MeoUI menus (motion popup) replace the plain Qt menus; the slider popup names every stop; message actions appear on hover (newest stays visible); pulsing dots while waiting for the first token; a jump-to-latest button; pressed and keyboard-focus states on sidebar rows and the mode pill; tooltips use the MeoUI delay; the sign-in page lists what Chat, Work and Skills do (`page.features`, from the core, translated in `ui-schema/locales`).
 - Native platform parts only: the window keeps the system title bar (no frameless window), notifications use the platform service (`notify-rust`: freedesktop D-Bus on KDE/GNOME, Windows toast, macOS Notification Center), file and folder pickers are the system dialogs.
 
 Offline check without the core, network or account: `desktop-rs/demo` builds `meo-ai-demo`, which loads the real `Main.qml` with canned views (`views/*.json`: chat, new chat, Work, collapsed rail, offline banner, sign-in, settings) and can save screenshots:
