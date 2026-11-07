@@ -158,6 +158,10 @@ pub enum Action {
         id: String,
         text: String,
     },
+    /// Clones the linked GitHub repository into the project's (empty) folder.
+    CloneProjectRepo {
+        id: String,
+    },
     /// Starts a Work task in a project: its folder is the Work folder.
     StartProjectWork {
         id: String,
@@ -773,6 +777,7 @@ impl AppCore {
                 self.update(|s| s.dialog = None);
                 self.project_agent_write(&id, |root| project_env::add_todo(root, &text));
             }
+            Action::CloneProjectRepo { id } => self.clone_project_repo(&id).await,
             Action::StartProjectWork { id } => self.update(|s| {
                 s.files.clear();
                 s.active = None;
@@ -2321,6 +2326,57 @@ impl AppCore {
                 None
             }
         }
+    }
+
+    /// `git clone` of the linked repository into the project's folder, which must be empty. The user
+    /// asked for it with a button; git uses their own credentials and settings.
+    #[cfg(not(target_arch = "wasm32"))]
+    async fn clone_project_repo(&self, id: &str) {
+        let env = self
+            .state
+            .lock()
+            .unwrap()
+            .project_env
+            .get(id)
+            .cloned()
+            .unwrap_or_default();
+        let (Some(folder), Some(repo)) = (env.folder, env.repo) else {
+            return self.notice("error", "Link a repository and choose a folder first.");
+        };
+        if !folder_is_empty(&folder) {
+            return self.notice(
+                "error",
+                "The folder is not empty, so the repository cannot be cloned into it.",
+            );
+        }
+        let host = match Host::open(&folder) {
+            Ok(h) => h,
+            Err(e) => return self.notice("error", e),
+        };
+        self.notice("info", format!("Cloning {repo}…"));
+        let outcome = host
+            .run(agent::Tool::Run {
+                command: format!("git clone https://github.com/{repo}.git ."),
+                timeout_secs: Some(600),
+            })
+            .await;
+        if outcome.ok {
+            self.refresh_project_agent(id);
+            self.notice("info", format!("Cloned {repo} into the project folder."));
+        } else {
+            let last = outcome
+                .text
+                .lines()
+                .rev()
+                .find(|l| !l.trim().is_empty())
+                .unwrap_or("git failed");
+            self.notice("error", format!("Could not clone {repo}: {last}"));
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    async fn clone_project_repo(&self, _id: &str) {
+        self.notice("error", "Cloning needs the desktop app.");
     }
 
     fn init_project_agent(&self, id: &str) {
@@ -5515,6 +5571,11 @@ impl AppCore {
             if outcome.ok { "done" } else { "error" },
             vec![],
         );
+        // The tool may have updated .agent/ (goal, to-do): the project page and details card follow.
+        let open = project_of_view(&self.state.lock().unwrap());
+        if let Some(project) = open {
+            self.refresh_project_agent(&project);
+        }
         Box::pin(self.agent_send(id, agent::observation(&call, &outcome.text))).await;
     }
 
@@ -6884,6 +6945,38 @@ fn inspector(s: &State, messages: &[Value], active: Option<&String>) -> Value {
                 .filter(|m| m.role == "assistant")
                 .find_map(|m| richtext::tasks(&m.text))
         });
+    // The project's own to-do (kept in .agent/TODO.md) is the list to show while it has items.
+    let agent_state = project_of_view(s).and_then(|id| s.project_agent.get(&id));
+    let kept = agent_state.filter(|a| a.exists && !a.todos.is_empty());
+    if let Some(state) = kept {
+        if !state.goal.is_empty() {
+            let goal: String = state
+                .goal
+                .lines()
+                .next()
+                .unwrap_or_default()
+                .chars()
+                .take(140)
+                .collect();
+            sections.push(json!({ "id": "agent_goal", "title": "Goal", "open": true,
+                                   "rows": [{ "icon": "flag", "label": goal, "status": "", "value": null }] }));
+        }
+        let done = state.todos.iter().filter(|t| t.done()).count();
+        let rows: Vec<Value> = state
+            .todos
+            .iter()
+            .map(|t| {
+                let (icon, status) = match t.mark {
+                    'x' => ("check_circle", "done"),
+                    '~' => ("progress_activity", "running"),
+                    _ => ("radio_button_unchecked", ""),
+                };
+                json!({ "icon": icon, "label": t.text, "status": status, "value": null })
+            })
+            .collect();
+        sections.push(json!({ "id": "agent_todo", "title": format!("To-do · {done}/{}", state.todos.len()), "open": true, "rows": rows }));
+    }
+    let task_list = if kept.is_some() { None } else { task_list };
     if let Some(list) = task_list {
         let done = list.iter().filter(|t| t["state"] == "done").count();
         let rows: Vec<Value> = list
@@ -7814,6 +7907,11 @@ fn effective_workspace(s: &State) -> Option<String> {
         .map(str::to_owned)
 }
 
+/// The folder exists and holds nothing at all.
+fn folder_is_empty(folder: &str) -> bool {
+    std::fs::read_dir(folder).is_ok_and(|mut entries| entries.next().is_none())
+}
+
 /// A folder from a path or a `file://` URL (what the system folder dialog returns).
 #[cfg(not(target_arch = "wasm32"))]
 fn folder_from_path(path: &str) -> String {
@@ -7931,19 +8029,30 @@ fn project_page(s: &State, id: &str) -> Value {
     environment.push(json!({ "id": "env_folder_note", "kind": "hint",
         "text": "A project's folder is remembered on this device only. Starting Work in the project opens this folder, so Meo can read it, change it and run commands there, within your Permissions." }));
     environment.push(json!({ "id": "env_h_repo", "kind": "heading", "label": "GitHub" }));
+    let can_clone =
+        can_host && env.repo.is_some() && env.folder.as_deref().is_some_and(folder_is_empty);
     let repo_buttons = match &env.repo {
-        Some(_) => vec![
-            button(
+        Some(_) => {
+            let mut b = Vec::new();
+            if can_clone {
+                b.push(button(
+                    "Clone into folder",
+                    "primary",
+                    json!({ "type": "clone_project_repo", "id": id }),
+                ));
+            }
+            b.push(button(
                 "Change",
                 "secondary",
                 json!({ "type": "begin_link_repo", "id": id }),
-            ),
-            button(
+            ));
+            b.push(button(
                 "Unlink",
                 "secondary",
                 json!({ "type": "unlink_repo", "id": id }),
-            ),
-        ],
+            ));
+            b
+        }
         None => vec![button(
             "Link repository",
             "primary",
@@ -10478,6 +10587,113 @@ mod tests {
         // Chat without a folder still learns the repository.
         let chat = c.project_context(None);
         assert!(chat.contains("QwQdoge/meo-ai") && !chat.contains("Project state"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_work_turn_that_updates_the_todo_shows_in_the_details_and_the_page() {
+        // The model edits .agent/TODO.md with its normal file tool; nothing special is needed on
+        // this side: the folder is the project's, the write is an ordinary one, and the views follow.
+        let dir = project_dir("e2e");
+        let edit = "```meo-tool\n{\"tool\":\"search_replace\",\"args\":{\"path\":\".agent/TODO.md\",\"old\":\"## Next\",\"new\":\"## Next\\n- [~] write docs\"}}\n```";
+        let api = fake_api(vec![edit, "Started on the docs; the list is updated."]);
+        let c = work_core(&api, &dir, "all");
+        // Make the open conversation a project chat whose folder is `dir`.
+        c.update(|s| {
+            s.projects = Some(Ok(vec![
+                json!({ "id": "p1", "name": "Trip", "description": "", "instructions": "" }),
+            ]));
+            s.conversations = vec![{
+                let mut x = conversation("c1", "Docs");
+                x.project_id = Some("p1".into());
+                x
+            }];
+            s.prefs.remove("work.workspace");
+        });
+        run(
+            &c,
+            Action::SetProjectFolder {
+                id: "p1".into(),
+                path: dir.to_string_lossy().into_owned(),
+            },
+        );
+        run(&c, Action::InitProjectAgent { id: "p1".into() });
+        run(
+            &c,
+            Action::SetSetting {
+                binding: "agent:p1:goal".into(),
+                value: json!("Ship the docs"),
+            },
+        );
+        run(
+            &c,
+            Action::Send {
+                text: "start the docs".into(),
+            },
+        );
+        let file = std::fs::read_to_string(dir.join(".agent/TODO.md")).unwrap();
+        assert!(file.contains("- [~] write docs"), "{file}");
+        // The details card now lists the goal and the to-do with its in-progress item.
+        let view = c.view();
+        let sections = view["page"]["inspector"]["sections"]
+            .as_array()
+            .unwrap()
+            .clone();
+        let todo = sections
+            .iter()
+            .find(|x| x["id"] == "agent_todo")
+            .expect("a to-do section");
+        assert_eq!(todo["title"], "To-do · 0/1");
+        assert_eq!(todo["rows"][0]["status"], "running");
+        assert!(sections
+            .iter()
+            .any(|x| x["id"] == "agent_goal" && x["rows"][0]["label"] == "Ship the docs"));
+        // And the project page shows it as a to-do marked "In progress".
+        c.update(|s| {
+            s.route = "projects".into();
+            s.open_project = Some("p1".into());
+        });
+        let items = page_items(&c, "goal");
+        let row = items.iter().find(|i| i["kind"] == "toggle").unwrap();
+        assert_eq!(
+            (row["label"].as_str(), row["description"].as_str()),
+            (Some("write docs"), Some("In progress"))
+        );
+        // The next turn's prompt carries the updated state.
+        let context = c.project_context(Some(&dir.to_string_lossy()));
+        assert!(context.contains("- [~] write docs") && context.contains("Ship the docs"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn cloning_is_offered_only_into_an_empty_folder() {
+        let dir = project_dir("clone");
+        let c = project_core(Some(&dir));
+        futures_executor::block_on(c.dispatch(Action::LinkRepo {
+            id: "p1".into(),
+            text: "QwQdoge/meo-ai".into(),
+        }));
+        let labels = |c: &AppCore| -> Vec<String> {
+            page_items(c, "environment")
+                .iter()
+                .find(|i| i["id"] == "env_repo")
+                .unwrap()["buttons"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|b| b["label"].as_str().unwrap().to_owned())
+                .collect()
+        };
+        assert_eq!(labels(&c), ["Clone into folder", "Change", "Unlink"]);
+        // Once the folder holds anything, the button is gone and a click is refused, not run.
+        std::fs::write(dir.join("keep.txt"), "x").unwrap();
+        assert_eq!(labels(&c), ["Change", "Unlink"]);
+        futures_executor::block_on(c.dispatch(Action::CloneProjectRepo { id: "p1".into() }));
+        assert!(c.view()["notice"]["text"]
+            .as_str()
+            .unwrap()
+            .contains("not empty"));
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -22,7 +22,9 @@ list and notes** between sessions. All of it lives in `core-rs/src/cloud` (`proj
 * **Online** (no folder, or the web / Android clients): the repository link and the GitHub app are the
   environment. Local folders need the desktop app; the web and Android show that plainly instead of a
   button that cannot work.
-* A project folder can be any local folder, a git checkout or not.
+* A project folder can be any local folder, a git checkout or not. With a repository linked and an
+  **empty** folder, "Clone into folder" runs `git clone https://github.com/<repo>.git .` there (your own
+  git credentials; a non-empty folder is refused, nothing is overwritten).
 
 ## Goal, to-do and notes: `.agent/` in the project folder
 
@@ -49,7 +51,8 @@ tool. `AGENTS.md` and `.agent/` have different jobs: rules versus state. The cor
   lasting decisions in NOTES.md; never delete a to-do the user wrote; keep files short.
 * **Edited by the user** on the project page: the goal text, ticking a to-do (writes `[x]` / `[ ]` into
   the file) and "Add a to-do" (goes under `## Next`). Edits on disk, by hand or by the model, show after
-  the next tool round or when the project is opened.
+  every tool round or when the project is opened. While Work runs, the details card lists the goal and
+  the to-do (in-progress item animated) instead of the model's inline task list.
 * Notes and rules are data, never instructions that override the request and never grant permissions.
 
 ## Project page
@@ -61,6 +64,5 @@ Danger zone. The page has its own navigation; the app sidebar stays, unlike Sett
 
 * The repository link is per device: Meo API has no field for it yet. Folder links cannot sync (paths
   differ between machines), but the repository could move to the project record.
-* Cloning a linked repository into a folder from the page (today the model can offer to do it with `run`).
 * Goal and to-do for a project that has no folder (they would have to live in Meo API).
 * Android cannot pick a folder; it shows the project and its repository only.
