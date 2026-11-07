@@ -10,11 +10,10 @@
 
 ### Native desktop preview
 
-Meo AI's desktop client is built with C++/QML and the shared **MeoUI** design system.
+Meo AI's desktop client (`meo/desktop-rs`) is Rust + Qt/QML on the shared **MeoUI** design system; it renders the Rust cloud core's view.
 
 ```sh
-cmake -S meo -B build/meo -DMEO_UI_ROOT="${MEO_UI_ROOT:-$PWD/../meo-ui}" -DBUILD_TESTING=ON
-cmake --build build/meo --parallel 2
+cargo build --manifest-path meo/desktop-rs/Cargo.toml   # needs Qt 6.8+ and MeoUI (MEO_UI_IMPORT_PATH at run time)
 ```
 
 Run the maintained service self-check and tests:
@@ -49,7 +48,7 @@ Windows installer and portable build and the Android APK, and attaches them with
 
 | Surface | Technology |
 | --- | --- |
-| Desktop: Linux, Windows, macOS | C++ + Qt/QML + MeoUI |
+| Desktop: Linux, Windows, macOS | Rust + Qt/QML + MeoUI |
 | Web | React + TypeScript |
 | Android | Kotlin + Jetpack Compose |
 | Shared presentation contract | [Meo Design & UI Schema](meo/ui-schema/README.md) |
@@ -141,7 +140,7 @@ Use **Try again** when the failure is marked retryable. Meo AI keeps cancellatio
 | --- | --- |
 | `meo/core-rs/` | Authoritative Rust protocol and shared core |
 | `meo/ui-schema/` | Shared navigation/pages/settings configuration and generator |
-| `meo/app/` | Desktop C++/QML + MeoUI client |
+| `meo/desktop-rs/` | Desktop Rust + QML + MeoUI client |
 | `meo/web/client/` | React/TypeScript Web client |
 | `meo/android/` | Kotlin/Compose Android client |
 | `meo/cloud/`, `meo/device/` | Remote AgentRun and authenticated device bridge to local AgentService |
@@ -161,7 +160,7 @@ Shared visual controls and design tokens belong to **MeoUI**. Account/session id
 ## Current architecture
 
 ```text
-Desktop (C++/QML + MeoUI) ──► local AgentService ──► providers / tools / memory
+Desktop (Rust + QML + MeoUI) ──► local AgentService ──► providers / tools / memory
         │                          ▲                       │
         │                          │ device relay           └─► System AI Router (typed system capabilities)
 Web (meo/web/client, React) ─┐     │

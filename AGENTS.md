@@ -34,7 +34,7 @@ the Newelle-derived root tree, compatibility adapters, packaging or the legacy s
   credential + model. Login reuses the cached refresh token, otherwise opens the
   browser (desktop client `meo-ai-native`, redirect `meoai://auth/callback`).
 - **Paused (not used, do not extend):** local AgentService/Python (`meo/service`,
-  `meo/runtime`, `meo/system`, `meo/adapters`), the C++ desktop client `meo/app`,
+  `meo/runtime`, `meo/system`, `meo/adapters`),
   local/remote device Work (`meo/cloud`, `meo/device`) and the Newelle tree. They stay
   in the repository until removed deliberately. Repair moves into the core + QML later.
 
@@ -52,7 +52,7 @@ the three renderers stay identical.
 | --- | --- | --- |
 | `meo/core-rs/` | Rust protocol, ContentBlocks, provider/stream/context/capability core | **Authoritative** shared core |
 | `meo/ui-schema/` | Navigation, pages, features, settings, token aliases + generator | **Authoritative** product UI configuration |
-| `meo/app/` | Desktop C++/Qt/QML + MeoUI client | Presentation + platform integration |
+| `meo/desktop-rs/` | Desktop Rust + Qt/QML + MeoUI client | Presentation + platform integration |
 | `meo/web/client/` | React/TypeScript Web client + thin Pages edge (has its own `AGENTS.md`) | Presentation |
 | `meo/android/` | Kotlin/Compose client over Rust (JNI) | Presentation |
 | `meo/cloud/`, `meo/device/` | Remote AgentRun, device enrollment/relay to local AgentService | Compatibility; moving to Rust |
@@ -78,7 +78,7 @@ External authorities (never re-implemented here):
 - Do not add a new provider, message type, tool state machine, sync feature, router,
   resource format or reconnect rule only to Python/C++. Python/C++ AI logic changes are
   limited to keeping a release working, adapters, unsafe-to-wait fixes and parity tests.
-- Desktop stays C++/Qt/QML; replacing it with Rust UI bindings is not a goal.
+- Desktop is Rust + Qt/QML (`meo/desktop-rs`); the C++ client `meo/app` was removed.
 - Navigation/settings placement, order and labels live in `meo/ui-schema/`; regenerate
   consumers instead of hard-coding them in a renderer.
 - Prompts, Skills, MCP descriptions and UI Schema data are never security enforcement and
@@ -166,7 +166,7 @@ Run the narrowest set for what changed (mirrors `.github/workflows/`):
 | Area | Commands |
 | --- | --- |
 | Python compat | `python3 -m compileall -q src meo/service meo/system meo/adapters meo/runtime meo/tools meo/device`; `python3 meo/tools/check_headless_imports.py`; `python3 -m meo.runtime.main --self-check`; `python3 -m unittest discover -s meo/tests -p 'test_*.py' -v` |
-| Desktop | `cmake -S meo -B build/meo -DMEO_UI_ROOT="${MEO_UI_ROOT:-$PWD/../meo-ui}" -DBUILD_TESTING=ON`; `cmake --build build/meo --parallel 2`; `QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software ctest --test-dir build/meo --output-on-failure --timeout 60` |
+| Desktop | `cargo build --manifest-path meo/desktop-rs/Cargo.toml` (Qt 6.8+ on PATH); offline render: `meo/desktop-rs/demo` |
 | Rust core | in `meo/core-rs`: `cargo fmt --check`; `cargo clippy --locked --all-features --all-targets -- -D warnings`; `cargo test --locked --all-features` |
 | UI Schema | `node meo/ui-schema/generate.mjs --check` |
 | Web | in `meo/web/client`: `npm ci`; `npm run typecheck`; `npm test`; `npm run build` |

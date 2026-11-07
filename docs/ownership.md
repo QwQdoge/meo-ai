@@ -31,7 +31,7 @@ The three frontends consume the same declarative UI configuration under `meo/ui-
 
 - `meo/core-rs/`: **authoritative product core and protocol**.
 - `meo/android/`: native Android frontend. Product logic belongs in Rust, not Kotlin view models or duplicated network stacks.
-- `meo/app/`: C++ desktop application and QML/MeoUI presentation; native integration remains C++.
+- `meo/desktop-rs/`: Rust + QML/MeoUI desktop presentation over the Rust cloud core (the C++ client `meo/app` was removed).
 - `meo/ui-schema/`: authoritative declarative product UI configuration and build-time generator; MeoUI retains ownership of reusable controls and token values.
 - `meo/web/client/`: canonical React/TypeScript product UI and thin browser edge; imported with provenance from the old Web fork.
 - `meo/web/`: browser integration contracts and shared transport adapter; business semantics remain in Core/API.
@@ -102,7 +102,7 @@ Preferred end state:
 ```text
 meo-ai/
   meo/core-rs/       # authoritative core/service/client
-  meo/app/qml/       # Linux native presentation
+  meo/desktop-rs/    # desktop native presentation
   meo/android/       # Android native presentation
   meo/web/           # web integration/presentation contract
 
