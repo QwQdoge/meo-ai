@@ -471,6 +471,22 @@ private fun SettingsPage(page: JSONObject, act: Act) {
     val current = sections.firstOrNull { it.str("id") == page.str("selected") } ?: sections.firstOrNull()
     val entries = page.list("nav").flatMap { it.list("items") }
     Column(Modifier.fillMaxSize().padding(8.dp)) {
+        page.obj("search")?.let { search ->
+            var text by remember(search.str("value")) { mutableStateOf(search.str("value")) }
+            LaunchedEffect(text) {
+                if (text != search.str("value")) {
+                    kotlinx.coroutines.delay(250)
+                    act.send(search.obj("action")?.withField(search.str("field"), text))
+                }
+            }
+            OutlinedTextField(
+                value = text,
+                onValueChange = { text = it },
+                singleLine = true,
+                placeholder = { Text(search.str("placeholder")) },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+            )
+        }
         // Categories: one scrolling row of chips (a card with a side list does not fit a phone).
         androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(horizontal = 8.dp)) {
             items(entries) { e ->

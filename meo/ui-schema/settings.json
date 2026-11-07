@@ -16,6 +16,34 @@
           "binding": "general.enter_to_send"
         },
         {
+          "id": "language",
+          "label": "Language",
+          "labelKey": "meo.settings.language",
+          "kind": "select",
+          "binding": "appearance.language",
+          "options": [
+            "system",
+            "en",
+            "zh-CN"
+          ]
+        }
+      ],
+      "keywords": [
+        "keyboard",
+        "enter",
+        "language",
+        "输入",
+        "语言"
+      ]
+    },
+    {
+      "id": "appearance",
+      "label": "Appearance",
+      "labelKey": "meo.settings.appearance",
+      "owner": "client",
+      "group": "Preferences",
+      "items": [
+        {
           "id": "theme",
           "label": "Theme",
           "labelKey": "meo.settings.theme",
@@ -28,15 +56,15 @@
           ]
         },
         {
-          "id": "language",
-          "label": "Language",
-          "labelKey": "meo.settings.language",
+          "id": "text_size",
+          "label": "Text size",
+          "labelKey": "meo.settings.textSize",
           "kind": "select",
-          "binding": "appearance.language",
+          "binding": "appearance.text_size",
           "options": [
-            "system",
-            "en",
-            "zh-CN"
+            "small",
+            "default",
+            "large"
           ]
         },
         {
@@ -48,10 +76,14 @@
         }
       ],
       "keywords": [
-        "keyboard",
-        "appearance",
-        "输入",
-        "外观"
+        "theme",
+        "dark",
+        "font",
+        "size",
+        "motion",
+        "外观",
+        "字体",
+        "动效"
       ]
     },
     {
@@ -100,6 +132,41 @@
         "instructions",
         "记忆",
         "指令"
+      ]
+    },
+    {
+      "id": "notifications",
+      "label": "Notifications",
+      "labelKey": "meo.settings.notifications",
+      "owner": "client",
+      "group": "Preferences",
+      "items": [
+        {
+          "id": "answers",
+          "label": "Notify me when an answer is ready in the background",
+          "labelKey": "meo.settings.notifyAnswers",
+          "kind": "toggle",
+          "binding": "notifications.answers"
+        }
+      ],
+      "keywords": [
+        "notify",
+        "alert",
+        "通知",
+        "提醒"
+      ]
+    },
+    {
+      "id": "shortcuts",
+      "label": "Keyboard shortcuts",
+      "labelKey": "meo.settings.shortcuts",
+      "owner": "client",
+      "group": "Preferences",
+      "items": [],
+      "keywords": [
+        "keys",
+        "hotkey",
+        "快捷键"
       ]
     },
     {
@@ -187,6 +254,22 @@
         "sync",
         "登录",
         "同步"
+      ]
+    },
+    {
+      "id": "about",
+      "label": "About",
+      "labelKey": "meo.settings.about",
+      "owner": "client",
+      "group": "About",
+      "items": [],
+      "keywords": [
+        "version",
+        "license",
+        "legal",
+        "关于",
+        "版本",
+        "许可"
       ]
     }
   ]

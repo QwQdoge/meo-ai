@@ -47,6 +47,10 @@ pub enum Action {
     SelectSettingsSection {
         id: String,
     },
+    /// Filters the settings page to what matches (empty clears it).
+    SearchSettings {
+        text: String,
+    },
     /// Model profiles (Meo API): create from the current routes, generate with a model, edit, use, delete.
     NewProfile,
     BeginGenerateProfile,
@@ -506,6 +510,8 @@ struct State {
     /// Apps whose sign-in failed at use: `true` = no longer accepted (expired, revoked, more access
     /// needed), `false` = never connected. Cleared when the apps are read again.
     app_auth_issues: HashMap<String, bool>,
+    /// What the settings search box holds.
+    settings_query: String,
     /// Apps the user was sent off to authorize; checked when the window comes back to the front.
     awaiting_auth: Vec<String>,
     store: StoreUi,
@@ -751,7 +757,11 @@ impl AppCore {
                     None => self.notice("info", "You can have up to 5 custom routes."),
                 }
             }
-            Action::SelectSettingsSection { id } => self.update(|s| s.settings_section = id),
+            Action::SelectSettingsSection { id } => self.update(|s| {
+                s.settings_section = id;
+                s.settings_query.clear();
+            }),
+            Action::SearchSettings { text } => self.update(|s| s.settings_query = text),
             Action::NewProfile => self.new_profile().await,
             Action::BeginGenerateProfile => self.prompt(
                 "Generate a profile",
@@ -5475,7 +5485,7 @@ impl AppCore {
     fn notify_answer(&self, conversation_id: &str, reply: &str) {
         let (title, locale) = {
             let s = self.state.lock().unwrap();
-            if s.foreground || reply.is_empty() {
+            if s.foreground || reply.is_empty() || !pref_bool(&s, "notifications.answers", true) {
                 return;
             }
             let language = s
@@ -5819,8 +5829,14 @@ impl AppCore {
                             "personalization.custom_instructions" => cloud["personalInstructions"].clone(),
                             "memory.enabled" => cloud["memoryEnabled"].clone(),
                             b => s.prefs.get(b).cloned().unwrap_or(match item.kind.as_str() {
-                                "toggle" => json!(b == "general.enter_to_send"),
-                                "select" => json!(item.options.first()),
+                                "toggle" => json!(matches!(b, "general.enter_to_send" | "notifications.answers")),
+                                "select" => {
+                                    if b == "appearance.text_size" {
+                                        json!("default")
+                                    } else {
+                                        json!(item.options.first())
+                                    }
+                                },
                                 _ => json!(""),
                             }),
                         };
@@ -5830,7 +5846,7 @@ impl AppCore {
                             "kind": item.kind,
                             "binding": item.binding,
                             "value": value,
-                            "options": item.options.iter().map(|o| json!({ "value": o, "label": o })).collect::<Vec<_>>(),
+                            "options": item.options.iter().map(|o| json!({ "value": o, "label": option_label(&item.binding, o) })).collect::<Vec<_>>(),
                         })
                     })
                     .collect();
@@ -5876,6 +5892,8 @@ impl AppCore {
                         }));
                     }
                     "usage" => items.extend(usage_items(s)),
+                    "shortcuts" => items.extend(shortcut_items(s)),
+                    "about" => items.extend(about_items()),
                     "permissions" => items.extend(permission_items(s)),
                     "devices" => items.extend(self.device_items(s)),
                     "account" => {
@@ -5957,7 +5975,13 @@ impl AppCore {
                 .map(|section| section.group.clone())
                 .unwrap_or_else(|| "Account".to_owned())
         };
-        let selected = if sections
+        let query = s.settings_query.trim().to_lowercase();
+        let searching = !query.is_empty();
+        let results =
+            searching.then(|| settings_results(&sections, &self.manifest.settings, &query));
+        let selected = if searching {
+            "results".to_owned()
+        } else if sections
             .iter()
             .any(|x| x["id"] == s.settings_section.as_str())
         {
@@ -5974,7 +5998,7 @@ impl AppCore {
             let id = section["id"].as_str().unwrap_or_default();
             let group = group_of(id);
             let entry = json!({
-                "id": id, "label": section["label"], "selected": id == selected,
+                "id": id, "label": section["label"], "selected": !searching && id == selected,
                 "action": { "type": "select_settings_section", "id": id },
             });
             match nav.iter_mut().find(|g| g["label"] == group) {
@@ -5982,8 +6006,16 @@ impl AppCore {
                 None => nav.push(json!({ "label": group, "items": [entry] })),
             }
         }
+        let sections = match results {
+            Some(items) => {
+                vec![json!({ "id": "results", "label": "Search results", "items": items })]
+            }
+            None => sections,
+        };
         json!({
             "kind": "settings", "title": "Settings", "sections": sections, "nav": nav, "selected": selected,
+            "search": { "placeholder": "Search settings", "value": s.settings_query,
+                        "action": { "type": "search_settings" }, "field": "text" },
             "close": { "type": "navigate", "route": "chat" },
         })
     }
@@ -7924,6 +7956,150 @@ fn tool_permissions(s: &State, p: &Value) -> Option<String> {
     (!parts.is_empty()).then(|| parts.join(" · "))
 }
 
+/// What a stored choice is called on screen (the schema holds the stored values).
+fn option_label(binding: &str, value: &str) -> String {
+    match (binding, value) {
+        ("appearance.theme", "system") => "Follow system",
+        ("appearance.theme", "light") => "Light",
+        ("appearance.theme", "dark") => "Dark",
+        ("appearance.language", "system") => "Follow system",
+        ("appearance.language", "en") => "English",
+        ("appearance.language", "zh-CN") => "简体中文",
+        ("appearance.text_size", "small") => "Small",
+        ("appearance.text_size", "default") => "Default",
+        ("appearance.text_size", "large") => "Large",
+        (_, other) => other,
+    }
+    .to_owned()
+}
+
+/// Settings > Keyboard shortcuts: what is really bound, by client.
+fn shortcut_items(s: &State) -> Vec<Value> {
+    let enter_sends = pref_bool(s, "general.enter_to_send", true);
+    let row = |id: &str, label: &str, keys: &str| item(format!("key_{id}"), label, keys, vec![]);
+    vec![
+        json!({ "id": "key_h_desktop", "kind": "heading", "label": "Desktop app" }),
+        row("new", "New chat", "Ctrl+N"),
+        row("find", "Search chats", "Ctrl+F"),
+        row("settings", "Open settings", "Ctrl+,"),
+        row("sidebar", "Show or hide the sidebar", "Ctrl+B"),
+        row("quit", "Quit", "Ctrl+Q"),
+        json!({ "id": "key_h_composer", "kind": "heading", "label": "Message box" }),
+        row(
+            "send",
+            "Send the message",
+            if enter_sends { "Enter" } else { "Shift+Enter" },
+        ),
+        row(
+            "newline",
+            "New line",
+            if enter_sends { "Shift+Enter" } else { "Enter" },
+        ),
+        row("stop", "Stop the answer (web)", "Esc"),
+        json!({ "id": "key_note", "kind": "hint", "text": "On macOS use ⌘ instead of Ctrl. Whether Enter sends is a setting in General." }),
+    ]
+}
+
+/// Settings > About: version, what Meo AI is made of, where the source and licenses are.
+fn about_items() -> Vec<Value> {
+    let link = |id: &str, label: &str, value: &str, url: &str| {
+        item(
+            format!("about_{id}"),
+            label,
+            value,
+            vec![button(
+                "Open",
+                "secondary",
+                json!({ "type": "open_link", "url": url }),
+            )],
+        )
+    };
+    vec![
+        json!({ "id": "about_version", "kind": "info", "label": "Meo AI", "value": env!("CARGO_PKG_VERSION") }),
+        json!({ "id": "about_what", "kind": "hint", "text": "The MeoArch assistant for everyday chat, agent work and safe system actions. One Rust core runs the desktop, Android and web clients." }),
+        json!({ "id": "about_h_links", "kind": "heading", "label": "Links" }),
+        link(
+            "site",
+            "Website and documentation",
+            "meoarch.org",
+            "https://meoarch.org/docs/",
+        ),
+        link(
+            "source",
+            "Source code",
+            "github.com/QwQdoge/meo-ai",
+            "https://github.com/QwQdoge/meo-ai",
+        ),
+        json!({ "id": "about_h_legal", "kind": "heading", "label": "Legal" }),
+        json!({ "id": "about_license", "kind": "hint", "text": "Meo AI is free software under the GNU General Public License v3.0 or later. It is a fork of Newelle by qwersyk, and its interface is built with MeoUI." }),
+        link(
+            "gpl",
+            "License",
+            "GPL-3.0-or-later",
+            "https://www.gnu.org/licenses/gpl-3.0.html",
+        ),
+        link(
+            "newelle",
+            "Newelle (upstream)",
+            "github.com/qwersyk/Newelle",
+            "https://github.com/qwersyk/Newelle",
+        ),
+        link(
+            "meoui",
+            "MeoUI (design system)",
+            "github.com/QwQdoge/MeoUI",
+            "https://github.com/QwQdoge/MeoUI",
+        ),
+    ]
+}
+
+/// The settings that match a search: a whole category when its name or keywords match, otherwise just
+/// the controls whose label or value matches, each group under its category name.
+fn settings_results(
+    sections: &[Value],
+    manifest: &[super::manifest::SettingSection],
+    query: &str,
+) -> Vec<Value> {
+    let mut out: Vec<Value> = Vec::new();
+    for section in sections {
+        let id = section["id"].as_str().unwrap_or_default();
+        let label = section["label"].as_str().unwrap_or_default();
+        let whole = label.to_lowercase().contains(query)
+            || manifest
+                .iter()
+                .find(|m| m.id == id)
+                .is_some_and(|m| m.keywords.iter().any(|k| k.to_lowercase().contains(query)));
+        let found: Vec<Value> = section["items"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|it| !matches!(it["kind"].as_str(), Some("heading")))
+            .filter(|it| {
+                whole
+                    || ["label", "value", "text"].iter().any(|f| {
+                        it[*f]
+                            .as_str()
+                            .is_some_and(|t| t.to_lowercase().contains(query))
+                    })
+            })
+            .cloned()
+            .collect();
+        if !found.is_empty() {
+            out.push(json!({ "id": format!("res_{id}"), "kind": "heading", "label": label }));
+            out.extend(found);
+        }
+        if out.len() > 60 {
+            break;
+        }
+    }
+    if out.is_empty() {
+        out.push(
+            json!({ "id": "res_none", "kind": "hint", "text": "No setting matches your search." }),
+        );
+    }
+    out
+}
+
 /// Settings > Permissions: only what applies to everything. Installing, switching on and signing in
 /// to apps, skills and MCP servers all live on the Plugins page.
 fn permission_items(s: &State) -> Vec<Value> {
@@ -8987,6 +9163,140 @@ mod tests {
             .clone()
     }
 
+    fn settings_view(c: &AppCore, section: &str, query: &str) -> Value {
+        c.update(|s| {
+            s.route = "settings".into();
+            s.settings_section = section.into();
+            s.settings_query = query.into();
+        });
+        c.view()["page"].clone()
+    }
+
+    fn section_of(page: &Value, id: &str) -> Value {
+        page["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|x| x["id"] == id)
+            .unwrap_or_else(|| panic!("no section {id}"))
+            .clone()
+    }
+
+    #[test]
+    fn settings_have_appearance_notifications_shortcuts_and_about_in_order() {
+        let c = signed_in_core();
+        let page = settings_view(&c, "general", "");
+        let groups: Vec<&str> = page["nav"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|g| g["label"].as_str().unwrap())
+            .collect();
+        assert_eq!(groups.last(), Some(&"About"));
+        let ids: Vec<&str> = page["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|x| x["id"].as_str().unwrap())
+            .collect();
+        let at = |id: &str| ids.iter().position(|x| *x == id).unwrap();
+        assert!(at("general") < at("appearance") && at("appearance") < at("notifications"));
+        assert!(at("notifications") < at("shortcuts") && at("account") < at("about"));
+        // Stored values read as words, and text size has a default.
+        let theme = section_of(&page, "appearance")["items"][0].clone();
+        assert_eq!(theme["options"][0]["label"], "Follow system");
+        let size = section_of(&page, "appearance")["items"][1].clone();
+        assert_eq!(size["value"], "default");
+        // Notifications are on until switched off.
+        assert_eq!(
+            section_of(&page, "notifications")["items"][0]["value"],
+            true
+        );
+    }
+
+    #[test]
+    fn about_page_has_version_and_license_links() {
+        let page = settings_view(&signed_in_core(), "about", "");
+        let items = section_of(&page, "about")["items"]
+            .as_array()
+            .unwrap()
+            .clone();
+        assert!(items
+            .iter()
+            .any(|i| i["id"] == "about_version" && i["value"] == env!("CARGO_PKG_VERSION")));
+        let gpl = items.iter().find(|i| i["id"] == "about_gpl").unwrap();
+        assert_eq!(gpl["buttons"][0]["action"]["type"], "open_link");
+        assert!(gpl["buttons"][0]["action"]["url"]
+            .as_str()
+            .unwrap()
+            .starts_with("https://"));
+    }
+
+    #[test]
+    fn shortcuts_follow_the_enter_to_send_setting() {
+        let c = signed_in_core();
+        let send = |c: &AppCore| {
+            let page = settings_view(c, "shortcuts", "");
+            section_of(&page, "shortcuts")["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|i| i["id"] == "key_send")
+                .unwrap()["value"]
+                .clone()
+        };
+        assert_eq!(send(&c), "Enter");
+        c.update(|s| {
+            s.prefs.insert("general.enter_to_send".into(), json!(false));
+        });
+        assert_eq!(send(&c), "Shift+Enter");
+    }
+
+    #[test]
+    fn settings_search_finds_controls_across_categories() {
+        let c = signed_in_core();
+        let page = settings_view(&c, "general", "motion");
+        assert_eq!(page["selected"], "results");
+        let results = section_of(&page, "results");
+        let labels: Vec<&str> = results["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|i| i["label"].as_str())
+            .collect();
+        assert!(
+            labels.contains(&"Appearance") && labels.contains(&"Reduce motion"),
+            "{labels:?}"
+        );
+        // A category keyword (Chinese) opens the whole category.
+        let page = settings_view(&c, "general", "通知");
+        let labels: Vec<String> = section_of(&page, "results")["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|i| i["label"].as_str().map(str::to_owned))
+            .collect();
+        assert!(
+            labels.iter().any(|l| l.starts_with("Notify me")),
+            "{labels:?}"
+        );
+        // Nothing found says so; the nav shows no selected category while searching.
+        let page = settings_view(&c, "general", "zzzzqq");
+        assert_eq!(section_of(&page, "results")["items"][0]["id"], "res_none");
+        assert!(page["nav"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|g| g["items"].as_array().unwrap())
+            .all(|e| e["selected"] == false));
+        // Picking a category clears the search.
+        c.update(|s| s.settings_query = "motion".into());
+        futures_executor::block_on(
+            c.dispatch(Action::SelectSettingsSection { id: "about".into() }),
+        );
+        assert_eq!(c.view()["page"]["selected"], "about");
+    }
+
     #[test]
     fn settings_has_only_general_permissions_and_points_to_plugins() {
         let c = signed_in_core();
@@ -9191,7 +9501,7 @@ mod tests {
             .iter()
             .map(|g| g["label"].as_str().unwrap())
             .collect();
-        assert_eq!(groups, ["Preferences", "AI", "Account"]);
+        assert_eq!(groups, ["Preferences", "AI", "Account", "About"]);
         let ids: Vec<&str> = page["sections"]
             .as_array()
             .unwrap()
@@ -9633,6 +9943,13 @@ mod tests {
             )
         );
         assert_eq!(sent[1].0, "Trip plan — 回答已完成");
+        // Switched off in Settings > Notifications: nothing more is sent.
+        futures_executor::block_on(c.dispatch(Action::SetSetting {
+            binding: "notifications.answers".into(),
+            value: json!(false),
+        }));
+        c.notify_answer("c1", "Silent");
+        assert_eq!(hooks.0.lock().unwrap().len(), 2);
     }
 
     #[test]

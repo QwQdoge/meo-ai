@@ -36,6 +36,8 @@ export default function CoreApp() {
     const theme = ["light", "dark"].includes(prefs["appearance.theme"]) ? prefs["appearance.theme"] : "system";
     document.documentElement.dataset.theme = theme;
     document.documentElement.dataset.reduceMotion = String(prefs["appearance.reduce_motion"] === true);
+    // Text size scales every rem-based size on the page.
+    document.documentElement.style.fontSize = ({ small: "14px", large: "18px" } as Record<string, string>)[prefs["appearance.text_size"]] ?? "";
   }, [prefs]);
 
   if (error) {
@@ -285,6 +287,7 @@ function SettingsPage({ page, act }: { page: Spec; act: Act }) {
     <main className="core-settings">
       <div className="core-settings-card">
         <nav className="core-settings-nav" aria-label={page.title}>
+          {page.search && <SettingsSearch search={page.search} act={act} />}
           {(page.nav ?? []).map((group: Spec) => (
             <div key={group.label}>
               <h3>{group.label}</h3>
@@ -305,6 +308,28 @@ function SettingsPage({ page, act }: { page: Spec; act: Act }) {
         </div>
       </div>
     </main>
+  );
+}
+
+/** Filters the settings by what is typed; the core returns the matching controls from every category. */
+function SettingsSearch({ search, act }: { search: Spec; act: Act }) {
+  const [text, setText] = useState<string>(search.value ?? "");
+  useEffect(() => setText(search.value ?? ""), [search.value]);
+  useEffect(() => {
+    if (text === (search.value ?? "")) return;
+    const t = window.setTimeout(() => act({ ...search.action, [search.field]: text }), 250);
+    return () => window.clearTimeout(t);
+  }, [text]);
+  return (
+    <input
+      type="search"
+      className="core-settings-search"
+      placeholder={search.placeholder}
+      aria-label={search.placeholder}
+      value={text}
+      onChange={(e) => setText(e.target.value)}
+      onKeyDown={(e) => e.key === "Escape" && setText("")}
+    />
   );
 }
 

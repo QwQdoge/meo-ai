@@ -247,7 +247,7 @@ for (const section of settings.sections) {
   );
   // Sidebar-style groups shared by every client; the core builds the page nav from these.
   requireValue(
-    ["Preferences", "AI", "Account"].includes(section.group),
+    ["Preferences", "AI", "Account", "About"].includes(section.group),
     "settings: invalid group",
   );
   requireValue(

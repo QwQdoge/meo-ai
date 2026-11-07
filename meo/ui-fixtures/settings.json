@@ -161,7 +161,8 @@
   "kind": "settings",
   "title": "Settings",
   "close": {
-   "type": "close_settings"
+   "type": "navigate",
+   "route": "chat"
   },
   "selected": "general",
   "nav": [
@@ -169,77 +170,153 @@
     "label": "Preferences",
     "items": [
      {
+      "id": "general",
       "label": "General",
       "selected": true,
       "action": {
        "type": "select_settings_section",
        "id": "general"
-      },
-      "id": "items-0"
+      }
      },
      {
-      "label": "Personalization",
+      "id": "appearance",
+      "label": "Appearance",
       "selected": false,
       "action": {
        "type": "select_settings_section",
-       "id": "p"
-      },
-      "id": "items-1"
+       "id": "appearance"
+      }
+     },
+     {
+      "id": "personalization",
+      "label": "Personalization & memory",
+      "selected": false,
+      "action": {
+       "type": "select_settings_section",
+       "id": "personalization"
+      }
+     },
+     {
+      "id": "notifications",
+      "label": "Notifications",
+      "selected": false,
+      "action": {
+       "type": "select_settings_section",
+       "id": "notifications"
+      }
+     },
+     {
+      "id": "shortcuts",
+      "label": "Keyboard shortcuts",
+      "selected": false,
+      "action": {
+       "type": "select_settings_section",
+       "id": "shortcuts"
+      }
      }
-    ],
-    "id": "nav-0"
+    ]
+   },
+   {
+    "label": "AI",
+    "items": [
+     {
+      "id": "models",
+      "label": "Models & connections",
+      "selected": false,
+      "action": {
+       "type": "select_settings_section",
+       "id": "models"
+      }
+     },
+     {
+      "id": "permissions",
+      "label": "Permissions",
+      "selected": false,
+      "action": {
+       "type": "select_settings_section",
+       "id": "permissions"
+      }
+     }
+    ]
    },
    {
     "label": "Account",
     "items": [
      {
+      "id": "usage",
       "label": "Usage",
       "selected": false,
       "action": {
        "type": "select_settings_section",
        "id": "usage"
-      },
-      "id": "items-0"
+      }
+     },
+     {
+      "id": "account",
+      "label": "Account & security",
+      "selected": false,
+      "action": {
+       "type": "select_settings_section",
+       "id": "account"
+      }
      }
-    ],
-    "id": "nav-1"
+    ]
+   },
+   {
+    "label": "About",
+    "items": [
+     {
+      "id": "about",
+      "label": "About",
+      "selected": false,
+      "action": {
+       "type": "select_settings_section",
+       "id": "about"
+      }
+     }
+    ]
    }
   ],
+  "search": {
+   "placeholder": "Search settings",
+   "value": "",
+   "action": {
+    "type": "search_settings"
+   },
+   "field": "text"
+  },
   "sections": [
    {
     "id": "general",
     "label": "General",
     "items": [
      {
+      "id": "enter_to_send",
+      "label": "Enter to send",
       "kind": "toggle",
-      "label": "Send with Enter",
       "binding": "general.enter_to_send",
-      "value": true,
-      "id": "items-0"
+      "value": true
      },
      {
-      "kind": "select",
+      "id": "language",
       "label": "Language",
-      "binding": "general.lang",
-      "value": "auto",
+      "kind": "select",
+      "binding": "appearance.language",
+      "value": "system",
       "options": [
        {
-        "label": "Follow system",
-        "value": "auto",
-        "id": "options-0"
+        "value": "system",
+        "label": "Follow system"
        },
        {
-        "label": "English",
         "value": "en",
-        "id": "options-1"
+        "label": "English"
+       },
+       {
+        "value": "zh-CN",
+        "label": "简体中文"
        }
-      ],
-      "id": "items-1"
-     },
-     {
-      "kind": "hint",
-      "text": "Theme and accent follow the system.",
-      "id": "items-2"
+      ]
      }
     ]
    }

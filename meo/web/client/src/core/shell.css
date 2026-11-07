@@ -381,3 +381,7 @@
 @media (prefers-reduced-motion: reduce) { .core-app .core-switch, .core-app .core-switch i { transition: none; } }
 .core-app .store-detail { margin: 2px 0 0; font-size: 12px; color: rgb(var(--text-secondary)); overflow-wrap: anywhere; }
 .core-app .store-badges { align-items: center; }
+
+/* Settings search box above the categories. */
+.core-app .core-settings-search { width: 100%; box-sizing: border-box; margin-bottom: 8px; padding: 7px 12px; border: 0; border-radius: 999px; background: var(--tonal); font-size: 13px; color: inherit; }
+.core-app .core-settings-search:focus { outline: 2px solid rgb(var(--accent-primary)); }

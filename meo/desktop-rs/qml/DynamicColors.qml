@@ -9,7 +9,11 @@ import MeoUI 1.0
 QtObject {
     id: root
 
-    readonly property bool darkMode: Qt.styleHints.colorScheme === Qt.ColorScheme.Dark
+    // "system" follows the desktop; "light" / "dark" are the user's choice in Settings > Appearance.
+    property string themePref: "system"
+    readonly property bool darkMode: themePref === "dark" ? true
+                                   : themePref === "light" ? false
+                                   : Qt.styleHints.colorScheme === Qt.ColorScheme.Dark
 
     function provider() {
         return typeof MeoSystem.MaterialColors === "undefined" ? null : MeoSystem.MaterialColors
