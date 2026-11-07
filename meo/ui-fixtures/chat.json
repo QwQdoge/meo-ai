@@ -291,7 +291,7 @@
     "blocks": [
      {
       "type": "markdown",
-      "text": "Here is the plan:\n\n- **Classify** the request with the fast model\n- **Plan** steps when thinking is above low\n- **Judge** the result before answering\n\n```rust\nfn route(level: Level) -> Route { Route::Fast }\n```"
+      "text": "Here is the plan:\n\n- **Classify** the request with the fast model\n- **Plan** steps when thinking is above low\n- **Judge** the result before answering\n\n```rust\nfn route(level: Level) -> Route {\n    match level {\n        Level::Low => Route::Fast,\n        _ => Route::Thinking,\n    }\n}\n```\n\nThen the router sends it: use `Route::Fast` for quick answers and keep an eye on the **budget**."
      }
     ],
     "actions": [

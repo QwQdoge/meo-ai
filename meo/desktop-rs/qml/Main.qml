@@ -58,6 +58,21 @@ ApplicationWindow {
             core.dispatch(JSON.stringify(action))
     }
 
+    // Splits Markdown into prose and fenced code parts: [{kind: "prose"|"code", text, lang}].
+    function splitFences(text) {
+        const out = []
+        const re = /```([^\n]*)\n([\s\S]*?)(```|$)/g
+        let last = 0, m
+        while ((m = re.exec(text)) !== null) {
+            if (m.index > last) out.push({ kind: "prose", text: text.slice(last, m.index).trim() })
+            out.push({ kind: "code", lang: m[1].trim(), text: m[2].replace(/\n$/, "") })
+            last = re.lastIndex
+            if (m[0].length === 0) re.lastIndex++
+        }
+        if (last < text.length) out.push({ kind: "prose", text: text.slice(last).trim() })
+        return out.filter(p => p.kind === "code" || p.text.length > 0)
+    }
+
     function withFields(action, fields) {
         const copy = Object.assign({}, action)
         for (const key in fields)
@@ -142,7 +157,26 @@ ApplicationWindow {
     // Wallpaper-derived Material colors and light/dark mode from the Meo desktop, when present.
     Loader { id: dynamicColors; source: "DynamicColors.qml" }
     // Appearance settings: theme, motion and text size (the system values stay the default).
-    Binding { target: dynamicColors.item; property: "themePref"; value: window.prefs["appearance.theme"] || "system"; when: dynamicColors.item !== null }
+    // Light / dark: the user's choice, else the system's. Qt's own color scheme cannot be set from
+    // QML, so MeoTheme is switched here and the window palette (what plain Labels and TextAreas use
+    // for their default colors) is taken from MeoTheme, so everything changes together, with or
+    // without the Meo desktop color plugin.
+    readonly property bool wantDark: window.prefs["appearance.theme"] === "dark"
+        || (window.prefs["appearance.theme"] !== "light" && Qt.styleHints.colorScheme === Qt.ColorScheme.Dark)
+    Binding { target: MeoTheme; property: "isDarkMode"; value: window.wantDark }
+    palette {
+        window: MeoTheme.background
+        windowText: MeoTheme.contentOnSurface
+        base: MeoTheme.surface
+        text: MeoTheme.contentOnSurface
+        button: MeoTheme.surfaceContainerHigh
+        buttonText: MeoTheme.contentOnSurface
+        placeholderText: MeoTheme.contentOnSurfaceVariant
+        highlight: MeoTheme.primary
+        highlightedText: MeoTheme.contentOnPrimary
+        toolTipBase: MeoTheme.inverseSurface
+        toolTipText: MeoTheme.inverseOnSurface
+    }
     Binding { target: MeoTheme; property: "reduceMotion"; value: window.prefs["appearance.reduce_motion"] === true }
     Binding { target: MeoTheme; property: "fontScale"; value: ({ "small": 0.9, "large": 1.15 })[window.prefs["appearance.text_size"]] || 1.0 }
 
@@ -176,13 +210,13 @@ ApplicationWindow {
             MeoIcon {
                 icon: link.symbol
                 size: 20
-                color: link.accent ? MeoTheme.primary : link.selected ? MeoTheme.contentOnSecondaryContainer : MeoTheme.onSurfaceVariant
+                color: link.accent ? MeoTheme.primary : link.selected ? MeoTheme.contentOnSecondaryContainer : MeoTheme.contentOnSurfaceVariant
                 Layout.alignment: Qt.AlignVCenter
                 verticalAlignment: Text.AlignVCenter
             }
-            MeoText {
+            Txt {
                 visible: !link.compact
-                color: link.accent ? MeoTheme.primary : MeoTheme.onSurface
+                color: link.accent ? MeoTheme.primary : MeoTheme.contentOnSurface
                 text: link.label
                 elide: Text.ElideRight
                 font.weight: link.selected ? Font.DemiBold : Font.Normal
@@ -256,12 +290,12 @@ ApplicationWindow {
                         border.width: seg.activeFocus && MeoTheme.focusVisible ? 2 : 0
                         border.color: MeoTheme.primary
                     }
-                    MeoText {
+                    Txt {
                         anchors.centerIn: parent
                         text: seg.modelData.label
                         typeRole: "label"
                         font.weight: seg.index === modeSwitch.current ? Font.DemiBold : Font.Normal
-                        color: seg.index === modeSwitch.current ? MeoTheme.onSurface : MeoTheme.onSurfaceVariant
+                        color: seg.index === modeSwitch.current ? MeoTheme.contentOnSurface : MeoTheme.contentOnSurfaceVariant
                     }
                     TapHandler { onTapped: modeSwitch.chose(seg.index) }
                     HoverHandler { cursorShape: Qt.PointingHandCursor }
@@ -269,6 +303,10 @@ ApplicationWindow {
             }
         }
     }
+
+    // MeoUI's MeoText has no default color (plain black), which is unreadable in dark mode: every
+    // text here follows the theme unless it sets its own color.
+    component Txt: MeoText { color: MeoTheme.contentOnSurface }
 
     // A quiet sidebar row for a project or chat: small plain text, selection tint, menu on hover.
     component NavRow: Item {
@@ -295,7 +333,7 @@ ApplicationWindow {
             border.color: MeoTheme.primary
             Behavior on color { ColorAnimation { duration: MeoTheme.motionDurationShort2 } }
         }
-        MeoText {
+        Txt {
             anchors.verticalCenter: parent.verticalCenter
             x: 12 + Math.max(0, nav.depth - 1) * 14
             width: parent.width - x - (nav.menu.length > 0 ? 30 : 8)
@@ -399,14 +437,14 @@ ApplicationWindow {
                     anchors.leftMargin: 12
                     anchors.rightMargin: 12
                     spacing: 8
-                    MeoIcon { icon: "search"; size: 18; color: MeoTheme.onSurfaceVariant }
+                    MeoIcon { icon: "search"; size: 18; color: MeoTheme.contentOnSurfaceVariant }
                     TextInput {
                         id: searchField
                         Layout.fillWidth: true
                         Layout.alignment: Qt.AlignVCenter
                         clip: true
                         font.pixelSize: 14 * MeoTheme.textScale
-                        color: MeoTheme.onSurface
+                        color: MeoTheme.contentOnSurface
                         selectByMouse: true
                         text: ""
                         // Typed text wins; the core echoes it back as the saved value.
@@ -414,7 +452,7 @@ ApplicationWindow {
                         Text {
                             visible: !parent.text && !parent.activeFocus
                             text: (sidebar.sb.search || {}).placeholder || ""
-                            color: MeoTheme.onSurfaceVariant
+                            color: MeoTheme.contentOnSurfaceVariant
                             font.pixelSize: 14 * MeoTheme.textScale
                             anchors.verticalCenter: parent.verticalCenter
                         }
@@ -462,7 +500,7 @@ ApplicationWindow {
                         visible: sideRow.modelData.kind === "header"
                         width: parent.width
                         spacing: 4
-                        MeoText { Layout.topMargin: 10; Layout.leftMargin: 12; text: sideRow.modelData.label || ""; typeRole: "label"; color: MeoTheme.onSurfaceVariant }
+                        Txt { Layout.topMargin: 10; Layout.leftMargin: 12; text: sideRow.modelData.label || ""; typeRole: "label"; color: MeoTheme.contentOnSurfaceVariant }
                         RowLayout {
                             spacing: 8
                             Repeater {
@@ -591,13 +629,13 @@ ApplicationWindow {
                 width: Math.min(parent.width - 48, 420)
                 spacing: 20
                 MeoAiMark { Layout.alignment: Qt.AlignHCenter; implicitWidth: 72; implicitHeight: 72 }
-                MeoText { text: window.page.title; typeRole: "title"; typeSize: "big"; Layout.alignment: Qt.AlignHCenter }
-                MeoText {
+                Txt { text: window.page.title; typeRole: "title"; typeSize: "big"; Layout.alignment: Qt.AlignHCenter }
+                Txt {
                     text: window.page.text
                     wrapMode: Text.Wrap
                     horizontalAlignment: Text.AlignHCenter
                     Layout.fillWidth: true
-                    color: MeoTheme.onSurfaceVariant
+                    color: MeoTheme.contentOnSurfaceVariant
                 }
                 ColumnLayout {
                     visible: (window.page.features || []).length > 0
@@ -625,8 +663,8 @@ ApplicationWindow {
                             ColumnLayout {
                                 Layout.fillWidth: true
                                 spacing: 2
-                                MeoText { text: modelData.title || ""; typeRole: "title"; typeSize: "small" }
-                                MeoText { text: modelData.text || ""; Layout.fillWidth: true; wrapMode: Text.Wrap; color: MeoTheme.onSurfaceVariant }
+                                Txt { text: modelData.title || ""; typeRole: "title"; typeSize: "small" }
+                                Txt { text: modelData.text || ""; Layout.fillWidth: true; wrapMode: Text.Wrap; color: MeoTheme.contentOnSurfaceVariant }
                             }
                         }
                     }
@@ -662,7 +700,7 @@ ApplicationWindow {
             RowLayout {
                 Layout.fillWidth: true
                 Layout.margins: 24
-                MeoText { text: window.page.title || ""; typeRole: "title"; typeSize: "medium"; Layout.fillWidth: true }
+                Txt { text: window.page.title || ""; typeRole: "title"; typeSize: "medium"; Layout.fillWidth: true }
                 Repeater { model: window.page.actions || []; ActionButton { spec: modelData } }
             }
             MeoLoadingIndicator { visible: !!window.page.loading; Layout.alignment: Qt.AlignHCenter }
@@ -719,7 +757,7 @@ ApplicationWindow {
             size: appIcon.tile * 0.5
             color: appIcon.brand
         }
-        MeoText {
+        Txt {
             visible: !appIcon.hasSvg && !appIcon.hasGlyph
             anchors.centerIn: parent
             text: (appIcon.label.match(/[A-Za-z0-9\u00C0-\uFFFF]/) || ["?"])[0].toUpperCase()
@@ -743,32 +781,99 @@ ApplicationWindow {
                 x: 24; y: 24
                 width: storeFlick.width - 48
                 spacing: 14
+                // Title, then one row: the tabs (text with an underline) and a compact search.
                 RowLayout {
                     Layout.fillWidth: true
-                    MeoText { text: window.page.title || ""; typeRole: "title"; typeSize: "large"; Layout.fillWidth: true }
+                    Txt { text: window.page.title || ""; typeRole: "title"; typeSize: "medium"; Layout.fillWidth: true }
                     MeoLoadingIndicator { visible: !!window.page.loading }
                 }
-                MeoTextField {
+                RowLayout {
                     Layout.fillWidth: true
-                    Layout.maximumWidth: 640
-                    placeholder: window.page.search ? window.page.search.placeholder : ""
-                    text: storeFlick.query
-                    onAccepted: window.act(window.withFields(window.page.search.action, ({ query: text })))
+                    spacing: 20
+                    Repeater {
+                        model: window.page.tabs || []
+                        delegate: Item {
+                            id: tab
+                            required property var modelData
+                            implicitWidth: tabText.implicitWidth
+                            implicitHeight: 34
+                            activeFocusOnTab: true
+                            Keys.onReturnPressed: window.act(modelData.action)
+                            Keys.onSpacePressed: window.act(modelData.action)
+                            Accessible.role: Accessible.PageTab
+                            Accessible.name: modelData.label
+                            Txt {
+                                id: tabText
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: tab.modelData.label
+                                font.weight: tab.modelData.selected ? Font.DemiBold : Font.Normal
+                                color: tab.modelData.selected ? MeoTheme.contentOnSurface : MeoTheme.contentOnSurfaceVariant
+                            }
+                            Rectangle {
+                                anchors.bottom: parent.bottom
+                                width: parent.width
+                                height: 2
+                                radius: 1
+                                color: MeoTheme.primary
+                                opacity: tab.modelData.selected ? 1 : 0
+                                Behavior on opacity { NumberAnimation { duration: MeoTheme.motionDurationShort3 } }
+                            }
+                            HoverHandler { cursorShape: Qt.PointingHandCursor }
+                            TapHandler { onTapped: window.act(tab.modelData.action) }
+                        }
+                    }
+                    Item { Layout.fillWidth: true }
+                    Rectangle {
+                        Layout.preferredWidth: 260
+                        implicitHeight: 34
+                        radius: height / 2
+                        color: MeoTheme.surfaceContainerHigh
+                        border.width: 1
+                        border.color: storeSearch.activeFocus ? MeoTheme.primary : "transparent"
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: 12
+                            anchors.rightMargin: 12
+                            spacing: 8
+                            MeoIcon { icon: "search"; size: 18; color: MeoTheme.contentOnSurfaceVariant }
+                            TextInput {
+                                id: storeSearch
+                                Layout.fillWidth: true
+                                Layout.alignment: Qt.AlignVCenter
+                                clip: true
+                                font.pixelSize: 14 * MeoTheme.textScale
+                                color: MeoTheme.contentOnSurface
+                                selectByMouse: true
+                                text: storeFlick.query
+                                Accessible.name: window.page.search ? window.page.search.placeholder : ""
+                                onAccepted: window.act(window.withFields(window.page.search.action, ({ query: text })))
+                                Text {
+                                    visible: !parent.text && !parent.activeFocus
+                                    text: window.page.search ? window.page.search.placeholder : ""
+                                    color: MeoTheme.contentOnSurfaceVariant
+                                    font.pixelSize: 14 * MeoTheme.textScale
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    elide: Text.ElideRight
+                                    width: parent.width
+                                }
+                            }
+                        }
+                    }
                 }
-                MeoSegmentedButtons {
-                    Layout.preferredWidth: 360
-                    size: "s"
-                    model: (window.page.tabs || []).map(t => t.label)
-                    currentIndex: Math.max(0, (window.page.tabs || []).findIndex(t => t.selected))
-                    onSelected: (index, data) => window.act(window.page.tabs[index].action)
-                }
-                MeoSegmentedButtons {
+                Flow {
                     visible: (window.page.filters || []).length > 0
-                    Layout.preferredWidth: 360
-                    size: "xs"
-                    model: (window.page.filters || []).map(f => f.label)
-                    currentIndex: Math.max(0, (window.page.filters || []).findIndex(f => f.selected))
-                    onSelected: (index, data) => window.act(window.page.filters[index].action)
+                    Layout.fillWidth: true
+                    spacing: 8
+                    Repeater {
+                        model: window.page.filters || []
+                        MeoButton {
+                            required property var modelData
+                            text: modelData.label
+                            type: modelData.selected ? "tonal" : "outlined"
+                            size: "xs"
+                            onClicked: window.act(modelData.action)
+                        }
+                    }
                 }
                 Repeater {
                     model: window.page.sections || []
@@ -777,27 +882,33 @@ ApplicationWindow {
                         required property var modelData
                         Layout.fillWidth: true
                         spacing: 10
-                        MeoText { text: sectionCol.modelData.title || ""; typeRole: "title"; typeSize: "small" }
-                        MeoText {
+                        Txt { text: sectionCol.modelData.title || ""; typeRole: "title"; typeSize: "small" }
+                        Txt {
                             visible: !!sectionCol.modelData.cards && sectionCol.modelData.cards.length === 0 && !!sectionCol.modelData.empty
                             text: sectionCol.modelData.empty || ""
-                            color: MeoTheme.onSurfaceVariant
+                            color: MeoTheme.contentOnSurfaceVariant
                         }
-                        Flow {
+                        GridLayout {
+                            id: cardGrid
                             Layout.fillWidth: true
-                            spacing: 12
+                            columns: Math.max(1, Math.floor((storeCol.width + 12) / 340))
+                            columnSpacing: 12
+                            rowSpacing: 12
+                            uniformCellWidths: true
                             Repeater {
                                 model: sectionCol.modelData.cards || []
                                 delegate: Rectangle {
                                     id: card
                                     required property var modelData
-                                    readonly property int columns: Math.max(1, Math.floor((storeCol.width + 12) / 340))
-                                    width: (storeCol.width - 12 * (columns - 1)) / columns
-                                    height: cardCol.implicitHeight + 28
+                                    Layout.fillWidth: true
+                                    Layout.fillHeight: true
+                                    Layout.alignment: Qt.AlignTop
+                                    implicitHeight: cardCol.implicitHeight + 28
                                     radius: 20
                                     color: MeoTheme.surfaceContainerLow
                                     RowLayout {
-                                        anchors { left: parent.left; right: parent.right; top: parent.top; margins: 14 }
+                                        anchors.fill: parent
+                                        anchors.margins: 14
                                         spacing: 12
                                         AppIcon { icon: card.modelData.icon; label: card.modelData.title || ""; Layout.alignment: Qt.AlignTop }
                                         ColumnLayout {
@@ -806,7 +917,7 @@ ApplicationWindow {
                                             spacing: 4
                                             RowLayout {
                                                 Layout.fillWidth: true
-                                                MeoText { text: card.modelData.title || ""; typeRole: "title"; typeSize: "small"; Layout.fillWidth: true; wrapMode: Text.Wrap }
+                                                Txt { text: card.modelData.title || ""; typeRole: "title"; typeSize: "small"; Layout.fillWidth: true; wrapMode: Text.Wrap }
                                                 MeoSwitch {
                                                     visible: !!card.modelData.switch
                                                     checked: !!(card.modelData.switch && card.modelData.switch.on)
@@ -814,14 +925,22 @@ ApplicationWindow {
                                                     onToggled: window.act(card.modelData.switch.action)
                                                 }
                                             }
-                                            MeoText { text: card.modelData.publisher || ""; color: MeoTheme.onSurfaceVariant; Layout.fillWidth: true; elide: Text.ElideRight }
-                                            MeoText { text: card.modelData.subtitle || ""; Layout.fillWidth: true; wrapMode: Text.Wrap; maximumLineCount: 3; elide: Text.ElideRight }
-                                            MeoText {
+                                            Txt {
+                                                visible: !!card.modelData.publisher && card.modelData.publisher !== card.modelData.title
+                                                text: card.modelData.publisher || ""
+                                                typeRole: "label"
+                                                font.weight: Font.Normal
+                                                color: MeoTheme.contentOnSurfaceVariant
+                                                Layout.fillWidth: true
+                                                elide: Text.ElideRight
+                                            }
+                                            Txt { text: card.modelData.subtitle || ""; Layout.fillWidth: true; wrapMode: Text.Wrap; maximumLineCount: 3; elide: Text.ElideRight }
+                                            Txt {
                                                 visible: !!card.modelData.detail
                                                 Layout.fillWidth: true
                                                 text: card.modelData.detail || ""
                                                 typeRole: "label"
-                                                color: MeoTheme.onSurfaceVariant
+                                                color: MeoTheme.contentOnSurfaceVariant
                                                 wrapMode: Text.Wrap
                                             }
                                             RowLayout {
@@ -831,11 +950,12 @@ ApplicationWindow {
                                                     implicitWidth: 8; implicitHeight: 8; radius: 4
                                                     color: card.modelData.tone === "ok" ? MeoTheme.success : card.modelData.tone === "error" ? MeoTheme.error : MeoTheme.warning
                                                 }
-                                                MeoText {
+                                                Txt {
                                                     text: (card.modelData.badges || []).concat(card.modelData.state === "installed" ? ["✓ Installed"] : []).join("  ·  ")
                                                     color: MeoTheme.primary
                                                 }
                                             }
+                                            Item { Layout.fillHeight: true; Layout.minimumHeight: 4 }
                                             Flow {
                                                 visible: (card.modelData.actions || []).length > 0
                                                 Layout.fillWidth: true
@@ -864,9 +984,9 @@ ApplicationWindow {
                                     RowLayout {
                                         spacing: 10
                                         AppIcon { icon: form.modelData.icon; label: form.modelData.title || ""; tile: 36 }
-                                        MeoText { text: form.modelData.title || ""; typeRole: "title"; typeSize: "small" }
+                                        Txt { text: form.modelData.title || ""; typeRole: "title"; typeSize: "small" }
                                     }
-                                    MeoText { text: form.modelData.text || ""; color: MeoTheme.onSurfaceVariant; Layout.fillWidth: true; wrapMode: Text.Wrap }
+                                    Txt { text: form.modelData.text || ""; color: MeoTheme.contentOnSurfaceVariant; Layout.fillWidth: true; wrapMode: Text.Wrap }
                                     MeoTextField {
                                         id: formInput
                                         Layout.fillWidth: true
@@ -953,14 +1073,14 @@ ApplicationWindow {
                                 anchors.leftMargin: 12
                                 anchors.rightMargin: 8
                                 spacing: 8
-                                MeoIcon { icon: "search"; size: 18; color: MeoTheme.onSurfaceVariant }
+                                MeoIcon { icon: "search"; size: 18; color: MeoTheme.contentOnSurfaceVariant }
                                 TextInput {
                                     id: settingsSearchField
                                     Layout.fillWidth: true
                                     Layout.alignment: Qt.AlignVCenter
                                     clip: true
                                     font.pixelSize: 14 * MeoTheme.textScale
-                                    color: MeoTheme.onSurface
+                                    color: MeoTheme.contentOnSurface
                                     selectByMouse: true
                                     Accessible.name: (window.page.search || {}).placeholder || ""
                                     onTextChanged: if (text !== settingsSearch.stored) settingsSearchTimer.restart()
@@ -968,7 +1088,7 @@ ApplicationWindow {
                                     Text {
                                         visible: !parent.text && !parent.activeFocus
                                         text: (window.page.search || {}).placeholder || ""
-                                        color: MeoTheme.onSurfaceVariant
+                                        color: MeoTheme.contentOnSurfaceVariant
                                         font.pixelSize: 14 * MeoTheme.textScale
                                         anchors.verticalCenter: parent.verticalCenter
                                     }
@@ -998,7 +1118,7 @@ ApplicationWindow {
                             required property var modelData
                             width: ListView.view.width
                             height: modelData.header ? 28 : 36
-                            MeoText { visible: !!modelData.header; text: modelData.header || ""; typeRole: "label"; color: MeoTheme.onSurfaceVariant; anchors.bottom: parent.bottom; x: 10 }
+                            Txt { visible: !!modelData.header; text: modelData.header || ""; typeRole: "label"; color: MeoTheme.contentOnSurfaceVariant; anchors.bottom: parent.bottom; x: 10 }
                             NavRow {
                                 visible: !!modelData.entry
                                 anchors.fill: parent
@@ -1044,7 +1164,7 @@ ApplicationWindow {
                             spacing: 20
                             RowLayout {
                                 Layout.fillWidth: true
-                                MeoText { text: current.label || window.page.title || ""; typeRole: "title"; typeSize: "medium"; Layout.fillWidth: true }
+                                Txt { text: current.label || window.page.title || ""; typeRole: "title"; typeSize: "medium"; Layout.fillWidth: true }
                                 MeoIconButton { visible: !!window.page.close; type: "standard"; icon.name: "close"; toolTipText: qsTr("Close settings"); onClicked: window.act(window.page.close) }
                             }
                             Repeater {
@@ -1054,13 +1174,13 @@ ApplicationWindow {
                                     required property var modelData
                                     Layout.fillWidth: true
                                     spacing: 8
-                                    MeoText {
+                                    Txt {
                                         visible: !!group.modelData.title
                                         Layout.leftMargin: 4
                                         text: group.modelData.title
                                         typeRole: "label"
                                         font.weight: Font.DemiBold
-                                        color: MeoTheme.onSurfaceVariant
+                                        color: MeoTheme.contentOnSurfaceVariant
                                     }
                                     Rectangle {
                                         visible: group.modelData.rows.length > 0
@@ -1096,7 +1216,7 @@ ApplicationWindow {
                                     }
                                     Repeater {
                                         model: group.modelData.notes
-                                        MeoText {
+                                        Txt {
                                             required property var modelData
                                             Layout.fillWidth: true
                                             Layout.leftMargin: 4
@@ -1105,7 +1225,7 @@ ApplicationWindow {
                                             wrapMode: Text.Wrap
                                             typeRole: "label"
                                             font.weight: Font.Normal
-                                            color: MeoTheme.onSurfaceVariant
+                                            color: MeoTheme.contentOnSurfaceVariant
                                         }
                                     }
                                 }
@@ -1139,8 +1259,8 @@ ApplicationWindow {
                 id: pillRow
                 anchors.centerIn: parent
                 spacing: 6
-                MeoText { text: pillRoot.current.label; typeRole: "label"; font.weight: Font.Medium }
-                MeoIcon { icon: "expand_more"; size: 18; color: MeoTheme.onSurfaceVariant }
+                Txt { text: pillRoot.current.label; typeRole: "label"; font.weight: Font.Medium }
+                MeoIcon { icon: "expand_more"; size: 18; color: MeoTheme.contentOnSurfaceVariant }
             }
             HoverHandler { id: pillHover; cursorShape: Qt.PointingHandCursor }
             TapHandler { id: pillTap; onTapped: menu.popupFor(pill) }
@@ -1171,7 +1291,7 @@ ApplicationWindow {
                 color: MeoTheme.surfaceContainerHighest
                 border.width: 1
                 border.color: MeoTheme.outlineVariant
-                MeoText { id: capText; anchors.centerIn: parent; text: modelData; typeRole: "label"; font.weight: Font.Medium }
+                Txt { id: capText; anchors.centerIn: parent; text: modelData; typeRole: "label"; font.weight: Font.Medium }
             }
         }
     }
@@ -1234,7 +1354,7 @@ ApplicationWindow {
             }
             ColumnLayout {
                 spacing: 8
-                MeoText { text: chipRoot.item.label || ""; typeRole: "label"; color: MeoTheme.onSurfaceVariant }
+                Txt { text: chipRoot.item.label || ""; typeRole: "label"; color: MeoTheme.contentOnSurfaceVariant }
                 MeoSlider {
                     Layout.preferredWidth: 200
                     from: 0
@@ -1250,7 +1370,7 @@ ApplicationWindow {
                     spacing: 0
                     Repeater {
                         model: chipRoot.options
-                        MeoText {
+                        Txt {
                             required property var modelData
                             required property int index
                             Layout.fillWidth: true
@@ -1258,7 +1378,7 @@ ApplicationWindow {
                             text: modelData.label
                             typeRole: "label"
                             font.weight: index === chipRoot.index ? Font.DemiBold : Font.Normal
-                            color: index === chipRoot.index ? MeoTheme.primary : MeoTheme.onSurfaceVariant
+                            color: index === chipRoot.index ? MeoTheme.primary : MeoTheme.contentOnSurfaceVariant
                         }
                     }
                 }
@@ -1288,7 +1408,7 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 Layout.alignment: Qt.AlignVCenter
                 spacing: 2
-                MeoText { text: setting.item.label || ""; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                Txt { text: setting.item.label || ""; wrapMode: Text.Wrap; Layout.fillWidth: true }
                 RowLayout {
                     visible: !setting.item.keys && !!(setting.item.description || (setting.item.kind === "item" && setting.item.value))
                     Layout.fillWidth: true
@@ -1300,9 +1420,9 @@ ApplicationWindow {
                         implicitWidth: 8; implicitHeight: 8; radius: 4
                         color: setting.item.tone === "ok" ? MeoTheme.success : setting.item.tone === "error" ? MeoTheme.error : MeoTheme.warning
                     }
-                    MeoText {
+                    Txt {
                         text: setting.item.description || String(setting.item.value || "")
-                        color: MeoTheme.onSurfaceVariant
+                        color: MeoTheme.contentOnSurfaceVariant
                         typeRole: "label"
                         font.weight: Font.Normal
                         wrapMode: Text.Wrap
@@ -1323,11 +1443,11 @@ ApplicationWindow {
                 visible: setting.item.kind === "slider"
                 spacing: 0
                 readonly property int index: Math.max(0, (setting.item.options || []).findIndex(o => o.value === setting.item.value))
-                MeoText {
+                Txt {
                     Layout.alignment: Qt.AlignRight
                     text: (((setting.item.options || [])[parent.index]) || {}).label || ""
                     typeRole: "label"
-                    color: MeoTheme.onSurfaceVariant
+                    color: MeoTheme.contentOnSurfaceVariant
                 }
                 MeoSlider {
                     Layout.preferredWidth: 160
@@ -1340,10 +1460,10 @@ ApplicationWindow {
                 }
             }
             KeyCaps { visible: setting.item.kind === "info" && !!setting.item.keys || setting.item.kind === "item" && !!setting.item.keys; combo: String(setting.item.value || "") }
-            MeoText {
+            Txt {
                 visible: setting.item.kind === "info" && !setting.item.keys
                 text: String(setting.item.value || "")
-                color: MeoTheme.onSurfaceVariant
+                color: MeoTheme.contentOnSurfaceVariant
                 horizontalAlignment: Text.AlignRight
             }
             Row {
@@ -1370,14 +1490,14 @@ ApplicationWindow {
             spacing: 8
             ColumnLayout {
                 spacing: 2
-                MeoText { text: setting.item.label || ""; Layout.fillWidth: true }
-                MeoText {
+                Txt { text: setting.item.label || ""; Layout.fillWidth: true }
+                Txt {
                     visible: !!setting.item.description
                     text: setting.item.description || ""
                     typeRole: "label"
                     font.weight: Font.Normal
                     wrapMode: Text.Wrap
-                    color: MeoTheme.onSurfaceVariant
+                    color: MeoTheme.contentOnSurfaceVariant
                     Layout.fillWidth: true
                 }
             }
@@ -1420,9 +1540,9 @@ ApplicationWindow {
                         anchors.margins: 8
                         anchors.leftMargin: 12
                         spacing: 0
-                        MeoText { text: modelData.label; typeRole: "label"; color: MeoTheme.onSurfaceVariant }
-                        MeoText { text: modelData.value; typeRole: "title"; typeSize: "medium" }
-                        MeoText { visible: !!modelData.hint; text: modelData.hint || ""; typeRole: "label"; color: MeoTheme.onSurfaceVariant }
+                        Txt { text: modelData.label; typeRole: "label"; color: MeoTheme.contentOnSurfaceVariant }
+                        Txt { text: modelData.value; typeRole: "title"; typeSize: "medium" }
+                        Txt { visible: !!modelData.hint; text: modelData.hint || ""; typeRole: "label"; color: MeoTheme.contentOnSurfaceVariant }
                     }
                 }
             }
@@ -1433,7 +1553,7 @@ ApplicationWindow {
             Layout.margins: setting.pad
             spacing: 6
             readonly property real peak: Math.max(1, ...((setting.item.items || []).map(b => b.value)))
-            MeoText { text: setting.item.label || ""; typeRole: "label"; color: MeoTheme.onSurfaceVariant }
+            Txt { text: setting.item.label || ""; typeRole: "label"; color: MeoTheme.contentOnSurfaceVariant }
             Row {
                 Layout.fillWidth: true
                 height: 72
@@ -1478,7 +1598,7 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     Layout.margins: 10
                     spacing: 4
-                    MeoText {
+                    Txt {
                         text: window.page.title || ""
                         typeRole: "title"
                         typeSize: "small"
@@ -1512,19 +1632,19 @@ ApplicationWindow {
                         width: Math.min(parent.width - 48, 520)
                         spacing: 10
                         MeoAiMark { Layout.alignment: Qt.AlignHCenter; implicitWidth: 48; implicitHeight: 48 }
-                        MeoText {
+                        Txt {
                             Layout.fillWidth: true
                             horizontalAlignment: Text.AlignHCenter
                             text: window.page.empty ? window.page.empty.title : ""
                             typeRole: "title"
                             typeSize: "large"
                         }
-                        MeoText {
+                        Txt {
                             Layout.fillWidth: true
                             horizontalAlignment: Text.AlignHCenter
                             wrapMode: Text.Wrap
                             text: window.page.empty ? window.page.empty.text : ""
-                            color: MeoTheme.onSurfaceVariant
+                            color: MeoTheme.contentOnSurfaceVariant
                         }
                     }
 
@@ -1562,7 +1682,7 @@ ApplicationWindow {
                             spacing: 4
                             RowLayout {
                                 Layout.fillWidth: true
-                                MeoText { text: inspectorCard.info.title || ""; typeRole: "label"; Layout.fillWidth: true }
+                                Txt { text: inspectorCard.info.title || ""; typeRole: "label"; Layout.fillWidth: true }
                                 MeoIconButton { type: "standard"; size: "xs"; icon.name: "close"; onClicked: window.act(inspectorCard.info.hide) }
                             }
                             Repeater {
@@ -1573,11 +1693,17 @@ ApplicationWindow {
                                     property bool open: modelData.open !== false
                                     Layout.fillWidth: true
                                     spacing: 3
-                                    MeoButton {
-                                        text: (sec.open ? "▾ " : "▸ ") + (modelData.title || "")
-                                        type: "text"
-                                        size: "xs"
-                                        onClicked: sec.open = !sec.open
+                                    Item {
+                                        width: parent.width
+                                        height: 28
+                                        RowLayout {
+                                            anchors.fill: parent
+                                            spacing: 4
+                                            MeoIcon { icon: sec.open ? "expand_more" : "chevron_right"; size: 16; color: MeoTheme.contentOnSurfaceVariant }
+                                            Txt { text: modelData.title || ""; typeRole: "label"; font.weight: Font.Medium; Layout.fillWidth: true; elide: Text.ElideRight }
+                                        }
+                                        HoverHandler { cursorShape: Qt.PointingHandCursor }
+                                        TapHandler { onTapped: sec.open = !sec.open }
                                     }
                                     Row {
                                         visible: sec.open && !!modelData.bar
@@ -1597,11 +1723,11 @@ ApplicationWindow {
                                             }
                                         }
                                     }
-                                    MeoText {
+                                    Txt {
                                         visible: sec.open && !!(modelData.bar || {}).label
                                         text: (modelData.bar || {}).label || ""
                                         typeRole: "label"
-                                        color: MeoTheme.onSurfaceVariant
+                                        color: MeoTheme.contentOnSurfaceVariant
                                     }
                                     Repeater {
                                         model: sec.open ? (modelData.rows || []).filter(r => r.label) : []
@@ -1613,13 +1739,13 @@ ApplicationWindow {
                                                 width: 6; height: 6; radius: 3
                                                 color: modelData.status === "error" ? MeoTheme.error : modelData.status === "done" ? MeoTheme.primary : MeoTheme.outline
                                             }
-                                            MeoText { text: modelData.label; typeRole: "label"; elide: Text.ElideRight; Layout.fillWidth: true }
-                                            MeoText { visible: modelData.value !== undefined && modelData.value !== null; text: String(modelData.value); typeRole: "label"; color: MeoTheme.onSurfaceVariant }
+                                            Txt { text: modelData.label; typeRole: "label"; elide: Text.ElideRight; Layout.fillWidth: true }
+                                            Txt { visible: modelData.value !== undefined && modelData.value !== null; text: String(modelData.value); typeRole: "label"; color: MeoTheme.contentOnSurfaceVariant }
                                         }
                                     }
                                     Repeater {
                                         model: sec.open ? (modelData.links || []) : []
-                                        MeoText {
+                                        Txt {
                                             required property var modelData
                                             width: sec.width
                                             text: modelData.title || modelData.url || ""
@@ -1659,7 +1785,7 @@ ApplicationWindow {
                                 id: dot
                                 required property int index
                                 width: 7; height: 7; radius: 4
-                                color: MeoTheme.onSurfaceVariant
+                                color: MeoTheme.contentOnSurfaceVariant
                                 opacity: 0.35
                                 SequentialAnimation on opacity {
                                     running: !MeoTheme.reduceMotion
@@ -1672,19 +1798,115 @@ ApplicationWindow {
                             }
                         }
                     }
+                    // Markdown: prose in one text block, fenced code as a code card of its own
+                    // (language, copy, horizontal scroll). Parsed again on every token, so an
+                    // unfinished fence while streaming is already drawn as code.
                     Component {
                         id: markdownBlock
+                        Column {
+                            id: md
+                            spacing: 10
+                            readonly property string raw: (block.text || "").replace(/:icon\[[^\]]*\]:/g, "")
+                            readonly property var parts: window.splitFences(raw)
+                            readonly property bool live: streaming
+                            // Waiting for the first token: pulsing dots instead of an empty gap.
+                            TypingDots { visible: streaming && !block.text; height: visible ? 24 : 0 }
+                            Repeater {
+                                model: md.parts
+                                delegate: Loader {
+                                    required property var modelData
+                                    required property int index
+                                    readonly property var part: modelData
+                                    readonly property bool isLast: index === md.parts.length - 1
+                                    readonly property bool live: md.live
+                                    width: md.width
+                                    sourceComponent: modelData.kind === "code" ? codeCard : prose
+                                }
+                            }
+                        }
+                    }
+                    Component {
+                        id: prose
                         TextEdit {
                             readOnly: true
                             selectByMouse: true
                             wrapMode: Text.Wrap
                             textFormat: TextEdit.MarkdownText
-                            text: (block.text || "").replace(/:icon\[[^\]]*\]:/g, "") + (streaming && block.text ? " ▍" : "")
-                            color: MeoTheme.onSurface
+                            text: part.text + (live && isLast ? " ▍" : "")
+                            color: MeoTheme.contentOnSurface
+                            selectionColor: MeoTheme.primaryContainer
+                            selectedTextColor: MeoTheme.contentOnPrimaryContainer
                             font.pixelSize: 15 * MeoTheme.textScale
-                            // Waiting for the first token: pulsing dots instead of an empty gap.
-                            height: streaming && !block.text ? 24 : implicitHeight
-                            TypingDots { visible: streaming && !block.text; y: 8 }
+                        }
+                    }
+                    Component {
+                        id: codeCard
+                        Rectangle {
+                            radius: 12
+                            clip: true
+                            color: MeoTheme.surfaceContainerLow
+                            border.width: 1
+                            border.color: MeoTheme.outlineVariant
+                            implicitHeight: codeColumn.implicitHeight
+                            Column {
+                                id: codeColumn
+                                width: parent.width
+                                Rectangle {
+                                    width: parent.width
+                                    height: 34
+                                    color: MeoTheme.surfaceContainer
+                                    Txt {
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        x: 14
+                                        text: part.lang || qsTr("code")
+                                        typeRole: "label"
+                                        font.weight: Font.Medium
+                                        color: MeoTheme.contentOnSurfaceVariant
+                                    }
+                                    MeoButton {
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        anchors.right: parent.right
+                                        anchors.rightMargin: 6
+                                        type: "text"
+                                        size: "xs"
+                                        icon.name: copied ? "check" : "content_copy"
+                                        text: copied ? ((window.v.strings || {}).copied || qsTr("Copied")) : ((window.v.strings || {}).copy || qsTr("Copy"))
+                                        property bool copied: false
+                                        onClicked: {
+                                            clipboardHelper.text = part.text
+                                            clipboardHelper.selectAll()
+                                            clipboardHelper.copy()
+                                            copied = true
+                                            copyReset.restart()
+                                        }
+                                        Timer { id: copyReset; interval: 1600; onTriggered: parent.copied = false }
+                                    }
+                                }
+                                Flickable {
+                                    id: codeFlick
+                                    width: parent.width
+                                    height: codeText.implicitHeight + 24
+                                    contentWidth: Math.max(width, codeText.implicitWidth + 28)
+                                    contentHeight: height
+                                    clip: true
+                                    boundsBehavior: Flickable.StopAtBounds
+                                    ScrollBar.horizontal: ScrollBar { policy: codeFlick.contentWidth > codeFlick.width ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff }
+                                    TextEdit {
+                                        id: codeText
+                                        x: 14
+                                        y: 12
+                                        readOnly: true
+                                        selectByMouse: true
+                                        wrapMode: TextEdit.NoWrap
+                                        text: part.text
+                                        color: MeoTheme.contentOnSurface
+                                        selectionColor: MeoTheme.primaryContainer
+                                        selectedTextColor: MeoTheme.contentOnPrimaryContainer
+                                        font.family: "monospace"
+                                        font.pixelSize: 13 * MeoTheme.textScale
+                                    }
+                                }
+                            }
                         }
                     }
                     Component {
@@ -1706,7 +1928,7 @@ ApplicationWindow {
                                     text: block.title || ""
                                     font.bold: true
                                     font.pixelSize: 14 * MeoTheme.textScale
-                                    color: MeoTheme.onSurface
+                                    color: MeoTheme.contentOnSurface
                                 }
                                 TextEdit {
                                     width: parent.width
@@ -1715,7 +1937,7 @@ ApplicationWindow {
                                     wrapMode: Text.Wrap
                                     textFormat: TextEdit.MarkdownText
                                     text: (block.text || "").replace(/:icon\[[^\]]*\]:/g, "")
-                                    color: MeoTheme.onSurface
+                                    color: MeoTheme.contentOnSurface
                                     font.pixelSize: 14 * MeoTheme.textScale
                                 }
                             }
@@ -1739,7 +1961,7 @@ ApplicationWindow {
                                 horizontalAlignment: Text.AlignHCenter
                                 textFormat: TextEdit.PlainText
                                 text: block.text || block.tex || ""
-                                color: MeoTheme.onSurface
+                                color: MeoTheme.contentOnSurface
                                 font.pixelSize: 19 * MeoTheme.textScale
                             }
                         }
@@ -1759,7 +1981,7 @@ ApplicationWindow {
                                 y: 10
                                 width: parent.width - 24
                                 spacing: 6
-                                Text { visible: !!block.title; text: block.title || ""; font.bold: true; font.pixelSize: 14 * MeoTheme.textScale; color: MeoTheme.onSurface }
+                                Text { visible: !!block.title; text: block.title || ""; font.bold: true; font.pixelSize: 14 * MeoTheme.textScale; color: MeoTheme.contentOnSurface }
                                 Canvas {
                                     id: plotCanvas
                                     width: parent.width
@@ -1778,7 +2000,7 @@ ApplicationWindow {
                                         ctx.font = "11px sans-serif"
                                         ctx.lineWidth = 1
                                         ctx.strokeStyle = MeoTheme.outlineVariant
-                                        ctx.fillStyle = MeoTheme.onSurfaceVariant
+                                        ctx.fillStyle = MeoTheme.contentOnSurfaceVariant
                                         ctx.textAlign = "center"
                                         for (const t of (block.xticks || [])) {
                                             ctx.beginPath(); ctx.moveTo(sx(t), top); ctx.lineTo(sx(t), top + h); ctx.stroke()
@@ -1789,7 +2011,7 @@ ApplicationWindow {
                                             ctx.beginPath(); ctx.moveTo(left, sy(t)); ctx.lineTo(left + w, sy(t)); ctx.stroke()
                                             ctx.fillText(String(t), left - 5, sy(t) + 4)
                                         }
-                                        ctx.strokeStyle = MeoTheme.onSurfaceVariant
+                                        ctx.strokeStyle = MeoTheme.contentOnSurfaceVariant
                                         ctx.lineWidth = 1.4
                                         if (x[0] <= 0 && x[1] >= 0) { ctx.beginPath(); ctx.moveTo(sx(0), top); ctx.lineTo(sx(0), top + h); ctx.stroke() }
                                         if (y[0] <= 0 && y[1] >= 0) { ctx.beginPath(); ctx.moveTo(left, sy(0)); ctx.lineTo(left + w, sy(0)); ctx.stroke() }
@@ -1829,7 +2051,7 @@ ApplicationWindow {
                                             required property int index
                                             spacing: 5
                                             Rectangle { y: 3; width: 10; height: 10; radius: 3; color: plotCard.palette[index % plotCard.palette.length] }
-                                            Text { text: modelData.label || ""; font.pixelSize: 12 * MeoTheme.textScale; color: MeoTheme.onSurfaceVariant }
+                                            Text { text: modelData.label || ""; font.pixelSize: 12 * MeoTheme.textScale; color: MeoTheme.contentOnSurfaceVariant }
                                         }
                                     }
                                 }
@@ -1860,7 +2082,7 @@ ApplicationWindow {
                                 y: 10
                                 width: parent.width - 24
                                 spacing: 6
-                                Text { visible: !!block.title; text: block.title || ""; font.bold: true; font.pixelSize: 14 * MeoTheme.textScale; color: MeoTheme.onSurface }
+                                Text { visible: !!block.title; text: block.title || ""; font.bold: true; font.pixelSize: 14 * MeoTheme.textScale; color: MeoTheme.contentOnSurface }
                                 Canvas {
                                     id: chartCanvas
                                     width: parent.width
@@ -1896,7 +2118,7 @@ ApplicationWindow {
                                         ctx.font = "11px sans-serif"
                                         ctx.lineWidth = 1
                                         ctx.strokeStyle = MeoTheme.outlineVariant
-                                        ctx.fillStyle = MeoTheme.onSurfaceVariant
+                                        ctx.fillStyle = MeoTheme.contentOnSurfaceVariant
                                         ctx.textAlign = "right"
                                         for (const t of (block.ticks || [])) {
                                             ctx.beginPath(); ctx.moveTo(left, sy(t)); ctx.lineTo(left + w, sy(t)); ctx.stroke()
@@ -1942,7 +2164,7 @@ ApplicationWindow {
                                             required property int index
                                             spacing: 5
                                             Rectangle { y: 3; width: 10; height: 10; radius: 3; color: chartCard.palette[index % chartCard.palette.length] }
-                                            Text { text: typeof modelData === "string" ? modelData : (modelData.name || ""); font.pixelSize: 12 * MeoTheme.textScale; color: MeoTheme.onSurfaceVariant }
+                                            Text { text: typeof modelData === "string" ? modelData : (modelData.name || ""); font.pixelSize: 12 * MeoTheme.textScale; color: MeoTheme.contentOnSurfaceVariant }
                                         }
                                     }
                                 }
@@ -1966,7 +2188,7 @@ ApplicationWindow {
                                 y: 10
                                 width: parent.width - 24
                                 spacing: 6
-                                Text { visible: !!block.title; text: block.title || ""; font.bold: true; font.pixelSize: 14 * MeoTheme.textScale; color: MeoTheme.onSurface }
+                                Text { visible: !!block.title; text: block.title || ""; font.bold: true; font.pixelSize: 14 * MeoTheme.textScale; color: MeoTheme.contentOnSurface }
                                 Row {
                                     spacing: 4
                                     visible: (block.variants || []).length > 1
@@ -1987,7 +2209,7 @@ ApplicationWindow {
                                     width: parent.width
                                     wrapMode: Text.Wrap
                                     font.pixelSize: 13 * MeoTheme.textScale
-                                    color: MeoTheme.onSurfaceVariant
+                                    color: MeoTheme.contentOnSurfaceVariant
                                     text: qsTr("Subject: ") + (draftCard.variant.subject || "")
                                 }
                                 Rectangle { width: parent.width; height: 1; color: MeoTheme.outlineVariant }
@@ -1997,7 +2219,7 @@ ApplicationWindow {
                                     selectByMouse: true
                                     wrapMode: Text.Wrap
                                     text: draftCard.variant.body || ""
-                                    color: MeoTheme.onSurface
+                                    color: MeoTheme.contentOnSurface
                                     font.pixelSize: 14 * MeoTheme.textScale
                                 }
                                 MeoButton {
@@ -2094,11 +2316,18 @@ ApplicationWindow {
                                 property bool toggled: false
                                 property bool manual: false
                                 readonly property bool open: toggled ? manual : !!modelData.stepsOpen
-                                MeoButton {
-                                    text: (stepsBox.open ? "▾ " : "▸ ") + (modelData.stepsLabel || "")
-                                    type: "text"
-                                    size: "xs"
-                                    onClicked: { stepsBox.manual = !stepsBox.open; stepsBox.toggled = true }
+                                Item {
+                                    width: stepsHeader.implicitWidth
+                                    height: 28
+                                    Row {
+                                        id: stepsHeader
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        spacing: 4
+                                        MeoIcon { anchors.verticalCenter: parent.verticalCenter; icon: stepsBox.open ? "expand_more" : "chevron_right"; size: 16; color: MeoTheme.contentOnSurfaceVariant }
+                                        Txt { anchors.verticalCenter: parent.verticalCenter; text: modelData.stepsLabel || ""; typeRole: "label"; font.weight: Font.Medium; color: MeoTheme.contentOnSurfaceVariant }
+                                    }
+                                    HoverHandler { cursorShape: Qt.PointingHandCursor }
+                                    TapHandler { onTapped: { stepsBox.manual = !stepsBox.open; stepsBox.toggled = true } }
                                 }
                                 Repeater {
                                     model: stepsBox.open ? (modelData.steps || []) : []
@@ -2112,7 +2341,7 @@ ApplicationWindow {
                                         Text {
                                             width: parent.width
                                             elide: Text.ElideRight
-                                            color: MeoTheme.onSurfaceVariant
+                                            color: MeoTheme.contentOnSurfaceVariant
                                             font.pixelSize: 13 * MeoTheme.textScale
                                             text: (stepRow.hasMore ? (stepRow.expanded ? "▾ " : "▸ ") : "   ") + (modelData.status === "done" ? "✓ " : modelData.status === "error" ? "✕ " : "… ") + modelData.title
                                             MouseArea {
@@ -2127,7 +2356,7 @@ ApplicationWindow {
                                             x: 32
                                             width: parent.width - 32
                                             wrapMode: Text.Wrap
-                                            color: MeoTheme.onSurfaceVariant
+                                            color: MeoTheme.contentOnSurfaceVariant
                                             font.pixelSize: 12 * MeoTheme.textScale
                                             text: modelData.detail || ""
                                         }
@@ -2347,8 +2576,8 @@ ApplicationWindow {
                                     background: null
                                     placeholderText: composerBox.composer.placeholder || ""
                                     wrapMode: TextEdit.Wrap
-                                    color: MeoTheme.onSurface
-                                    placeholderTextColor: MeoTheme.onSurfaceVariant
+                                    color: MeoTheme.contentOnSurface
+                                    placeholderTextColor: MeoTheme.contentOnSurfaceVariant
                                     font.pixelSize: 15 * MeoTheme.textScale
                                     leftPadding: 10
                                     topPadding: 8

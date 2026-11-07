@@ -1,6 +1,7 @@
 // Offline host for the desktop QML: loads ../qml/Main.qml against a canned `core.view` JSON file,
 // so the UI can be built, rendered and screenshotted without the Rust core, the network or an account.
 //   meo-ai-demo --view views/chat.json [--shot out.png] [--size 1180x780]
+// Dark mode: put {"prefs": {"appearance.theme": "dark"}} in the view file.
 // Actions the UI sends are printed to stdout, one JSON object per line.
 #include <QCommandLineParser>
 #include <QFile>
