@@ -3,9 +3,9 @@
   "product": "Meo AI",
   "applications": {
     "desktop": {
-      "path": ".",
-      "source": "app",
-      "technology": "C++ / Qt QML / MeoUI"
+      "path": "desktop-rs",
+      "source": "qml",
+      "technology": "Rust / Qt QML / MeoUI"
     },
     "web": {
       "path": "web/client",

@@ -24,16 +24,39 @@ Remove), **Import** (a GitHub link to a `SKILL.md` or its folder, or the https a
 MCP server). First-party entries carry an `icon`: a brand mark (`svg` path from simple-icons) or a
 named glyph; entries without one get a letter tile.
 
+## Where it is managed
+
+Everything about apps, skills and MCP servers lives on the **Plugins** page (Discover, Installed,
+Import): install, switch on/off, sign in, sign in again, disconnect, remove, and see what each app may
+do. **Settings > Permissions** holds only what applies to everything: the default approval level and
+how approvals work, with a button that opens Plugins.
+
 ## Connecting an app
 
-Installing an app does not sign you in anywhere by itself. Installed cards show **Connected** or
-**Not connected** and the button that fixes it:
+Installing an app does not sign you in anywhere by itself. Every installed card shows a status dot and
+the button that fixes it. One function (`app_auth`) decides the state, so the badge, the dot and the
+buttons always agree:
+
+| State | Meaning | Primary button |
+| --- | --- | --- |
+| Connected | A sign-in is stored and has not been rejected | none (Reconnect stays available, quiet) |
+| Not connected / Account not linked | Never signed in | Connect / Connect GitHub |
+| Sign-in expired | Stored, but the service rejected it at use (expired, revoked, more access needed) | Reconnect |
+| Needs sign-in (not supported yet) | A server Meo AI cannot sign in to answered that it needs it | none, and it says so |
+
+A failed tool listing or tool call with an authorization error flips the card to *Sign-in expired* and
+raises a notice with the Reconnect button. After you were sent to authorize, coming back to the window
+reads the apps again and says "X is connected." (or use **Check again**). Turning on an app that is not
+connected offers Connect. A new account with no apps is offered the Essentials bundle once.
+
+Each connected card lists what the app may do: *Runs on its own* (list/get/search/read/fetch tools) and
+*Asks first* (everything else), following the composer's Permissions.
 
 | App | Connect button does |
 | --- | --- |
-| Cloudflare, Supabase, Neon, Linear, Notion, Vercel, Figma, Hugging Face, Canva, Dropbox, Zapier | Opens the service's own authorization page (OAuth with PKCE); the grant is saved encrypted in Meo API and refreshed automatically. Installing starts this right away. |
+| Cloudflare, Supabase, Neon, Linear, Notion, Vercel, Figma, Hugging Face, Canva, Dropbox, Zapier | Opens the service's own authorization page (OAuth with PKCE); the grant is saved encrypted in Meo API and refreshed automatically. |
 | Cloudflare, Supabase, Neon | Also: **API token** to paste a token instead. |
-| GitHub, Google Drive | Opens Meo Account (sign-in methods) where you link that account; Meo API uses the linked account's token. |
+| GitHub, Google Drive | Opens Meo Account (sign-in methods) where you link or re-grant that account; Meo API uses the linked account's token. |
 | Docs servers | Nothing to connect. |
 
 ## How the model uses an app

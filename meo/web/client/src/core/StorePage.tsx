@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Icon } from "./icons";
+import { Switch } from "./Switch";
 import type { Action } from "./useCore";
 
 type Act = (action: Action | null | undefined) => void;
@@ -87,10 +88,15 @@ function Card({ card, run }: { card: Spec; run: (a: Spec) => void }) {
     <article className="store-card" data-state={card.state}>
       <AppIcon icon={card.icon} name={card.title} size={36} />
       <div className="store-card-body">
-        <h3>{card.title}</h3>
+        <div className="store-card-title">
+          <h3>{card.title}</h3>
+          {card.switch && <Switch spec={card.switch} act={run} />}
+        </div>
         <p className="store-pub">{card.publisher}</p>
         <p className="store-desc">{card.subtitle}</p>
+        {card.detail && <p className="store-detail">{card.detail}</p>}
         <div className="store-badges">
+          {card.tone && <i className={`core-tone ${card.tone}`} aria-hidden />}
           {(card.badges ?? []).map((b: string) => <span key={b}>{b}</span>)}
           {card.state === "installed" && <span className="ok"><Icon name="check" size={12} /> Installed</span>}
         </div>

@@ -30,7 +30,7 @@ use super::{
     host::Host,
     locale,
     manifest::Manifest,
-    orchestration, remote, richtext,
+    orchestration, project_env, remote, richtext,
     router::{self, Choice, Router},
     storage::Storage,
     usage,
@@ -46,6 +46,10 @@ pub enum Action {
     /// Opens a category of the settings card.
     SelectSettingsSection {
         id: String,
+    },
+    /// Filters the settings page to what matches (empty clears it).
+    SearchSettings {
+        text: String,
     },
     /// Model profiles (Meo API): create from the current routes, generate with a model, edit, use, delete.
     NewProfile,
@@ -118,6 +122,50 @@ pub enum Action {
         value: Value,
     },
     Refresh,
+    /// Reads the installed apps again (after authorizing one elsewhere).
+    RefreshPlugins,
+    /// The host's folder dialog for a project (desktop); it answers with `set_project_folder`.
+    PickProjectFolder {
+        id: String,
+    },
+    /// Links a project to a folder on this device (a path or `file://` URL).
+    SetProjectFolder {
+        id: String,
+        path: String,
+    },
+    ClearProjectFolder {
+        id: String,
+    },
+    BeginLinkRepo {
+        id: String,
+    },
+    /// Links a project to a GitHub repository (`owner/name` or its address).
+    LinkRepo {
+        id: String,
+        text: String,
+    },
+    UnlinkRepo {
+        id: String,
+    },
+    /// Creates `.agent/` (goal, to-do, notes) in the project folder where it is missing.
+    InitProjectAgent {
+        id: String,
+    },
+    BeginAddTodo {
+        id: String,
+    },
+    AddTodo {
+        id: String,
+        text: String,
+    },
+    /// Clones the linked GitHub repository into the project's (empty) folder.
+    CloneProjectRepo {
+        id: String,
+    },
+    /// Starts a Work task in a project: its folder is the Work folder.
+    StartProjectWork {
+        id: String,
+    },
     DismissNotice,
     /// Filters the chat list by title and message text (empty clears it).
     Search {
@@ -501,6 +549,17 @@ struct State {
     plugins: Option<Result<Vec<Value>, String>>,
     /// Tools of the connected apps by plugin id (a failed listing is kept as its message).
     app_tools: HashMap<String, Result<Vec<Value>, String>>,
+    /// Apps whose sign-in failed at use: `true` = no longer accepted (expired, revoked, more access
+    /// needed), `false` = never connected. Cleared when the apps are read again.
+    app_auth_issues: HashMap<String, bool>,
+    /// What the settings search box holds.
+    settings_query: String,
+    /// Per project, on this device: its folder and GitHub repository.
+    project_env: HashMap<String, project_env::ProjectEnv>,
+    /// The `.agent/` state of each project folder, as last read (shown on the project page).
+    project_agent: HashMap<String, project_env::AgentState>,
+    /// Apps the user was sent off to authorize; checked when the window comes back to the front.
+    awaiting_auth: Vec<String>,
     store: StoreUi,
     prefs: Map<String, Value>,
     cloud_settings: Option<Value>,
@@ -525,6 +584,9 @@ pub struct AppCore {
 }
 
 const KEY_SESSION: &str = "session";
+const KEY_PROJECT_ENV: &str = "project-envs";
+/// Set once the Essentials skills were offered to this account on this device.
+const KEY_ESSENTIALS_OFFERED: &str = "essentials-offered";
 const KEY_PREFS: &str = "prefs";
 const KEY_CONVERSATIONS: &str = "conversations";
 /// Ids of the conversations that are Work tasks (a cache of the server's `mode`; older apps kept
@@ -682,6 +744,50 @@ impl AppCore {
             }
             Action::SetSetting { binding, value } => self.set_setting(binding, value).await,
             Action::Refresh => self.load_all().await,
+            Action::PickProjectFolder { .. } => {}
+            Action::SetProjectFolder { id, path } => self.set_project_folder(id, path).await,
+            Action::ClearProjectFolder { id } => self.set_project_env(&id, |e| e.folder = None),
+            Action::BeginLinkRepo { id } => self.prompt(
+                "Link a GitHub repository",
+                "Type owner/name or paste the repository's address. Meo uses the GitHub app for issues, pull requests and files that are not in the folder.",
+                "",
+                false,
+                input_button("Link", "primary", json!({ "type": "link_repo", "id": id })),
+            ),
+            Action::LinkRepo { id, text } => {
+                self.update(|s| s.dialog = None);
+                match project_env::parse_repo(&text) {
+                    Some(repo) => {
+                        self.set_project_env(&id, |e| e.repo = Some(repo.clone()));
+                        self.notice("info", format!("Linked to {repo}."));
+                    }
+                    None => self.notice("error", "That is not a GitHub repository. Use owner/name."),
+                }
+            }
+            Action::UnlinkRepo { id } => self.set_project_env(&id, |e| e.repo = None),
+            Action::InitProjectAgent { id } => self.init_project_agent(&id),
+            Action::BeginAddTodo { id } => self.prompt(
+                "Add a to-do",
+                "It goes under Next in .agent/TODO.md; Meo keeps the list up to date as it works.",
+                "",
+                false,
+                input_button("Add", "primary", json!({ "type": "add_todo", "id": id })),
+            ),
+            Action::AddTodo { id, text } => {
+                self.update(|s| s.dialog = None);
+                self.project_agent_write(&id, |root| project_env::add_todo(root, &text));
+            }
+            Action::CloneProjectRepo { id } => self.clone_project_repo(&id).await,
+            Action::StartProjectWork { id } => self.update(|s| {
+                s.files.clear();
+                s.active = None;
+                s.route = "work".into();
+                s.new_chat_project = Some(id);
+            }),
+            Action::RefreshPlugins => {
+                self.refresh_plugins().await;
+                self.check_pending_auth().await;
+            }
             Action::DismissNotice => self.update(|s| s.notice = None),
             Action::Realtime => self.realtime().await,
             Action::Search { text } => {
@@ -738,15 +844,11 @@ impl AppCore {
                     None => self.notice("info", "You can have up to 5 custom routes."),
                 }
             }
-            Action::SelectSettingsSection { id } => {
-                let connectors = id == "connectors";
-                self.update(|s| s.settings_section = id);
-                if connectors {
-                    // Read the installed apps, then what each enabled one offers, so the list is current.
-                    self.refresh_plugins().await;
-                    let _ = Box::pin(self.app_instructions()).await;
-                }
-            }
+            Action::SelectSettingsSection { id } => self.update(|s| {
+                s.settings_section = id;
+                s.settings_query.clear();
+            }),
+            Action::SearchSettings { text } => self.update(|s| s.settings_query = text),
             Action::NewProfile => self.new_profile().await,
             Action::BeginGenerateProfile => self.prompt(
                 "Generate a profile",
@@ -771,7 +873,12 @@ impl AppCore {
                 self.update(|s| s.router.custom.retain(|c| c.id != id));
                 self.persist_router().await;
             }
-            Action::SetForeground { visible } => self.update(|s| s.foreground = visible),
+            Action::SetForeground { visible } => {
+                self.update(|s| s.foreground = visible);
+                if visible {
+                    Box::pin(self.check_pending_auth()).await;
+                }
+            }
             Action::AttachText { name, text } => self.attach_text(name, text).await,
             Action::AttachImage { name, mime, data } => self.attach_image(name, mime, data),
             Action::RemoveImage { index } => self.update(|s| {
@@ -810,7 +917,28 @@ impl AppCore {
                         "https://account.meoarch.org/account/sign-in-methods".to_owned(),
                     )
                 };
-                self.notice("info", message);
+                self.notice("info", format!("{message} Come back here when you are done."));
+                self.update(|s| {
+                    let ids: Vec<String> = s
+                        .plugins
+                        .as_ref()
+                        .and_then(|r| r.as_ref().ok())
+                        .map(|rows| {
+                            rows.iter()
+                                .filter(|p| {
+                                    account_provider(p["remoteUrl"].as_str().unwrap_or_default())
+                                        == Some(provider.as_str())
+                                })
+                                .filter_map(|p| p["id"].as_str().map(str::to_owned))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    for id in ids {
+                        if !s.awaiting_auth.contains(&id) {
+                            s.awaiting_auth.push(id);
+                        }
+                    }
+                });
                 self.hooks.open_url(&url);
             }
             Action::DisconnectPlugin { id } => Box::pin(self.disconnect_plugin(id)).await,
@@ -878,6 +1006,8 @@ impl AppCore {
         let conversations: Vec<ConversationSummary> =
             self.load_json(KEY_CONVERSATIONS).unwrap_or_default();
         let work_ids: Vec<String> = self.load_json(KEY_WORK).unwrap_or_default();
+        let project_env: HashMap<String, project_env::ProjectEnv> =
+            self.load_json(KEY_PROJECT_ENV).unwrap_or_default();
         let credentials: Vec<Credential> = self.load_json(KEY_CREDENTIALS).unwrap_or_default();
         let catalogue: HashMap<String, Vec<Model>> = self.load_json(KEY_MODELS).unwrap_or_default();
         let selected = prefs
@@ -896,6 +1026,7 @@ impl AppCore {
             s.prefs = prefs;
             s.conversations = conversations;
             s.work_ids = work_ids;
+            s.project_env = project_env;
             s.credentials = credentials;
             s.catalogue = catalogue;
             s.selected = selected;
@@ -1097,8 +1228,33 @@ impl AppCore {
         // The sidebar's Projects tree needs the list on every page.
         self.update(|s| s.projects = Some(projects.map_err(|e| e.to_string())));
         self.bootstrap_router().await;
+        self.offer_essentials();
         let route = self.state.lock().unwrap().route.clone();
         self.load_route(&route).await;
+    }
+
+    /// A new account has no skills at all: offer the Essentials bundle once, with a button, instead
+    /// of leaving the user to find it in the store.
+    fn offer_essentials(&self) {
+        if self
+            .load_json::<bool>(KEY_ESSENTIALS_OFFERED)
+            .unwrap_or(false)
+        {
+            return;
+        }
+        let empty = matches!(
+            self.state.lock().unwrap().plugins.as_ref(),
+            Some(Ok(rows)) if rows.is_empty()
+        );
+        if !empty {
+            return;
+        }
+        self.save_json(KEY_ESSENTIALS_OFFERED, &true);
+        self.notice_with_action(
+            "Add the Meo Essentials skills? They teach Meo to write documents, spreadsheets and PDFs, design web pages and debug carefully.",
+            "Add Essentials",
+            json!({ "type": "install_plugin", "id": "essentials" }),
+        );
     }
 
     // ---- multi-call answers ----------------------------------------------
@@ -1794,7 +1950,13 @@ impl AppCore {
                 let r = self
                     .call(|api, t| async move { api.list_plugins(&t).await })
                     .await;
-                self.update(|s| s.plugins = Some(r.map_err(|e| e.to_string())));
+                self.update(|s| {
+                    s.plugins = Some(r.map_err(|e| e.to_string()));
+                    s.app_tools.clear();
+                    s.app_auth_issues.clear();
+                });
+                // What each enabled app offers, and whether its sign-in still works, shown on its card.
+                let _ = Box::pin(self.app_instructions()).await;
                 if self.state.lock().unwrap().store.registry.is_none() {
                     self.store_search(String::new()).await;
                 }
@@ -2068,21 +2230,197 @@ impl AppCore {
         self.notice("error", "Attach a file with the file picker.");
     }
 
-    /// The composer's folder button: a picked folder (path or `file://` URL) becomes the Work folder.
+    /// The composer's folder button: a picked folder (path or `file://` URL) becomes the Work folder,
+    /// or the project's folder when a project is open.
     #[cfg(not(target_arch = "wasm32"))]
     async fn set_workspace(&self, path: String) {
-        let local = url::Url::parse(&path)
-            .ok()
-            .and_then(|u| u.to_file_path().ok())
-            .unwrap_or_else(|| {
-                std::path::PathBuf::from(path.strip_prefix("file://").unwrap_or(&path))
-            });
-        self.agent_workspace(&local.to_string_lossy()).await;
+        let project = project_of_view(&self.state.lock().unwrap());
+        if let Some(project) = project {
+            return self.set_project_folder(project, path).await;
+        }
+        self.agent_workspace(&folder_from_path(&path)).await;
     }
 
     #[cfg(target_arch = "wasm32")]
     async fn set_workspace(&self, _path: String) {
         self.notice("error", "The web app cannot open a folder on this device.");
+    }
+
+    /// Links a project to a folder on this device; Work in that project then runs there.
+    #[cfg(not(target_arch = "wasm32"))]
+    async fn set_project_folder(&self, id: String, path: String) {
+        match Host::open(&folder_from_path(&path)) {
+            Ok(host) => {
+                let root = host.root().to_owned();
+                self.set_project_env(&id, |e| e.folder = Some(root.clone()));
+                self.notice("info", format!("{root} is now this project's folder."));
+            }
+            Err(e) => self.notice("error", e),
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    async fn set_project_folder(&self, _id: String, _path: String) {
+        self.notice("error", "The web app cannot open a folder on this device.");
+    }
+
+    /// Changes what a project is linked to on this device, keeps it, and reads its `.agent/` again.
+    fn set_project_env(&self, id: &str, change: impl FnOnce(&mut project_env::ProjectEnv)) {
+        self.update(|s| {
+            let entry = s.project_env.entry(id.to_owned()).or_default();
+            change(entry);
+            if entry.is_empty() {
+                s.project_env.remove(id);
+            }
+        });
+        let all = self.state.lock().unwrap().project_env.clone();
+        self.save_json(KEY_PROJECT_ENV, &all);
+        self.refresh_project_agent(id);
+    }
+
+    /// Reads the project folder's `.agent/` (goal, to-do, notes) for the project page and the prompt.
+    fn refresh_project_agent(&self, id: &str) {
+        let folder = self
+            .state
+            .lock()
+            .unwrap()
+            .project_env
+            .get(id)
+            .and_then(|e| e.folder.clone());
+        self.update(|s| match folder {
+            Some(f) => {
+                s.project_agent.insert(
+                    id.to_owned(),
+                    project_env::read_state(std::path::Path::new(&f)),
+                );
+            }
+            None => {
+                s.project_agent.remove(id);
+            }
+        });
+    }
+
+    /// Runs a change of the project's `.agent/` files and shows the result; a failure is told as is.
+    fn project_agent_write<T>(
+        &self,
+        id: &str,
+        change: impl FnOnce(&std::path::Path) -> std::io::Result<T>,
+    ) -> Option<T> {
+        let folder = self
+            .state
+            .lock()
+            .unwrap()
+            .project_env
+            .get(id)
+            .and_then(|e| e.folder.clone());
+        let Some(folder) = folder else {
+            self.notice("error", "Choose a folder for this project first.");
+            return None;
+        };
+        let result = change(std::path::Path::new(&folder));
+        self.refresh_project_agent(id);
+        match result {
+            Ok(value) => Some(value),
+            Err(e) => {
+                self.notice("error", format!("Could not update .agent/: {e}"));
+                None
+            }
+        }
+    }
+
+    /// `git clone` of the linked repository into the project's folder, which must be empty. The user
+    /// asked for it with a button; git uses their own credentials and settings.
+    #[cfg(not(target_arch = "wasm32"))]
+    async fn clone_project_repo(&self, id: &str) {
+        let env = self
+            .state
+            .lock()
+            .unwrap()
+            .project_env
+            .get(id)
+            .cloned()
+            .unwrap_or_default();
+        let (Some(folder), Some(repo)) = (env.folder, env.repo) else {
+            return self.notice("error", "Link a repository and choose a folder first.");
+        };
+        if !folder_is_empty(&folder) {
+            return self.notice(
+                "error",
+                "The folder is not empty, so the repository cannot be cloned into it.",
+            );
+        }
+        let host = match Host::open(&folder) {
+            Ok(h) => h,
+            Err(e) => return self.notice("error", e),
+        };
+        self.notice("info", format!("Cloning {repo}…"));
+        let outcome = host
+            .run(agent::Tool::Run {
+                command: format!("git clone https://github.com/{repo}.git ."),
+                timeout_secs: Some(600),
+            })
+            .await;
+        if outcome.ok {
+            self.refresh_project_agent(id);
+            self.notice("info", format!("Cloned {repo} into the project folder."));
+        } else {
+            let last = outcome
+                .text
+                .lines()
+                .rev()
+                .find(|l| !l.trim().is_empty())
+                .unwrap_or("git failed");
+            self.notice("error", format!("Could not clone {repo}: {last}"));
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    async fn clone_project_repo(&self, _id: &str) {
+        self.notice("error", "Cloning needs the desktop app.");
+    }
+
+    fn init_project_agent(&self, id: &str) {
+        if let Some(created) = self.project_agent_write(id, project_env::init) {
+            self.notice(
+                "info",
+                if created.is_empty() {
+                    ".agent/ is already set up.".to_owned()
+                } else {
+                    format!("Created .agent/ with {}.", created.join(", "))
+                },
+            );
+        }
+    }
+
+    /// What the model is told about the open project: where it lives, its repository, and the goal,
+    /// to-do and notes kept in `.agent/` (read fresh, so edits by hand and by earlier turns show).
+    fn project_context(&self, folder: Option<&str>) -> String {
+        let s = self.state.lock().unwrap();
+        let Some(id) = project_of_view(&s) else {
+            return String::new();
+        };
+        let name = s
+            .projects
+            .as_ref()
+            .and_then(|r| r.as_ref().ok())
+            .and_then(|list| list.iter().find(|p| p["id"] == id.as_str()))
+            .and_then(|p| p["name"].as_str())
+            .unwrap_or("this project")
+            .to_owned();
+        let env = s.project_env.get(&id).cloned().unwrap_or_default();
+        let mut out = format!("Project: {name}.");
+        if let Some(repo) = &env.repo {
+            out.push_str(&format!(
+                "\nGitHub repository: {repo}. For its issues, pull requests and files that are not in the folder, use the GitHub app (it only works while the app is connected); the folder, if open, is a checkout of it."
+            ));
+        }
+        if let Some(root) = folder {
+            out.push('\n');
+            out.push_str(&project_env::prompt_block(&project_env::read_state(
+                std::path::Path::new(root),
+            )));
+        }
+        out
     }
 
     async fn remove_file(&self, id: String) {
@@ -2206,6 +2544,7 @@ impl AppCore {
             s.project_memories.clear();
             s.project_chats.clear();
         });
+        self.refresh_project_agent(&id);
         self.refresh_open_project().await;
     }
 
@@ -2423,7 +2762,15 @@ impl AppCore {
             .await
         {
             Ok(url) if url.starts_with("https://") => {
-                self.notice("info", "Opening the service to authorize Meo AI…");
+                self.notice(
+                    "info",
+                    "Opening the service to authorize Meo AI… Come back here when you are done.",
+                );
+                self.update(|s| {
+                    if !s.awaiting_auth.contains(&id) {
+                        s.awaiting_auth.push(id.clone());
+                    }
+                });
                 self.hooks.open_url(&url);
             }
             Ok(_) => self.notice("error", "The service did not give an authorization page."),
@@ -2711,7 +3058,29 @@ impl AppCore {
             })
             .await
         {
-            Ok(()) => self.refresh_plugins().await,
+            Ok(()) => {
+                self.refresh_plugins().await;
+                if enabled {
+                    let row = {
+                        let s = self.state.lock().unwrap();
+                        s.plugins
+                            .as_ref()
+                            .and_then(|r| r.as_ref().ok())
+                            .and_then(|rows| rows.iter().find(|p| p["id"] == id.as_str()).cloned())
+                            .filter(|p| app_auth(&s, p).state == "needs_connect")
+                    };
+                    if let Some(p) = row {
+                        if let Some((label, action)) = connect_action(&p) {
+                            let text = format!(
+                                "{} is on but not connected yet.",
+                                p["name"].as_str().unwrap_or("The app")
+                            );
+                            self.notice("info", &text);
+                            self.update(|s| s.notice_action = Some((text.clone(), label, action)));
+                        }
+                    }
+                }
+            }
             Err(e) => self.notice("error", e.to_string()),
         }
     }
@@ -2723,7 +3092,72 @@ impl AppCore {
         self.update(|s| {
             s.plugins = Some(r.map_err(|e| e.to_string()));
             s.app_tools.clear();
+            s.app_auth_issues.clear();
         });
+    }
+
+    /// After the user was sent to authorize an app: read the apps again and say so when it worked.
+    /// Nothing is said while it has not (they may still be signing in).
+    async fn check_pending_auth(&self) {
+        let waiting = self.state.lock().unwrap().awaiting_auth.clone();
+        if waiting.is_empty() {
+            return;
+        }
+        self.refresh_plugins().await;
+        let mut done = Vec::new();
+        {
+            let s = self.state.lock().unwrap();
+            if let Some(Ok(rows)) = s.plugins.as_ref() {
+                for id in &waiting {
+                    match rows.iter().find(|p| p["id"] == id.as_str()) {
+                        Some(p) if app_auth(&s, p).state == "connected" => {
+                            done.push((
+                                id.clone(),
+                                p["name"].as_str().unwrap_or("The app").to_owned(),
+                            ));
+                        }
+                        // Removed meanwhile: stop waiting.
+                        None => done.push((id.clone(), String::new())),
+                        _ => {}
+                    }
+                }
+            }
+        }
+        if done.is_empty() {
+            return;
+        }
+        self.update(|s| {
+            s.awaiting_auth
+                .retain(|id| !done.iter().any(|(d, _)| d == id))
+        });
+        if let Some((_, name)) = done.iter().find(|(_, n)| !n.is_empty()) {
+            self.notice("info", format!("{name} is connected."));
+        }
+    }
+
+    /// An app call failed because of its sign-in: remember it (the card changes to Reconnect) and
+    /// offer the button that fixes it, instead of leaving only a message.
+    fn mark_auth_issue(&self, plugin: &Value, expired: bool) {
+        let id = plugin["id"].as_str().unwrap_or_default().to_owned();
+        let name = plugin["name"].as_str().unwrap_or("The app").to_owned();
+        self.update(|s| {
+            s.app_auth_issues.insert(id, expired);
+        });
+        let text = if expired {
+            format!("{name} no longer accepts your sign-in. Reconnect it to keep using it.")
+        } else {
+            format!("{name} is not connected yet.")
+        };
+        match connect_action(plugin) {
+            Some((label, action)) => {
+                self.notice("error", &text);
+                self.update(|s| s.notice_action = Some((text.clone(), label, action)));
+            }
+            None => self.notice(
+                "error",
+                format!("{text} Meo AI cannot sign in to this server yet."),
+            ),
+        }
     }
 
     async fn create_project(&self, text: String) {
@@ -4658,14 +5092,7 @@ impl AppCore {
 
     /// Starts the tool loop of a new user message: a fresh checkpoint, and the folder from `/workspace`.
     fn agent_begin(&self, text: &str) {
-        let wanted = self
-            .state
-            .lock()
-            .unwrap()
-            .prefs
-            .get("work.workspace")
-            .and_then(Value::as_str)
-            .map(str::to_owned);
+        let wanted = effective_workspace(&self.state.lock().unwrap());
         let host = wanted.and_then(|path| {
             let current = self.state.lock().unwrap().agent.host.clone();
             match current {
@@ -4720,6 +5147,11 @@ impl AppCore {
             return;
         };
         self.update(|s| s.agent.round += 1);
+        // The previous round may have updated .agent/: the project page and the next prompt follow.
+        let open = project_of_view(&self.state.lock().unwrap());
+        if let Some(project) = open {
+            self.refresh_project_agent(&project);
+        }
         let call = match first {
             Ok(call) => call,
             Err(problem) => {
@@ -4909,10 +5341,23 @@ impl AppCore {
             } else {
                 format!("\n\n{mcp}")
             };
+            let context = self.project_context(tools_root.as_deref());
+            let context = if context.is_empty() {
+                context
+            } else {
+                format!("\n\n{context}")
+            };
             request["prompt"] = json!(format!(
-                "{}{mcp}\n\n{current}",
+                "{}{mcp}{context}\n\n{current}",
                 agent::tool_instructions_with_apps(tools_root.as_deref(), subagents, web, &apps)
             ));
+        } else {
+            // No tools, but the project's repository still tells the model where its work lives.
+            let context = self.project_context(None);
+            if !context.is_empty() {
+                let current = request["prompt"].as_str().unwrap_or_default().to_owned();
+                request["prompt"] = json!(format!("{context}\n\n{current}"));
+            }
         }
     }
 
@@ -4959,6 +5404,16 @@ impl AppCore {
         .await;
         self.update(|s| {
             for (id, r) in fetched {
+                match &r {
+                    Err(e) => {
+                        if let Some(expired) = auth_problem(e) {
+                            s.app_auth_issues.insert(id.clone(), expired);
+                        }
+                    }
+                    Ok(_) => {
+                        s.app_auth_issues.remove(&id);
+                    }
+                }
                 s.app_tools.insert(id, r);
             }
         });
@@ -5054,12 +5509,21 @@ impl AppCore {
                     text
                 };
                 if r["isError"] == true {
+                    if let Some(expired) = auth_problem(&text) {
+                        self.mark_auth_issue(&plugin, expired);
+                    }
                     agent::Outcome::fail(text)
                 } else {
                     agent::Outcome::done(text)
                 }
             }
-            Err(e) => agent::Outcome::fail(app_error_hint(&e.to_string())),
+            Err(e) => {
+                let message = e.to_string();
+                if let Some(expired) = auth_problem(&message) {
+                    self.mark_auth_issue(&plugin, expired);
+                }
+                agent::Outcome::fail(app_error_hint(&message))
+            }
         }
     }
 
@@ -5107,6 +5571,11 @@ impl AppCore {
             if outcome.ok { "done" } else { "error" },
             vec![],
         );
+        // The tool may have updated .agent/ (goal, to-do): the project page and details card follow.
+        let open = project_of_view(&self.state.lock().unwrap());
+        if let Some(project) = open {
+            self.refresh_project_agent(&project);
+        }
         Box::pin(self.agent_send(id, agent::observation(&call, &outcome.text))).await;
     }
 
@@ -5299,7 +5768,7 @@ impl AppCore {
     fn notify_answer(&self, conversation_id: &str, reply: &str) {
         let (title, locale) = {
             let s = self.state.lock().unwrap();
-            if s.foreground || reply.is_empty() {
+            if s.foreground || reply.is_empty() || !pref_bool(&s, "notifications.answers", true) {
                 return;
             }
             let language = s
@@ -5402,6 +5871,24 @@ impl AppCore {
     async fn set_setting(&self, binding: String, value: Value) {
         if binding.starts_with("project:") {
             return self.edit_project_field(&binding, value).await;
+        }
+        if let Some(rest) = binding.strip_prefix("agent:") {
+            // agent:<project id>:goal, agent:<project id>:todo:<line of TODO.md>
+            let mut parts = rest.splitn(3, ':');
+            let (Some(id), Some(what)) = (parts.next(), parts.next()) else {
+                return;
+            };
+            match (what, parts.next().and_then(|l| l.parse::<usize>().ok())) {
+                ("goal", _) => {
+                    let text = value.as_str().unwrap_or_default().to_owned();
+                    self.project_agent_write(id, |root| project_env::set_goal(root, &text));
+                }
+                ("todo", Some(line)) => {
+                    self.project_agent_write(id, |root| project_env::toggle_todo(root, line));
+                }
+                _ => {}
+            }
+            return;
         }
         if let Some(rest) = binding.strip_prefix("pr:") {
             // pr:<profile id>:<role> — one role of a profile; an empty value clears it.
@@ -5594,6 +6081,7 @@ impl AppCore {
             "strings": {
                 "copy": "Copy", "copied": "Copied", "dismiss": "Dismiss", "more": "More",
                 "send": "Send", "stop": "Stop", "offline": "Offline — showing saved data",
+                "jump": "Jump to the latest message", "thinking": "Thinking",
             },
             "auth": {
                 "state": s.auth,
@@ -5642,8 +6130,14 @@ impl AppCore {
                             "personalization.custom_instructions" => cloud["personalInstructions"].clone(),
                             "memory.enabled" => cloud["memoryEnabled"].clone(),
                             b => s.prefs.get(b).cloned().unwrap_or(match item.kind.as_str() {
-                                "toggle" => json!(b == "general.enter_to_send"),
-                                "select" => json!(item.options.first()),
+                                "toggle" => json!(matches!(b, "general.enter_to_send" | "notifications.answers")),
+                                "select" => {
+                                    if b == "appearance.text_size" {
+                                        json!("default")
+                                    } else {
+                                        json!(item.options.first())
+                                    }
+                                },
                                 _ => json!(""),
                             }),
                         };
@@ -5652,8 +6146,9 @@ impl AppCore {
                             "label": item.label,
                             "kind": item.kind,
                             "binding": item.binding,
+                            "description": item.description,
                             "value": value,
-                            "options": item.options.iter().map(|o| json!({ "value": o, "label": o })).collect::<Vec<_>>(),
+                            "options": item.options.iter().map(|o| json!({ "value": o, "label": option_label(&item.binding, o) })).collect::<Vec<_>>(),
                         })
                     })
                     .collect();
@@ -5699,7 +6194,9 @@ impl AppCore {
                         }));
                     }
                     "usage" => items.extend(usage_items(s)),
-                    "connectors" => items.extend(connector_items(s)),
+                    "shortcuts" => items.extend(shortcut_items(s)),
+                    "about" => items.extend(about_items()),
+                    "permissions" => items.extend(permission_items(s)),
                     "devices" => items.extend(self.device_items(s)),
                     "account" => {
                         items.push(json!({
@@ -5780,7 +6277,13 @@ impl AppCore {
                 .map(|section| section.group.clone())
                 .unwrap_or_else(|| "Account".to_owned())
         };
-        let selected = if sections
+        let query = s.settings_query.trim().to_lowercase();
+        let searching = !query.is_empty();
+        let results =
+            searching.then(|| settings_results(&sections, &self.manifest.settings, &query));
+        let selected = if searching {
+            "results".to_owned()
+        } else if sections
             .iter()
             .any(|x| x["id"] == s.settings_section.as_str())
         {
@@ -5797,7 +6300,7 @@ impl AppCore {
             let id = section["id"].as_str().unwrap_or_default();
             let group = group_of(id);
             let entry = json!({
-                "id": id, "label": section["label"], "selected": id == selected,
+                "id": id, "label": section["label"], "selected": !searching && id == selected,
                 "action": { "type": "select_settings_section", "id": id },
             });
             match nav.iter_mut().find(|g| g["label"] == group) {
@@ -5805,8 +6308,16 @@ impl AppCore {
                 None => nav.push(json!({ "label": group, "items": [entry] })),
             }
         }
+        let sections = match results {
+            Some(items) => {
+                vec![json!({ "id": "results", "label": "Search results", "items": items })]
+            }
+            None => sections,
+        };
         json!({
-            "kind": "settings", "title": "Settings", "sections": sections, "nav": nav, "selected": selected,
+            "kind": "settings", "standalone": true, "title": "Settings", "sections": sections, "nav": nav, "selected": selected,
+            "search": { "placeholder": "Search settings", "value": s.settings_query,
+                        "action": { "type": "search_settings" }, "field": "text" },
             "close": { "type": "navigate", "route": "chat" },
         })
     }
@@ -6434,6 +6945,38 @@ fn inspector(s: &State, messages: &[Value], active: Option<&String>) -> Value {
                 .filter(|m| m.role == "assistant")
                 .find_map(|m| richtext::tasks(&m.text))
         });
+    // The project's own to-do (kept in .agent/TODO.md) is the list to show while it has items.
+    let agent_state = project_of_view(s).and_then(|id| s.project_agent.get(&id));
+    let kept = agent_state.filter(|a| a.exists && !a.todos.is_empty());
+    if let Some(state) = kept {
+        if !state.goal.is_empty() {
+            let goal: String = state
+                .goal
+                .lines()
+                .next()
+                .unwrap_or_default()
+                .chars()
+                .take(140)
+                .collect();
+            sections.push(json!({ "id": "agent_goal", "title": "Goal", "open": true,
+                                   "rows": [{ "icon": "flag", "label": goal, "status": "", "value": null }] }));
+        }
+        let done = state.todos.iter().filter(|t| t.done()).count();
+        let rows: Vec<Value> = state
+            .todos
+            .iter()
+            .map(|t| {
+                let (icon, status) = match t.mark {
+                    'x' => ("check_circle", "done"),
+                    '~' => ("progress_activity", "running"),
+                    _ => ("radio_button_unchecked", ""),
+                };
+                json!({ "icon": icon, "label": t.text, "status": status, "value": null })
+            })
+            .collect();
+        sections.push(json!({ "id": "agent_todo", "title": format!("To-do · {done}/{}", state.todos.len()), "open": true, "rows": rows }));
+    }
+    let task_list = if kept.is_some() { None } else { task_list };
     if let Some(list) = task_list {
         let done = list.iter().filter(|t| t["state"] == "done").count();
         let rows: Vec<Value> = list
@@ -7029,6 +7572,11 @@ fn sign_in_page(s: &State) -> Value {
             "Sign in with your Meo Account to use Meo AI on every device."
         },
         "busy": busy,
+        "features": [
+            { "icon": "chat", "title": "Chat", "text": "Ask anything and get answers with sources." },
+            { "icon": "work", "title": "Work", "text": "Hand a task to Meo and follow it from any device." },
+            { "icon": "skills", "title": "Skills and apps", "text": "Add an app or skill once and use it everywhere." },
+        ],
         "actions": [button(if busy { "Open sign-in page again" } else { "Sign in with Meo Account" }, "primary", json!({ "type": "sign_in" }))],
     })
 }
@@ -7168,8 +7716,8 @@ fn conversation_page(s: &State) -> Value {
             // Work on a device that can run tasks: the folder Work reads, edits and runs commands in.
             // `pick_workspace` is answered by the host's folder dialog with `set_workspace`.
             "workspace": (s.route == "work" && remote::can_host()).then(|| {
-                let root = s.agent.host.as_ref().map(|h| h.root().to_owned())
-                    .or_else(|| s.prefs.get("work.workspace").and_then(Value::as_str).map(str::to_owned));
+                let root = effective_workspace(s)
+                    .or_else(|| s.agent.host.as_ref().map(|h| h.root().to_owned()));
                 let name = root.as_deref().map(|r| {
                     std::path::Path::new(r).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| r.to_owned())
                 });
@@ -7324,7 +7872,57 @@ fn item(id: String, label: &str, value: &str, buttons: Vec<Value>) -> Value {
     json!({ "id": id, "kind": "item", "label": label, "value": value, "buttons": buttons })
 }
 
+/// Like [`item`], for rows whose texts are ours (not the user's content), so they are translated.
+fn own_item(id: String, label: &str, value: &str, buttons: Vec<Value>) -> Value {
+    let mut row = item(id, label, value, buttons);
+    row["translate"] = json!(true);
+    row
+}
+
 /// The detail page of one project, built only from generic settings controls.
+/// The project the open conversation belongs to, or the one a new chat or task will be filed under.
+fn project_of_view(s: &State) -> Option<String> {
+    match &s.active {
+        Some(id) => s
+            .conversations
+            .iter()
+            .find(|c| &c.id == id)
+            .and_then(|c| c.project_id.clone()),
+        None => s.new_chat_project.clone(),
+    }
+}
+
+/// The folder Work runs in: the open project's folder when it has one on this device, else the folder
+/// chosen for Work in general.
+fn effective_workspace(s: &State) -> Option<String> {
+    if let Some(folder) = project_of_view(s)
+        .and_then(|id| s.project_env.get(&id).and_then(|e| e.folder.clone()))
+        .filter(|f| std::path::Path::new(f).is_dir())
+    {
+        return Some(folder);
+    }
+    s.prefs
+        .get("work.workspace")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+}
+
+/// The folder exists and holds nothing at all.
+fn folder_is_empty(folder: &str) -> bool {
+    std::fs::read_dir(folder).is_ok_and(|mut entries| entries.next().is_none())
+}
+
+/// A folder from a path or a `file://` URL (what the system folder dialog returns).
+#[cfg(not(target_arch = "wasm32"))]
+fn folder_from_path(path: &str) -> String {
+    url::Url::parse(path)
+        .ok()
+        .and_then(|u| u.to_file_path().ok())
+        .unwrap_or_else(|| std::path::PathBuf::from(path.strip_prefix("file://").unwrap_or(path)))
+        .to_string_lossy()
+        .into_owned()
+}
+
 fn project_page(s: &State, id: &str) -> Value {
     let project = s
         .projects
@@ -7340,6 +7938,9 @@ fn project_page(s: &State, id: &str) -> Value {
             "binding": format!("project:{id}:{name}"), "value": field(key), "placeholder": placeholder,
         })
     };
+    let env = s.project_env.get(id).cloned().unwrap_or_default();
+    // Only the desktop app has a folder dialog (Android can run tasks but cannot pick a folder).
+    let can_host = remote::can_host() && !cfg!(target_os = "android");
     let chats: Vec<Value> = s
         .project_chats
         .iter()
@@ -7386,22 +7987,235 @@ fn project_page(s: &State, id: &str) -> Value {
         "action": { "type": "begin_add_project_memory", "id": id },
     })];
     memory_items.extend(memories);
+
+    // ---- Environment: where the work happens (a folder here, a repository online).
+    let mut environment: Vec<Value> =
+        vec![json!({ "id": "env_h_folder", "kind": "heading", "label": "Folder" })];
+    let folder_buttons = match (&env.folder, can_host) {
+        (Some(_), true) => vec![
+            button(
+                "Work here",
+                "primary",
+                json!({ "type": "start_project_work", "id": id }),
+            ),
+            button(
+                "Change",
+                "secondary",
+                json!({ "type": "pick_project_folder", "id": id }),
+            ),
+            button(
+                "Remove",
+                "secondary",
+                json!({ "type": "clear_project_folder", "id": id }),
+            ),
+        ],
+        (None, true) => vec![button(
+            "Choose folder",
+            "primary",
+            json!({ "type": "pick_project_folder", "id": id }),
+        )],
+        _ => vec![],
+    };
+    environment.push(own_item(
+        "env_folder".into(),
+        "Folder on this device",
+        env.folder.as_deref().unwrap_or(if can_host {
+            "Not set. Work in this project has no files to read or change."
+        } else {
+            "Folders are only available in the desktop app."
+        }),
+        folder_buttons,
+    ));
+    environment.push(json!({ "id": "env_folder_note", "kind": "hint",
+        "text": "A project's folder is remembered on this device only. Starting Work in the project opens this folder, so Meo can read it, change it and run commands there, within your Permissions." }));
+    environment.push(json!({ "id": "env_h_repo", "kind": "heading", "label": "GitHub" }));
+    let can_clone =
+        can_host && env.repo.is_some() && env.folder.as_deref().is_some_and(folder_is_empty);
+    let repo_buttons = match &env.repo {
+        Some(_) => {
+            let mut b = Vec::new();
+            if can_clone {
+                b.push(button(
+                    "Clone into folder",
+                    "primary",
+                    json!({ "type": "clone_project_repo", "id": id }),
+                ));
+            }
+            b.push(button(
+                "Change",
+                "secondary",
+                json!({ "type": "begin_link_repo", "id": id }),
+            ));
+            b.push(button(
+                "Unlink",
+                "secondary",
+                json!({ "type": "unlink_repo", "id": id }),
+            ));
+            b
+        }
+        None => vec![button(
+            "Link repository",
+            "primary",
+            json!({ "type": "begin_link_repo", "id": id }),
+        )],
+    };
+    environment.push(own_item(
+        "env_repo".into(),
+        "Repository",
+        env.repo.as_deref().unwrap_or("Not linked"),
+        repo_buttons,
+    ));
+    // The GitHub app is what lets Meo reach the repository online; say where it stands.
+    let github = s
+        .plugins
+        .as_ref()
+        .and_then(|r| r.as_ref().ok())
+        .and_then(|rows| {
+            rows.iter()
+                .find(|p| p["remoteUrl"] == "https://api.githubcopilot.com/mcp/")
+        });
+    environment.push(match github {
+        None => own_item(
+            "env_github".into(),
+            "GitHub app",
+            "Not installed. Install it so Meo can read issues, pull requests and files online.",
+            vec![button(
+                "Install",
+                "primary",
+                json!({ "type": "install_plugin", "id": "github" }),
+            )],
+        ),
+        Some(p) => {
+            let auth = app_auth(s, p);
+            let mut buttons = Vec::new();
+            if p["enabled"] != true {
+                buttons.push(button(
+                    "Turn on",
+                    "primary",
+                    json!({ "type": "toggle_plugin", "id": p["id"], "enabled": true }),
+                ));
+            }
+            if let Some((label, action)) = connect_action(p) {
+                let fix = matches!(auth.state, "needs_connect" | "needs_reauth");
+                buttons.push(button(
+                    &label,
+                    if fix { "primary" } else { "secondary" },
+                    action,
+                ));
+            }
+            let mut row = own_item(
+                "env_github".into(),
+                "GitHub app",
+                &if p["enabled"] != true {
+                    "Off".to_owned()
+                } else if auth.label.is_empty() {
+                    "Ready".to_owned()
+                } else {
+                    auth.label.to_owned()
+                },
+                buttons,
+            );
+            row["tone"] = json!(auth_tone(&auth, p["enabled"] == true));
+            row
+        }
+    });
+    environment.push(json!({ "id": "env_repo_note", "kind": "hint",
+        "text": "Online, Meo works on the repository through the GitHub app. With a folder as well, the folder is treated as a checkout of it." }));
+
+    // ---- Goal and to-do: persistent, kept in <folder>/.agent/ so they travel with the code.
+    let mut goal: Vec<Value> = Vec::new();
+    match (&env.folder, s.project_agent.get(id)) {
+        (None, _) => goal.push(json!({ "id": "goal_none", "kind": "hint",
+            "text": "Choose a folder under Environment to keep a goal, a to-do list and notes with the project. They are stored as Markdown in the folder's .agent/ directory, next to AGENTS.md, so they survive restarts and can be committed." })),
+        (Some(_), Some(state)) if state.exists => {
+            goal.push(json!({
+                "id": "goal_text", "label": "Goal", "kind": "text", "single_line": false,
+                "binding": format!("agent:{id}:goal"), "value": state.goal,
+                "description": "What the project is for and when it is done. Meo reads this at the start of every task and updates it when the goal changes.",
+                "placeholder": "Describe the goal",
+            }));
+            goal.push(json!({ "id": "goal_h_todo", "kind": "heading", "label": "To-do" }));
+            if state.todos.is_empty() {
+                goal.push(json!({ "id": "todo_empty", "kind": "hint", "text": "Nothing on the list yet. Meo adds the plan here when it starts a larger task." }));
+            }
+            for todo in &state.todos {
+                let mut row = json!({
+                    "id": format!("todo_{}", todo.line), "label": todo.text, "kind": "toggle",
+                    "binding": format!("agent:{id}:todo:{}", todo.line), "value": todo.done(),
+                });
+                if todo.mark == '~' {
+                    row["description"] = json!("In progress");
+                }
+                goal.push(row);
+            }
+            goal.push(json!({ "id": "todo_add", "kind": "button", "label": "Add a to-do", "style": "secondary",
+                "action": { "type": "begin_add_todo", "id": id } }));
+            goal.push(json!({ "id": "goal_note", "kind": "hint",
+                "text": "Meo keeps .agent/GOAL.md, TODO.md and NOTES.md up to date while it works. You can edit them by hand too; AGENTS.md stays where it is and holds the rules." }));
+        }
+        (Some(_), _) => {
+            goal.push(json!({ "id": "goal_setup", "kind": "hint",
+                "text": "This folder has no .agent/ yet. Set it up to give the project a goal, a to-do list and notes that Meo keeps up to date." }));
+            goal.push(json!({ "id": "goal_init", "kind": "button", "label": "Set up .agent", "style": "primary",
+                "action": { "type": "init_project_agent", "id": id } }));
+        }
+    }
+
+    let mut overview = vec![json!({
+        "id": "start_work", "kind": "button", "label": "Start Work in this project", "style": "primary",
+        "action": { "type": "start_project_work", "id": id },
+    })];
+    overview.extend([
+        text("name", "Name", "name", true, ""),
+        text("description", "Description", "description", false, ""),
+        text(
+            "instructions",
+            "Instructions",
+            "instructions",
+            false,
+            "How Meo should behave in this project",
+        ),
+    ]);
+    let sections = [
+        ("project", "Overview", overview),
+        ("environment", "Environment", environment),
+        ("goal", "Goal & to-do", goal),
+        ("project_chats", "Chats", chat_items),
+        ("project_memory", "Memory", memory_items),
+        (
+            "project_danger",
+            "Danger zone",
+            vec![json!({
+                "id": "delete_project", "kind": "button", "label": "Delete project", "style": "danger",
+                "action": { "type": "begin_delete_project", "id": id },
+            })],
+        ),
+    ];
+    let selected = if sections
+        .iter()
+        .any(|(sid, _, _)| *sid == s.settings_section)
+    {
+        s.settings_section.clone()
+    } else {
+        "project".to_owned()
+    };
+    let nav_entry = |(sid, label, _): &(&str, &str, Vec<Value>)| {
+        json!({ "id": sid, "label": label, "selected": *sid == selected,
+                "action": { "type": "select_settings_section", "id": sid } })
+    };
+    let (main, more): (Vec<_>, Vec<_>) = sections
+        .iter()
+        .partition(|(sid, _, _)| *sid != "project_danger");
     json!({
         "kind": "settings",
         "title": if field("name").is_empty() { "Project".to_owned() } else { field("name") },
-        "sections": [
-            { "id": "project", "label": "Project", "items": [
-                text("name", "Name", "name", true, ""),
-                text("description", "Description", "description", false, ""),
-                text("instructions", "Instructions", "instructions", false, "How Meo should behave in this project"),
-            ]},
-            { "id": "project_chats", "label": "Chats", "items": chat_items },
-            { "id": "project_memory", "label": "Project memory", "items": memory_items },
-            { "id": "project_danger", "label": "Danger zone", "items": [{
-                "id": "delete_project", "kind": "button", "label": "Delete project", "style": "danger",
-                "action": { "type": "begin_delete_project", "id": id },
-            }]},
+        "sections": sections.iter().map(|(sid, label, items)| json!({ "id": sid, "label": label, "items": items })).collect::<Vec<_>>(),
+        "nav": [
+            { "label": if field("name").is_empty() { "Project".to_owned() } else { field("name") },
+              "items": main.iter().map(|x| nav_entry(x)).collect::<Vec<_>>() },
+            { "label": "More", "items": more.iter().map(|x| nav_entry(x)).collect::<Vec<_>>() },
         ],
+        "selected": selected,
     })
 }
 
@@ -7517,43 +8331,166 @@ const OAUTH_ENDPOINTS: [&str; 8] = [
     "https://mcp.zapier.com/api/mcp/mcp",
 ];
 
-/// The buttons of one installed app: switch, the connect / token / disconnect set that fits its
-/// kind of sign-in, and remove. Used by the store's Installed tab and by Settings > Apps & connectors.
-fn plugin_buttons(p: &Value, id: &str, on: bool) -> Vec<Value> {
+/// How an installed app signs in.
+#[derive(Clone, Copy, PartialEq)]
+enum SignIn {
+    /// Nothing to sign in to (docs servers, skills).
+    None,
+    /// The linked GitHub / Google account in Meo Account.
+    Account(&'static str),
+    /// The service's own authorization page and/or a pasted token, kept in Meo API.
+    Service,
+}
+
+fn sign_in_of(p: &Value) -> SignIn {
     let url = p["remoteUrl"].as_str().unwrap_or_default();
-    let mut actions = vec![button(
-        if on { "On" } else { "Off" },
-        if on { "primary" } else { "secondary" },
-        json!({ "type": "toggle_plugin", "id": id, "enabled": !on }),
-    )];
     if let Some(provider) = account_provider(url) {
-        if p["linkedAccount"] != true {
-            actions.insert(
-                0,
-                button(
-                    &format!("Connect {provider}"),
-                    "primary",
-                    json!({ "type": "connect_account", "provider": provider }),
-                ),
-            );
-        } else {
-            actions.insert(
-                0,
-                button(
-                    "More access",
-                    "secondary",
-                    json!({ "type": "connect_account", "provider": provider, "grant": true }),
-                ),
-            );
-        }
+        SignIn::Account(provider)
+    } else if TOKEN_ENDPOINTS.contains(&url) || OAUTH_ENDPOINTS.contains(&url) {
+        SignIn::Service
+    } else {
+        SignIn::None
     }
-    if TOKEN_ENDPOINTS.contains(&url) || OAUTH_ENDPOINTS.contains(&url) {
-        let has = p["manifest"]["hasToken"] == true;
-        actions.push(button(
-            if has { "Reconnect" } else { "Connect" },
-            if has { "secondary" } else { "primary" },
+}
+
+/// Does an app failure come from its sign-in? `Some(true)`: the sign-in is no longer accepted
+/// (expired, revoked, more access needed); `Some(false)`: there is none yet; `None`: something else.
+fn auth_problem(error: &str) -> Option<bool> {
+    let e = error.to_lowercase();
+    if e.contains("not_linked") || e.contains("token_required") {
+        Some(false)
+    } else if e.contains("reauthorization")
+        || e.contains("external_authorization_required")
+        || e.contains("invalid_token")
+        || e.contains("unauthorized")
+    {
+        Some(true)
+    } else {
+        None
+    }
+}
+
+/// Where an installed app stands: `ready` (nothing to sign in to), `connected`, `needs_connect`
+/// (never signed in) or `needs_reauth` (signed in, but the service no longer accepts it). One place
+/// decides this, so the status line, the badge and the buttons always agree.
+struct AppAuth {
+    state: &'static str,
+    label: &'static str,
+    sign_in: SignIn,
+}
+
+fn app_auth(s: &State, p: &Value) -> AppAuth {
+    let sign_in = sign_in_of(p);
+    let id = p["id"].as_str().unwrap_or_default();
+    let issue = s.app_auth_issues.get(id).copied();
+    let has = match sign_in {
+        SignIn::Account(_) => p["linkedAccount"] == true,
+        SignIn::Service => p["manifest"]["hasToken"] == true,
+        SignIn::None => {
+            return match issue {
+                // A server we cannot sign in to answered that it needs it: say so instead of "ready".
+                Some(_) => AppAuth {
+                    state: "unsupported",
+                    label: "Needs sign-in (not supported yet)",
+                    sign_in,
+                },
+                None => AppAuth {
+                    state: "ready",
+                    label: "",
+                    sign_in,
+                },
+            };
+        }
+    };
+    let account = matches!(sign_in, SignIn::Account(_));
+    match (has, issue) {
+        (_, Some(true)) | (true, Some(false)) => AppAuth {
+            state: "needs_reauth",
+            label: "Sign-in expired",
+            sign_in,
+        },
+        (false, _) => AppAuth {
+            state: "needs_connect",
+            label: if account {
+                "Account not linked"
+            } else {
+                "Not connected"
+            },
+            sign_in,
+        },
+        (true, None) => AppAuth {
+            state: "connected",
+            label: if account {
+                "Account linked"
+            } else {
+                "Connected"
+            },
+            sign_in,
+        },
+    }
+}
+
+/// The button that signs an app in (or in again), with its label; `None` when Meo AI cannot.
+fn connect_action(p: &Value) -> Option<(String, Value)> {
+    let id = p["id"].as_str().unwrap_or_default();
+    let has_token = p["manifest"]["hasToken"] == true;
+    match sign_in_of(p) {
+        SignIn::Account(provider) => Some((
+            if p["linkedAccount"] == true {
+                format!("Reconnect {provider}")
+            } else {
+                format!("Connect {provider}")
+            },
+            json!({ "type": "connect_account", "provider": provider, "grant": p["linkedAccount"] == true }),
+        )),
+        SignIn::Service => Some((
+            if has_token {
+                "Reconnect".to_owned()
+            } else {
+                "Connect".to_owned()
+            },
             json!({ "type": "connect_plugin", "id": id }),
-        ));
+        )),
+        SignIn::None => None,
+    }
+}
+
+/// The on / off switch of an installed app (a generic `switch` the clients draw as a switch).
+fn plugin_switch(id: &str, on: bool) -> Value {
+    json!({ "on": on, "label": if on { "On" } else { "Off" },
+            "action": { "type": "toggle_plugin", "id": id, "enabled": !on } })
+}
+
+/// A colour for the sign-in state next to an app's status line: `ok`, `warn`, `error` or none.
+fn auth_tone(auth: &AppAuth, on: bool) -> &'static str {
+    match (on, auth.state) {
+        (true, "connected") => "ok",
+        (true, "needs_connect" | "unsupported") => "warn",
+        (true, "needs_reauth") => "error",
+        _ => "",
+    }
+}
+
+/// The buttons of one installed app: the one that fixes its sign-in state first (primary while
+/// something is wrong, quiet otherwise), then token / disconnect, then remove. The on / off switch
+/// is separate (see [`plugin_switch`]). Used by the store's Installed tab and Settings.
+fn plugin_buttons(s: &State, p: &Value, id: &str) -> Vec<Value> {
+    let url = p["remoteUrl"].as_str().unwrap_or_default();
+    let auth = app_auth(s, p);
+    let fix = matches!(auth.state, "needs_connect" | "needs_reauth");
+    let style = if fix { "primary" } else { "secondary" };
+    let mut actions: Vec<Value> = Vec::new();
+    match (auth.sign_in, connect_action(p)) {
+        // A linked account that works can still be asked for more access.
+        (SignIn::Account(provider), _) if auth.state == "connected" => actions.push(button(
+            "More access",
+            "secondary",
+            json!({ "type": "connect_account", "provider": provider, "grant": true }),
+        )),
+        (_, Some((label, action))) => actions.push(button(&label, style, action)),
+        _ => {}
+    }
+    if matches!(auth.sign_in, SignIn::Service) {
         if TOKEN_ENDPOINTS.contains(&url) {
             actions.push(button(
                 "API token",
@@ -7561,13 +8498,20 @@ fn plugin_buttons(p: &Value, id: &str, on: bool) -> Vec<Value> {
                 json!({ "type": "begin_plugin_token", "id": id }),
             ));
         }
-        if has {
+        if p["manifest"]["hasToken"] == true {
             actions.push(button(
                 "Disconnect",
                 "secondary",
                 json!({ "type": "disconnect_plugin", "id": id }),
             ));
         }
+    }
+    if s.awaiting_auth.iter().any(|a| a == id) {
+        actions.push(button(
+            "Check again",
+            "secondary",
+            json!({ "type": "refresh_plugins" }),
+        ));
     }
     actions.push(button(
         "Remove",
@@ -7577,114 +8521,217 @@ fn plugin_buttons(p: &Value, id: &str, on: bool) -> Vec<Value> {
     actions
 }
 
-/// One line for an installed app: what it is, whether it is on, whether it is signed in, and how many
-/// tools it offers (when they have been read).
-fn plugin_status(s: &State, p: &Value) -> String {
-    let url = p["remoteUrl"].as_str().unwrap_or_default();
-    let mut parts: Vec<String> = vec![if !p["remoteUrl"].is_null() {
-        "MCP"
-    } else if p["kind"] == "skills" || p["kind"] == "bundle" {
-        "Skills"
-    } else {
-        "Plugin"
+/// What a connected app may do, and what asks first: the permission the user is granting it.
+fn tool_permissions(s: &State, p: &Value) -> Option<String> {
+    if p["enabled"] != true {
+        return None;
     }
-    .to_owned()];
-    parts.push(
-        if p["enabled"].as_bool().unwrap_or(false) {
-            "On"
+    let Some(Ok(tools)) = p["id"].as_str().and_then(|id| s.app_tools.get(id)) else {
+        return None;
+    };
+    let names = |read: bool| -> Vec<&str> {
+        tools
+            .iter()
+            .filter_map(|t| t["name"].as_str())
+            .filter(|n| agent::is_lookup_tool(n) == read)
+            .collect()
+    };
+    let list = |v: Vec<&str>| {
+        let shown: Vec<&str> = v.iter().take(6).copied().collect();
+        let more = v.len().saturating_sub(shown.len());
+        if more > 0 {
+            format!("{}, +{more} more", shown.join(", "))
         } else {
-            "Off"
+            shown.join(", ")
         }
-        .to_owned(),
-    );
-    if TOKEN_ENDPOINTS.contains(&url) || OAUTH_ENDPOINTS.contains(&url) {
-        parts.push(
-            if p["manifest"]["hasToken"] == true {
-                "Connected"
-            } else {
-                "Not connected"
-            }
-            .to_owned(),
-        );
-    } else if account_provider(url).is_some() {
-        parts.push(
-            if p["linkedAccount"] == true {
-                "Account linked"
-            } else {
-                "Account not linked"
-            }
-            .to_owned(),
-        );
+    };
+    let (reads, writes) = (names(true), names(false));
+    let mut parts = Vec::new();
+    if !reads.is_empty() {
+        parts.push(format!("Runs on its own: {}", list(reads)));
     }
-    match p["id"].as_str().and_then(|id| s.app_tools.get(id)) {
-        Some(Ok(tools)) => {
-            let reads = tools
-                .iter()
-                .filter(|t| t["name"].as_str().is_some_and(agent::is_lookup_tool))
-                .count();
-            parts.push(format!("{} tools ({reads} read-only)", tools.len()));
-        }
-        Some(Err(e)) => parts.push(format!(
-            "tools unavailable: {}",
-            e.chars().take(80).collect::<String>()
-        )),
-        None => {}
+    if !writes.is_empty() {
+        parts.push(format!("Asks first: {}", list(writes)));
     }
-    parts.join(" · ")
+    (!parts.is_empty()).then(|| parts.join(" · "))
 }
 
-/// Settings > Apps & connectors: every installed app, skill and MCP server in one list, with its state
-/// and the same actions as the store's Installed tab.
-fn connector_items(s: &State) -> Vec<Value> {
-    let rows = match s.plugins.as_ref() {
-        None => {
-            return vec![
-                json!({ "id": "conn_loading", "kind": "info", "label": "Apps", "value": "Reading your apps…" }),
-            ];
-        }
-        Some(Err(e)) => {
-            return vec![
-                json!({ "id": "conn_error", "kind": "info", "label": "Apps could not be loaded", "value": e }),
-            ];
-        }
-        Some(Ok(rows)) => rows,
+/// What a stored choice is called on screen (the schema holds the stored values).
+fn option_label(binding: &str, value: &str) -> String {
+    match (binding, value) {
+        ("appearance.theme", "system") => "Follow system",
+        ("appearance.theme", "light") => "Light",
+        ("appearance.theme", "dark") => "Dark",
+        ("appearance.language", "system") => "Follow system",
+        ("appearance.language", "en") => "English",
+        ("appearance.language", "zh-CN") => "简体中文",
+        ("appearance.text_size", "small") => "Small",
+        ("appearance.text_size", "default") => "Default",
+        ("appearance.text_size", "large") => "Large",
+        (_, other) => other,
+    }
+    .to_owned()
+}
+
+/// Settings > Keyboard shortcuts: what is really bound, by client.
+fn shortcut_items(s: &State) -> Vec<Value> {
+    let enter_sends = pref_bool(s, "general.enter_to_send", true);
+    // `keys`: the value is a key combination, drawn as key caps.
+    let row = |id: &str, label: &str, keys: &str| {
+        let mut r = own_item(format!("key_{id}"), label, keys, vec![]);
+        r["keys"] = json!(true);
+        r
     };
-    let on = rows
-        .iter()
-        .filter(|p| p["enabled"].as_bool().unwrap_or(false))
-        .count();
-    let mut items = vec![
-        json!({ "id": "conn_summary", "kind": "info", "label": "Installed", "value": format!("{} · {on} on", rows.len()) }),
-        item(
-            "conn_store".into(),
-            "Apps & Skills",
-            "Find, connect and import apps, skills and MCP servers.",
+    vec![
+        json!({ "id": "key_h_desktop", "kind": "heading", "label": "Desktop app" }),
+        row("new", "New chat", "Ctrl+N"),
+        row("find", "Search chats", "Ctrl+F"),
+        row("settings", "Open settings", "Ctrl+,"),
+        row("sidebar", "Show or hide the sidebar", "Ctrl+B"),
+        row("quit", "Quit", "Ctrl+Q"),
+        json!({ "id": "key_h_composer", "kind": "heading", "label": "Message box" }),
+        row(
+            "send",
+            "Send the message",
+            if enter_sends { "Enter" } else { "Shift+Enter" },
+        ),
+        row(
+            "newline",
+            "New line",
+            if enter_sends { "Shift+Enter" } else { "Enter" },
+        ),
+        row("stop", "Stop the answer (web)", "Esc"),
+        json!({ "id": "key_note", "kind": "hint", "text": "On macOS use ⌘ instead of Ctrl. Whether Enter sends is a setting in General." }),
+    ]
+}
+
+/// Settings > About: version, what Meo AI is made of, where the source and licenses are.
+fn about_items() -> Vec<Value> {
+    let link = |id: &str, label: &str, value: &str, url: &str| {
+        own_item(
+            format!("about_{id}"),
+            label,
+            value,
             vec![button(
                 "Open",
+                "secondary",
+                json!({ "type": "open_link", "url": url }),
+            )],
+        )
+    };
+    vec![
+        json!({ "id": "about_version", "kind": "info", "label": "Meo AI", "value": env!("CARGO_PKG_VERSION") }),
+        json!({ "id": "about_what", "kind": "hint", "text": "The MeoArch assistant for everyday chat, agent work and safe system actions. One Rust core runs the desktop, Android and web clients." }),
+        json!({ "id": "about_h_links", "kind": "heading", "label": "Links" }),
+        link(
+            "site",
+            "Website and documentation",
+            "meoarch.org",
+            "https://meoarch.org/docs/",
+        ),
+        link(
+            "source",
+            "Source code",
+            "github.com/QwQdoge/meo-ai",
+            "https://github.com/QwQdoge/meo-ai",
+        ),
+        json!({ "id": "about_h_legal", "kind": "heading", "label": "Legal" }),
+        json!({ "id": "about_license", "kind": "hint", "text": "Meo AI is free software under the GNU General Public License v3.0 or later. It is a fork of Newelle by qwersyk, and its interface is built with MeoUI." }),
+        link(
+            "gpl",
+            "License",
+            "GPL-3.0-or-later",
+            "https://www.gnu.org/licenses/gpl-3.0.html",
+        ),
+        link(
+            "newelle",
+            "Newelle (upstream)",
+            "github.com/qwersyk/Newelle",
+            "https://github.com/qwersyk/Newelle",
+        ),
+        link(
+            "meoui",
+            "MeoUI (design system)",
+            "github.com/QwQdoge/MeoUI",
+            "https://github.com/QwQdoge/MeoUI",
+        ),
+    ]
+}
+
+/// The settings that match a search: a whole category when its name or keywords match, otherwise just
+/// the controls whose label or value matches, each group under its category name.
+fn settings_results(
+    sections: &[Value],
+    manifest: &[super::manifest::SettingSection],
+    query: &str,
+) -> Vec<Value> {
+    let mut out: Vec<Value> = Vec::new();
+    for section in sections {
+        let id = section["id"].as_str().unwrap_or_default();
+        let label = section["label"].as_str().unwrap_or_default();
+        let whole = label.to_lowercase().contains(query)
+            || manifest
+                .iter()
+                .find(|m| m.id == id)
+                .is_some_and(|m| m.keywords.iter().any(|k| k.to_lowercase().contains(query)));
+        let found: Vec<Value> = section["items"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|it| !matches!(it["kind"].as_str(), Some("heading")))
+            .filter(|it| {
+                whole
+                    || ["label", "value", "text"].iter().any(|f| {
+                        it[*f]
+                            .as_str()
+                            .is_some_and(|t| t.to_lowercase().contains(query))
+                    })
+            })
+            .cloned()
+            .collect();
+        if !found.is_empty() {
+            out.push(json!({ "id": format!("res_{id}"), "kind": "heading", "label": label }));
+            out.extend(found);
+        }
+        if out.len() > 60 {
+            break;
+        }
+    }
+    if out.is_empty() {
+        out.push(
+            json!({ "id": "res_none", "kind": "hint", "text": "No setting matches your search." }),
+        );
+    }
+    out
+}
+
+/// Settings > Permissions: only what applies to everything. Installing, switching on and signing in
+/// to apps, skills and MCP servers all live on the Plugins page.
+fn permission_items(s: &State) -> Vec<Value> {
+    vec![
+        slider(
+            "permission",
+            "Default approval level",
+            "chat.permission",
+            &permission_value(s),
+            PERMISSIONS,
+            false,
+        ),
+        json!({
+            "id": "perm_explain", "kind": "hint",
+            "text": "This is the level the composer starts with. Looking things up (list, get, search, read, fetch) runs without asking from Allow low risk up. Anything that changes something asks at Allow low risk, goes to an approver model at Auto choose, and runs freely only at Full access. Commands such as sudo, git push or rm -rf, paths outside the open folder and credentials always ask unless you chose Full access. A task started from another device never runs above Auto choose.",
+        }),
+        own_item(
+            "perm_plugins".into(),
+            "Apps, skills and MCP servers",
+            "Turn them on or off, sign in again, and see what each one may do on the Plugins page.",
+            vec![button(
+                "Open Plugins",
                 "primary",
                 json!({ "type": "navigate", "route": "skills" }),
             )],
         ),
-    ];
-    let mut sorted: Vec<&Value> = rows.iter().collect();
-    sorted.sort_by_key(|p| p["name"].as_str().unwrap_or_default().to_lowercase());
-    for p in sorted {
-        let id = p["id"].as_str().unwrap_or_default();
-        items.push(item(
-            format!("conn_{id}"),
-            p["name"].as_str().unwrap_or("Unnamed"),
-            &plugin_status(s, p),
-            plugin_buttons(p, id, p["enabled"].as_bool().unwrap_or(false)),
-        ));
-    }
-    if rows.is_empty() {
-        items.push(json!({ "id": "conn_none", "kind": "info", "label": "Nothing installed yet", "value": "Open Apps & Skills to add an app, a skill or an MCP server." }));
-    }
-    items.push(json!({
-        "id": "conn_approvals", "kind": "info", "label": "Approvals",
-        "value": "A connected app follows the composer's Permissions. Looking things up (list, get, search, read, fetch) runs without asking from Low up. Anything else asks at Low, goes to the approver at Smart and runs at Allow all. Ask every time asks for all of it.",
-    }));
-    items
+    ]
 }
 
 fn store_page(s: &State) -> Value {
@@ -7747,23 +8794,12 @@ fn store_page(s: &State) -> Value {
                     if p["kind"] == "skills" || p["kind"] == "bundle" {
                         badges.push("Skills");
                     }
-                    let account = account_provider(p["remoteUrl"].as_str().unwrap_or_default());
-                    let token_app = p["remoteUrl"].as_str().is_some_and(|u| {
-                        TOKEN_ENDPOINTS.contains(&u) || OAUTH_ENDPOINTS.contains(&u)
-                    });
-                    if token_app || account.is_some() {
-                        let connected = if token_app {
-                            p["manifest"]["hasToken"] == true
-                        } else {
-                            p["linkedAccount"] == true
-                        };
-                        badges.push(if connected {
-                            "Connected"
-                        } else {
-                            "Not connected"
-                        });
+                    let auth = app_auth(s, p);
+                    if !auth.label.is_empty() {
+                        badges.push(auth.label);
                     }
-                    store_card(
+                    let on_now = on;
+                    let mut card = store_card(
                         id.to_owned(),
                         p["name"].as_str().unwrap_or_default(),
                         p["description"].as_str().unwrap_or_default(),
@@ -7771,8 +8807,14 @@ fn store_page(s: &State) -> Value {
                         &publisher,
                         badges,
                         if on { "on" } else { "off" },
-                        plugin_buttons(p, id, on),
-                    )
+                        plugin_buttons(s, p, id),
+                    );
+                    card["switch"] = plugin_switch(id, on);
+                    card["tone"] = json!(auth_tone(&app_auth(s, p), on_now));
+                    if let Some(detail) = tool_permissions(s, p) {
+                        card["detail"] = json!(detail);
+                    }
+                    card
                 })
                 .collect();
             sections.push(json!({ "id": "installed", "title": format!("Installed · {}", cards.len()), "cards": cards,
@@ -8709,12 +9751,193 @@ mod tests {
         );
     }
 
+    fn installed_cards(c: &AppCore) -> Vec<Value> {
+        c.update(|s| {
+            s.route = "skills".into();
+            s.store.tab = "installed".into();
+        });
+        let page = c.view()["page"].clone();
+        page["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|x| x["id"] == "installed")
+            .expect("the Installed tab lists the apps")["cards"]
+            .as_array()
+            .unwrap()
+            .clone()
+    }
+
+    fn settings_view(c: &AppCore, section: &str, query: &str) -> Value {
+        c.update(|s| {
+            s.route = "settings".into();
+            s.settings_section = section.into();
+            s.settings_query = query.into();
+        });
+        c.view()["page"].clone()
+    }
+
+    fn section_of(page: &Value, id: &str) -> Value {
+        page["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|x| x["id"] == id)
+            .unwrap_or_else(|| panic!("no section {id}"))
+            .clone()
+    }
+
     #[test]
-    fn settings_connectors_lists_installed_apps_with_state_and_actions() {
+    fn settings_have_appearance_notifications_shortcuts_and_about_in_order() {
+        let c = signed_in_core();
+        let page = settings_view(&c, "general", "");
+        let groups: Vec<&str> = page["nav"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|g| g["label"].as_str().unwrap())
+            .collect();
+        assert_eq!(groups.last(), Some(&"About"));
+        let ids: Vec<&str> = page["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|x| x["id"].as_str().unwrap())
+            .collect();
+        let at = |id: &str| ids.iter().position(|x| *x == id).unwrap();
+        assert!(at("general") < at("appearance") && at("appearance") < at("notifications"));
+        assert!(at("notifications") < at("shortcuts") && at("account") < at("about"));
+        // Stored values read as words, and text size has a default.
+        let theme = section_of(&page, "appearance")["items"][0].clone();
+        assert_eq!(theme["options"][0]["label"], "Follow system");
+        let size = section_of(&page, "appearance")["items"][1].clone();
+        assert_eq!(size["value"], "default");
+        // Notifications are on until switched off.
+        assert_eq!(
+            section_of(&page, "notifications")["items"][0]["value"],
+            true
+        );
+    }
+
+    #[test]
+    fn about_page_has_version_and_license_links() {
+        let page = settings_view(&signed_in_core(), "about", "");
+        let items = section_of(&page, "about")["items"]
+            .as_array()
+            .unwrap()
+            .clone();
+        assert!(items
+            .iter()
+            .any(|i| i["id"] == "about_version" && i["value"] == env!("CARGO_PKG_VERSION")));
+        let gpl = items.iter().find(|i| i["id"] == "about_gpl").unwrap();
+        assert_eq!(gpl["buttons"][0]["action"]["type"], "open_link");
+        assert!(gpl["buttons"][0]["action"]["url"]
+            .as_str()
+            .unwrap()
+            .starts_with("https://"));
+    }
+
+    #[test]
+    fn shortcuts_follow_the_enter_to_send_setting() {
+        let c = signed_in_core();
+        let send = |c: &AppCore| {
+            let page = settings_view(c, "shortcuts", "");
+            section_of(&page, "shortcuts")["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|i| i["id"] == "key_send")
+                .unwrap()["value"]
+                .clone()
+        };
+        assert_eq!(send(&c), "Enter");
+        c.update(|s| {
+            s.prefs.insert("general.enter_to_send".into(), json!(false));
+        });
+        assert_eq!(send(&c), "Shift+Enter");
+    }
+
+    #[test]
+    fn settings_search_finds_controls_across_categories() {
+        let c = signed_in_core();
+        let page = settings_view(&c, "general", "motion");
+        assert_eq!(page["selected"], "results");
+        let results = section_of(&page, "results");
+        let labels: Vec<&str> = results["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|i| i["label"].as_str())
+            .collect();
+        assert!(
+            labels.contains(&"Appearance") && labels.contains(&"Reduce motion"),
+            "{labels:?}"
+        );
+        // A category keyword (Chinese) opens the whole category.
+        let page = settings_view(&c, "general", "通知");
+        let labels: Vec<String> = section_of(&page, "results")["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|i| i["label"].as_str().map(str::to_owned))
+            .collect();
+        assert!(
+            labels.iter().any(|l| l.starts_with("Notify me")),
+            "{labels:?}"
+        );
+        // Nothing found says so; the nav shows no selected category while searching.
+        let page = settings_view(&c, "general", "zzzzqq");
+        assert_eq!(section_of(&page, "results")["items"][0]["id"], "res_none");
+        assert!(page["nav"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|g| g["items"].as_array().unwrap())
+            .all(|e| e["selected"] == false));
+        // Picking a category clears the search.
+        c.update(|s| s.settings_query = "motion".into());
+        futures_executor::block_on(
+            c.dispatch(Action::SelectSettingsSection { id: "about".into() }),
+        );
+        assert_eq!(c.view()["page"]["selected"], "about");
+    }
+
+    #[test]
+    fn settings_has_only_general_permissions_and_points_to_plugins() {
         let c = signed_in_core();
         c.update(|s| {
             s.route = "settings".into();
-            s.settings_section = "connectors".into();
+            s.settings_section = "permissions".into();
+        });
+        let page = c.view()["page"].clone();
+        let section = page["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|x| x["id"] == "permissions")
+            .expect("the permissions page exists")
+            .clone();
+        let ids: Vec<&str> = section["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| i["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, ["permission", "perm_explain", "perm_plugins"]);
+        assert!(
+            page["sections"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|x| x["id"] != "connectors"),
+            "apps are managed on the Plugins page, not in Settings"
+        );
+    }
+
+    #[test]
+    fn installed_cards_carry_switch_state_permissions_and_the_fixing_button() {
+        let c = signed_in_core();
+        c.update(|s| {
             s.plugins = Some(Ok(vec![
                 json!({ "id": "p2", "name": "Ops skills", "kind": "skills", "enabled": false }),
                 json!({ "id": "p1", "name": "Linear", "kind": "mcp", "enabled": true,
@@ -8729,39 +9952,145 @@ mod tests {
                 ]),
             );
         });
-        let page = c.view()["page"].clone();
-        let section = page["sections"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|x| x["id"] == "connectors")
-            .expect("the connectors page is no longer dropped for lack of items")
-            .clone();
-        let items = section["items"].as_array().unwrap();
-        let ids: Vec<&str> = items.iter().map(|i| i["id"].as_str().unwrap()).collect();
+        let cards = installed_cards(&c);
+        let linear = cards.iter().find(|x| x["id"] == "p1").unwrap();
+        assert_eq!(linear["switch"]["on"], true);
+        assert_eq!(linear["tone"], "ok");
         assert_eq!(
-            ids,
-            [
-                "conn_summary",
-                "conn_store",
-                "conn_p1",
-                "conn_p2",
-                "conn_approvals"
-            ]
+            linear["detail"],
+            "Runs on its own: list_issues, get_issue · Asks first: create_issue"
         );
-        assert_eq!(items[0]["value"], "2 · 1 on");
-        assert_eq!(
-            items[2]["value"],
-            "MCP · On · Connected · 3 tools (2 read-only)"
-        );
-        let labels: Vec<&str> = items[2]["buttons"]
+        let labels: Vec<&str> = linear["actions"]
             .as_array()
             .unwrap()
             .iter()
             .map(|b| b["label"].as_str().unwrap())
             .collect();
-        assert_eq!(labels, ["On", "Reconnect", "Disconnect", "Remove"]);
-        assert_eq!(items[3]["value"], "Skills · Off");
+        assert_eq!(labels, ["Reconnect", "Disconnect", "Remove"]);
+        let skills = cards.iter().find(|x| x["id"] == "p2").unwrap();
+        assert_eq!(skills["switch"]["on"], false);
+        assert!(skills.get("detail").is_none());
+    }
+
+    fn row_state(c: &AppCore, row: Value) -> (String, Vec<(String, String)>) {
+        let s = c.state.lock().unwrap();
+        let buttons = plugin_buttons(&s, &row, "p")
+            .iter()
+            .map(|b| {
+                (
+                    b["label"].as_str().unwrap().to_owned(),
+                    b["style"].as_str().unwrap().to_owned(),
+                )
+            })
+            .collect();
+        (app_auth(&s, &row).state.to_owned(), buttons)
+    }
+
+    #[test]
+    fn an_app_that_needs_signing_in_always_has_the_button_that_fixes_it() {
+        let c = signed_in_core();
+        let linear = |token: bool| json!({ "id": "p", "name": "Linear", "remoteUrl": "https://mcp.linear.app/mcp", "manifest": { "hasToken": token } });
+        // Never connected: Connect is the primary button.
+        let (state, buttons) = row_state(&c, linear(false));
+        assert_eq!(state, "needs_connect");
+        assert!(buttons.contains(&("Connect".into(), "primary".into())));
+        // Connected: Reconnect stays available, quietly.
+        let (state, buttons) = row_state(&c, linear(true));
+        assert_eq!(state, "connected");
+        assert!(buttons.contains(&("Reconnect".into(), "secondary".into())));
+        // The service rejected the sign-in at use: still "has a token", but now it says so and
+        // Reconnect becomes the primary button.
+        c.update(|s| {
+            s.app_auth_issues.insert("p".into(), true);
+        });
+        let (state, buttons) = row_state(&c, linear(true));
+        assert_eq!(state, "needs_reauth");
+        assert!(buttons.contains(&("Reconnect".into(), "primary".into())));
+        // Linked account (GitHub): reconnecting goes back to Meo Account.
+        let github = json!({ "id": "p", "name": "GitHub", "remoteUrl": "https://api.githubcopilot.com/mcp/", "linkedAccount": true });
+        let (state, buttons) = row_state(&c, github.clone());
+        assert_eq!(state, "needs_reauth");
+        assert!(buttons.contains(&("Reconnect GitHub".into(), "primary".into())));
+        c.update(|s| s.app_auth_issues.clear());
+        let (state, buttons) = row_state(&c, github);
+        assert_eq!(state, "connected");
+        assert!(buttons.contains(&("More access".into(), "secondary".into())));
+    }
+
+    #[test]
+    fn a_server_without_sign_in_support_never_claims_to_be_ready_after_an_auth_error() {
+        let c = signed_in_core();
+        let custom =
+            json!({ "id": "p", "name": "example.com", "remoteUrl": "https://example.com/mcp" });
+        assert_eq!(row_state(&c, custom.clone()).0, "ready");
+        c.update(|s| {
+            s.app_auth_issues.insert("p".into(), true);
+        });
+        assert_eq!(row_state(&c, custom).0, "unsupported");
+    }
+
+    #[test]
+    fn a_new_account_is_offered_the_essentials_once() {
+        let c = signed_in_core();
+        c.update(|s| s.plugins = Some(Ok(vec![])));
+        c.offer_essentials();
+        let v = c.view();
+        assert_eq!(v["notice"]["actionLabel"], "Add Essentials");
+        assert_eq!(v["notice"]["action"]["id"], "essentials");
+        c.update(|s| s.notice = None);
+        c.offer_essentials();
+        assert!(c.view()["notice"].is_null(), "offered only once");
+        // An account that already has something is never nagged.
+        let d = signed_in_core();
+        d.update(|s| s.plugins = Some(Ok(vec![json!({ "id": "x", "name": "X" })])));
+        d.offer_essentials();
+        assert!(d.view()["notice"].is_null());
+    }
+
+    #[test]
+    fn authorization_failures_are_told_apart_from_other_failures() {
+        assert_eq!(auth_problem("mcp_github_not_linked"), Some(false));
+        assert_eq!(auth_problem("mcp_token_required"), Some(false));
+        assert_eq!(
+            auth_problem("mcp_github_reauthorization_required"),
+            Some(true)
+        );
+        assert_eq!(
+            auth_problem("mcp_external_authorization_required"),
+            Some(true)
+        );
+        assert_eq!(auth_problem("HTTP 503 upstream down"), None);
+    }
+
+    #[test]
+    fn failed_tool_listing_with_a_bad_sign_in_flips_the_card_to_reconnect() {
+        let c = signed_in_core();
+        c.update(|s| {
+            s.plugins = Some(Ok(vec![
+                json!({ "id": "p1", "name": "Linear", "kind": "mcp", "enabled": true,
+                "remoteUrl": "https://mcp.linear.app/mcp", "manifest": { "hasToken": true } }),
+            ]));
+            s.app_tools.insert(
+                "p1".into(),
+                Err("mcp_external_authorization_required".into()),
+            );
+            s.app_auth_issues.insert("p1".into(), true);
+        });
+        let cards = installed_cards(&c);
+        let card = &cards[0];
+        assert!(card["badges"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|b| b == "Sign-in expired"));
+        assert_eq!(card["tone"], "error");
+        let reconnect = card["actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|b| b["label"] == "Reconnect")
+            .unwrap();
+        assert_eq!(reconnect["style"], "primary");
     }
 
     #[test]
@@ -8777,7 +10106,7 @@ mod tests {
             .iter()
             .map(|g| g["label"].as_str().unwrap())
             .collect();
-        assert_eq!(groups, ["Preferences", "AI", "Account"]);
+        assert_eq!(groups, ["Preferences", "AI", "Account", "About"]);
         let ids: Vec<&str> = page["sections"]
             .as_array()
             .unwrap()
@@ -9048,6 +10377,326 @@ mod tests {
         assert_eq!(dialog["actions"][0]["withInput"], true);
     }
 
+    fn project_dir(name: &str) -> std::path::PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("meo-core-project-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn project_core(folder: Option<&std::path::Path>) -> AppCore {
+        let c = signed_in_core();
+        c.update(|s| {
+            s.route = "projects".into();
+            s.open_project = Some("p1".into());
+            s.projects = Some(Ok(vec![
+                json!({ "id": "p1", "name": "Trip", "description": "", "instructions": "" }),
+            ]));
+        });
+        if let Some(f) = folder {
+            futures_executor::block_on(c.dispatch(Action::SetProjectFolder {
+                id: "p1".into(),
+                path: f.to_string_lossy().into_owned(),
+            }));
+        }
+        c
+    }
+
+    fn page_items(c: &AppCore, section: &str) -> Vec<Value> {
+        c.update(|s| s.settings_section = section.into());
+        let page = c.view()["page"].clone();
+        page["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|x| x["id"] == section)
+            .unwrap()["items"]
+            .as_array()
+            .unwrap()
+            .clone()
+    }
+
+    #[test]
+    fn a_project_folder_becomes_the_work_folder_of_its_chats() {
+        let dir = project_dir("workfolder");
+        let other = project_dir("otherfolder");
+        let c = project_core(Some(&dir));
+        c.update(|s| {
+            s.prefs
+                .insert("work.workspace".into(), json!(other.to_string_lossy()));
+            s.conversations = vec![{
+                let mut x = conversation("c1", "Plan");
+                x.project_id = Some("p1".into());
+                x
+            }];
+        });
+        let root = std::fs::canonicalize(&dir)
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        // A project chat works in the project's folder, any other chat in the general Work folder.
+        c.update(|s| s.active = Some("c1".into()));
+        assert_eq!(
+            effective_workspace(&c.state.lock().unwrap()),
+            Some(root.clone())
+        );
+        c.update(|s| s.active = None);
+        assert_eq!(
+            effective_workspace(&c.state.lock().unwrap()),
+            Some(other.to_string_lossy().into_owned())
+        );
+        // "Start Work" in the project: a new task filed under it, in its folder.
+        futures_executor::block_on(c.dispatch(Action::StartProjectWork { id: "p1".into() }));
+        assert_eq!(c.view()["route"].as_str().unwrap_or("work"), "work");
+        assert_eq!(effective_workspace(&c.state.lock().unwrap()), Some(root));
+        // Removing the folder falls back.
+        futures_executor::block_on(c.dispatch(Action::ClearProjectFolder { id: "p1".into() }));
+        assert_eq!(
+            effective_workspace(&c.state.lock().unwrap()),
+            Some(other.to_string_lossy().into_owned())
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&other);
+    }
+
+    #[test]
+    fn links_survive_a_restart() {
+        let dir = project_dir("restart");
+        let c = project_core(Some(&dir));
+        futures_executor::block_on(c.dispatch(Action::LinkRepo {
+            id: "p1".into(),
+            text: "https://github.com/QwQdoge/meo-ai.git".into(),
+        }));
+        let saved = c.storage.load(KEY_PROJECT_ENV).expect("saved");
+        let again: HashMap<String, project_env::ProjectEnv> = serde_json::from_str(&saved).unwrap();
+        assert_eq!(again["p1"].repo.as_deref(), Some("QwQdoge/meo-ai"));
+        assert!(again["p1"].folder.is_some());
+        // Nonsense is refused and changes nothing.
+        futures_executor::block_on(c.dispatch(Action::LinkRepo {
+            id: "p1".into(),
+            text: "not a repo".into(),
+        }));
+        assert_eq!(
+            c.state.lock().unwrap().project_env["p1"].repo.as_deref(),
+            Some("QwQdoge/meo-ai")
+        );
+        futures_executor::block_on(c.dispatch(Action::UnlinkRepo { id: "p1".into() }));
+        assert!(c.state.lock().unwrap().project_env["p1"].repo.is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn goal_and_todo_are_kept_in_the_folder_and_edited_from_the_page() {
+        let dir = project_dir("agentdir");
+        let c = project_core(Some(&dir));
+        // Folder set, no .agent yet: the page offers to set it up.
+        let items = page_items(&c, "goal");
+        assert!(items
+            .iter()
+            .any(|i| i["id"] == "goal_init" && i["action"]["type"] == "init_project_agent"));
+        futures_executor::block_on(c.dispatch(Action::InitProjectAgent { id: "p1".into() }));
+        assert!(dir.join(".agent/TODO.md").is_file());
+        futures_executor::block_on(c.dispatch(Action::SetSetting {
+            binding: "agent:p1:goal".into(),
+            value: json!("Ship the beta"),
+        }));
+        futures_executor::block_on(c.dispatch(Action::AddTodo {
+            id: "p1".into(),
+            text: "write docs".into(),
+        }));
+        let items = page_items(&c, "goal");
+        let goal = items.iter().find(|i| i["id"] == "goal_text").unwrap();
+        assert_eq!(goal["value"], "Ship the beta");
+        let todo = items
+            .iter()
+            .find(|i| i["kind"] == "toggle")
+            .unwrap()
+            .clone();
+        assert_eq!(todo["label"], "write docs");
+        assert_eq!(todo["value"], false);
+        // Ticking it writes `[x]` into the file.
+        futures_executor::block_on(c.dispatch(Action::SetSetting {
+            binding: todo["binding"].as_str().unwrap().into(),
+            value: json!(true),
+        }));
+        assert!(std::fs::read_to_string(dir.join(".agent/TODO.md"))
+            .unwrap()
+            .contains("- [x] write docs"));
+        // Edits made on disk (by hand or by the model) show after the state is read again.
+        std::fs::write(dir.join(".agent/GOAL.md"), "# Goal\n\nChanged outside\n").unwrap();
+        c.refresh_project_agent("p1");
+        let items = page_items(&c, "goal");
+        assert_eq!(
+            items.iter().find(|i| i["id"] == "goal_text").unwrap()["value"],
+            "Changed outside"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn without_a_folder_the_page_says_how_to_get_a_goal_and_never_writes() {
+        let c = project_core(None);
+        let items = page_items(&c, "goal");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["kind"], "hint");
+        // Adding a to-do without a folder is a clear error, not a write somewhere.
+        futures_executor::block_on(c.dispatch(Action::AddTodo {
+            id: "p1".into(),
+            text: "x".into(),
+        }));
+        assert!(c.view()["notice"]["text"]
+            .as_str()
+            .unwrap()
+            .contains("folder"));
+        // The environment page offers the repository link and the GitHub app state.
+        let env = page_items(&c, "environment");
+        assert!(env.iter().any(
+            |i| i["id"] == "env_repo" && i["buttons"][0]["action"]["type"] == "begin_link_repo"
+        ));
+        let github = env.iter().find(|i| i["id"] == "env_github").unwrap();
+        assert_eq!(github["buttons"][0]["action"]["id"], "github");
+    }
+
+    #[test]
+    fn the_model_is_told_the_project_state_and_how_to_keep_it() {
+        let dir = project_dir("prompt");
+        let c = project_core(Some(&dir));
+        futures_executor::block_on(c.dispatch(Action::InitProjectAgent { id: "p1".into() }));
+        futures_executor::block_on(c.dispatch(Action::SetSetting {
+            binding: "agent:p1:goal".into(),
+            value: json!("Ship the beta"),
+        }));
+        futures_executor::block_on(c.dispatch(Action::LinkRepo {
+            id: "p1".into(),
+            text: "QwQdoge/meo-ai".into(),
+        }));
+        c.update(|s| {
+            s.active = None;
+            s.new_chat_project = Some("p1".into());
+        });
+        let root = dir.to_string_lossy().into_owned();
+        let context = c.project_context(Some(&root));
+        assert!(context.contains("Project: Trip."));
+        assert!(context.contains("QwQdoge/meo-ai"));
+        assert!(context.contains("Ship the beta"));
+        // The static rules mention the directory, keep AGENTS.md in place, and are the same every time.
+        let rules = agent::tool_instructions(Some(&root), false, false);
+        assert!(rules.contains(".agent/") && rules.contains("AGENTS.md stays where it is"));
+        assert_eq!(rules, agent::tool_instructions(Some(&root), false, false));
+        // Chat without a folder still learns the repository.
+        let chat = c.project_context(None);
+        assert!(chat.contains("QwQdoge/meo-ai") && !chat.contains("Project state"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_work_turn_that_updates_the_todo_shows_in_the_details_and_the_page() {
+        // The model edits .agent/TODO.md with its normal file tool; nothing special is needed on
+        // this side: the folder is the project's, the write is an ordinary one, and the views follow.
+        let dir = project_dir("e2e");
+        let edit = "```meo-tool\n{\"tool\":\"search_replace\",\"args\":{\"path\":\".agent/TODO.md\",\"old\":\"## Next\",\"new\":\"## Next\\n- [~] write docs\"}}\n```";
+        let api = fake_api(vec![edit, "Started on the docs; the list is updated."]);
+        let c = work_core(&api, &dir, "all");
+        // Make the open conversation a project chat whose folder is `dir`.
+        c.update(|s| {
+            s.projects = Some(Ok(vec![
+                json!({ "id": "p1", "name": "Trip", "description": "", "instructions": "" }),
+            ]));
+            s.conversations = vec![{
+                let mut x = conversation("c1", "Docs");
+                x.project_id = Some("p1".into());
+                x
+            }];
+            s.prefs.remove("work.workspace");
+        });
+        run(
+            &c,
+            Action::SetProjectFolder {
+                id: "p1".into(),
+                path: dir.to_string_lossy().into_owned(),
+            },
+        );
+        run(&c, Action::InitProjectAgent { id: "p1".into() });
+        run(
+            &c,
+            Action::SetSetting {
+                binding: "agent:p1:goal".into(),
+                value: json!("Ship the docs"),
+            },
+        );
+        run(
+            &c,
+            Action::Send {
+                text: "start the docs".into(),
+            },
+        );
+        let file = std::fs::read_to_string(dir.join(".agent/TODO.md")).unwrap();
+        assert!(file.contains("- [~] write docs"), "{file}");
+        // The details card now lists the goal and the to-do with its in-progress item.
+        let view = c.view();
+        let sections = view["page"]["inspector"]["sections"]
+            .as_array()
+            .unwrap()
+            .clone();
+        let todo = sections
+            .iter()
+            .find(|x| x["id"] == "agent_todo")
+            .expect("a to-do section");
+        assert_eq!(todo["title"], "To-do · 0/1");
+        assert_eq!(todo["rows"][0]["status"], "running");
+        assert!(sections
+            .iter()
+            .any(|x| x["id"] == "agent_goal" && x["rows"][0]["label"] == "Ship the docs"));
+        // And the project page shows it as a to-do marked "In progress".
+        c.update(|s| {
+            s.route = "projects".into();
+            s.open_project = Some("p1".into());
+        });
+        let items = page_items(&c, "goal");
+        let row = items.iter().find(|i| i["kind"] == "toggle").unwrap();
+        assert_eq!(
+            (row["label"].as_str(), row["description"].as_str()),
+            (Some("write docs"), Some("In progress"))
+        );
+        // The next turn's prompt carries the updated state.
+        let context = c.project_context(Some(&dir.to_string_lossy()));
+        assert!(context.contains("- [~] write docs") && context.contains("Ship the docs"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn cloning_is_offered_only_into_an_empty_folder() {
+        let dir = project_dir("clone");
+        let c = project_core(Some(&dir));
+        futures_executor::block_on(c.dispatch(Action::LinkRepo {
+            id: "p1".into(),
+            text: "QwQdoge/meo-ai".into(),
+        }));
+        let labels = |c: &AppCore| -> Vec<String> {
+            page_items(c, "environment")
+                .iter()
+                .find(|i| i["id"] == "env_repo")
+                .unwrap()["buttons"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|b| b["label"].as_str().unwrap().to_owned())
+                .collect()
+        };
+        assert_eq!(labels(&c), ["Clone into folder", "Change", "Unlink"]);
+        // Once the folder holds anything, the button is gone and a click is refused, not run.
+        std::fs::write(dir.join("keep.txt"), "x").unwrap();
+        assert_eq!(labels(&c), ["Change", "Unlink"]);
+        futures_executor::block_on(c.dispatch(Action::CloneProjectRepo { id: "p1".into() }));
+        assert!(c.view()["notice"]["text"]
+            .as_str()
+            .unwrap()
+            .contains("not empty"));
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn a_project_page_edits_through_generic_controls() {
         let c = signed_in_core();
@@ -9073,10 +10722,39 @@ mod tests {
             (page["kind"].as_str(), page["title"].as_str()),
             (Some("settings"), Some("Trip"))
         );
-        let controls = &page["sections"][0]["items"];
-        assert_eq!(controls[2]["binding"], "project:p1:instructions");
-        assert_eq!(controls[2]["value"], "Be brief");
-        let chats = &page["sections"][1]["items"];
+        let by_id = |id: &str| {
+            page["sections"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|x| x["id"] == id)
+                .unwrap_or_else(|| panic!("no section {id}"))["items"]
+                .clone()
+        };
+        let controls = by_id("project");
+        assert_eq!(controls[0]["action"]["type"], "start_project_work");
+        assert_eq!(controls[3]["binding"], "project:p1:instructions");
+        assert_eq!(controls[3]["value"], "Be brief");
+        // Every section is reachable from the page's own navigation.
+        let nav_ids: Vec<&str> = page["nav"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|g| g["items"].as_array().unwrap())
+            .map(|e| e["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            nav_ids,
+            [
+                "project",
+                "environment",
+                "goal",
+                "project_chats",
+                "project_memory",
+                "project_danger"
+            ]
+        );
+        let chats = &by_id("project_chats");
         assert_eq!(
             chats[0]["action"],
             json!({ "type": "new_chat_in_project", "id": "p1" })
@@ -9086,7 +10764,7 @@ mod tests {
             chats[1]["buttons"][0]["action"],
             json!({ "type": "select_conversation", "id": "c9" })
         );
-        let memory = &page["sections"][2]["items"][1];
+        let memory = &by_id("project_memory")[1];
         assert_eq!(
             (
                 memory["label"].as_str(),
@@ -9219,6 +10897,13 @@ mod tests {
             )
         );
         assert_eq!(sent[1].0, "Trip plan — 回答已完成");
+        // Switched off in Settings > Notifications: nothing more is sent.
+        futures_executor::block_on(c.dispatch(Action::SetSetting {
+            binding: "notifications.answers".into(),
+            value: json!(false),
+        }));
+        c.notify_answer("c1", "Silent");
+        assert_eq!(hooks.0.lock().unwrap().len(), 2);
     }
 
     #[test]

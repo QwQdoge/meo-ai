@@ -1,31 +1,33 @@
 > 📚 [MeoArch 主文档 / Master Doc](https://github.com/QwQdoge/MeoArch-os-workspace/blob/main/docs/MEOARCH_MASTER.md)：全部仓库地图、操作手册、Cloudflare 清单、全部文档链接。<!-- meoarch-master -->
 
-> **Unified product source (2026-10-18):** Desktop is `app/` (C++/QML + MeoUI), Web is `web/client/` (React/TypeScript), Android is `android/` (Kotlin/Compose), shared Core is `core-rs/` (Rust), and design configuration is `ui-schema/`. Meo API and Meo Account remain separate. See [workspace.json](workspace.json). The old Web deployment has not been promoted to this source.
+> **Unified product source (2026-10-18):** Desktop is `desktop-rs/` (Rust + QML + MeoUI), Web is `web/client/` (React/TypeScript), Android is `android/` (Kotlin/Compose), shared Core is `core-rs/` (Rust), and design configuration is `ui-schema/`. Meo API and Meo Account remain separate. See [workspace.json](workspace.json). The old Web deployment has not been promoted to this source.
 
 # Meo AI preview
 
-Native C++/QML MeoUI client for the Newelle-derived agent engine. GPL-3.0;
-upstream Newelle attribution and license remain in the repository root.
+Rust + QML MeoUI desktop client (`desktop-rs`) over the Rust cloud core, plus the
+Newelle-derived Python AgentService kept for the Linux package. GPL-3.0; upstream
+Newelle attribution and license remain in the repository root.
 
 See [architecture](docs/architecture.md), [AgentService contract](docs/agent-service-contract.md),
 [SystemTool contract](docs/system-tool-contract.md) and [upstream policy](docs/upstream-policy.md).
 
 ## Build
 
-On Arch Linux, install Qt 6.8+ base/declarative/shadertools/tools, CMake and a C++
-compiler. Clone MeoUI alongside this repository.
+Desktop (needs Qt 6.8+ and a MeoUI build):
 
 ```sh
-cmake -S meo -B build/meo -DMEO_UI_ROOT="${MEO_UI_ROOT:-$PWD/../meo-ui}" -DBUILD_TESTING=ON
-cmake --build build/meo --parallel 2
-QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software ctest --test-dir build/meo --output-on-failure
+cargo build --manifest-path meo/desktop-rs/Cargo.toml
+```
+
+Offline UI check without the core or an account: see `desktop-rs/demo`.
+
+Python service checks:
+
+```sh
 python3 meo/tools/check_headless_imports.py
 python3 -m meo.runtime.main --self-check
 python3 -m unittest discover -s meo/tests -p 'test_*.py' -v
 ```
-
-MeoUI is built as a dependency, not vendored. Installing this preview also
-installs the built MeoUI module through its existing CMake install rules.
 
 ## Phase B AgentService
 
@@ -58,13 +60,7 @@ python3 -m meo.runtime.main \
   --port 8765
 ```
 
-The service refuses non-loopback binds. The native QML application now uses
-AgentService at `http://127.0.0.1:8765` by default when neither transport endpoint
-is configured. Override the service origin when needed:
-
-```sh
-MEO_AI_SERVICE_ENDPOINT=http://127.0.0.1:8765 ./build/meo/meo-ai
-```
+The service refuses non-loopback binds. (The former C++ client that talked to it was removed; the desktop client now renders the Rust cloud core.)
 
 An explicitly configured `MEO_AI_ENDPOINT` selects the Phase A compatibility
 transport only when `MEO_AI_SERVICE_ENDPOINT` is absent. The app never retries a
@@ -190,11 +186,6 @@ path. To select it, set `MEO_AI_ENDPOINT` and leave `MEO_AI_SERVICE_ENDPOINT`
 unset. Build/install **this fork's** Newelle engine, enable its API interface on
 `127.0.0.1:8080`, configure a nonempty API key and start:
 
-```sh
-MEO_AI_API_KEY=... \
-MEO_AI_ENDPOINT=http://127.0.0.1:8080 \
-./build/meo/meo-ai
-```
 
 The legacy path still understands inherited `/models`, `/model`, `/tools`,
 `/skill`, `/list_chats`, `/resume` and `/option` commands. It remains only a

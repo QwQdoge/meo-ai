@@ -1,0 +1,20 @@
+# Offline UI host: build with
+#   cmake -S meo/desktop-rs/demo -B build/demo -DCMAKE_PREFIX_PATH=<Qt> -DMEO_UI_ROOT=<MeoUI checkout>
+#   QT_QPA_PLATFORM=offscreen build/demo/meo-ai-demo --view meo/desktop-rs/demo/../../ui-fixtures/chat.json --shot chat.png
+cmake_minimum_required(VERSION 3.21)
+project(MeoAIDemo LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_AUTOMOC ON)
+find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2)
+set(MEO_UI_ROOT "" CACHE PATH "MeoUI source directory")
+if(NOT EXISTS "${MEO_UI_ROOT}/CMakeLists.txt")
+    message(FATAL_ERROR "Set MEO_UI_ROOT to a MeoUI checkout")
+endif()
+set(MEOUI_BUILD_SHOWCASE OFF CACHE BOOL "" FORCE)
+set(BUILD_TESTING OFF)
+add_subdirectory("${MEO_UI_ROOT}" meoui)
+add_executable(meo-ai-demo demo.cpp)
+target_compile_definitions(meo-ai-demo PRIVATE MEO_DEMO_QML_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../qml")
+add_dependencies(meo-ai-demo meoui_moduleplugin)
+target_compile_definitions(meo-ai-demo PRIVATE MEOUI_IMPORT_PATH="${CMAKE_CURRENT_BINARY_DIR}/meoui")
+target_link_libraries(meo-ai-demo PRIVATE Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2)

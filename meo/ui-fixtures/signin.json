@@ -1,0 +1,38 @@
+{
+ "page": {
+  "kind": "sign_in",
+  "title": "Welcome to Meo AI",
+  "text": "Sign in with your Meo Account.",
+  "actions": [
+   {
+    "label": "Sign in",
+    "style": "primary",
+    "action": {
+     "type": "sign_in"
+    }
+   }
+  ],
+  "features": [
+   {
+    "icon": "chat",
+    "title": "Chat",
+    "text": "Ask anything and get answers with sources."
+   },
+   {
+    "icon": "work",
+    "title": "Work",
+    "text": "Hand a task to Meo and follow it from any device."
+   },
+   {
+    "icon": "skills",
+    "title": "Skills and apps",
+    "text": "Add an app or skill once and use it everywhere."
+   }
+  ]
+ },
+ "prefs": {},
+ "strings": {
+  "jump": "Jump to the latest message",
+  "thinking": "Thinking"
+ }
+}
