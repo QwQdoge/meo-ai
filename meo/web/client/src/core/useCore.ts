@@ -18,6 +18,20 @@ export function useCore() {
 
   useEffect(() => {
     let disposed = false;
+    // The core reports a change for every streamed chunk. Reading the whole view and re-rendering
+    // for each one froze long chats, so at most one refresh is done per animation frame (about
+    // every 100 ms in a background tab, where frames do not run).
+    let queued = false;
+    const refresh = () => {
+      queued = false;
+      if (!disposed && core.current) setView(JSON.parse(core.current.view()));
+    };
+    const schedule = () => {
+      if (queued || disposed) return;
+      queued = true;
+      if (document.hidden) window.setTimeout(refresh, 100);
+      else requestAnimationFrame(refresh);
+    };
     (async () => {
       try {
         await init();
@@ -25,9 +39,7 @@ export function useCore() {
         const instance = new WebCore(
           "",
           `${location.origin}${CALLBACK_PATH}`,
-          () => {
-            if (!disposed) setView(JSON.parse(instance.view()));
-          },
+          () => schedule(),
           (url) => location.assign(url),
           (title, text) => {
             if (typeof Notification !== "undefined" && Notification.permission === "granted")

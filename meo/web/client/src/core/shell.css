@@ -423,3 +423,6 @@
   background: rgb(var(--surface-secondary)); color: inherit; font-size: 14px; resize: vertical; }
 .core-app .set-row.stack input:focus, .core-app .set-row.stack textarea:focus { outline: 2px solid rgb(var(--accent-primary)); outline-offset: -1px; }
 @media (max-width: 839px) { .core-app .core-settings-body { padding: 12px 14px 28px; } }
+
+/* Off-screen messages are not laid out or painted until they scroll into view (long chats). */
+.core-app .core-message { content-visibility: auto; contain-intrinsic-size: auto 140px; }

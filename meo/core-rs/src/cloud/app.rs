@@ -581,6 +581,8 @@ pub struct AppCore {
     /// Held while one task refreshes the access token, so parallel calls never refresh twice
     /// (a rotated refresh token would make the second refresh look like a revoked session).
     refreshing: Arc<AtomicBool>,
+    /// The last sidebar built and a hash of everything it was built from (see `sidebar_key`).
+    sidebar_cache: Arc<Mutex<Option<(u64, Value)>>>,
 }
 
 const KEY_SESSION: &str = "session";
@@ -628,6 +630,7 @@ impl AppCore {
             state: Arc::new(Mutex::new(state)),
             cancel: Arc::new(AtomicBool::new(false)),
             refreshing: Arc::new(AtomicBool::new(false)),
+            sidebar_cache: Arc::new(Mutex::new(None)),
             http,
             api,
             oauth,
@@ -6091,7 +6094,7 @@ impl AppCore {
             "sync": { "live": s.sync_live, "devices": s.sync_devices },
             "route": s.route,
             "navigation": if signed_in { self.manifest.nav_json(&s.route) } else { json!([]) },
-            "sidebar": if signed_in { shell_sidebar(&s) } else { Value::Null },
+            "sidebar": if signed_in { self.sidebar(&s) } else { Value::Null },
             "page": page,
             "dialog": s.dialog.as_ref().map(|d| json!({
                 "kind": d.kind,
@@ -6400,6 +6403,57 @@ fn pref_bool(s: &State, key: &str, default: bool) -> bool {
 
 /// The Claude-style left column shared by every page: Chat | Work switch, search, new chat,
 /// plugins, projects tree and plain chats. `collapsed` leaves only the icon rail.
+/// A hash of everything `shell_sidebar` reads. Building the sidebar (a menu per chat) is the largest
+/// part of a view and almost never changes while an answer streams, so it is rebuilt only when this
+/// changes. Anything the sidebar starts to read must be added here.
+fn sidebar_key(s: &State) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for c in &s.conversations {
+        (&c.id, &c.title, &c.updated_at, &c.project_id, &c.mode).hash(&mut h);
+    }
+    s.work_ids.hash(&mut h);
+    // Projects are JSON; only their ids, names and the open one matter here, but hashing the text is cheap.
+    s.projects
+        .as_ref()
+        .map(|r| {
+            r.as_ref().map(|list| {
+                list.iter()
+                    .map(|p| (p["id"].as_str(), p["name"].as_str()))
+                    .collect::<Vec<_>>()
+            })
+        })
+        .map(|r| r.ok())
+        .hash(&mut h);
+    (
+        &s.route,
+        &s.active,
+        &s.open_project,
+        s.show_archived,
+        &s.search,
+        s.online,
+        s.sync_live,
+        pref_bool(s, "ui.sidebar_collapsed", false),
+    )
+        .hash(&mut h);
+    h.finish()
+}
+
+impl AppCore {
+    fn sidebar(&self, s: &State) -> Value {
+        let key = sidebar_key(s);
+        let mut cache = self.sidebar_cache.lock().unwrap();
+        if let Some((kept, value)) = cache.as_ref() {
+            if *kept == key {
+                return value.clone();
+            }
+        }
+        let value = shell_sidebar(s);
+        *cache = Some((key, value.clone()));
+        value
+    }
+}
+
 fn shell_sidebar(s: &State) -> Value {
     let work = s.route == "work";
     let active = s.active.as_ref();
@@ -7581,6 +7635,53 @@ fn sign_in_page(s: &State) -> Value {
     })
 }
 
+/// A stored message as the view shows it: its text without tool blocks, its pictures and (answers)
+/// its Markdown/math/chart blocks. Parsing these is the most expensive part of the view and a stored
+/// message never changes, so the result is kept by message content: a long chat costs the parsing of
+/// the one message being streamed, not of every message on every token.
+struct Rendered {
+    text: String,
+    images: Vec<String>,
+    blocks: Vec<Value>,
+}
+
+fn rendered(m: &ChatMessage) -> std::sync::Arc<Rendered> {
+    use std::collections::HashMap;
+    use std::hash::{Hash, Hasher};
+    use std::sync::{Arc, Mutex, OnceLock};
+    const MAX_KEPT: usize = 1500;
+    static KEPT: OnceLock<Mutex<HashMap<u64, Arc<Rendered>>>> = OnceLock::new();
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    (&m.id, &m.role, &m.text).hash(&mut hasher);
+    let key = hasher.finish();
+    let kept = KEPT.get_or_init(Default::default);
+    if let Some(found) = kept.lock().unwrap().get(&key) {
+        return found.clone();
+    }
+    let shown = if m.role == "assistant" {
+        tool_free_text(&m.text)
+    } else {
+        m.text.clone()
+    };
+    let (text, images) = extract_images(&shown);
+    let blocks = if m.role == "assistant" {
+        with_message_id(richtext::blocks(&text), &m.id)
+    } else {
+        Vec::new()
+    };
+    let value = Arc::new(Rendered {
+        text,
+        images,
+        blocks,
+    });
+    let mut kept = kept.lock().unwrap();
+    if kept.len() >= MAX_KEPT {
+        kept.clear();
+    }
+    kept.insert(key, value.clone());
+    value
+}
+
 fn conversation_page(s: &State) -> Value {
     let active = s.active.clone();
     let mut messages: Vec<Value> = active
@@ -7604,12 +7705,12 @@ fn conversation_page(s: &State) -> Value {
                             actions.push(button("Regenerate", "secondary", json!({ "type": "regenerate" })));
                         }
                     }
-                    let shown = if m.role == "assistant" { tool_free_text(&m.text) } else { m.text.clone() };
-                    let (text, mut images) = extract_images(&shown);
+                    let done = rendered(m);
+                    let mut images = done.images.clone();
                     images.extend(s.generated.get(&m.id).into_iter().flatten().cloned());
                     let mut message = json!({
-                        "id": m.id, "role": m.role, "text": text, "streaming": false, "actions": actions,
-                        "blocks": if m.role == "assistant" { with_message_id(richtext::blocks(&text), &m.id) } else { Vec::new() },
+                        "id": m.id, "role": m.role, "text": done.text, "streaming": false, "actions": actions,
+                        "blocks": done.blocks,
                         "images": images.into_iter().map(|u| json!({ "url": u })).collect::<Vec<_>>(),
                     });
                     // Steps stored with the answer; the live steps below replace them while working.
@@ -10695,6 +10796,85 @@ mod tests {
             .contains("not empty"));
         assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `cargo test --release -- --ignored view_cost --nocapture`: what one streamed token costs.
+    #[test]
+    #[ignore]
+    fn view_cost_of_a_long_streaming_chat() {
+        let c = signed_in_core();
+        let body = "This is a paragraph of an answer with **bold** text, a list:\n\n- one\n- two\n- three\n\n```rust\nfn main() { println!(\"hi\"); }\n```\n\nand more words to make it realistic. ".repeat(6);
+        c.update(|s| {
+            s.conversations = (0..200)
+                .map(|i| conversation(&format!("c{i}"), &format!("Chat number {i}")))
+                .collect();
+            s.active = Some("c1".into());
+            s.messages.insert(
+                "c1".into(),
+                (0..300)
+                    .map(|i| ChatMessage {
+                        id: format!("m{i}"),
+                        role: if i % 2 == 0 { "user" } else { "assistant" }.into(),
+                        text: body.clone(),
+                        steps: vec![],
+                    })
+                    .collect(),
+            );
+        });
+        let n = 50;
+        c.view(); // warm the caches, as a running app has
+        let start = std::time::Instant::now();
+        let mut last = Value::Null;
+        for _ in 0..n {
+            last = c.view();
+        }
+        let build = start.elapsed() / n;
+        let start = std::time::Instant::now();
+        let mut bytes = 0;
+        for _ in 0..n {
+            bytes = last.to_string().len();
+        }
+        println!(
+            "view(): build {build:?}, serialize {:?}, {} KB of JSON",
+            start.elapsed() / n,
+            bytes / 1024
+        );
+    }
+
+    #[test]
+    fn the_cached_sidebar_follows_everything_it_shows() {
+        let c = signed_in_core();
+        let sidebar = |c: &AppCore| c.view()["sidebar"].clone();
+        c.update(|s| {
+            s.conversations = vec![conversation("c1", "Old title"), conversation("c2", "Other")]
+        });
+        let first = sidebar(&c);
+        assert_eq!(first, sidebar(&c), "nothing changed, same sidebar");
+        let titles = |v: &Value| -> Vec<String> {
+            v["sections"][2]["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|i| i["title"].as_str().unwrap().to_owned())
+                .collect()
+        };
+        assert_eq!(titles(&first), ["Old title", "Other"]);
+        c.update(|s| s.conversations[0].title = "New title".into());
+        assert_eq!(titles(&sidebar(&c)), ["New title", "Other"]);
+        c.update(|s| s.active = Some("c2".into()));
+        assert_eq!(sidebar(&c)["sections"][2]["items"][1]["selected"], true);
+        c.update(|s| s.work_ids = vec!["c2".into()]);
+        assert_eq!(titles(&sidebar(&c)), ["New title"]);
+        c.update(|s| {
+            s.prefs.insert("ui.sidebar_collapsed".into(), json!(true));
+        });
+        assert_eq!(sidebar(&c)["collapsed"], true);
+        c.update(|s| s.show_archived = true);
+        assert_eq!(sidebar(&c)["sections"][2]["label"], "Archived");
+        c.update(|s| s.projects = Some(Ok(vec![json!({ "id": "p1", "name": "Trip" })])));
+        assert_eq!(sidebar(&c)["sections"][1]["items"][0]["title"], "Trip");
+        c.update(|s| s.projects = Some(Ok(vec![json!({ "id": "p1", "name": "Renamed" })])));
+        assert_eq!(sidebar(&c)["sections"][1]["items"][0]["title"], "Renamed");
     }
 
     #[test]

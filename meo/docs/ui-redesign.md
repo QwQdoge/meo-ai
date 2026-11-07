@@ -108,3 +108,16 @@ Offline check without the core, network or account: `desktop-rs/demo` builds `me
 - [x] Export a conversation (core, all three clients): "Export" in a conversation's menu saves it as `meo-<title>.md` (the host's save hook, a browser download on the web, else the Downloads folder). Tool requests are left out. Found by comparing the action list with Claude, ChatGPT and DeepSeek; the other gaps there are still open and mostly need Meo API support: share links, edit branches (switching between versions of a message), answer feedback, voice, and showing a model's reasoning (the stream does not forward it today).
 - [ ] Code block highlighting polish
 - [ ] Sidebar tree drag/drop categories
+
+## Performance of long chats (2026-11-07)
+
+Measured on a 300-message chat (about 600 KB of view JSON, 200 chats in the sidebar), per streamed token:
+
+| Where | Before | After | How |
+| --- | --- | --- | --- |
+| Web page (script time) | 512 ms | 2 ms | refreshes coalesced per animation frame; each message is a memoized component (only the streamed one re-renders); off-screen messages use `content-visibility` |
+| Desktop QML | 40.6 ms | 9.4 ms | the host sends unchanged stored messages as `{id, same: true}` placeholders (`desktop-rs/src/message_delta.rs`); QML message blocks are read by position and updated in place instead of rebuilt |
+| Core `view()` | 9.3 ms | 4.8 ms | the sidebar (a menu per chat) is cached by a hash of what it shows (`sidebar_key`); stored messages' parsed blocks are cached by content (`rendered`) |
+
+Scrolling: a reader who scrolled up is no longer pulled to the bottom by the stream (web and desktop); sending a message follows again.
+Measure again with `meo-ai-demo --view <fixture> --bench 30` (desktop, `MEO_BENCH_DELTA=1` for the placeholder path), `?perf=300&stream=40` on the web demo and `cargo test --release -- --ignored view_cost --nocapture` (core).

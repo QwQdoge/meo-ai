@@ -850,6 +850,83 @@ function TuneButton({ toolbar, act }: { toolbar: Spec[]; act: Act }) {
   );
 }
 
+/** Everything that shows in one message, compared without its identity: stored messages never change,
+ *  so a streamed token re-renders only the message being streamed, not the whole chat. */
+const sameMessage = (a: Spec, b: Spec) =>
+  a.id === b.id && a.role === b.role && a.text === b.text && !!a.streaming === !!b.streaming &&
+  !!a.stepsOpen === !!b.stepsOpen && a.stepsLabel === b.stepsLabel &&
+  (a.blocks?.length ?? 0) === (b.blocks?.length ?? 0) && (a.images?.length ?? 0) === (b.images?.length ?? 0) &&
+  (a.actions?.length ?? 0) === (b.actions?.length ?? 0) &&
+  (a.steps ? JSON.stringify(a.steps) : "") === (b.steps ? JSON.stringify(b.steps) : "");
+
+const MessageView = React.memo(
+  function MessageView({ m, strings, act }: { m: Spec; strings: Spec; act: Act }) {
+    return (
+          <div className={`core-message ${m.role === "user" ? "user" : "assistant"}`}>
+            {m.role === "user" ? (
+              <div className="core-bubble user">{m.text}</div>
+            ) : (
+              <div className="core-bubble assistant">
+                {m.steps && (
+                  <details className="core-steps" open={!!m.stepsOpen}>
+                    <summary>{m.stepsLabel}</summary>
+                    <ol>
+                      {m.steps.map((st: Spec) => (
+                        <li key={st.id} className={`step-${st.status}`}>
+                          <details>
+                            <summary>
+                              <span className="core-step-mark" aria-hidden>
+                                {st.status === "done" ? <Icon name="check_circle" size={14} /> : st.status === "error" ? <Icon name="error" size={14} /> : <Icon name="progress_activity" size={14} className="spin" />}
+                              </span>
+                              <b>{st.title}</b>
+                            </summary>
+                            {st.detail ? <p className="core-muted">{st.detail}</p> : null}
+                            {(st.items ?? []).length > 0 && (
+                              <ul>
+                                {st.items.map((it: Spec, k: number) => (
+                                  <li key={k}>{/^https?:\/\//.test(it.url) ? <a href={it.url} target="_blank" rel="noreferrer noopener">{it.title || it.url}</a> : it.title}</li>
+                                ))}
+                              </ul>
+                            )}
+                          </details>
+                        </li>
+                      ))}
+                    </ol>
+                  </details>
+                )}
+                {m.streaming && !m.text && !(m.blocks ?? []).length && (
+                  <span className="core-typing" role="status" aria-label={strings.thinking ?? "Thinking"}><i /><i /><i /></span>
+                )}
+                <Blocks
+                  blocks={m.blocks?.length ? m.blocks : [{ type: "markdown", text: m.text }]}
+                  streaming={!!m.streaming}
+                  act={act as (action: Spec) => void}
+                  copy={strings.copy ?? "Copy"}
+                  copied={strings.copied ?? "Copied"}
+                  components={{ pre: (props: any) => <CodeBlock {...props} label={strings.copy ?? "Copy"} done={strings.copied ?? "Copied"} /> }}
+                />
+                {(m.images ?? []).map((img: Spec, k: number) => (
+                  <span key={k} className="core-image-wrap">
+                    <img className="core-image" src={img.url} alt="" loading="lazy" />
+                    <a className="core-image-save" href={img.url} download={`meo-image-${k + 1}.png`} aria-label="Download">Download</a>
+                  </span>
+                ))}
+              </div>
+            )}
+            {!m.streaming && m.text && (
+              <div className="core-message-actions">
+                <CopyButton text={m.text} label={strings.copy ?? "Copy"} done={strings.copied ?? "Copied"} />
+                {(m.actions ?? []).map((a: Spec, j: number) => (
+                  <button key={j} onClick={() => act(a.action)}>{a.label}</button>
+                ))}
+              </div>
+            )}
+          </div>
+    );
+  },
+  (a, b) => sameMessage(a.m, b.m) && a.strings.copy === b.strings.copy && a.strings.copied === b.strings.copied,
+);
+
 function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: Spec; strings: Spec; act: Act; work?: boolean }) {
   const inspector: Spec = page.inspector ?? {};
   const area = useRef<HTMLTextAreaElement>(null);
@@ -857,6 +934,8 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
   const composer: Spec = page.composer ?? {};
   const end = useRef<HTMLDivElement>(null);
   const [atEnd, setAtEnd] = useState(true);
+  // Follow the stream only while the reader is at the bottom; scrolling up to read stays put.
+  const stick = useRef(true);
   const fileInput = useRef<HTMLInputElement>(null);
   const [input, setInput] = useState("");
   const [dragging, setDragging] = useState(false);
@@ -887,12 +966,20 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
   const last = messages[messages.length - 1]?.text?.length ?? 0;
 
   useEffect(() => {
+    if (!stick.current) return;
     end.current?.scrollIntoView({ block: "end" });
+    // Heights of messages that were skipped by content-visibility settle after the first pass.
+    const frame = requestAnimationFrame(() => stick.current && end.current?.scrollIntoView({ block: "end" }));
+    return () => cancelAnimationFrame(frame);
   }, [messages.length, last]);
+  // Another chat opens at its end.
+  const firstId = messages[0]?.id;
+  useEffect(() => { stick.current = true; }, [firstId]);
 
   const send = () => {
     const text = input.trim();
     if (!text || composer.busy || !composer.sendAction) return;
+    stick.current = true;
     act({ ...composer.sendAction, text });
     setInput("");
   };
@@ -924,7 +1011,7 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
             <button className="core-chip" onClick={() => act(inspector.show)}>{inspector.title}</button>
           )}
         </header>
-        <div className="core-messages" onScroll={(e) => { const el = e.currentTarget; setAtEnd(el.scrollHeight - el.scrollTop - el.clientHeight < 80); }}>
+        <div className="core-messages" onScroll={(e) => { const el = e.currentTarget; const near = el.scrollHeight - el.scrollTop - el.clientHeight < 80; stick.current = near; setAtEnd(near); }}>
           {page.empty && (
             <div className="core-empty">
               <img src="/meo-ai.svg" alt="" width={48} height={48} />
@@ -938,66 +1025,7 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
             </div>
           )}
           {messages.map((m, i) => (
-            <div key={i} className={`core-message ${m.role === "user" ? "user" : "assistant"}`}>
-              {m.role === "user" ? (
-                <div className="core-bubble user">{m.text}</div>
-              ) : (
-                <div className="core-bubble assistant">
-                  {m.steps && (
-                    <details className="core-steps" open={!!m.stepsOpen}>
-                      <summary>{m.stepsLabel}</summary>
-                      <ol>
-                        {m.steps.map((st: Spec) => (
-                          <li key={st.id} className={`step-${st.status}`}>
-                            <details>
-                              <summary>
-                                <span className="core-step-mark" aria-hidden>
-                                  {st.status === "done" ? <Icon name="check_circle" size={14} /> : st.status === "error" ? <Icon name="error" size={14} /> : <Icon name="progress_activity" size={14} className="spin" />}
-                                </span>
-                                <b>{st.title}</b>
-                              </summary>
-                              {st.detail ? <p className="core-muted">{st.detail}</p> : null}
-                              {(st.items ?? []).length > 0 && (
-                                <ul>
-                                  {st.items.map((it: Spec, k: number) => (
-                                    <li key={k}>{/^https?:\/\//.test(it.url) ? <a href={it.url} target="_blank" rel="noreferrer noopener">{it.title || it.url}</a> : it.title}</li>
-                                  ))}
-                                </ul>
-                              )}
-                            </details>
-                          </li>
-                        ))}
-                      </ol>
-                    </details>
-                  )}
-                  {m.streaming && !m.text && !(m.blocks ?? []).length && (
-                    <span className="core-typing" role="status" aria-label={strings.thinking ?? "Thinking"}><i /><i /><i /></span>
-                  )}
-                  <Blocks
-                    blocks={m.blocks?.length ? m.blocks : [{ type: "markdown", text: m.text }]}
-                    streaming={!!m.streaming}
-                    act={act as (action: Spec) => void}
-                    copy={strings.copy ?? "Copy"}
-                    copied={strings.copied ?? "Copied"}
-                    components={{ pre: (props: any) => <CodeBlock {...props} label={strings.copy ?? "Copy"} done={strings.copied ?? "Copied"} /> }}
-                  />
-                  {(m.images ?? []).map((img: Spec, k: number) => (
-                    <span key={k} className="core-image-wrap">
-                      <img className="core-image" src={img.url} alt="" loading="lazy" />
-                      <a className="core-image-save" href={img.url} download={`meo-image-${k + 1}.png`} aria-label="Download">Download</a>
-                    </span>
-                  ))}
-                </div>
-              )}
-              {!m.streaming && m.text && (
-                <div className="core-message-actions">
-                  <CopyButton text={m.text} label={strings.copy ?? "Copy"} done={strings.copied ?? "Copied"} />
-                  {(m.actions ?? []).map((a: Spec, j: number) => (
-                    <button key={j} onClick={() => act(a.action)}>{a.label}</button>
-                  ))}
-                </div>
-              )}
-            </div>
+            <MessageView key={m.id ? m.id : `live${i}`} m={m} strings={strings} act={act} />
           ))}
           <div ref={end} />
         </div>

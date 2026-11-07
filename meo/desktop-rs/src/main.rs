@@ -26,6 +26,7 @@ use std::{
 };
 
 mod fileurl;
+mod message_delta;
 mod updater;
 
 use meo_ai_core::cloud::{
@@ -60,6 +61,8 @@ mod meo_core {
         pub core: Option<AppCore>,
         pub handle: Option<Handle>,
         pub refresh_pending: Arc<AtomicBool>,
+        /// What QML holds of the open chat (see `message_delta`).
+        pub sent: message_delta::SentMessages,
     }
 
     impl Default for MeoCore {
@@ -69,6 +72,7 @@ mod meo_core {
                 core: None,
                 handle: None,
                 refresh_pending: Arc::new(AtomicBool::new(false)),
+                sent: message_delta::SentMessages::default(),
             }
         }
     }
@@ -104,9 +108,18 @@ mod meo_core {
         fn refresh_view(&mut self) {
             self.refresh_pending.store(false, Ordering::SeqCst);
             if let Some(core) = &self.core {
-                self.view = core.view();
+                let mut view = core.view();
+                self.sent.compact(&mut view);
+                self.view = view;
                 self.view_changed();
             }
+        }
+
+        /// QML met a placeholder message it has no row for: send the next view in full.
+        #[qslot(qml_name = "resend")]
+        fn resend(&mut self) {
+            self.sent.reset();
+            self.refresh_view();
         }
     }
 }

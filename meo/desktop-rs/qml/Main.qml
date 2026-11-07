@@ -1812,15 +1812,14 @@ ApplicationWindow {
                             // Waiting for the first token: pulsing dots instead of an empty gap.
                             TypingDots { visible: streaming && !block.text; height: visible ? 24 : 0 }
                             Repeater {
-                                model: md.parts
+                                model: md.parts.length
                                 delegate: Loader {
-                                    required property var modelData
                                     required property int index
-                                    readonly property var part: modelData
+                                    readonly property var part: md.parts[index] || ({ kind: "prose", text: "" })
                                     readonly property bool isLast: index === md.parts.length - 1
                                     readonly property bool live: md.live
                                     width: md.width
-                                    sourceComponent: modelData.kind === "code" ? codeCard : prose
+                                    sourceComponent: part.kind === "code" ? codeCard : prose
                                 }
                             }
                         }
@@ -2274,30 +2273,50 @@ ApplicationWindow {
                         readonly property var source: window.page.messages || []
                         onSourceChanged: syncMessages(source)
                         Component.onCompleted: syncMessages(source)
+                        // A cheap fingerprint of everything but the text (which is compared as is): most
+                        // rows are unchanged on every token, so they must not be re-serialized.
+                        function fingerprint(m) {
+                            return (m.id || "") + "|" + m.role + "|" + (m.streaming ? 1 : 0) + "|"
+                                + (m.blocks ? m.blocks.length : 0) + "|" + (m.steps ? m.steps.length : 0) + "|"
+                                + (m.stepsOpen ? 1 : 0) + "|" + (m.stepsLabel || "") + "|"
+                                + (m.actions ? m.actions.length : 0) + "|" + (m.images ? m.images.length : 0)
+                        }
                         function syncMessages(list) {
                             for (let i = 0; i < list.length; ++i) {
                                 const m = list[i]
+                                // The host sends an unchanged stored message as a placeholder (its row stays).
+                                if (m.same) {
+                                    if (i < messageModel.count && messageModel.get(i).key === String(m.id)) continue
+                                    if (typeof core.resend === "function") Qt.callLater(core.resend)
+                                    return
+                                }
                                 const key = m.id ? String(m.id) : "live:" + i
-                                const json = JSON.stringify(m)
+                                const print = fingerprint(m)
+                                const text = m.text || ""
                                 if (i < messageModel.count) {
                                     const row = messageModel.get(i)
                                     if (row.key === key) {
-                                        if (row.json !== json)
-                                            messageModel.set(i, { "key": key, "json": json })
+                                        if (row.print !== print || row.text !== text)
+                                            messageModel.set(i, { "key": key, "print": print, "text": text, "json": JSON.stringify(m) })
                                         continue
                                     }
                                     // A different message at this position (another chat, an edit,
                                     // a stream that became a stored reply): rebuild from here.
                                     messageModel.remove(i, messageModel.count - i)
                                 }
-                                messageModel.append({ "key": key, "json": json })
+                                if (m.role === "user") follow = true
+                                messageModel.append({ "key": key, "print": print, "text": text, "json": JSON.stringify(m) })
                             }
                             if (messageModel.count > list.length)
                                 messageModel.remove(list.length, messageModel.count - list.length)
                         }
                         add: MeoListTransitions.add
-                        onCountChanged: positionViewAtEnd()
-                        onContentHeightChanged: if (atYEnd || window.page.composer.busy) positionViewAtEnd()
+                        // Follow the stream only while the reader is at the bottom; a reader who
+                        // scrolled up to read is left where they are. Sending a message follows again.
+                        property bool follow: true
+                        onMovingChanged: if (!moving) follow = atYEnd
+                        onCountChanged: if (follow) positionViewAtEnd()
+                        onContentHeightChanged: if (follow) positionViewAtEnd()
                         delegate: Item {
                             id: messageItem
                             // The message object of this row (see syncMessages).
@@ -2458,17 +2477,19 @@ ApplicationWindow {
                                     y: 12
                                     width: bubble.width - 32
                                     spacing: 8
+                                    // The blocks are read by position, so a streamed token updates the
+                                    // existing controls in place instead of rebuilding them all.
+                                    readonly property var blockList: {
+                                        const own = modelData.role === "user" || !modelData.blocks
+                                        return own ? [{ type: "markdown", text: modelData.text }] : modelData.blocks
+                                    }
                                     Repeater {
-                                        model: {
-                                            const own = modelData.role === "user" || !modelData.blocks
-                                            const list = own ? [{ type: "markdown", text: modelData.text }] : modelData.blocks
-                                            return list.map((x, i) => Object.assign({ last: i === list.length - 1 }, x))
-                                        }
+                                        model: blocksColumn.blockList.length
                                         Loader {
-                                            required property var modelData
+                                            required property int index
                                             width: blocksColumn.width
-                                            property var block: modelData
-                                            property bool streaming: !!messageItem.streaming && !!modelData.last
+                                            readonly property var block: blocksColumn.blockList[index] || ({})
+                                            readonly property bool streaming: !!messageItem.streaming && index === blocksColumn.blockList.length - 1
                                             sourceComponent: block.type === "callout" ? calloutBlock : block.type === "draft" ? draftBlock : block.type === "plot" ? plotBlock : block.type === "chart" ? chartBlock : block.type === "math" ? mathBlock : markdownBlock
                                         }
                                     }
