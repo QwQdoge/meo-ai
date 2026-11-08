@@ -640,7 +640,7 @@ function RowMenu({ menu, act, label }: { menu: Spec[]; act: Act; label: string }
 }
 
 /** One collapsible part of the details card: icon rows, a usage bar, step rows, links. */
-function InspectorSection({ sec }: { sec: Spec }) {
+function InspectorSection({ sec, act }: { sec: Spec; act: Act }) {
   const [open, setOpen] = useState(sec.open !== false);
   const total = Math.max(1, ...[(sec.bar?.segments ?? []).reduce((n: number, x: Spec) => n + x.value, 0)]);
   return (
@@ -662,10 +662,13 @@ function InspectorSection({ sec }: { sec: Spec }) {
             <div key={i} className="core-irow">
               {r.icon && <Icon name={r.icon} />}
               {r.status && <span className={`dot ${r.status}`} aria-hidden />}
+              {r.swatch != null && <i className={`core-swatch seg${r.swatch}`} aria-hidden />}
               <span className="label">{r.label}</span>
-              {r.value != null && <span className="core-muted">{r.value}</span>}
+              {r.value != null && <span className="core-muted num">{r.value}</span>}
+              {r.percent && <span className="core-muted num core-pct">{r.percent}</span>}
             </div>
           ))}
+          {sec.action && <button className="core-isec-action" onClick={() => act(sec.action.action)}>{sec.action.label}</button>}
           {(sec.files ?? []).map((f: Spec) => (
             <details key={f.path} className="core-change">
               <summary>
@@ -1180,7 +1183,7 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
       {inspector.visible && (
         <aside className="core-inspector" aria-label={inspector.title}>
           <header><strong>{inspector.title}</strong><button aria-label="Hide" onClick={() => act(inspector.hide)}>✕</button></header>
-          {(inspector.sections ?? []).map((sec: Spec) => <InspectorSection key={sec.id} sec={sec} />)}
+          {(inspector.sections ?? []).map((sec: Spec) => <InspectorSection key={sec.id} sec={sec} act={act} />)}
         </aside>
       )}
     </div>

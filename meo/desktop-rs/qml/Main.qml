@@ -69,6 +69,9 @@ ApplicationWindow {
             core.dispatch(JSON.stringify(action))
     }
 
+    // Colors of the context breakdown (bar segments and legend swatches), by position.
+    readonly property var swatches: [MeoTheme.primary, MeoTheme.tertiary, MeoTheme.secondary, MeoTheme.outline, MeoTheme.error]
+
     // Splits Markdown into prose and fenced code parts: [{kind: "prose"|"code", text, lang}].
     function splitFences(text) {
         const out = []
@@ -1801,7 +1804,7 @@ ApplicationWindow {
                                                 width: Math.max(2, (sec.width - 3) * modelData.value / sum)
                                                 height: 6
                                                 radius: 3
-                                                color: index === 0 ? MeoTheme.primary : index === 1 ? MeoTheme.tertiary : MeoTheme.outlineVariant
+                                                color: window.swatches[index % window.swatches.length]
                                             }
                                         }
                                     }
@@ -1821,9 +1824,23 @@ ApplicationWindow {
                                                 width: 6; height: 6; radius: 3
                                                 color: modelData.status === "error" ? MeoTheme.error : modelData.status === "done" ? MeoTheme.primary : MeoTheme.outline
                                             }
+                                            // Legend swatch of the context breakdown.
+                                            Rectangle {
+                                                visible: modelData.swatch !== undefined
+                                                width: 10; height: 10; radius: 3
+                                                color: window.swatches[(modelData.swatch || 0) % window.swatches.length]
+                                            }
                                             Txt { text: modelData.label; typeRole: "label"; elide: Text.ElideRight; Layout.fillWidth: true }
-                                            Txt { visible: modelData.value !== undefined && modelData.value !== null; text: String(modelData.value); typeRole: "label"; color: MeoTheme.contentOnSurfaceVariant }
+                                            Num { visible: modelData.value !== undefined && modelData.value !== null; text: String(modelData.value); typeRole: "label"; color: MeoTheme.contentOnSurfaceVariant }
+                                            Num { visible: !!modelData.percent; text: modelData.percent || ""; typeRole: "label"; Layout.preferredWidth: 36; horizontalAlignment: Text.AlignRight; color: MeoTheme.contentOnSurfaceVariant }
                                         }
+                                    }
+                                    MeoButton {
+                                        visible: sec.open && !!modelData.action
+                                        text: modelData.action ? modelData.action.label : ""
+                                        type: "tonal"
+                                        size: "xs"
+                                        onClicked: window.act(modelData.action.action)
                                     }
                                     Repeater {
                                         model: sec.open ? (modelData.links || []) : []

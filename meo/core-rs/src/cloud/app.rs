@@ -6885,6 +6885,24 @@ fn environment_row(s: &State) -> Value {
     }
 }
 
+/// Roughly how many tokens the open chat holds (4 characters a token), counting a summary instead of
+/// the messages it replaced. An estimate for display; the provider counts for real.
+fn chat_tokens(s: &State, messages: &[Value], active: Option<&String>) -> usize {
+    let chars: usize = messages
+        .iter()
+        .map(|m| m["text"].as_str().map_or(0, |t| t.chars().count()))
+        .sum();
+    let summary = active
+        .and_then(|id| s.summaries.get(id))
+        .copied()
+        .unwrap_or_default();
+    (chars.saturating_sub(summary.replaced_chars) + summary.summary_chars) / 4
+}
+
+/// The size of the working window the usage ring is measured against. Models differ and the API does
+/// not say, so this is a reference (the ring explains itself in its tooltip), not a limit.
+const REFERENCE_WINDOW_TOKENS: usize = 128_000;
+
 fn inspector(s: &State, messages: &[Value], active: Option<&String>) -> Value {
     let started = s.streaming.is_some()
         || messages
@@ -6983,14 +7001,65 @@ fn inspector(s: &State, messages: &[Value], active: Option<&String>) -> Value {
                 .map(|f| json!({ "icon": "description", "label": f["name"] })),
         )
         .collect();
-    let mut context_rows = vec![
-        json!({ "label": "Messages", "value": compact(message_tokens) }),
-        json!({ "label": "Work notes", "value": compact(note_tokens) }),
-    ];
+    // Where the context goes, in the order it matters: the conversation, the tools it may call, and
+    // the standing instructions. Every figure is an estimate (4 characters a token).
+    let tool_tokens: usize = s
+        .app_tools
+        .values()
+        .filter_map(|r| r.as_ref().ok())
+        .flatten()
+        .map(|t| {
+            (t["name"].as_str().map_or(0, |x| x.len())
+                + t["description"].as_str().map_or(0, |x| x.chars().count())
+                + t["inputSchema"].to_string().len())
+                / 4
+        })
+        .sum();
+    let instruction_tokens = (s
+        .cloud_settings
+        .as_ref()
+        .and_then(|c| c["personalInstructions"].as_str())
+        .map_or(0, |t| t.chars().count())
+        + project_of_view(s)
+            .and_then(|id| {
+                s.projects
+                    .as_ref()
+                    .and_then(|r| r.as_ref().ok())
+                    .and_then(|l| l.iter().find(|p| p["id"] == id.as_str()))
+                    .and_then(|p| p["instructions"].as_str().map(|t| t.chars().count()))
+            })
+            .unwrap_or(0))
+        / 4;
+    let parts: Vec<(&str, usize)> = vec![
+        ("Messages", message_tokens),
+        ("Work notes", note_tokens),
+        ("Connected apps", tool_tokens),
+        ("Instructions", instruction_tokens),
+    ]
+    .into_iter()
+    .filter(|(_, n)| *n > 0)
+    .collect();
+    let total: usize = parts.iter().map(|(_, n)| n).sum::<usize>().max(1);
+    let mut context_rows: Vec<Value> = parts
+        .iter()
+        .enumerate()
+        .map(|(i, (label, n))| {
+            json!({ "label": label, "value": compact(*n), "percent": format!("{}%", (n * 100 + total / 2) / total), "swatch": i })
+        })
+        .collect();
     if summary.count > 0 {
         context_rows.push(
             json!({ "label": "Summarised earlier messages", "value": summary.count.to_string() }),
         );
+    }
+    let mut context_section = json!({ "id": "context", "title": "Context", "open": true,
+        "bar": { "label": format!("≈ {} tokens", compact(total)),
+                 "segments": parts.iter().map(|(label, n)| json!({ "label": label, "value": n })).collect::<Vec<_>>() },
+        "rows": context_rows });
+    // Long chats can be summarised: the same /compact the composer offers, one click away.
+    if message_tokens >= 8_000 {
+        context_section["action"] = json!({ "label": "Compact conversation",
+            "action": { "type": "send", "text": "/compact" } });
     }
     let mut sections = vec![
         json!({ "id": "environment", "title": "Environment", "open": true, "rows": [
@@ -6999,12 +7068,7 @@ fn inspector(s: &State, messages: &[Value], active: Option<&String>) -> Value {
             { "icon": "tune", "label": profile.unwrap_or_else(|| "No profile".to_owned()) },
             { "icon": "psychology", "label": format!("Thinking · {level}") },
         ] }),
-        json!({ "id": "context", "title": "Context", "open": true,
-            "bar": { "label": format!("≈ {} tokens", compact(message_tokens + note_tokens)), "segments": [
-                { "label": "Messages", "value": message_tokens },
-                { "label": "Work notes", "value": note_tokens },
-            ] },
-            "rows": context_rows }),
+        context_section,
     ];
     if !s.agent.changes.is_empty() {
         sections.insert(
@@ -7165,6 +7229,15 @@ fn export_file_name(title: &str) -> String {
     }
     let slug = slug.trim_matches('-');
     format!("meo-{}.md", if slug.is_empty() { "chat" } else { slug })
+}
+
+/// 12345 → "12K", 1_200_000 → "1.2M".
+fn compact_tokens(n: usize) -> String {
+    if n >= 1000 {
+        format!("{:.1}k", n as f64 / 1000.0)
+    } else {
+        n.to_string()
+    }
 }
 
 /// 12345 → "12K", 1_200_000 → "1.2M".
@@ -7850,6 +7923,14 @@ fn conversation_page(s: &State) -> Value {
             "sendAction": { "type": "send" },
             "stopAction": { "type": "stop" },
             "editLast": edit_last,
+            // The ring beside the controls: this chat's size against a reference window.
+            "usage": (!messages.is_empty()).then(|| {
+                let tokens = chat_tokens(s, &messages, active.as_ref());
+                json!({
+                    "fraction": (tokens as f64 / REFERENCE_WINDOW_TOKENS as f64).min(1.0),
+                    "label": format!("≈ {} tokens in this chat", compact_tokens(tokens)),
+                })
+            }),
             "toolbar": composer_controls(s),
             // Work on a device that can run tasks: the folder Work reads, edits and runs commands in.
             // `pick_workspace` is answered by the host's folder dialog with `set_workspace`.
@@ -10876,6 +10957,54 @@ mod tests {
             start.elapsed() / n,
             bytes / 1024
         );
+    }
+
+    #[test]
+    fn the_details_break_the_context_down_and_the_composer_shows_a_usage_ring() {
+        let c = signed_in_core();
+        let long = "word ".repeat(10_000);
+        c.update(|s| {
+            s.messages.insert(
+                "c1".into(),
+                vec![
+                    ChatMessage { id: "m1".into(), role: "user".into(), text: long.clone(), steps: vec![] },
+                    ChatMessage { id: "m2".into(), role: "assistant".into(), text: "ok".into(), steps: vec![] },
+                ],
+            );
+            s.cloud_settings = Some(json!({ "personalInstructions": "Be brief and kind. ".repeat(20) }));
+            s.plugins = Some(Ok(vec![json!({ "id": "p1", "name": "Linear", "enabled": true, "remoteUrl": "https://mcp.linear.app/mcp" })]));
+            s.app_tools.insert("p1".into(), Ok(vec![json!({ "name": "list_issues", "description": "List the issues of a team", "inputSchema": { "type": "object" } })]));
+        });
+        let page = c.view()["page"].clone();
+        let sections = page["inspector"]["sections"].as_array().unwrap();
+        let context = sections.iter().find(|x| x["id"] == "context").unwrap();
+        let labels: Vec<&str> = context["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["label"].as_str().unwrap())
+            .collect();
+        assert_eq!(labels, ["Messages", "Connected apps", "Instructions"]);
+        assert!(context["rows"][0]["percent"]
+            .as_str()
+            .unwrap()
+            .ends_with('%'));
+        assert_eq!(context["rows"][0]["swatch"], 0);
+        assert_eq!(
+            context["action"]["action"]["text"], "/compact",
+            "a long chat can be compacted from here"
+        );
+        // The ring: about 12.5k tokens against the 128k reference window.
+        let usage = &page["composer"]["usage"];
+        let fraction = usage["fraction"].as_f64().unwrap();
+        assert!(fraction > 0.08 && fraction < 0.12, "{fraction}");
+        assert!(usage["label"]
+            .as_str()
+            .unwrap()
+            .contains("tokens in this chat"));
+        // A new chat has nothing to measure.
+        c.update(|s| s.active = None);
+        assert!(c.view()["page"]["composer"]["usage"].is_null());
     }
 
     #[test]

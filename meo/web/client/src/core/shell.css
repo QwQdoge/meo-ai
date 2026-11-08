@@ -473,3 +473,17 @@
 .core-app .core-bar { display: block; border-radius: 8px; background: var(--tonal); animation: core-skeleton 1.8s ease-in-out infinite alternate; }
 @keyframes core-skeleton { from { opacity: 1; } to { opacity: .45; } }
 .core-app .core-loading { flex: 1; }
+
+/* Context breakdown: one palette for the bar segments and the legend swatches. */
+.core-app { --seg0: rgb(var(--accent-primary)); --seg1: #e0663d; --seg2: #8a6fd1; --seg3: #7d8590; --seg4: #d64550; }
+.core-app .core-bar { height: 8px; border-radius: 4px; gap: 1px; }
+.core-app .core-bar .seg0, .core-app .core-swatch.seg0 { background: var(--seg0); }
+.core-app .core-bar .seg1, .core-app .core-swatch.seg1 { background: var(--seg1); }
+.core-app .core-bar .seg2, .core-app .core-swatch.seg2 { background: var(--seg2); }
+.core-app .core-bar .seg3, .core-app .core-swatch.seg3 { background: var(--seg3); }
+.core-app .core-bar .seg4, .core-app .core-swatch.seg4 { background: var(--seg4); }
+.core-app .core-swatch { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+.core-app .core-irow .num { font-variant-numeric: tabular-nums; }
+.core-app .core-irow .core-pct { min-width: 36px; text-align: end; }
+.core-app .core-isec-body > .core-isec-action { align-self: flex-start; margin-block-start: 4px; padding: 4px 12px; border: 0; border-radius: 999px; background: var(--tonal); color: inherit; font: inherit; font-size: 12px; cursor: pointer; transition: background var(--t2, 120ms); }
+.core-app .core-isec-body > .core-isec-action:hover { background: rgb(var(--accent-primary) / .16); }
