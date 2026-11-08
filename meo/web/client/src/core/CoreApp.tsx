@@ -159,6 +159,7 @@ function Sidebar({ sidebar, strings, act, open, setOpen }: { sidebar: Spec; stri
         ))}
       </div>
       <div className="core-side-foot">
+        {sidebar.account && <AccountMenu account={sidebar.account} collapsed={collapsed} act={act} />}
         {(sidebar.footer ?? []).map((f: Spec) => (
           <button key={f.id} className="core-side-link" aria-current={f.selected ? "page" : undefined} title={f.label} onClick={() => go(f.action)}>
             {glyph(f.icon)}{!collapsed && <span>{f.label}</span>}
@@ -166,6 +167,39 @@ function Sidebar({ sidebar, strings, act, open, setOpen }: { sidebar: Spec; stri
         ))}
       </div>
     </aside>
+  );
+}
+
+/** Avatar and name at the foot of the sidebar; opens the account menu above it. */
+function AccountMenu({ account, collapsed, act }: { account: Spec; collapsed: boolean; act: Act }) {
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: Event) => { if (!root.current?.contains(e.target as Node)) setOpen(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("pointerdown", away);
+    document.addEventListener("keydown", esc);
+    return () => { document.removeEventListener("pointerdown", away); document.removeEventListener("keydown", esc); };
+  }, [open]);
+  return (
+    <div className="core-account" ref={root}>
+      <button className="core-account-btn" aria-haspopup="menu" aria-expanded={open} title={account.email} onClick={() => setOpen((v) => !v)}>
+        <span className="core-avatar" aria-hidden>{account.initial}</span>
+        {!collapsed && <span className="label">{account.name}</span>}
+        {!collapsed && <Icon name="expand_more" size={14} />}
+      </button>
+      {open && (
+        <div className="core-account-menu" role="menu">
+          <div className="core-account-email">{account.email}</div>
+          {(account.menu ?? []).map((m: Spec, i: number) => m.divider ? <hr key={i} /> : (
+            <button key={m.id} role="menuitem" onClick={() => { setOpen(false); act(m.action); }}>
+              {glyph(m.icon, 16)}<span className="label">{m.label}</span>{m.shortcut && <kbd>{m.shortcut}</kbd>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

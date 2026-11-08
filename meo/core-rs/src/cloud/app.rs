@@ -47,6 +47,10 @@ pub enum Action {
     SelectSettingsSection {
         id: String,
     },
+    /// Goes to Settings with one category open (the account menu's Usage and Language entries).
+    OpenSettings {
+        section: String,
+    },
     /// Filters the settings page to what matches (empty clears it).
     SearchSettings {
         text: String,
@@ -854,6 +858,15 @@ impl AppCore {
                 s.settings_section = id;
                 s.settings_query.clear();
             }),
+            Action::OpenSettings { section } => {
+                self.update(|s| {
+                    s.route = "settings".into();
+                    s.open_project = None;
+                    s.settings_section = section;
+                    s.settings_query.clear();
+                });
+                self.load_route("settings").await;
+            }
             Action::SearchSettings { text } => self.update(|s| s.settings_query = text),
             Action::NewProfile => self.new_profile().await,
             Action::BeginGenerateProfile => self.prompt(
@@ -6461,6 +6474,7 @@ fn sidebar_key(s: &State) -> u64 {
         s.online,
         s.sync_live,
         pref_bool(s, "ui.sidebar_collapsed", false),
+        s.session.as_ref().map(|x| &x.email),
     )
         .hash(&mut h);
     h.finish()
@@ -6579,6 +6593,38 @@ fn shell_sidebar(s: &State) -> Value {
         "footer": [
             { "id": "settings", "label": "Settings", "icon": "settings", "selected": s.route == "settings",
               "action": { "type": "navigate", "route": "settings" } },
+        ],
+        "account": account_block(s),
+    })
+}
+
+/// The signed-in account at the foot of the sidebar: who it is, and the menu it opens.
+fn account_block(s: &State) -> Value {
+    let email = s
+        .session
+        .as_ref()
+        .map(|x| x.email.clone())
+        .unwrap_or_default();
+    if email.is_empty() {
+        return Value::Null;
+    }
+    let name = email.split('@').next().unwrap_or(&email).to_owned();
+    let initial = name
+        .chars()
+        .next()
+        .map(|c| c.to_uppercase().to_string())
+        .unwrap_or_default();
+    json!({
+        "name": name, "email": email, "initial": initial,
+        "menu": [
+            { "id": "settings", "label": "Settings", "icon": "settings", "shortcut": "Ctrl+,",
+              "action": { "type": "navigate", "route": "settings" } },
+            { "id": "usage", "label": "Usage", "icon": "usage", "action": { "type": "open_settings", "section": "usage" } },
+            { "id": "language", "label": "Language", "icon": "language", "action": { "type": "open_settings", "section": "general" } },
+            { "divider": true },
+            { "id": "about", "label": "About Meo AI", "icon": "info", "action": { "type": "open_settings", "section": "about" } },
+            { "divider": true },
+            { "id": "sign_out", "label": "Log out", "icon": "logout", "action": { "type": "sign_out" } },
         ],
     })
 }

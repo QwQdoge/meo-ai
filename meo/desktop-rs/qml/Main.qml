@@ -247,8 +247,10 @@ ApplicationWindow {
     component AppMenu: MeoMenu {
         id: appMenu
         property var entries: []
+        property string header: ""
         signal picked(var entry)
-        model: entries.map(e => ({ label: e.label, icon: e.icon || "", checked: !!e.checked, action: () => appMenu.picked(e) }))
+        model: (header ? [{ type: "label", label: header }] : []).concat(entries.map(e => e.divider ? { type: "separator" }
+            : ({ label: e.label, icon: e.icon || "", shortcut: e.shortcut || "", checked: !!e.checked, action: () => appMenu.picked(e) })))
         function popupFor(anchor) { openAt(anchor, 0, anchor.height + 4) }
     }
 
@@ -623,14 +625,49 @@ ApplicationWindow {
             RowLayout {
                 Layout.fillWidth: true
                 spacing: 4
+                // Signed-in account: avatar and name open the account menu; the gear goes to Settings.
+                Item {
+                    id: accountBtn
+                    visible: !!sidebar.sb.account
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 36
+                    readonly property var acct: sidebar.sb.account || {}
+                    Rectangle {
+                        anchors.fill: parent
+                        radius: 10
+                        color: accountHover.hovered ? MeoTheme.surfaceContainerHigh : "transparent"
+                        Behavior on color { ColorAnimation { duration: MeoTheme.motionDurationFor(window.tFast) } }
+                    }
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: 6
+                        anchors.rightMargin: 6
+                        spacing: 8
+                        Rectangle {
+                            Layout.preferredWidth: 24; Layout.preferredHeight: 24; radius: 12
+                            color: MeoTheme.secondaryContainer
+                            Txt { anchors.centerIn: parent; text: accountBtn.acct.initial || ""; typeRole: "label"; color: MeoTheme.contentOnSurface }
+                        }
+                        Txt { visible: !sidebar.collapsed; text: accountBtn.acct.name || ""; elide: Text.ElideRight; Layout.fillWidth: true }
+                    }
+                    HoverHandler { id: accountHover }
+                    TapHandler { onTapped: accountMenu.openAt(accountBtn, 0, -(accountMenu.implicitHeight || 260) - 6) }
+                    AppMenu {
+                        id: accountMenu
+                        entries: accountBtn.acct.menu || []
+                        header: accountBtn.acct.email || ""
+                        onPicked: entry => window.act(entry.action)
+                    }
+                }
                 Repeater {
                     model: sidebar.sb.footer || []
                     SideLink {
                         required property var modelData
-                        Layout.fillWidth: true
+                        Layout.fillWidth: !sidebar.sb.account
+                        Layout.preferredWidth: sidebar.sb.account ? 34 : -1
                         symbol: "settings"
-                        label: modelData.label
-                        compact: sidebar.collapsed
+                        label: sidebar.sb.account ? "" : modelData.label
+                        compact: sidebar.collapsed || !!sidebar.sb.account
                         selected: !!modelData.selected
                         onClicked: window.act(modelData.action)
                     }
