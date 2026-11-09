@@ -21,7 +21,8 @@ ApplicationWindow {
     required property var core
     // One unsent draft per chat, so switching chats never mixes them up.
     property var drafts: ({})
-    color: MeoTheme.background
+    // The window is the sidebar's tone; the page is a raised card on top of it (see `pageCard`).
+    color: MeoTheme.surfaceContainerLow
 
     readonly property var v: (core && core.view) || ({})
     readonly property var page: v.page || ({})
@@ -446,13 +447,12 @@ ApplicationWindow {
             }
             Item { Layout.fillHeight: true }
         }
-        Rectangle { visible: skeletonSidebar.visible; Layout.fillHeight: true; width: window.hairline; color: MeoTheme.outlineVariant }
 
         // Claude-style left column from `view.sidebar`: Chat | Work, search, new chat, plugins,
         // projects tree and chats; collapses to an icon rail.
         ColumnLayout {
             id: sidebar
-            visible: !!window.v.sidebar && !window.v.sidebar.skeleton && window.page.standalone !== true
+            visible: !!window.v.sidebar && !window.v.sidebar.skeleton
             readonly property var sb: window.v.sidebar || ({})
             readonly property bool collapsed: !!sb.collapsed
             readonly property var rows: {
@@ -481,20 +481,24 @@ ApplicationWindow {
             Layout.margins: 8
             spacing: 4
 
+            // The sidebar toggle sits at the top-left corner in both states (the icon points at
+            // the panel it opens or closes); the Chat | Work switch follows it when open.
             RowLayout {
                 Layout.fillWidth: true
+                spacing: 6
+                MeoIconButton {
+                    Layout.alignment: sidebar.collapsed ? Qt.AlignHCenter : Qt.AlignVCenter
+                    type: "standard"
+                    size: "xs"
+                    icon.name: sidebar.collapsed ? "left_panel_open" : "left_panel_close"
+                    toolTipText: (sidebar.collapsed ? qsTr("Show sidebar") : qsTr("Hide sidebar")) + "  Ctrl+B"
+                    onClicked: window.act(sidebar.sb.toggle)
+                }
                 ModeSwitch {
                     visible: !sidebar.collapsed
                     Layout.fillWidth: true
                     modes: sidebar.sb.modes || []
                     onChose: index => window.act(sidebar.sb.modes[index].action)
-                }
-                MeoIconButton {
-                    type: "standard"
-                    size: "xs"
-                    icon.name: "dock_to_right"
-                    toolTipText: sidebar.collapsed ? qsTr("Show sidebar") : qsTr("Hide sidebar")
-                    onClicked: window.act(sidebar.sb.toggle)
                 }
             }
             Repeater {
@@ -689,14 +693,40 @@ ApplicationWindow {
             }
         }
 
-        Rectangle { visible: !!window.v.sidebar && window.page.standalone !== true; Layout.fillHeight: true; width: window.hairline; color: MeoTheme.outlineVariant }
-
-        ColumnLayout {
+        // The page: a raised, rounded card next to the sidebar (a soft shadow and a hairline edge
+        // separate the two tones), flush with the window when there is no sidebar (sign-in).
+        Item {
+            id: pageHost
             Layout.fillWidth: true
             Layout.fillHeight: true
             // The page decides its own width; a wide child must never squeeze the sidebar.
             Layout.minimumWidth: 0
             Layout.preferredWidth: 0
+            readonly property bool inset: !!window.v.sidebar && !window.v.sidebar.skeleton
+
+            MeoElevationShadow {
+                target: pageCard
+                anchors.fill: pageCard
+                elevation: MeoTheme.elevationLevel1
+                radius: pageCard.radius
+                visible: pageHost.inset
+            }
+            Rectangle {
+                id: pageCard
+                anchors.fill: parent
+                anchors.topMargin: pageHost.inset ? 8 : 0
+                anchors.rightMargin: pageHost.inset ? 8 : 0
+                anchors.bottomMargin: pageHost.inset ? 8 : 0
+                radius: pageHost.inset ? 18 : 0
+                color: MeoTheme.background
+                border.width: pageHost.inset ? window.hairline : 0
+                border.color: MeoTheme.outlineVariant
+                Behavior on anchors.topMargin { NumberAnimation { duration: window.tBase; easing.type: Easing.BezierSpline; easing.bezierCurve: MeoTheme.motionEasingStandard } }
+            }
+
+        ColumnLayout {
+            anchors.fill: pageCard
+            anchors.margins: pageHost.inset ? 1 : 0
             spacing: 0
 
             MeoBanner {
@@ -727,9 +757,63 @@ ApplicationWindow {
                     conversation: conversationPage,
                     list: listPage,
                     store: storePage,
-                    settings: settingsPage,
+                    settings: loadingPage,
                     unavailable: unavailablePage,
                 })[window.page.kind] || unavailablePage
+            }
+        }
+        }
+    }
+
+    // Settings float over the app: a scrim, then one dialog card centered on it. Clicking the
+    // scrim, Esc, or the close button in the card's top-right corner returns to the chat.
+    Item {
+        id: settingsOverlay
+        anchors.fill: parent
+        z: 50
+        readonly property bool open: window.page.kind === "settings"
+        visible: opacity > 0
+        opacity: open ? 1 : 0
+        Behavior on opacity { NumberAnimation { duration: window.tBase; easing.type: Easing.BezierSpline; easing.bezierCurve: MeoTheme.motionEasingStandard } }
+        onOpenChanged: if (open) forceActiveFocus()
+        Keys.onEscapePressed: if (window.page.close) window.act(window.page.close)
+        Rectangle {
+            anchors.fill: parent
+            color: Qt.alpha(MeoTheme.scrim, 0.42)
+            MouseArea { anchors.fill: parent; enabled: settingsOverlay.open; onClicked: if (window.page.close) window.act(window.page.close) }
+        }
+        MeoElevationShadow {
+            target: settingsDialog
+            anchors.fill: settingsDialog
+            elevation: MeoTheme.elevationLevel3
+            radius: settingsDialog.radius
+        }
+        Rectangle {
+            id: settingsDialog
+            anchors.centerIn: parent
+            width: Math.min(parent.width - 48, 940)
+            height: Math.min(parent.height - 48, 660)
+            radius: 24
+            color: MeoTheme.surface
+            border.width: window.hairline
+            border.color: MeoTheme.outlineVariant
+            scale: settingsOverlay.open ? 1 : 0.97
+            Behavior on scale { NumberAnimation { duration: window.tBase; easing.type: Easing.BezierSpline; easing.bezierCurve: MeoTheme.motionEasingStandard } }
+            // Swallow clicks so only the scrim closes the dialog.
+            MouseArea { anchors.fill: parent }
+            Loader {
+                anchors.fill: parent
+                active: settingsOverlay.open || settingsOverlay.visible
+                sourceComponent: settingsPage
+            }
+            MeoIconButton {
+                anchors.top: parent.top
+                anchors.right: parent.right
+                anchors.margins: 12
+                type: "standard"
+                icon.name: "close"
+                toolTipText: qsTr("Close settings") + "  Esc"
+                onClicked: if (window.page.close) window.act(window.page.close)
             }
         }
     }
@@ -1167,12 +1251,18 @@ ApplicationWindow {
                 }
                 return out
             }
-            Rectangle {
+            Item {
                 anchors.fill: parent
-                anchors.margins: 16
-                radius: 22
-                color: MeoTheme.surface
-                border.color: MeoTheme.outlineVariant
+                // The category column is one tone down from the page it controls.
+                Rectangle {
+                    anchors.top: parent.top
+                    anchors.bottom: parent.bottom
+                    anchors.left: parent.left
+                    width: 226
+                    topLeftRadius: 24
+                    bottomLeftRadius: 24
+                    color: MeoTheme.surfaceContainerLow
+                }
                 RowLayout {
                     anchors.fill: parent
                     spacing: 0
@@ -1291,7 +1381,7 @@ ApplicationWindow {
                             RowLayout {
                                 Layout.fillWidth: true
                                 Txt { text: current.label || window.page.title || ""; typeRole: "title"; typeSize: "medium"; Layout.fillWidth: true }
-                                MeoIconButton { visible: !!window.page.close; type: "standard"; icon.name: "close"; toolTipText: qsTr("Close settings"); onClicked: window.act(window.page.close) }
+                                Item { Layout.preferredWidth: 40 }
                             }
                             Repeater {
                                 model: settingsFlick.groups
@@ -1725,7 +1815,7 @@ ApplicationWindow {
                         typeRole: "title"
                         typeSize: "small"
                         elide: Text.ElideRight
-                        Layout.maximumWidth: parent.width - 80
+                        Layout.maximumWidth: chatColumn.width - 80
                     }
                     MeoIconButton {
                         visible: (window.page.menu || []).length > 0
