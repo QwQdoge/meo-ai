@@ -119,9 +119,16 @@ External authorities (never re-implemented here):
 - Primary hierarchy is `Chat`, `Work`, `Projects`, `Skills` — task surfaces, not settings.
   Compact/mobile layouts use the same hierarchy in a left drawer (hamburger or edge swipe);
   no separate bottom-navigation model.
-- `Chat` is conversation. `Work` is agentic execution with an explicit target device,
-  visible progress, permission boundaries and resumable state. Never silently turn Chat
-  into Work. Chat and Work share one activity UI contract, not one execution engine.
+- `Chat` is conversation. It may use lightweight lookup tools, but has no bound local
+  workspace and no general filesystem, shell or Git authority. `Work` is agentic execution
+  with an explicit target device and workspace, visible progress, permission boundaries
+  and resumable state. Never silently turn Chat into Work. Chat and Work share an activity
+  UI contract and protocol primitives, not workspace authority or one execution engine.
+- Work has General and Code task profiles. Code is not a third top-level navigation mode:
+  it selects repository-aware Skills and the appropriate Git, terminal, build and test
+  tools within Work. Every Work task is bound to one primary target device and one active
+  workspace. Remote sources are materialized only into a user-selected destination; local
+  workspace contents are never silently uploaded. See `meo/docs/chat-work-product-model.md`.
 - `Projects` own persistent context/files/conversations; `Skills` own reusable visible
   capabilities. Provider config, model routing, memory management, MCP, diagnostics,
   account and connector administration belong in Settings.
