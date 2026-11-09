@@ -17,6 +17,50 @@ const CALLOUTS: [(&str, &str, &str); 5] = [
     ("CAUTION", "caution", "report"),
 ];
 
+/// A reply that is still being written ends in the middle of something: an open code fence, an
+/// unfinished link, a bold or code span with no end yet. Closing those for display keeps the layout
+/// from jumping when the closing characters arrive; the stored text is never changed.
+pub fn close_open_markdown(text: &str) -> String {
+    let fence_lines = |mark: &str| text.lines().filter(|l| l.trim_start().starts_with(mark)).count();
+    let mut out = text.to_owned();
+    if fence_lines("```") % 2 == 1 {
+        out.push_str("\n```");
+        return out;
+    }
+    if fence_lines("~~~") % 2 == 1 {
+        out.push_str("\n~~~");
+        return out;
+    }
+    if text.lines().filter(|l| l.trim() == "$$").count() % 2 == 1 {
+        out.push_str("\n$$");
+        return out;
+    }
+    // Only the last line can be unfinished.
+    let start = out.rfind('\n').map_or(0, |i| i + 1);
+    let last = out[start..].to_owned();
+    if last.trim_start().starts_with("```") || last.trim_start().starts_with("~~~") {
+        return out;
+    }
+    // A link whose address has not arrived: show just its text.
+    if let Some(i) = last.rfind("](") {
+        if !last[i..].contains(')') {
+            if let Some(open) = last[..i].rfind('[') {
+                let label = last[open + 1..i].to_owned();
+                out.truncate(start + open);
+                out.push_str(&label);
+                return out;
+            }
+        }
+    }
+    if last.matches('`').count() % 2 == 1 {
+        out.push('`');
+    }
+    if last.matches("**").count() % 2 == 1 {
+        out.push_str("**");
+    }
+    out
+}
+
 fn flush(markdown: &mut Vec<Cow<str>>, out: &mut Vec<Value>) {
     let text = markdown.join("\n");
     if !text.trim().is_empty() {
@@ -398,6 +442,19 @@ pub fn blocks_with(text: &str, native: bool) -> Vec<Value> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_reply_still_being_written_is_closed_for_display() {
+        use super::close_open_markdown as close;
+        assert_eq!(close("Run:\n```bash\nls"), "Run:\n```bash\nls\n```");
+        assert_eq!(close("Run:\n```bash\nls\n```"), "Run:\n```bash\nls\n```");
+        assert_eq!(close("a **bold"), "a **bold**");
+        assert_eq!(close("use `cmd"), "use `cmd`");
+        assert_eq!(close("see [docs](https://exa"), "see docs");
+        assert_eq!(close("see [docs](https://a.b) ok"), "see [docs](https://a.b) ok");
+        assert_eq!(close("x\n$$\na=b"), "x\n$$\na=b\n$$");
+        assert_eq!(close("plain"), "plain");
+    }
+
     use super::*;
 
     #[test]

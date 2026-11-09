@@ -676,6 +676,7 @@ pub struct AppCore {
 
 const KEY_SESSION: &str = "session";
 const KEY_PROJECT_ENV: &str = "project-envs";
+const KEY_FAILED_ROUND: &str = "failed-round";
 /// Set once the Essentials skills were offered to this account on this device.
 const KEY_ESSENTIALS_OFFERED: &str = "essentials-offered";
 const KEY_PREFS: &str = "prefs";
@@ -801,6 +802,35 @@ impl AppCore {
         if let Ok(raw) = serde_json::to_string(value) {
             self.storage.save(key, &raw);
         }
+    }
+
+    /// Keeps the round that broke off (without its consent, which a retry asks for again) so the
+    /// Retry card is still there after a restart; `None` removes it.
+    fn store_failed_round(&self) {
+        let saved = self.state.lock().unwrap().failed_round.as_ref().map(|(p, partial, reason)| {
+            json!({
+                "conversationId": p.conversation_id, "prompt": p.prompt, "request": p.request, "image": p.image,
+                "judge": p.judge, "partial": partial, "reason": reason,
+            })
+        });
+        match saved {
+            Some(v) => self.save_json(KEY_FAILED_ROUND, &v),
+            None => self.storage.remove(KEY_FAILED_ROUND),
+        }
+    }
+
+    fn load_failed_round(&self) -> Option<(PendingSend, String, String)> {
+        let v: Value = self.load_json(KEY_FAILED_ROUND)?;
+        let pending = PendingSend {
+            image: v["image"].as_bool().unwrap_or(false),
+            save_prompt: false,
+            conversation_id: v["conversationId"].as_str()?.to_owned(),
+            prompt: v["prompt"].as_str()?.to_owned(),
+            request: v["request"].clone(),
+            consent: Value::Null,
+            judge: serde_json::from_value(v["judge"].clone()).ok().flatten(),
+        };
+        Some((pending, v["partial"].as_str()?.to_owned(), v["reason"].as_str()?.to_owned()))
     }
 
     pub async fn dispatch(&self, action: Action) {
@@ -965,6 +995,7 @@ impl AppCore {
             Action::Retry => self.retry().await,
             Action::RetryRound => {
                 let failed = self.state.lock().unwrap().failed_round.take();
+                self.store_failed_round();
                 match failed {
                     Some((pending, _, _)) => Box::pin(self.retry_round(pending)).await,
                     None => self.retry().await,
@@ -1173,6 +1204,7 @@ impl AppCore {
         let work_ids: Vec<String> = self.load_json(KEY_WORK).unwrap_or_default();
         let project_env: HashMap<String, project_env::ProjectEnv> =
             self.load_json(KEY_PROJECT_ENV).unwrap_or_default();
+        let failed_round = self.load_failed_round();
         let credentials: Vec<Credential> = self.load_json(KEY_CREDENTIALS).unwrap_or_default();
         let catalogue: HashMap<String, Vec<Model>> = self.load_json(KEY_MODELS).unwrap_or_default();
         let selected = prefs
@@ -1193,6 +1225,7 @@ impl AppCore {
             s.starting = false;
             s.work_ids = work_ids;
             s.project_env = project_env;
+            s.failed_round = failed_round;
             s.credentials = credentials;
             s.catalogue = catalogue;
             s.selected = selected;
@@ -1255,6 +1288,7 @@ impl AppCore {
             KEY_CREDENTIALS,
             KEY_MODELS,
             KEY_PENDING_AUTH,
+            KEY_FAILED_ROUND,
         ] {
             self.storage.remove(key);
         }
@@ -4877,6 +4911,7 @@ impl AppCore {
             Err(e) => {
                 let reason = failure_reason(&e.to_string(), false);
                 self.update(|s| s.failed_round = Some((pending, String::new(), reason)));
+                self.store_failed_round();
             }
         }
     }
@@ -4975,6 +5010,7 @@ impl AppCore {
         let started = super::now_secs();
         self.cancel.store(false, Ordering::SeqCst);
         self.update(|s| s.failed_round = None);
+        self.store_failed_round();
         let native = pending.request["tools"].is_array();
         // One answer across the rounds of a native run: each round continues what was written.
         let carry = if native {
@@ -5200,6 +5236,7 @@ impl AppCore {
                 }
                 let reason = failure_reason(&e, stopped);
                 self.update(|s| s.failed_round = Some((pending, reply.clone(), reason)));
+                self.store_failed_round();
             }
             None if revise.is_some() => {
                 self.update(|s| {
@@ -9156,7 +9193,7 @@ fn conversation_page(s: &State) -> Value {
         .filter(|(id, _)| Some(id) == active.as_ref());
     if let Some((_, text)) = streaming {
         let text = clean_reply(text);
-        messages.push(json!({ "role": "assistant", "text": text, "streaming": true, "blocks": richtext::blocks(&text) }));
+        messages.push(json!({ "role": "assistant", "text": text, "streaming": true, "blocks": richtext::blocks(&richtext::close_open_markdown(&text)) }));
     }
     // A round that broke off: what it had written, why, and a way on (Retry runs that round again).
     if streaming.is_none() {
