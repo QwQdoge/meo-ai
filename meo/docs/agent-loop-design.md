@@ -138,6 +138,17 @@ Also changed on the way: the automatic web search no longer uses the user's whol
 100 characters or less; a request about the user's own work, such as a repository, never triggers one), a run has up to 20
 tool rounds, and debug builds need a larger test stack (`core-rs/.cargo/config.toml`; release was measured fine at 512 KB).
 
+## The extra steps follow the thinking level
+
+The thinking level the user already sets decides how much extra work the core does. Nothing new was added to the router; the existing pieces are switched by level.
+
+| Level | What runs before and after the model's own work |
+|---|---|
+| low | Nothing. The first call is the answer. |
+| medium | The router's reading of the request (what is wanted, what is not). The task list is the model's own. |
+| high | The reading (skipped when the server planner already ran), the examine list from it starts the task list so the round driver keeps going until each item is done, and the answer is checked against what was actually read. |
+| max | As high, plus the server's planner and judge. |
+
 ## What is not native yet
 
 - An open folder (desktop Work) still uses the fenced protocol (its tools are local). Porting `read_file`,

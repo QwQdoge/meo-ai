@@ -442,6 +442,8 @@ struct NativeRun {
     reviewed: bool,
     /// This run offers `web_search` (the user switched search on, or asked for something the web answers).
     web: bool,
+    /// The task list was started from the brief (once).
+    seeded: bool,
 }
 
 /// The tool loop of the current Work message: Codex-style turns of "answer, tool, result, answer".
@@ -449,6 +451,8 @@ struct NativeRun {
 struct AgentRun {
     /// What the router understood the user to want (see `understand`), kept for every round of the run.
     brief: Option<String>,
+    /// The places the brief says must be examined: at High and Max they start the run's task list.
+    brief_tasks: Vec<String>,
     /// Set when the run uses native tool calling.
     native: Option<NativeRun>,
     host: Option<Host>,
@@ -4385,8 +4389,12 @@ impl AppCore {
         } else {
             matches!(level.as_str(), "high" | "max")
         };
+        // The router and planner that already exist (High and Max in chat, Medium and up in Work) read the
+        // request themselves: the router's own reading below is for the levels that do not run them.
+        let mut orchestrated = false;
         if mode == "auto" && plans && !has_pictures && !continuing {
             if auto_consent {
+                orchestrated = true;
                 let o = self.orchestrate(&text, &level, search, work).await;
                 if let Some(chosen) = o.route {
                     let found =
@@ -4430,11 +4438,22 @@ impl AppCore {
         // first round it is made, on later rounds it is the same one.
         let brief = if continuing_round {
             self.state.lock().unwrap().agent.brief.clone()
-        } else if auto_consent && pref_bool(&self.state.lock().unwrap(), "chat.understand", true) {
+        } else if auto_consent
+            && !orchestrated
+            && level != "low"
+            && pref_bool(&self.state.lock().unwrap(), "chat.understand", true)
+        {
             let made = Box::pin(self.understand(&text)).await;
-            let kept = made.clone();
-            self.update(|s| s.agent.brief = kept);
-            made
+            let (text_brief, tasks) = match made {
+                Some((b, t)) => (Some(b), t),
+                None => (None, Vec::new()),
+            };
+            let kept = text_brief.clone();
+            self.update(|s| {
+                s.agent.brief = kept;
+                s.agent.brief_tasks = tasks;
+            });
+            text_brief
         } else {
             None
         };
@@ -5604,7 +5623,7 @@ impl AppCore {
     /// what a good answer holds, what must be examined, and what they did not ask for), written for this
     /// request by the model, not by a rule for one kind of task. The brief goes in front of the request on
     /// every round, so the main model starts from what was meant instead of from keywords.
-    async fn understand(&self, text: &str) -> Option<String> {
+    async fn understand(&self, text: &str) -> Option<(String, Vec<String>)> {
         if text.chars().count() < 12 {
             return None;
         }
@@ -5658,6 +5677,10 @@ impl AppCore {
                 .filter(|t| !t.is_empty())
         };
         let goal = field("goal")?;
+        let examine: Vec<String> = v["examine"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|x| x.as_str()).map(|t| t.trim().chars().take(100).collect::<String>()).filter(|t| !t.is_empty()).take(6).collect())
+            .unwrap_or_default();
         let mut out = format!("## What the user wants (understood before answering)\nGoal: {goal}");
         for (label, value) in [
             ("Subject", field("subject")),
@@ -5669,7 +5692,7 @@ impl AppCore {
                 out.push_str(&format!("\n{label}: {value}"));
             }
         }
-        Some(out)
+        Some((out, examine))
     }
 
     /// Before a long answer built on tool results is shown: a cheap model checks it against the calls
@@ -5680,7 +5703,12 @@ impl AppCore {
         let (request, calls) = {
             let s = self.state.lock().unwrap();
             let run = s.agent.native.as_ref()?;
-            if run.reviewed || s.agent.nudges >= 2 || s.agent.round >= MAX_TOOL_ROUNDS || run.turns.is_empty() {
+            if !thorough(&thinking_level(&s))
+                || run.reviewed
+                || s.agent.nudges >= 2
+                || s.agent.round >= MAX_TOOL_ROUNDS
+                || run.turns.is_empty()
+            {
                 return None;
             }
             let calls: Vec<String> = run
@@ -5777,8 +5805,16 @@ impl AppCore {
         };
         let turns = {
             let mut s = self.state.lock().unwrap();
+            let level = thinking_level(&s);
+            let planned = s.agent.brief_tasks.clone();
             let run = s.agent.native.get_or_insert_with(NativeRun::default);
             run.targets = targets;
+            // At High and Max what the router said must be examined becomes the task list, so the
+            // existing round driver will not let the run end while one of them is unread.
+            if thorough(&level) && !run.seeded && run.tasks.is_empty() && !planned.is_empty() {
+                run.tasks = planned.iter().map(|t| json!({ "title": t, "state": "todo" })).collect();
+                run.seeded = true;
+            }
             run.turns.clone()
         };
         request["tools"] = Value::Array(defs);
@@ -9073,6 +9109,18 @@ fn about_users_own_work(text: &str) -> bool {
     ["仓库", "代码库", "我的项目", "我的代码", "repo", "repository", "github", "gitlab", "issue", "pull request", "commit", "分支"]
         .iter()
         .any(|w| t.contains(w))
+}
+
+/// The thinking level the user chose (`chat.thinking`): low, medium, high or max. The steps that spend extra
+/// model calls on a request follow it: nothing at low, the router's reading at medium, and at high and max the
+/// planned task list and the check of the answer as well.
+fn thinking_level(s: &State) -> String {
+    s.prefs.get("chat.thinking").and_then(Value::as_str).unwrap_or("medium").to_owned()
+}
+
+/// High and Max: the levels that buy the thorough path.
+fn thorough(level: &str) -> bool {
+    matches!(level, "high" | "max")
 }
 
 /// A short message that only asks to carry on ("继续，不要停", "keep going"): it has no topic of its own.
@@ -14530,6 +14578,9 @@ mod tests {
             s.agent.host = None;
             s.prefs.remove("work.workspace");
             s.prefs.insert("chat.web_search".into(), json!(true));
+            // High: the check of the answer is part of this level. A forced model keeps the existing planner out of it.
+            s.prefs.insert("chat.thinking".into(), json!("high"));
+            s.prefs.insert("chat.mode".into(), json!("default"));
         });
         run(&c, Action::Send { text: "review my repo".into() });
         let streams = api.streams.lock().unwrap().clone();
@@ -14556,6 +14607,9 @@ mod tests {
             s.agent.host = None;
             s.prefs.remove("work.workspace");
             s.prefs.insert("chat.web_search".into(), json!(true));
+            // High: the check of the answer is part of this level. A forced model keeps the existing planner out of it.
+            s.prefs.insert("chat.thinking".into(), json!("high"));
+            s.prefs.insert("chat.mode".into(), json!("default"));
         });
         run(&c, Action::Send { text: "review my repo".into() });
         let streams = api.streams.lock().unwrap().clone();
@@ -14598,6 +14652,54 @@ mod tests {
             assert!(!text.contains("housekeeping") && !text.contains("Dependabot") && !text.contains("capitalization"), "{text}");
             assert!(text.contains("Understand first") && text.contains("stay on what the user named"), "the general rules stay: {text}");
         }
+    }
+
+    #[test]
+    fn the_extra_steps_follow_the_thinking_level() {
+        let reading = r#"{"direct": false, "goal": "check the code", "subject": "the project", "deliverable": "findings", "examine": ["the main sources", "authentication"], "not_wanted": ["settings"]}"#;
+        let prefs = |level: &str, mode: &str| {
+            let (level, mode) = (level.to_owned(), mode.to_owned());
+            move |s: &mut State| {
+                s.route = "chat".into();
+                s.agent.host = None;
+                s.prefs.remove("work.workspace");
+                s.prefs.insert("chat.understand".into(), json!(true));
+                s.prefs.insert("chat.web_search".into(), json!(true));
+                s.prefs.insert("chat.thinking".into(), json!(level));
+                s.prefs.insert("chat.mode".into(), json!(mode));
+            }
+        };
+        // Low: nothing extra, the first call is the answer.
+        let folder = temp_folder("levels-low");
+        let api = fake_api(vec![reading, "Answer."]);
+        let c = work_core(&api, &folder, "smart");
+        c.update(prefs("low", "auto"));
+        run(&c, Action::Send { text: "go through my project and tell me what to fix".into() });
+        let streams = api.streams.lock().unwrap().clone();
+        assert!(!streams[0]["prompt"].as_str().unwrap().contains("Read the user's request and decide"), "no reading at low");
+        assert!(!streams.iter().any(|b| b["prompt"].as_str().is_some_and(|p| p.contains("## What the user wants"))));
+        let _ = std::fs::remove_dir_all(&folder);
+        // Medium: the router's reading, but the task list is the model's own.
+        let folder = temp_folder("levels-medium");
+        let api = fake_api(vec![reading, "Answer."]);
+        let c = work_core(&api, &folder, "smart");
+        c.update(prefs("medium", "auto"));
+        run(&c, Action::Send { text: "go through my project and tell me what to fix".into() });
+        let streams = api.streams.lock().unwrap().clone();
+        assert!(streams[0]["prompt"].as_str().unwrap().contains("Read the user's request and decide"));
+        assert!(c.state.lock().unwrap().agent.native.as_ref().is_none_or(|n| n.tasks.is_empty()), "no list is started at medium");
+        let _ = std::fs::remove_dir_all(&folder);
+        // High (a forced model, so the existing planner stays out): what must be examined starts the task list.
+        let folder = temp_folder("levels-high");
+        let api = fake_api(vec![reading, "Partial.", r#"{"text":"","calls":[{"id":"t","name":"update_tasks","arguments":"{\"tasks\":[{\"title\":\"the main sources\",\"state\":\"done\"},{\"title\":\"authentication\",\"state\":\"done\"}]}"}]}"#, "All read."]);
+        let c = work_core(&api, &folder, "smart");
+        c.update(prefs("high", "default"));
+        run(&c, Action::Send { text: "go through my project and tell me what to fix".into() });
+        let streams = api.streams.lock().unwrap().clone();
+        let driver = streams.iter().find(|b| b["prompt"].as_str().is_some_and(|p| p.contains("<goal_round>"))).expect("the unfinished list kept the run going");
+        let prompt = driver["prompt"].as_str().unwrap();
+        assert!(prompt.contains("[ ] the main sources") && prompt.contains("[ ] authentication"), "{prompt}");
+        let _ = std::fs::remove_dir_all(&folder);
     }
 
     #[test]
