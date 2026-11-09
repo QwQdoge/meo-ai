@@ -115,22 +115,22 @@ impl WebCore {
         } else {
             redirect_uri
         };
-        WebCore {
-            core: AppCore::new(
-                OAuthConfig {
-                    account_origin: super::ACCOUNT_ORIGIN.into(),
-                    api_origin: super::API_ORIGIN.into(),
-                    client_id: client_id.into(),
-                    redirect_uri: redirect_uri.into(),
-                },
-                Arc::new(LocalStorage),
-                Arc::new(JsHooks {
-                    changed: on_changed,
-                    open_url,
-                    notify: on_notify,
-                }),
-            ),
-        }
+        let core = AppCore::new(
+            OAuthConfig {
+                account_origin: super::ACCOUNT_ORIGIN.into(),
+                api_origin: super::API_ORIGIN.into(),
+                client_id: client_id.into(),
+                redirect_uri: redirect_uri.into(),
+            },
+            Arc::new(LocalStorage),
+            Arc::new(JsHooks {
+                changed: on_changed,
+                open_url,
+                notify: on_notify,
+            }),
+        );
+        core.expect_start();
+        WebCore { core }
     }
 
     /// Loads the saved session. Await it before dispatching `auth_callback`.

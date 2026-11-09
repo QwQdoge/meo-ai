@@ -9,6 +9,7 @@ import MeoUI 1.0
 QtObject {
     id: root
 
+    // Follows Qt's color scheme, which Main.qml sets from Settings > Appearance (else the system's).
     readonly property bool darkMode: Qt.styleHints.colorScheme === Qt.ColorScheme.Dark
 
     function provider() {

@@ -48,7 +48,14 @@ class MainActivity : ComponentActivity() {
                     ?.takeIf { it in setOf("system", "light", "dark") } ?: "system",
                 reduceMotion = prefs?.optBoolean("appearance.reduce_motion", false) ?: false,
             ) {
-                CoreApp(view, model.core::dispatch)
+                // Settings > Appearance > Text size scales every sp size.
+                val density = androidx.compose.ui.platform.LocalDensity.current
+                val factor = when (prefs?.optString("appearance.text_size", "default")) { "small" -> 0.9f; "large" -> 1.15f; else -> 1f }
+                androidx.compose.runtime.CompositionLocalProvider(
+                    androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(density.density, density.fontScale * factor),
+                ) {
+                    CoreApp(view, model.core::dispatch)
+                }
             }
         }
     }

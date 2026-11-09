@@ -16,6 +16,10 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.material.icons.rounded.AccountTree
+import androidx.compose.material.icons.rounded.ExpandMore
+import androidx.compose.material.icons.rounded.ArrowDownward
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.Edit
@@ -327,8 +331,84 @@ private fun SignInPage(page: JSONObject, act: Act) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
         )
+        page.list("features").forEach { feature ->
+            Row(Modifier.fillMaxWidth().widthIn(max = 420.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.secondaryContainer, modifier = Modifier.size(40.dp)) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            navigationIcon(feature.str("icon").let { if (it == "skills") "extension" else it }),
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                        )
+                    }
+                }
+                Column {
+                    Text(feature.str("title"), style = MaterialTheme.typography.titleSmall)
+                    Text(feature.str("text"), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
         if (page.optBoolean("busy")) CircularProgressIndicator()
         page.list("actions").forEach { ActionButton(it, act) }
+    }
+}
+
+/** Chat | Work as one pill: the thumb slides between the labels (not two separate buttons). */
+@Composable
+private fun ModeSwitch(modes: List<JSONObject>, act: Act, modifier: Modifier = Modifier) {
+    val selected = modes.indexOfFirst { it.optBoolean("selected") }.coerceAtLeast(0)
+    val count = modes.size.coerceAtLeast(1)
+    BoxWithConstraints(
+        modifier.height(36.dp).clip(RoundedCornerShape(50)).background(MaterialTheme.colorScheme.surfaceContainerHigh).padding(3.dp),
+    ) {
+        val cell = maxWidth / count
+        val thumbX by androidx.compose.animation.core.animateDpAsState(
+            cell * selected,
+            androidx.compose.animation.core.tween(200, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+            label = "modeThumb",
+        )
+        Surface(
+            Modifier.offset(x = thumbX).width(cell).fillMaxHeight(),
+            shape = RoundedCornerShape(50),
+            color = MaterialTheme.colorScheme.surface,
+            shadowElevation = 1.dp,
+        ) {}
+        Row(Modifier.fillMaxSize()) {
+            modes.forEachIndexed { index, mode ->
+                Box(
+                    Modifier.weight(1f).fillMaxHeight().clip(RoundedCornerShape(50))
+                        .clickable(role = androidx.compose.ui.semantics.Role.Tab) { act.send(mode.obj("action")) },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        mode.str("label"),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = if (index == selected) FontWeight.SemiBold else FontWeight.Normal,
+                        color = if (index == selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Three pulsing dots while the answer has not started. */
+@Composable
+private fun TypingDots() {
+    val transition = androidx.compose.animation.core.rememberInfiniteTransition(label = "typing")
+    Row(Modifier.padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+        repeat(3) { i ->
+            val alpha by transition.animateFloat(
+                initialValue = 0.35f,
+                targetValue = 1f,
+                animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+                    androidx.compose.animation.core.tween(480, delayMillis = i * 160, easing = androidx.compose.animation.core.LinearEasing),
+                    androidx.compose.animation.core.RepeatMode.Reverse,
+                ),
+                label = "dot$i",
+            )
+            Box(Modifier.size(7.dp).clip(RoundedCornerShape(50)).background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha)))
+        }
     }
 }
 
@@ -392,6 +472,22 @@ private fun SettingsPage(page: JSONObject, act: Act) {
     val current = sections.firstOrNull { it.str("id") == page.str("selected") } ?: sections.firstOrNull()
     val entries = page.list("nav").flatMap { it.list("items") }
     Column(Modifier.fillMaxSize().padding(8.dp)) {
+        page.obj("search")?.let { search ->
+            var text by remember(search.str("value")) { mutableStateOf(search.str("value")) }
+            LaunchedEffect(text) {
+                if (text != search.str("value")) {
+                    kotlinx.coroutines.delay(250)
+                    act.send(search.obj("action")?.withField(search.str("field"), text))
+                }
+            }
+            OutlinedTextField(
+                value = text,
+                onValueChange = { text = it },
+                singleLine = true,
+                placeholder = { Text(search.str("placeholder")) },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+            )
+        }
         // Categories: one scrolling row of chips (a card with a side list does not fit a phone).
         androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(horizontal = 8.dp)) {
             items(entries) { e ->
@@ -400,7 +496,29 @@ private fun SettingsPage(page: JSONObject, act: Act) {
         }
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(current?.str("label") ?: page.str("title"), style = MaterialTheme.typography.headlineSmall)
-            current?.list("items")?.forEach { SettingControl(it, act) }
+            // A heading starts a group: its rows sit in one rounded card, hints are notes under it.
+            val groups = mutableListOf<Triple<String, MutableList<JSONObject>, MutableList<JSONObject>>>()
+            var g = Triple("", mutableListOf<JSONObject>(), mutableListOf<JSONObject>())
+            current?.list("items")?.forEach { it0 ->
+                when (it0.str("kind")) {
+                    "heading" -> { if (g.second.isNotEmpty() || g.third.isNotEmpty() || g.first.isNotEmpty()) groups.add(g); g = Triple(it0.str("label"), mutableListOf(), mutableListOf()) }
+                    "hint" -> g.third.add(it0)
+                    else -> g.second.add(it0)
+                }
+            }
+            if (g.second.isNotEmpty() || g.third.isNotEmpty()) groups.add(g)
+            groups.forEach { (title, rows, notes) ->
+                if (title.isNotEmpty()) Text(title, Modifier.padding(start = 4.dp, top = 8.dp), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (rows.isNotEmpty()) Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainerLow, border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+                    Column {
+                        rows.forEachIndexed { i, row ->
+                            if (i > 0) androidx.compose.material3.HorizontalDivider(Modifier.padding(start = 16.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
+                            SettingControl(row, act, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp))
+                        }
+                    }
+                }
+                notes.forEach { Text(it.str("text"), Modifier.padding(horizontal = 4.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            }
         }
     }
 }
@@ -408,18 +526,53 @@ private fun SettingsPage(page: JSONObject, act: Act) {
 private fun setting(item: JSONObject, value: Any?): JSONObject =
     JSONObject().put("type", "set_setting").put("binding", item.str("binding")).put("value", value)
 
+/** Name and a quiet description (a status dot first when the core gives a tone). */
+@Composable
+private fun RowText(item: JSONObject, modifier: Modifier = Modifier) {
+    val note = if (item.optBoolean("keys")) "" else item.str("description").ifEmpty { if (item.str("kind") == "item") item.str("value") else "" }
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(item.str("label"), style = MaterialTheme.typography.bodyLarge)
+        if (note.isNotEmpty()) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            val tone = item.str("tone")
+            if (tone.isNotEmpty()) Box(
+                Modifier.size(8.dp).clip(RoundedCornerShape(50)).background(
+                    when (tone) {
+                        "ok" -> androidx.compose.ui.graphics.Color(0xFF2E7D32)
+                        "error" -> MaterialTheme.colorScheme.error
+                        else -> androidx.compose.ui.graphics.Color(0xFFB26A00)
+                    },
+                ),
+            )
+            Text(note, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+/** A key combination as key caps. */
+@Composable
+private fun KeyCaps(combo: String) {
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        combo.split("+").filter { it.isNotEmpty() }.forEach { key ->
+            Surface(shape = RoundedCornerShape(7.dp), color = MaterialTheme.colorScheme.surfaceContainerHighest, border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+                Text(key, Modifier.padding(horizontal = 8.dp, vertical = 3.dp), style = MaterialTheme.typography.labelMedium)
+            }
+        }
+    }
+}
+
 @Composable
 private fun SettingControl(item: JSONObject, act: Act, modifier: Modifier = Modifier.fillMaxWidth()) {
     when (item.str("kind")) {
-        "toggle" -> Row(modifier, verticalAlignment = Alignment.CenterVertically) {
-            Text(item.str("label"), Modifier.weight(1f))
+        "toggle" -> Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            RowText(item, Modifier.weight(1f))
             Switch(checked = item.optBoolean("value"), onCheckedChange = { act(setting(item, it)) })
         }
         "slider" -> {
             val options = item.list("options")
             val index = options.indexOfFirst { it.str("value") == item.str("value") }.coerceAtLeast(0)
             Column(modifier) {
-                Text(item.str("label") + " · " + (options.getOrNull(index)?.str("label") ?: ""), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                RowText(item)
+                Text(options.getOrNull(index)?.str("label") ?: "", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                 Slider(
                     value = index.toFloat(),
                     onValueChange = { v -> options.getOrNull(v.toInt())?.let { if (it.str("value") != item.str("value")) act(setting(item, it.str("value"))) } },
@@ -462,19 +615,24 @@ private fun SettingControl(item: JSONObject, act: Act, modifier: Modifier = Modi
         }
         "select" -> SelectControl(item, act, modifier)
         "text" -> TextControl(item, act, modifier)
-        "info" -> Row(modifier, verticalAlignment = Alignment.CenterVertically) {
-            Text(item.str("label"), Modifier.weight(1f))
-            Text(item.str("value"), color = MaterialTheme.colorScheme.onSurfaceVariant)
+        "info" -> Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            RowText(item, Modifier.weight(1f))
+            if (item.optBoolean("keys")) KeyCaps(item.str("value"))
+            else Text(item.str("value"), color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         "button" -> ActionButton(item, act, modifier)
-        "item" -> Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Column(Modifier.weight(1f)) {
-                Text(item.str("label"))
-                item.str("value").takeIf { it.isNotEmpty() }?.let {
-                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        "item" -> {
+            val buttons = item.list("buttons")
+            val below = buttons.size > 2
+            Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    RowText(item, Modifier.weight(1f))
+                    if (item.optBoolean("keys")) KeyCaps(item.str("value"))
+                    item.obj("switch")?.let { sw -> Switch(checked = sw.optBoolean("on"), onCheckedChange = { act.send(sw.obj("action")) }) }
+                    if (!below) buttons.forEach { ActionButton(it, act) }
                 }
+                if (below) FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { buttons.forEach { ActionButton(it, act) } }
             }
-            item.list("buttons").forEach { ActionButton(it, act) }
         }
     }
 }
@@ -484,11 +642,12 @@ private fun SelectControl(item: JSONObject, act: Act, modifier: Modifier) {
     var open by remember { mutableStateOf(false) }
     val options = item.list("options")
     val current = options.firstOrNull { it.str("value") == item.str("value") }
-    Column(modifier) {
-        Text(item.str("label"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+        RowText(item, Modifier.weight(1f))
         Box {
-            OutlinedButton(onClick = { open = true }, enabled = options.isNotEmpty(), modifier = Modifier.fillMaxWidth()) {
-                Text(current?.str("label") ?: "—", Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            OutlinedButton(onClick = { open = true }, enabled = options.isNotEmpty(), shape = RoundedCornerShape(50)) {
+                Text(current?.str("label") ?: "—", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Icon(Icons.Rounded.ExpandMore, contentDescription = null, modifier = Modifier.size(18.dp))
             }
             DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
                 options.forEach { option ->
@@ -559,14 +718,7 @@ private fun ShellSidebar(sb: JSONObject, act: Act, modifier: Modifier, forceExpa
     Column(modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             if (!collapsed) {
-                Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    sb.list("modes").forEach { mode ->
-                        val on = mode.optBoolean("selected")
-                        val click = { act.send(mode.obj("action")) }
-                        if (on) FilledTonalButton(onClick = click, modifier = Modifier.weight(1f)) { Text(mode.str("label")) }
-                        else OutlinedButton(onClick = click, modifier = Modifier.weight(1f)) { Text(mode.str("label")) }
-                    }
-                }
+                ModeSwitch(sb.list("modes"), act, Modifier.weight(1f))
             }
             if (!forceExpanded) {
                 IconButton(onClick = { act.send(sb.obj("toggle")) }) {
@@ -752,6 +904,7 @@ private fun ChatPane(page: JSONObject, prefs: JSONObject?, strings: JSONObject, 
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
+                    Image(painterResource(R.mipmap.ic_launcher), contentDescription = null, modifier = Modifier.size(48.dp))
                     Text(empty.str("title"), style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center)
                     Text(
                         empty.str("text"),
@@ -787,6 +940,16 @@ private fun ChatPane(page: JSONObject, prefs: JSONObject?, strings: JSONObject, 
             ) {
                 items(messages) { MessageBubble(it, strings, act) }
             }
+            val scope = rememberCoroutineScope()
+            val showJump by remember { androidx.compose.runtime.derivedStateOf { messages.isNotEmpty() && listState.canScrollForward } }
+            if (showJump) {
+                androidx.compose.material3.SmallFloatingActionButton(
+                    onClick = { scope.launch { listState.animateScrollToItem(messages.size - 1) } },
+                    modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = composerDp + 12.dp),
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    contentColor = MaterialTheme.colorScheme.onSurface,
+                ) { Icon(Icons.Rounded.ArrowDownward, contentDescription = strings.str("jump").ifEmpty { "Jump to the latest message" }) }
+            }
             Column(
                 Modifier.align(Alignment.BottomCenter)
                     .widthIn(max = 720.dp)
@@ -821,7 +984,7 @@ private fun ChatPane(page: JSONObject, prefs: JSONObject?, strings: JSONObject, 
 private fun MessageBubble(message: JSONObject, strings: JSONObject, act: Act) {
     val mine = message.str("role") == "user"
     val streaming = message.optBoolean("streaming")
-    val text = message.str("text") + if (streaming) " ▍" else ""
+    val text = message.str("text") + if (streaming && message.str("text").isNotEmpty()) " ▍" else ""
     val clipboard = LocalClipboardManager.current
     Column(Modifier.fillMaxWidth(), horizontalAlignment = if (mine) Alignment.End else Alignment.Start) {
         if (mine) {
@@ -839,6 +1002,7 @@ private fun MessageBubble(message: JSONObject, strings: JSONObject, act: Act) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (message.has("steps")) Steps(message, act)
                     val blocks = message.list("blocks")
+                    if (streaming && message.str("text").isEmpty() && blocks.isEmpty()) TypingDots()
                     if (blocks.isEmpty()) MarkdownText(stripIcons(text), Modifier.fillMaxWidth())
                     else blocks.forEachIndexed { i, block ->
                         val cursor = if (streaming && i == blocks.lastIndex) " ▍" else ""
@@ -1542,14 +1706,34 @@ private fun StorePage(page: JSONObject, act: Act) {
                     Row(Modifier.padding(14.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         AppIcon(card.obj("icon"), card.str("title"))
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text(card.str("title"), style = MaterialTheme.typography.titleSmall)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(card.str("title"), Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+                                card.obj("switch")?.let { sw ->
+                                    androidx.compose.material3.Switch(checked = sw.optBoolean("on"), onCheckedChange = { run(sw.obj("action")) })
+                                }
+                            }
                             Text(card.str("publisher"), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Text(card.str("subtitle"), style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                            card.str("detail").takeIf { it.isNotEmpty() }?.let {
+                                Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
                             val badges = (0 until (card.optJSONArray("badges")?.length() ?: 0)).map { card.optJSONArray("badges")!!.optString(it) } +
                                 if (card.str("state") == "installed") listOf("✓ Installed") else emptyList()
-                            Text(badges.joinToString("  ·  "), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                val tone = card.str("tone")
+                                if (tone.isNotEmpty()) Box(
+                                    Modifier.size(8.dp).clip(RoundedCornerShape(50)).background(
+                                        when (tone) {
+                                            "ok" -> androidx.compose.ui.graphics.Color(0xFF2E7D32)
+                                            "error" -> MaterialTheme.colorScheme.error
+                                            else -> androidx.compose.ui.graphics.Color(0xFFB26A00)
+                                        },
+                                    ),
+                                )
+                                Text(badges.joinToString("  ·  "), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                            }
                             val actions = card.list("actions")
-                            if (actions.isNotEmpty()) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
+                            if (actions.isNotEmpty()) FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
                                 actions.forEach { a ->
                                     val click = { run(a.obj("action")) }
                                     if (a.str("style") == "primary") Button(onClick = click) { Text(a.str("label")) }

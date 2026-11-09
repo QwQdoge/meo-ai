@@ -12,6 +12,18 @@ pub enum Theme {
     Dark,
 }
 
+/// How large the app's text is: `small`, `default` or `large`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TextSize {
+    #[serde(rename = "small")]
+    Small,
+    #[default]
+    #[serde(rename = "default")]
+    Normal,
+    #[serde(rename = "large")]
+    Large,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GeneralPreferences {
@@ -29,6 +41,8 @@ impl Default for GeneralPreferences {
 pub struct AppearancePreferences {
     pub theme: Theme,
     pub reduce_motion: bool,
+    #[serde(default)]
+    pub text_size: TextSize,
     /// Interface language: `system`, `en` or `zh-CN`.
     #[serde(default = "system_language")]
     pub language: String,
@@ -41,6 +55,7 @@ impl Default for AppearancePreferences {
         Self {
             theme: Theme::default(),
             reduce_motion: false,
+            text_size: TextSize::default(),
             language: system_language(),
         }
     }
@@ -59,6 +74,18 @@ impl Default for PersonalizationPreferences {
         }
     }
 }
+/// What the app may notify about; delivery rules stay with the system.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NotificationPreferences {
+    /// A notification when an answer finishes while the app is in the background.
+    pub answers: bool,
+}
+impl Default for NotificationPreferences {
+    fn default() -> Self {
+        Self { answers: true }
+    }
+}
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MemoryPreferences {
@@ -71,6 +98,8 @@ pub struct Preferences {
     pub memory: MemoryPreferences,
     pub general: GeneralPreferences,
     pub appearance: AppearancePreferences,
+    #[serde(default)]
+    pub notifications: NotificationPreferences,
     pub personalization: PersonalizationPreferences,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

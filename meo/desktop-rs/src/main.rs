@@ -26,6 +26,7 @@ use std::{
 };
 
 mod fileurl;
+mod message_delta;
 mod updater;
 
 use meo_ai_core::cloud::{
@@ -60,6 +61,8 @@ mod meo_core {
         pub core: Option<AppCore>,
         pub handle: Option<Handle>,
         pub refresh_pending: Arc<AtomicBool>,
+        /// What QML holds of the open chat (see `message_delta`).
+        pub sent: message_delta::SentMessages,
     }
 
     impl Default for MeoCore {
@@ -69,6 +72,7 @@ mod meo_core {
                 core: None,
                 handle: None,
                 refresh_pending: Arc::new(AtomicBool::new(false)),
+                sent: message_delta::SentMessages::default(),
             }
         }
     }
@@ -104,9 +108,18 @@ mod meo_core {
         fn refresh_view(&mut self) {
             self.refresh_pending.store(false, Ordering::SeqCst);
             if let Some(core) = &self.core {
-                self.view = core.view();
+                let mut view = core.view();
+                self.sent.compact(&mut view);
+                self.view = view;
                 self.view_changed();
             }
+        }
+
+        /// QML met a placeholder message it has no row for: send the next view in full.
+        #[qslot(qml_name = "resend")]
+        fn resend(&mut self) {
+            self.sent.reset();
+            self.refresh_view();
         }
     }
 }
@@ -168,20 +181,13 @@ impl PlatformHooks for DesktopHooks {
     }
 
     fn notify(&self, title: &str, text: &str) {
-        let sent = if cfg!(target_os = "macos") {
-            let quote = |t: &str| t.replace('\\', "\\\\").replace('"', "\\\"");
-            std::process::Command::new("osascript")
-                .args([
-                    "-e",
-                    &format!("display notification \"{}\" with title \"{}\"", quote(text), quote(title)),
-                ])
-                .spawn()
-        } else {
-            std::process::Command::new("notify-send")
-                .args(["--app-name=Meo AI", "--icon=org.meo.AI", title, text])
-                .spawn()
-        };
-        if let Err(error) = sent {
+        // The platform's own notification service: freedesktop D-Bus (KDE Plasma, GNOME, ...),
+        // Windows toast, macOS Notification Center. No shelling out to helper programs.
+        let mut notification = notify_rust::Notification::new();
+        notification.appname("Meo AI").summary(title).body(text).icon("org.meo.AI");
+        #[cfg(windows)]
+        notification.app_id("org.meo.AI");
+        if let Err(error) = notification.show() {
             tracing::warn!(%error, "could not show a desktop notification");
         }
     }
@@ -301,6 +307,9 @@ fn main() {
     );
     if demo {
         core.load_demo();
+    } else {
+        // Until `start` has read the saved session the view is a loading state, not a sign-in page.
+        core.expect_start();
     }
     {
         let mut backend = object.borrow_mut();

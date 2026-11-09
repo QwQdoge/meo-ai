@@ -1,3 +1,4 @@
+import { Switch } from "./Switch";
 import React, { useEffect, useRef, useState, type ReactNode } from "react";
 import { Blocks } from "./rich";
 import { Icon, hasIcon } from "./icons";
@@ -35,6 +36,8 @@ export default function CoreApp() {
     const theme = ["light", "dark"].includes(prefs["appearance.theme"]) ? prefs["appearance.theme"] : "system";
     document.documentElement.dataset.theme = theme;
     document.documentElement.dataset.reduceMotion = String(prefs["appearance.reduce_motion"] === true);
+    // Text size scales every rem-based size on the page.
+    document.documentElement.style.fontSize = ({ small: "14px", large: "18px" } as Record<string, string>)[prefs["appearance.text_size"]] ?? "";
   }, [prefs]);
 
   if (error) {
@@ -50,7 +53,7 @@ export default function CoreApp() {
   const page: Spec = view.page;
   return (
     <div className={`core-app${drawer ? " drawer-open" : ""}`} data-mode={view.route === "work" ? "work" : "chat"}>
-      {view.sidebar && <Sidebar sidebar={view.sidebar} strings={strings} act={act} open={drawer} setOpen={setDrawer} />}
+      {view.sidebar && view.page?.standalone !== true && <Sidebar sidebar={view.sidebar} strings={strings} act={act} open={drawer} setOpen={setDrawer} />}
       {view.sidebar && drawer && <div className="core-drawer-scrim" onClick={() => setDrawer(false)} />}
       {view.dialog && <Dialog dialog={view.dialog} act={act} />}
       <div className="core-main">
@@ -79,6 +82,18 @@ const glyph = (name: string, size = 18): ReactNode => (hasIcon(name) ? <Icon nam
 function Sidebar({ sidebar, strings, act, open, setOpen }: { sidebar: Spec; strings: Spec; act: Act; open: boolean; setOpen: (v: boolean) => void }) {
   const go = (a: Action | undefined) => { setOpen(false); act(a); };
   const collapsed = !!sidebar.collapsed;
+  const sideScroll = useRef<HTMLDivElement>(null);
+  useEffect(() => fadeEdges(sideScroll.current));
+  // While the saved session is read: the sidebar as the last run left it, with placeholders for its rows.
+  if (sidebar.skeleton) {
+    const bars = collapsed ? [30, 30, 30, 30, 30] : [30, 34, 30, 28, 28, 28, 28, 28, 28];
+    const widths = [100, 100, 50, 70, 55, 80, 65, 75, 50];
+    return (
+      <aside className={`core-sidebar skeleton${collapsed ? " collapsed" : ""}`} aria-hidden>
+        {bars.map((h, i) => <i key={i} className="core-bar" style={{ height: h, width: collapsed ? 40 : `${widths[i]}%`, marginBlockStart: i === 3 || i === 5 ? 10 : 0 }} />)}
+      </aside>
+    );
+  }
   const row = (item: Spec, depth = 0): ReactNode => (
     <li key={item.id} className="core-chat-row" style={{ paddingInlineStart: depth * 14 }}>
       <button aria-current={item.selected ? "true" : undefined} onClick={() => go(item.action)}>
@@ -106,7 +121,7 @@ function Sidebar({ sidebar, strings, act, open, setOpen }: { sidebar: Spec; stri
           {glyph("add", 20)}{!collapsed && <span>{sidebar.newChat.label}</span>}
         </button>
       )}
-      <div className="core-side-scroll">
+      <div className="core-side-scroll" ref={sideScroll} onScroll={(e) => fadeEdges(e.currentTarget)}>
         {(sidebar.sections ?? []).map((sec: Spec) => (
           <section key={sec.id} className="core-side-section">
             {sec.kind === "list" ? (
@@ -144,6 +159,7 @@ function Sidebar({ sidebar, strings, act, open, setOpen }: { sidebar: Spec; stri
         ))}
       </div>
       <div className="core-side-foot">
+        {sidebar.account && <AccountMenu account={sidebar.account} collapsed={collapsed} act={act} />}
         {(sidebar.footer ?? []).map((f: Spec) => (
           <button key={f.id} className="core-side-link" aria-current={f.selected ? "page" : undefined} title={f.label} onClick={() => go(f.action)}>
             {glyph(f.icon)}{!collapsed && <span>{f.label}</span>}
@@ -151,6 +167,39 @@ function Sidebar({ sidebar, strings, act, open, setOpen }: { sidebar: Spec; stri
         ))}
       </div>
     </aside>
+  );
+}
+
+/** Avatar and name at the foot of the sidebar; opens the account menu above it. */
+function AccountMenu({ account, collapsed, act }: { account: Spec; collapsed: boolean; act: Act }) {
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: Event) => { if (!root.current?.contains(e.target as Node)) setOpen(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("pointerdown", away);
+    document.addEventListener("keydown", esc);
+    return () => { document.removeEventListener("pointerdown", away); document.removeEventListener("keydown", esc); };
+  }, [open]);
+  return (
+    <div className="core-account" ref={root}>
+      <button className="core-account-btn" aria-haspopup="menu" aria-expanded={open} title={account.email} onClick={() => setOpen((v) => !v)}>
+        <span className="core-avatar" aria-hidden>{account.initial}</span>
+        {!collapsed && <span className="label">{account.name}</span>}
+        {!collapsed && <Icon name="expand_more" size={14} />}
+      </button>
+      {open && (
+        <div className="core-account-menu" role="menu">
+          <div className="core-account-email">{account.email}</div>
+          {(account.menu ?? []).map((m: Spec, i: number) => m.divider ? <hr key={i} /> : (
+            <button key={m.id} role="menuitem" onClick={() => { setOpen(false); act(m.action); }}>
+              {glyph(m.icon, 16)}<span className="label">{m.label}</span>{m.shortcut && <kbd>{m.shortcut}</kbd>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -199,6 +248,8 @@ function Dialog({ dialog, act }: { dialog: Spec; act: Act }) {
 
 function Page({ page, prefs, strings, act, work }: { page: Spec; prefs: Spec; strings: Spec; act: Act; work?: boolean }) {
   switch (page.kind) {
+    case "loading":
+      return <main className="core-loading" aria-busy="true" />;
     case "sign_in":
       return <SignIn page={page} act={act} />;
     case "conversation":
@@ -228,6 +279,16 @@ function SignIn({ page, act }: { page: Spec; act: Act }) {
       <img src="/meo-ai.svg" alt="" width={72} height={72} />
       <h1>{page.title}</h1>
       <p>{page.text}</p>
+      {(page.features ?? []).length > 0 && (
+        <ul className="core-features">
+          {page.features.map((f: Spec, i: number) => (
+            <li key={i}>
+              <span className="core-feature-icon" aria-hidden>{glyph(f.icon, 22)}</span>
+              <span><b>{f.title}</b><small>{f.text}</small></span>
+            </li>
+          ))}
+        </ul>
+      )}
       {page.busy && <div className="core-spinner" role="progressbar" aria-label="Signing in" />}
       {(page.actions ?? []).map((a: Spec, i: number) => <Button key={i} spec={a} act={act} />)}
     </main>
@@ -274,6 +335,7 @@ function SettingsPage({ page, act }: { page: Spec; act: Act }) {
     <main className="core-settings">
       <div className="core-settings-card">
         <nav className="core-settings-nav" aria-label={page.title}>
+          {page.search && <SettingsSearch search={page.search} act={act} />}
           {(page.nav ?? []).map((group: Spec) => (
             <div key={group.label}>
               <h3>{group.label}</h3>
@@ -288,13 +350,140 @@ function SettingsPage({ page, act }: { page: Spec; act: Act }) {
             <h1>{current?.label ?? page.title}</h1>
             {page.close && <button className="core-close" aria-label="Close" onClick={() => act(page.close)}>✕</button>}
           </header>
-          <div className="core-section">
-            {(current?.items ?? []).map((item: Spec) => <Control key={item.id} item={item} act={act} />)}
+          <div className="set-groups">
+            {settingGroups(current?.items ?? []).map((g, i) => (
+              <section key={i} className="set-group">
+                {g.title && <h3>{g.title}</h3>}
+                {g.rows.length > 0 && (
+                  <div className="set-card">
+                    {g.rows.map((item: Spec) => <SettingRow key={item.id} item={item} act={act} />)}
+                  </div>
+                )}
+                {g.notes.map((n: Spec) => <p key={n.id} className="set-note">{n.text}</p>)}
+              </section>
+            ))}
           </div>
         </div>
       </div>
     </main>
   );
+}
+
+/** Filters the settings by what is typed; the core returns the matching controls from every category. */
+function SettingsSearch({ search, act }: { search: Spec; act: Act }) {
+  const [text, setText] = useState<string>(search.value ?? "");
+  useEffect(() => setText(search.value ?? ""), [search.value]);
+  useEffect(() => {
+    if (text === (search.value ?? "")) return;
+    const t = window.setTimeout(() => act({ ...search.action, [search.field]: text }), 250);
+    return () => window.clearTimeout(t);
+  }, [text]);
+  return (
+    <input
+      type="search"
+      className="core-settings-search"
+      placeholder={search.placeholder}
+      aria-label={search.placeholder}
+      value={text}
+      onChange={(e) => setText(e.target.value)}
+      onKeyDown={(e) => e.key === "Escape" && setText("")}
+    />
+  );
+}
+
+/** Items split at each heading: a titled group is one rounded card of rows, hints are notes under it. */
+function settingGroups(items: Spec[]): { title: string; rows: Spec[]; notes: Spec[] }[] {
+  const out: { title: string; rows: Spec[]; notes: Spec[] }[] = [];
+  let g = { title: "", rows: [] as Spec[], notes: [] as Spec[] };
+  for (const it of items) {
+    if (it.kind === "heading") {
+      if (g.rows.length || g.notes.length || g.title) out.push(g);
+      g = { title: it.label ?? "", rows: [], notes: [] };
+    } else if (it.kind === "hint") g.notes.push(it);
+    else g.rows.push(it);
+  }
+  if (g.rows.length || g.notes.length) out.push(g);
+  return out;
+}
+
+/** A key combination drawn as key caps ("Ctrl+N" -> Ctrl N). */
+function KeyCaps({ combo }: { combo: string }) {
+  return <span className="set-keys">{combo.split("+").filter(Boolean).map((k, i) => <kbd key={i}>{k}</kbd>)}</span>;
+}
+
+/** One settings row: name and a quiet description on the left, the control on the right. */
+function SettingRow({ item, act }: { item: Spec; act: Act }) {
+  const [text, setText] = useState<string>(String(item.value ?? ""));
+  useEffect(() => setText(String(item.value ?? "")), [item.value]);
+  const commit = () => text !== String(item.value ?? "") && act(setting(item, text));
+  const description: string | undefined = item.keys ? undefined : item.description || (item.kind === "item" ? item.value : undefined);
+  const head = (
+    <div className="set-text">
+      <b>{item.label}</b>
+      {description && <small>{item.tone && <i className={`core-tone ${item.tone}`} aria-hidden />}{description}</small>}
+    </div>
+  );
+  switch (item.kind) {
+    case "toggle":
+      return <div className="set-row">{head}<Switch spec={{ on: item.value === true, label: item.label, action: setting(item, item.value !== true) }} act={act} /></div>;
+    case "select":
+      return (
+        <div className="set-row">
+          {head}
+          <span className="set-select">
+            <select aria-label={item.label} value={item.value ?? ""} onChange={(e) => act(setting(item, e.target.value))}>
+              {!(item.options ?? []).some((o: Spec) => o.value === item.value) && <option value="">—</option>}
+              {(item.options ?? []).map((o: Spec) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+            <Icon name="expand_more" size={16} />
+          </span>
+        </div>
+      );
+    case "slider": {
+      const options: Spec[] = item.options ?? [];
+      const index = Math.max(0, options.findIndex((o) => o.value === item.value));
+      return (
+        <div className="set-row">
+          {head}
+          <span className="set-slider">
+            <small>{options[index]?.label}</small>
+            <input type="range" aria-label={item.label} min={0} max={options.length - 1} step={1} value={index} aria-valuetext={options[index]?.label}
+              onChange={(e) => act(setting(item, options[Number(e.target.value)].value))} />
+          </span>
+        </div>
+      );
+    }
+    case "info":
+      return <div className="set-row">{head}{item.keys ? <KeyCaps combo={String(item.value ?? "")} /> : <span className="set-value">{String(item.value ?? "")}</span>}</div>;
+    case "item": {
+      const buttons: Spec[] = item.buttons ?? [];
+      const below = buttons.length > 2;
+      const list = buttons.map((b, i) => <Button key={i} spec={b} act={act} />);
+      return (
+        <div className="set-row wrap">
+          {head}
+          {item.keys && <KeyCaps combo={String(item.value ?? "")} />}
+          {item.switch && <Switch spec={item.switch} act={act} />}
+          {!below && list.length > 0 && <span className="set-buttons">{list}</span>}
+          {below && <div className="set-buttons full">{list}</div>}
+        </div>
+      );
+    }
+    case "text":
+      return (
+        <div className="set-row stack">
+          {head}
+          {item.single_line ? (
+            <input value={text} placeholder={item.placeholder} onChange={(e) => setText(e.target.value)} onBlur={commit}
+              onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && commit()} />
+          ) : (
+            <textarea rows={4} value={text} onChange={(e) => setText(e.target.value)} onBlur={commit} />
+          )}
+        </div>
+      );
+    default:
+      return <div className="set-row stack"><Control item={item} act={act} /></div>;
+  }
 }
 
 const setting = (item: Spec, value: unknown): Action => ({ type: "set_setting", binding: item.binding, value });
@@ -385,11 +574,23 @@ function Control({ item, act }: { item: Spec; act: Act }) {
     case "item":
       return (
         <div className="core-item">
-          <div className="core-item-text">
-            <span>{item.label}</span>
-            {item.value && <small className="core-muted">{item.value}</small>}
+          <div className="core-item-row">
+            <div className="core-item-text">
+              <span>{item.label}</span>
+              {item.value && (
+                <small className="core-muted">
+                  {item.tone && <i className={`core-tone ${item.tone}`} aria-hidden />}
+                  {item.value}
+                </small>
+              )}
+            </div>
+            {item.switch && <Switch spec={item.switch} act={act} />}
           </div>
-          {(item.buttons ?? []).map((b: Spec, i: number) => <Button key={i} spec={b} act={act} />)}
+          {(item.buttons ?? []).length > 0 && (
+            <div className="core-item-buttons">
+              {item.buttons.map((b: Spec, i: number) => <Button key={i} spec={b} act={act} />)}
+            </div>
+          )}
         </div>
       );
     case "button":
@@ -473,7 +674,7 @@ function RowMenu({ menu, act, label }: { menu: Spec[]; act: Act; label: string }
 }
 
 /** One collapsible part of the details card: icon rows, a usage bar, step rows, links. */
-function InspectorSection({ sec }: { sec: Spec }) {
+function InspectorSection({ sec, act }: { sec: Spec; act: Act }) {
   const [open, setOpen] = useState(sec.open !== false);
   const total = Math.max(1, ...[(sec.bar?.segments ?? []).reduce((n: number, x: Spec) => n + x.value, 0)]);
   return (
@@ -495,10 +696,13 @@ function InspectorSection({ sec }: { sec: Spec }) {
             <div key={i} className="core-irow">
               {r.icon && <Icon name={r.icon} />}
               {r.status && <span className={`dot ${r.status}`} aria-hidden />}
+              {r.swatch != null && <i className={`core-swatch seg${r.swatch}`} aria-hidden />}
               <span className="label">{r.label}</span>
-              {r.value != null && <span className="core-muted">{r.value}</span>}
+              {r.value != null && <span className="core-muted num">{r.value}</span>}
+              {r.percent && <span className="core-muted num core-pct">{r.percent}</span>}
             </div>
           ))}
+          {sec.action && <button className="core-isec-action" onClick={() => act(sec.action.action)}>{sec.action.label}</button>}
           {(sec.files ?? []).map((f: Spec) => (
             <details key={f.path} className="core-change">
               <summary>
@@ -697,14 +901,116 @@ function TuneButton({ toolbar, act }: { toolbar: Spec[]; act: Act }) {
   );
 }
 
+/** Everything that shows in one message, compared without its identity: stored messages never change,
+ *  so a streamed token re-renders only the message being streamed, not the whole chat. */
+const sameMessage = (a: Spec, b: Spec) =>
+  a.id === b.id && a.role === b.role && a.text === b.text && !!a.streaming === !!b.streaming &&
+  !!a.stepsOpen === !!b.stepsOpen && a.stepsLabel === b.stepsLabel &&
+  (a.blocks?.length ?? 0) === (b.blocks?.length ?? 0) && (a.images?.length ?? 0) === (b.images?.length ?? 0) &&
+  (a.actions?.length ?? 0) === (b.actions?.length ?? 0) &&
+  (a.steps ? JSON.stringify(a.steps) : "") === (b.steps ? JSON.stringify(b.steps) : "");
+
+const MessageView = React.memo(
+  function MessageView({ m, strings, act }: { m: Spec; strings: Spec; act: Act }) {
+    return (
+          <div className={`core-message ${m.role === "user" ? "user" : "assistant"}`}>
+            {m.role === "user" ? (
+              <div className="core-bubble user">{m.text}</div>
+            ) : (
+              <div className="core-bubble assistant">
+                {m.steps && (
+                  <details className="core-steps" open={!!m.stepsOpen}>
+                    <summary>{m.stepsLabel}</summary>
+                    <ol>
+                      {m.steps.map((st: Spec) => (
+                        <li key={st.id} className={`step-${st.status}`}>
+                          <details>
+                            <summary>
+                              <span className="core-step-mark" aria-hidden>
+                                {st.status === "done" ? <Icon name="check_circle" size={14} /> : st.status === "error" ? <Icon name="error" size={14} /> : <Icon name="progress_activity" size={14} className="spin" />}
+                              </span>
+                              <b>{st.title}</b>
+                            </summary>
+                            {st.detail ? <p className="core-muted">{st.detail}</p> : null}
+                            {(st.items ?? []).length > 0 && (
+                              <ul>
+                                {st.items.map((it: Spec, k: number) => (
+                                  <li key={k}>{/^https?:\/\//.test(it.url) ? <a href={it.url} target="_blank" rel="noreferrer noopener">{it.title || it.url}</a> : it.title}</li>
+                                ))}
+                              </ul>
+                            )}
+                          </details>
+                        </li>
+                      ))}
+                    </ol>
+                  </details>
+                )}
+                {m.streaming && !m.text && !(m.blocks ?? []).length && (
+                  <span className="core-typing" role="status" aria-label={strings.thinking ?? "Thinking"}><i /><i /><i /></span>
+                )}
+                <Blocks
+                  blocks={m.blocks?.length ? m.blocks : [{ type: "markdown", text: m.text }]}
+                  streaming={!!m.streaming}
+                  act={act as (action: Spec) => void}
+                  copy={strings.copy ?? "Copy"}
+                  copied={strings.copied ?? "Copied"}
+                  components={{ pre: (props: any) => <CodeBlock {...props} label={strings.copy ?? "Copy"} done={strings.copied ?? "Copied"} /> }}
+                />
+                {(m.images ?? []).map((img: Spec, k: number) => (
+                  <span key={k} className="core-image-wrap">
+                    <img className="core-image" src={img.url} alt="" loading="lazy" />
+                    <a className="core-image-save" href={img.url} download={`meo-image-${k + 1}.png`} aria-label="Download">Download</a>
+                  </span>
+                ))}
+              </div>
+            )}
+            {!m.streaming && m.text && (
+              <div className="core-message-actions">
+                <CopyButton text={m.text} label={strings.copy ?? "Copy"} done={strings.copied ?? "Copied"} />
+                {(m.actions ?? []).map((a: Spec, j: number) => (
+                  <button key={j} onClick={() => act(a.action)}>{a.label}</button>
+                ))}
+              </div>
+            )}
+          </div>
+    );
+  },
+  (a, b) => sameMessage(a.m, b.m) && a.strings.copy === b.strings.copy && a.strings.copied === b.strings.copied,
+);
+
+/** The edge of a scrolling area fades only while there is more to scroll in that direction (see shell.css). */
+function fadeEdges(el: HTMLElement | null) {
+  if (!el) return;
+  el.toggleAttribute("data-fade-top", el.scrollTop > 4);
+  el.toggleAttribute("data-fade-bottom", el.scrollHeight - el.scrollTop - el.clientHeight > 4);
+}
+
 function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: Spec; strings: Spec; act: Act; work?: boolean }) {
   const inspector: Spec = page.inspector ?? {};
   const area = useRef<HTMLTextAreaElement>(null);
   const messages: Spec[] = page.messages ?? [];
   const composer: Spec = page.composer ?? {};
   const end = useRef<HTMLDivElement>(null);
+  const list = useRef<HTMLDivElement>(null);
+  const [atEnd, setAtEnd] = useState(true);
+  // Follow the stream only while the reader is at the bottom; scrolling up to read stays put.
+  const stick = useRef(true);
   const fileInput = useRef<HTMLInputElement>(null);
   const [input, setInput] = useState("");
+  // One unsent draft per chat; the box is focused when a chat opens so you can just type.
+  const inputNow = useRef("");
+  inputNow.current = input;
+  const drafts = useRef<Record<string, string>>({});
+  const shownChat = useRef<string>(page.id ?? "");
+  useEffect(() => {
+    const id: string = page.id ?? "";
+    if (shownChat.current !== id) {
+      drafts.current[shownChat.current] = inputNow.current;
+      shownChat.current = id;
+      setInput(drafts.current[id] ?? "");
+    }
+    area.current?.focus();
+  }, [page.id]);
   const [dragging, setDragging] = useState(false);
   const [attachNote, setAttachNote] = useState("");
   const note = (text: string) => { setAttachNote(text); window.setTimeout(() => setAttachNote(""), 4000); };
@@ -733,12 +1039,21 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
   const last = messages[messages.length - 1]?.text?.length ?? 0;
 
   useEffect(() => {
+    if (!stick.current) return;
     end.current?.scrollIntoView({ block: "end" });
+    // Heights of messages that were skipped by content-visibility settle after the first pass.
+    const frame = requestAnimationFrame(() => stick.current && end.current?.scrollIntoView({ block: "end" }));
+    return () => cancelAnimationFrame(frame);
   }, [messages.length, last]);
+  useEffect(() => fadeEdges(list.current), [messages.length, last, page.id]);
+  // Another chat opens at its end.
+  const firstId = messages[0]?.id;
+  useEffect(() => { stick.current = true; }, [firstId]);
 
   const send = () => {
     const text = input.trim();
     if (!text || composer.busy || !composer.sendAction) return;
+    stick.current = true;
     act({ ...composer.sendAction, text });
     setInput("");
   };
@@ -770,9 +1085,16 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
             <button className="core-chip" onClick={() => act(inspector.show)}>{inspector.title}</button>
           )}
         </header>
-        <div className="core-messages">
+        <div className="core-messages" ref={list} onScroll={(e) => {
+          const el = e.currentTarget;
+          const near = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+          stick.current = near;
+          setAtEnd(near);
+          fadeEdges(el);
+        }}>
           {page.empty && (
             <div className="core-empty">
+              <img src="/meo-ai.svg" alt="" width={48} height={48} />
               <h2>{page.empty.title}</h2>
               <p className="core-muted">{page.empty.text}</p>
               <div className="core-chips">
@@ -783,66 +1105,15 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
             </div>
           )}
           {messages.map((m, i) => (
-            <div key={i} className={`core-message ${m.role === "user" ? "user" : "assistant"}`}>
-              {m.role === "user" ? (
-                <div className="core-bubble user">{m.text}</div>
-              ) : (
-                <div className="core-bubble assistant">
-                  {m.steps && (
-                    <details className="core-steps" open={!!m.stepsOpen}>
-                      <summary>{m.stepsLabel}</summary>
-                      <ol>
-                        {m.steps.map((st: Spec) => (
-                          <li key={st.id} className={`step-${st.status}`}>
-                            <details>
-                              <summary>
-                                <span className="core-step-mark" aria-hidden>
-                                  {st.status === "done" ? <Icon name="check_circle" size={14} /> : st.status === "error" ? <Icon name="error" size={14} /> : <Icon name="progress_activity" size={14} className="spin" />}
-                                </span>
-                                <b>{st.title}</b>
-                              </summary>
-                              {st.detail ? <p className="core-muted">{st.detail}</p> : null}
-                              {(st.items ?? []).length > 0 && (
-                                <ul>
-                                  {st.items.map((it: Spec, k: number) => (
-                                    <li key={k}>{/^https?:\/\//.test(it.url) ? <a href={it.url} target="_blank" rel="noreferrer noopener">{it.title || it.url}</a> : it.title}</li>
-                                  ))}
-                                </ul>
-                              )}
-                            </details>
-                          </li>
-                        ))}
-                      </ol>
-                    </details>
-                  )}
-                  <Blocks
-                    blocks={m.blocks?.length ? m.blocks : [{ type: "markdown", text: m.text }]}
-                    streaming={!!m.streaming}
-                    act={act as (action: Spec) => void}
-                    copy={strings.copy ?? "Copy"}
-                    copied={strings.copied ?? "Copied"}
-                    components={{ pre: (props: any) => <CodeBlock {...props} label={strings.copy ?? "Copy"} done={strings.copied ?? "Copied"} /> }}
-                  />
-                  {(m.images ?? []).map((img: Spec, k: number) => (
-                    <span key={k} className="core-image-wrap">
-                      <img className="core-image" src={img.url} alt="" loading="lazy" />
-                      <a className="core-image-save" href={img.url} download={`meo-image-${k + 1}.png`} aria-label="Download">Download</a>
-                    </span>
-                  ))}
-                </div>
-              )}
-              {!m.streaming && m.text && (
-                <div className="core-message-actions">
-                  <CopyButton text={m.text} label={strings.copy ?? "Copy"} done={strings.copied ?? "Copied"} />
-                  {(m.actions ?? []).map((a: Spec, j: number) => (
-                    <button key={j} onClick={() => act(a.action)}>{a.label}</button>
-                  ))}
-                </div>
-              )}
-            </div>
+            <MessageView key={m.id ? m.id : `live${i}`} m={m} strings={strings} act={act} />
           ))}
           <div ref={end} />
         </div>
+        {!atEnd && messages.length > 0 && (
+          <button className="core-jump" aria-label={strings.jump ?? "Jump to the latest message"} title={strings.jump ?? "Jump to the latest message"} onClick={() => end.current?.scrollIntoView({ block: "end", behavior: "smooth" })}>
+            <Icon name="arrow_down" size={18} />
+          </button>
+        )}
         {page.consent && (
           <div className="core-banner" role="alertdialog" aria-label={page.consent.title}>
             <span><strong>{page.consent.title}</strong> {page.consent.text}</span>
@@ -897,6 +1168,10 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
               }}
               onKeyDown={(e) => {
                 if (e.key === "Escape" && composer.busy) act(composer.stopAction);
+                if (e.key === "ArrowUp" && input === "" && composer.editLast) {
+                  e.preventDefault();
+                  act(composer.editLast);
+                }
                 if (e.key === "Tab" && matches.length > 0) {
                   e.preventDefault();
                   setInput(matches[0].name + " ");
@@ -942,7 +1217,7 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
       {inspector.visible && (
         <aside className="core-inspector" aria-label={inspector.title}>
           <header><strong>{inspector.title}</strong><button aria-label="Hide" onClick={() => act(inspector.hide)}>✕</button></header>
-          {(inspector.sections ?? []).map((sec: Spec) => <InspectorSection key={sec.id} sec={sec} />)}
+          {(inspector.sections ?? []).map((sec: Spec) => <InspectorSection key={sec.id} sec={sec} act={act} />)}
         </aside>
       )}
     </div>
