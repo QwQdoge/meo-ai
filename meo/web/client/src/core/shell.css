@@ -564,3 +564,23 @@
 .core-app .core-irow { min-height: 30px; font-size: 13px; }
 .core-app .core-bar { height: 8px; border-radius: 4px; gap: 2px; }
 .core-app .core-bar > i { border-radius: 4px; }
+
+/* ---------- Chat motion: a new message rises in, suggestions appear in turn, the sidebar glides ---------- */
+.core-app .core-messages > .core-message:last-child { animation: core-rise .3s var(--ease) both; }
+.core-app .core-messages > .core-message.user:last-child { animation-name: core-rise-right; }
+@keyframes core-rise { from { opacity: 0; transform: translateY(8px); } }
+@keyframes core-rise-right { from { opacity: 0; transform: translate(10px, 6px) scale(.97); } }
+.core-app .core-empty .core-suggest { animation: core-rise .38s var(--ease) both; }
+.core-app .core-empty .core-suggest:nth-child(2) { animation-delay: .05s; }
+.core-app .core-empty .core-suggest:nth-child(3) { animation-delay: .1s; }
+.core-app .core-empty .core-suggest:nth-child(4) { animation-delay: .15s; }
+.core-app .core-empty h2, .core-app .core-empty p { animation: core-rise .38s var(--ease) both; }
+.core-app .core-sidebar { transition: width .25s var(--ease), padding .25s var(--ease); }
+.core-app .core-page { animation: core-fade-in .2s var(--ease); }
+.core-app .core-send { transition: transform .12s var(--ease), box-shadow .2s var(--ease), background-color .2s var(--ease); }
+.core-app .core-bubble.assistant a, .core-app .core-message-actions button { transition: background-color .2s var(--ease), color .2s var(--ease); }
+@media (prefers-reduced-motion: reduce) {
+  .core-app .core-messages > .core-message:last-child, .core-app .core-empty .core-suggest, .core-app .core-empty h2, .core-app .core-empty p, .core-app .core-page { animation: none; }
+}
+:root[data-reduce-motion="true"] .core-app .core-messages > .core-message:last-child,
+:root[data-reduce-motion="true"] .core-app .core-empty .core-suggest { animation: none; }

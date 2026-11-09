@@ -7675,6 +7675,28 @@ fn role_weight(role: &Value) -> String {
 }
 
 /// Settings > Model profiles: the list, or the editor of one profile.
+/// True when the provider's model list is known (loaded, not empty) and does not contain the model.
+/// An unknown list proves nothing, so it is never reported as missing.
+fn model_missing(s: &State, credential: &str, model: &str) -> bool {
+    s.catalogue
+        .get(credential)
+        .is_some_and(|models| !models.is_empty() && !models.iter().any(|m| m.id == model))
+}
+
+/// The jobs of a profile whose model its provider does not offer (a request for them ends in
+/// "model not found").
+fn profile_missing_jobs(s: &State, profile: &Value) -> usize {
+    profile["roles"].as_object().map_or(0, |roles| {
+        roles
+            .values()
+            .filter(|r| {
+                matches!((r["credentialId"].as_str(), r["model"].as_str()),
+                    (Some(c), Some(m)) if model_missing(s, c, m))
+            })
+            .count()
+    })
+}
+
 fn profile_items(s: &State) -> Vec<Value> {
     let doc = match &s.profiles {
         None => {
@@ -7714,8 +7736,11 @@ fn profile_items(s: &State) -> Vec<Value> {
             let mut options = models_for_role(s, &role);
             options.insert(0, json!({ "value": "", "label": "Not set" }));
             // A saved model the provider no longer lists stays selectable.
+            let missing = matches!((current["credentialId"].as_str(), current["model"].as_str()),
+                (Some(c), Some(m)) if model_missing(s, c, m));
             if !value.is_empty() && !options.iter().any(|o| o["value"] == value.as_str()) {
-                options.push(json!({ "value": value, "label": current["model"] }));
+                let name = current["model"].as_str().unwrap_or_default();
+                options.push(json!({ "value": value, "label": if missing { format!("{name} (not offered by the provider)") } else { name.to_owned() } }));
             }
             items.push(json!({
                 "id": format!("pf_role_{rid}"), "label": role["label"], "kind": "select",
@@ -7723,7 +7748,11 @@ fn profile_items(s: &State) -> Vec<Value> {
             }));
             items.push(json!({
                 "id": format!("pf_hint_{rid}"), "kind": "hint",
-                "text": format!("{} {}", role["description"].as_str().unwrap_or_default(), role_weight(&role)),
+                "text": if missing {
+                    format!("This model is not in your provider's list, so this job will fail with \"model not found\". Pick another one. {}", role["description"].as_str().unwrap_or_default())
+                } else {
+                    format!("{} {}", role["description"].as_str().unwrap_or_default(), role_weight(&role))
+                },
             }));
         }
         let active = profile["active"] == true;
@@ -7759,7 +7788,11 @@ fn profile_items(s: &State) -> Vec<Value> {
             format!("pf_{id}"),
             p["name"].as_str().unwrap_or_default(),
             &format!(
-                "{set} jobs set{}",
+                "{set} jobs set{}{}",
+                match profile_missing_jobs(s, p) {
+                    0 => String::new(),
+                    n => format!(" · {n} with a model the provider does not offer"),
+                },
                 p["description"]
                     .as_str()
                     .filter(|d| !d.is_empty())
@@ -11320,6 +11353,33 @@ mod tests {
         });
         let fresh = c.view()["page"].clone();
         assert!(fresh["id"].is_null() && fresh["composer"]["editLast"].is_null());
+    }
+
+    #[test]
+    fn a_profile_flags_models_the_provider_does_not_offer() {
+        let c = signed_in_core();
+        c.update(|s| {
+            s.catalogue.insert("c1".into(), vec![serde_json::from_value(json!({ "id": "claude-sonnet-5-5", "name": "Sonnet" })).unwrap()]);
+            s.profiles = Some(Ok(json!({
+                "roles": [
+                    { "id": "default", "label": "Everyday chat", "description": "Chat.", "task": "chat" },
+                    { "id": "fast", "label": "Quick jobs", "description": "Titles.", "task": "chat" },
+                ],
+                "profiles": [{ "id": "p1", "name": "Mine", "description": "", "active": true,
+                "roles": { "default": { "credentialId": "c1", "model": "claude-sonnet-5-5" },
+                           "fast": { "credentialId": "c1", "model": "gpt-6-luna" } } }] })));
+        });
+        let list = profile_items(&c.state.lock().unwrap());
+        let row = list.iter().find(|i| i["id"] == "pf_p1").unwrap();
+        assert!(row["value"].as_str().unwrap().contains("1 with a model the provider does not offer"), "{row}");
+        c.update(|s| s.editing_profile = Some("p1".into()));
+        let editor = profile_items(&c.state.lock().unwrap());
+        let fast = editor.iter().find(|i| i["id"] == "pf_role_fast").unwrap();
+        assert!(fast["options"].to_string().contains("not offered by the provider"), "{fast}");
+        let hint = editor.iter().find(|i| i["id"] == "pf_hint_fast").unwrap();
+        assert!(hint["text"].as_str().unwrap().contains("model not found"), "{hint}");
+        let fine = editor.iter().find(|i| i["id"] == "pf_hint_default").unwrap();
+        assert!(!fine["text"].as_str().unwrap().contains("model not found"));
     }
 
     #[test]

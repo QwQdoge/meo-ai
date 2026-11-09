@@ -2551,6 +2551,11 @@ ApplicationWindow {
                         x: Math.max(16, (parent.width - reserved - width) / 2)
                         clip: true
                         spacing: 8
+                        // The rows around a new message slide to their new place instead of jumping (the
+                        // message itself comes in with `add`, below).
+                        displaced: Transition {
+                            NumberAnimation { properties: "y"; duration: window.tBase; easing.type: Easing.OutCubic }
+                        }
                         // The core sends a whole new view on every change (each streamed token
                         // included). Binding that array directly rebuilt every message delegate
                         // and re-parsed every Markdown block per token. Keep a ListModel keyed

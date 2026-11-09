@@ -933,6 +933,15 @@ const sameMessage = (a: Spec, b: Spec) =>
   (a.actions?.length ?? 0) === (b.actions?.length ?? 0) &&
   (a.steps ? JSON.stringify(a.steps) : "") === (b.steps ? JSON.stringify(b.steps) : "");
 
+/** While an answer streams, its last text block ends with a block cursor (as on desktop and Android). */
+function withCaret(blocks: Spec[], streaming: boolean): Spec[] {
+  if (!streaming || !blocks.length) return blocks;
+  const at = blocks.length - 1;
+  const last = blocks[at];
+  if (last.type !== "markdown" || !last.text) return blocks;
+  return [...blocks.slice(0, at), { ...last, text: last.text + " ▍" }];
+}
+
 /** What a step is doing, from its id and title (the core sends free text). */
 const STEP_KINDS: [RegExp, string, string][] = [
   [/connect|mcp|connector|oauth|authori[sz]/, "cable", "Connecting"],
@@ -1015,7 +1024,7 @@ const MessageView = React.memo(
                   <span className="core-typing" role="status" aria-label={strings.thinking ?? "Thinking"}><i /><i /><i /></span>
                 )}
                 <Blocks
-                  blocks={m.blocks?.length ? m.blocks : [{ type: "markdown", text: m.text }]}
+                  blocks={withCaret(m.blocks?.length ? m.blocks : [{ type: "markdown", text: m.text }], !!m.streaming)}
                   streaming={!!m.streaming}
                   act={act as (action: Spec) => void}
                   copy={strings.copy ?? "Copy"}

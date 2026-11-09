@@ -69,6 +69,8 @@ and a live browser/device acceptance test are also separate steps.
 
 Production (`meo-ai-web` on Cloudflare Pages) is uploaded directly; CI only builds and stages the artifact. To publish without CI:
 
+`scripts/deploy-local.sh` runs all of the steps below (tests, build with the CI MeoUI ref, staging, rollback target, upload, smoke checks): `MEO_UI_ROOT=<MeoUI checkout> scripts/deploy-local.sh` (add `--dry-run` to stop before the upload). The manual steps:
+
 1. `npm ci && npm run typecheck && npm test` in `meo/web/client`.
 2. Install the CLI once: `cargo install wasm-bindgen-cli --version 0.2.129 --locked` (must match the locked crate).
 3. Build with the MeoUI revision CI uses (see `.github/workflows/meo-web-client.yml`): `MEO_OUTPUT_ROOT=<dir> MEO_UI_ROOT=<MeoUI checkout at that ref> npm run build`.
