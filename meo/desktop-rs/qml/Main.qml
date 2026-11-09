@@ -2035,6 +2035,8 @@ ApplicationWindow {
                             }
                             MeoIcon { anchors.centerIn: parent; icon: live.icon; size: 14; color: MeoTheme.primary }
                         }
+                        // The sentence in its usual muted color, and over it a band that travels along and
+                        // shows the same sentence in the full text color: the highlight.
                         Item {
                             id: sweepBox
                             anchors.verticalCenter: parent.verticalCenter
@@ -2048,19 +2050,13 @@ ApplicationWindow {
                                 font.weight: Font.Medium
                                 color: MeoTheme.contentOnSurfaceVariant
                             }
-                            // The light: a soft highlight band that travels over the sentence.
-                            Rectangle {
+                            Item {
                                 id: sweep
                                 visible: !MeoTheme.reduceMotion
                                 height: parent.height
-                                width: Math.max(40, parent.width * 0.35)
+                                width: Math.max(36, parent.width * 0.3)
+                                clip: true
                                 x: -width
-                                gradient: Gradient {
-                                    orientation: Gradient.Horizontal
-                                    GradientStop { position: 0; color: "transparent" }
-                                    GradientStop { position: 0.5; color: Qt.alpha(MeoTheme.background, 0.75) }
-                                    GradientStop { position: 1; color: "transparent" }
-                                }
                                 NumberAnimation on x {
                                     running: !MeoTheme.reduceMotion && live.visible
                                     loops: Animation.Infinite
@@ -2068,6 +2064,13 @@ ApplicationWindow {
                                     to: sweepBox.width
                                     duration: 1500
                                     easing.type: Easing.InOutSine
+                                }
+                                Txt {
+                                    x: -sweep.x
+                                    text: sweepText.text
+                                    typeRole: "label"
+                                    font.weight: Font.Medium
+                                    color: MeoTheme.contentOnSurface
                                 }
                             }
                         }

@@ -535,8 +535,8 @@
 .core-live-icon { position: relative; display: inline-grid; place-items: center; width: 22px; height: 22px; color: rgb(var(--accent-primary)); }
 .core-live-icon::before { content: ""; position: absolute; inset: 0; border-radius: 50%; background: rgb(var(--accent-primary)); opacity: .14; animation: core-halo 1.4s infinite ease-in-out; }
 .core-live-icon svg { position: relative; }
-.core-live-text { background: linear-gradient(100deg, currentColor 40%, rgb(var(--text-primary)) 50%, currentColor 60%) 200% 0 / 250% 100%; -webkit-background-clip: text; background-clip: text;
-  color: transparent; animation: core-sweep 1.6s infinite linear; }
+.core-live-text { background: linear-gradient(100deg, rgb(var(--text-secondary)) 38%, rgb(var(--text-primary)) 50%, rgb(var(--text-secondary)) 62%) 200% 0 / 250% 100%;
+  -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; color: rgb(var(--text-secondary)); animation: core-sweep 1.6s infinite linear; }
 .core-live-time { font-variant-numeric: tabular-nums; font-weight: 400; opacity: .6; }
 @keyframes core-halo { 0%, 100% { transform: scale(.9); } 50% { transform: scale(1.25); } }
 @keyframes core-sweep { from { background-position: 200% 0; } to { background-position: -50% 0; } }
@@ -549,9 +549,10 @@
 .core-steps > ol > li { animation: core-fade-in .2s var(--ease); }
 @media (prefers-reduced-motion: reduce) {
   .core-live-icon::before, .core-live-text, .core-pulse, .core-typing i { animation: none; }
-  .core-live-text { color: inherit; background: none; }
+  .core-live-text { background: none; -webkit-text-fill-color: currentColor; }
 }
 :root[data-reduce-motion="true"] .core-live-icon::before, :root[data-reduce-motion="true"] .core-live-text { animation: none; }
+:root[data-reduce-motion="true"] .core-live-text { background: none; -webkit-text-fill-color: currentColor; }
 
 /* Details: a docked side panel with hairline-separated sections; rows are icon, label, value. */
 .core-app .core-inspector { width: 296px; padding: 0 14px 14px; border-radius: var(--r-l); }
