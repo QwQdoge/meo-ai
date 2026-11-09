@@ -19,6 +19,10 @@ you like me to carry out?" in English. Causes, all found in code:
 | Task list written again as text every round | Each round's `meo-tasks` block was drawn. | Only the newest list is kept; a native run's list is drawn live at the top of the answer. |
 | Flash and jump when the answer finishes | The web keyed messages by server id, so the streamed message remounted (and replayed its entrance) when it got its id. | Messages are keyed by position in the chat. |
 | Details showed route/model/answer as "tools", context at 98% "connected apps" | Plumbing steps counted as tools; CJK text counted as 4 characters a token. | Only real tool steps listed; CJK counted as one token a character; Model and Context moved to the end, closed. |
+| Asked again "what do you want me to change?" on later messages | Across messages the request is an older user message; old tool results (whole files) pushed it out of the 40k window. | The server shrinks old tool results to one line, oldest first, before anything is cut, so user messages stay. |
+| "好的" and "can you see the context" sent to web search | The fenced path searched the web with the message itself as the query. | No search on the model's behalf when it has `web_search`, or when the message is not a lookup. |
+| "The file was cut before the part I need", then giving up | Results are capped at 14,000 characters with no way on. | The whole result is kept on the device; the cut note gives an id and `read_more {id, from}` reads the next part. |
+| Claimed the GitHub tools cannot do something, plan restated every round | No rule against either. | Prompt: never ask to repeat the request, check the tools before saying something cannot be done, one sentence between calls, report outcome / checked / not done. |
 | Avatar and settings overlap | Collapsed sidebar put avatar, gear and sync dot in one row. | Gear on the right (icon only); collapsed they stack; the sync state is a dot on the avatar. |
 
 ## The flow
