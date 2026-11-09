@@ -204,6 +204,9 @@ pub enum Action {
     Regenerate,
     /// Asks again after a failed answer, without saving the prompt twice.
     Retry,
+    /// Runs the round that broke off again (same request, fresh consent), so the task goes on
+    /// from where it stopped instead of starting over.
+    RetryRound,
     /// The host's language (`en-US`, `zh_CN.UTF-8`, ...), used when the language setting is "system".
     SetLocale {
         locale: String,
@@ -391,6 +394,7 @@ struct Orchestration {
     judge: Option<Choice>,
 }
 
+#[derive(Clone)]
 struct PendingSend {
     /// Create an image instead of a chat answer.
     image: bool,
@@ -494,6 +498,8 @@ struct AgentRun {
     nudges: usize,
     /// Native rounds that said what they would do next but called nothing, sent back to do it.
     stalls: usize,
+    /// Rounds of this message run again on their own after the connection to the model broke.
+    retries: usize,
     /// Files this message changed, with their diffs, for the Details card.
     changes: Vec<Value>,
 }
@@ -566,6 +572,8 @@ struct State {
     notice: Option<(String, String)>,
     /// A button for the notice with exactly this text (label, action); ignored once the text changes.
     notice_action: Option<(String, String, Value)>,
+    /// The round that broke off (the request, what it had written, why), shown with a Retry button.
+    failed_round: Option<(PendingSend, String, String)>,
     conversations: Vec<ConversationSummary>,
     active: Option<String>,
     messages: HashMap<String, Vec<ChatMessage>>,
@@ -951,6 +959,13 @@ impl AppCore {
             Action::CloseDialog => self.update(|s| s.dialog = None),
             Action::Regenerate => self.regenerate().await,
             Action::Retry => self.retry().await,
+            Action::RetryRound => {
+                let failed = self.state.lock().unwrap().failed_round.take();
+                match failed {
+                    Some((pending, _, _)) => Box::pin(self.retry_round(pending)).await,
+                    None => self.retry().await,
+                }
+            }
             Action::AutoConfigureRouter => {
                 let models = all_models(&self.state.lock().unwrap());
                 let suggestion = router::suggest(&models);
@@ -4278,7 +4293,7 @@ impl AppCore {
         self.update(|s| {
             if let Some((_, steps)) = s.activity.as_mut() {
                 let n = steps.iter().filter(|x| is_note_step(x)).count() + 1;
-                steps.push(json!({ "id": format!("note{n}"), "title": clip(text, 280), "detail": "", "status": "done", "items": [] }));
+                steps.push(json!({ "id": format!("note{n}"), "title": note_line(text), "detail": "", "status": "done", "items": [] }));
             }
         });
     }
@@ -4841,6 +4856,27 @@ impl AppCore {
         }
     }
 
+    /// The same round again: a fresh consent for the same request, the prompt not saved twice.
+    async fn retry_round(&self, mut pending: PendingSend) {
+        pending.save_prompt = false;
+        let request = pending.request.clone();
+        match self.call(|api, t| {
+            let request = request.clone();
+            async move { api.chat_prepare(&t, &request).await }
+        })
+        .await
+        {
+            Ok(consent) => {
+                pending.consent = consent;
+                Box::pin(self.stream(pending)).await;
+            }
+            Err(e) => {
+                let reason = failure_reason(&e.to_string(), false);
+                self.update(|s| s.failed_round = Some((pending, String::new(), reason)));
+            }
+        }
+    }
+
     async fn retry(&self) {
         let Some((_, list, busy)) = self.active_messages() else {
             return;
@@ -4934,6 +4970,7 @@ impl AppCore {
         }
         let started = super::now_secs();
         self.cancel.store(false, Ordering::SeqCst);
+        self.update(|s| s.failed_round = None);
         let native = pending.request["tools"].is_array();
         // One answer across the rounds of a native run: each round continues what was written.
         let carry = if native {
@@ -5090,7 +5127,7 @@ impl AppCore {
         if native && (tooling || goal_round.is_some() || cut_off || revise.is_some() || stalled) {
             // A round that only leads to a tool call is not stored as a message of its own.
             self.record_chat_usage(&pending, &reply, started).await;
-        } else if !reply.is_empty() {
+        } else if !reply.is_empty() && failure.is_none() {
             self.push_message(&id, "assistant", &reply);
             if failure.is_none() && !resume {
                 if let Some(judge) = pending.judge.clone() {
@@ -5141,7 +5178,25 @@ impl AppCore {
             }
         }
         match failure {
-            Some(e) => self.notice("error", e),
+            Some(e) => {
+                // The connection to the model broke (timeout, provider hiccup, dropped stream): the
+                // same round runs again once by itself; after that it stays on the page with the
+                // steps so far and a Retry button, instead of the run just ending.
+                let stopped = self.cancel.load(Ordering::SeqCst);
+                let again = !stopped
+                    && is_transient_failure(&e)
+                    && {
+                        let mut s = self.state.lock().unwrap();
+                        let ok = s.agent.retries < 1;
+                        s.agent.retries += usize::from(ok);
+                        ok
+                    };
+                if again {
+                    return Box::pin(self.retry_round(pending)).await;
+                }
+                let reason = failure_reason(&e, stopped);
+                self.update(|s| s.failed_round = Some((pending, reply.clone(), reason)));
+            }
             None if revise.is_some() => {
                 self.update(|s| {
                     s.agent.round += 1;
@@ -7673,10 +7728,30 @@ fn is_internal_step(step: &Value) -> bool {
 
 /// What the model wrote between its calls (`note1`, ...): progress, drawn as plain text among the steps.
 fn is_note_step(step: &Value) -> bool {
-    step["id"]
-        .as_str()
-        .and_then(|id| id.strip_prefix("note"))
-        .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
+    step["kind"] == "note"
+        || step["id"]
+            .as_str()
+            .and_then(|id| id.strip_prefix("note"))
+            .is_some_and(|n| n.strip_prefix("-r").unwrap_or(n).chars().all(|c| c.is_ascii_digit()) && !n.is_empty())
+}
+
+/// A note as one short line: no fenced blocks (task lists, tool calls), the first sentence or two.
+fn note_line(text: &str) -> String {
+    let mut out = String::new();
+    let mut fenced = false;
+    for line in agent::visible_text(text).lines() {
+        if line.trim_start().starts_with("```") {
+            fenced = !fenced;
+            continue;
+        }
+        if !fenced && !line.trim().is_empty() {
+            if !out.is_empty() {
+                out.push(' ');
+            }
+            out.push_str(line.trim());
+        }
+    }
+    clip(&out, 160)
 }
 
 fn visible_steps(steps: &[Value]) -> Vec<Value> {
@@ -9059,6 +9134,19 @@ fn conversation_page(s: &State) -> Value {
         let text = clean_reply(text);
         messages.push(json!({ "role": "assistant", "text": text, "streaming": true, "blocks": richtext::blocks(&text) }));
     }
+    // A round that broke off: what it had written, why, and a way on (Retry runs that round again).
+    if streaming.is_none() {
+        if let Some((pending, partial, reason)) = s.failed_round.as_ref().filter(|(p, _, _)| Some(&p.conversation_id) == active.as_ref()) {
+            let _ = pending;
+            let partial = clean_reply(partial);
+            let text = if partial.trim().is_empty() { format!("> {reason}") } else { format!("{}\n\n> {reason}", partial.trim_end()) };
+            messages.push(json!({
+                "role": "assistant", "text": text, "streaming": false, "failed": true,
+                "blocks": richtext::blocks(&text),
+                "actions": [button("Retry", "primary", json!({ "type": "retry_round" }))],
+            }));
+        }
+    }
     // Steps of the current / last answer, collapsed under it.
     if let Some((_, steps)) = s
         .activity
@@ -9078,6 +9166,7 @@ fn conversation_page(s: &State) -> Value {
         if let Some(target) = messages.iter_mut().rev().find(|m| m["role"] == "assistant") {
             // After a finished answer only its latest message carries the steps.
             let latest = target["streaming"] == true
+                || target["failed"] == true
                 || !s
                     .messages
                     .get(active.as_deref().unwrap_or_default())
@@ -9435,6 +9524,34 @@ fn clean_reply(text: &str) -> String {
         .join("\n")
 }
 
+/// A failure of the connection to the model, not of the request: worth running the round again.
+fn is_transient_failure(e: &str) -> bool {
+    [
+        "HTTP 499", "HTTP 502", "HTTP 503", "HTTP 504", "HTTP 520", "HTTP 522", "HTTP 524",
+        "ai_provider_timeout", "ai_provider_unreachable", "ai_provider_request_cancelled",
+        "stream failed", "error sending request", "error decoding response", "connection",
+    ]
+    .iter()
+    .any(|p| e.contains(p))
+}
+
+/// What the user reads when a round broke off: what happened, in plain words.
+fn failure_reason(e: &str, stopped: bool) -> String {
+    if stopped {
+        "Stopped.".to_owned()
+    } else if e.contains("ai_provider_timeout") || e.contains("HTTP 504") || e.contains("HTTP 524") {
+        "The model took too long to respond.".to_owned()
+    } else if e.contains("ai_provider_request_cancelled") || e.contains("HTTP 499") || e.contains("stream failed") {
+        "The connection to the model broke off.".to_owned()
+    } else if e.contains("ai_provider_unreachable") || e.contains("HTTP 502") || e.contains("HTTP 503") {
+        "The model provider could not be reached.".to_owned()
+    } else if e.contains("HTTP 429") {
+        "The provider is limiting requests right now.".to_owned()
+    } else {
+        e.chars().take(300).collect()
+    }
+}
+
 /// The end of a reply promises more work ("先读取 README", "next I'll check the tests") instead of
 /// finishing. A question to the user is not a promise.
 fn announces_next_step(reply: &str) -> bool {
@@ -9527,7 +9644,7 @@ fn merge_rounds(messages: Vec<Value>) -> Vec<Value> {
         let mut steps = prev["steps"].as_array().cloned().unwrap_or_default();
         if let Some(note) = note {
             let n = steps.iter().filter(|x| x["kind"] == "note").count() + 1;
-            steps.push(json!({ "id": format!("note-r{n}"), "kind": "note", "title": clip(&note, 280), "detail": "", "status": "done", "items": [] }));
+            steps.push(json!({ "id": format!("note-r{n}"), "kind": "note", "title": note_line(&note), "detail": "", "status": "done", "items": [] }));
         }
         steps.extend(m["steps"].as_array().cloned().unwrap_or_default());
         let working = prev["stepsLabel"] == "Working…" || m["stepsLabel"] == "Working…";
@@ -13674,7 +13791,12 @@ mod tests {
                             ),
                             }
                         };
-                        (200, "text/event-stream", frame)
+                        // "@drop": the connection to the provider broke before it answered.
+                        if reply == "@drop" {
+                            (499, "application/json", json!({ "error": "ai_provider_request_cancelled" }).to_string())
+                        } else {
+                            (200, "text/event-stream", frame)
+                        }
                     } else if path == "/v1/conversations" && method == "POST" {
                         (
                             200,
@@ -14927,6 +15049,35 @@ mod tests {
         assert_eq!(last["blocks"][0]["type"], "plan", "{last}");
         assert_eq!(last["blocks"][0]["live"], true);
         assert!(last["steps"].as_array().unwrap().iter().any(|x| x["id"] == "tool1"), "{last}");
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn a_round_that_breaks_off_runs_again_once_then_waits_with_a_retry_button() {
+        let folder = temp_folder("native-drop");
+        let call = r#"{"text":"","calls":[{"id":"a","name":"web_search","arguments":"{\"query\":\"rust\"}"}]}"#;
+        let api = fake_api(vec![call, "@drop", "@drop", "Rust 1.99 came out in October."]);
+        let c = work_core(&api, &folder, "smart");
+        c.update(|s| {
+            s.route = "chat".into();
+            s.agent.host = None;
+            s.prefs.remove("work.workspace");
+            s.prefs.insert("chat.web_search".into(), json!(true));
+        });
+        run(&c, Action::Send { text: "when did rust 1.99 come out".into() });
+        let n = |api: &FakeApi| api.streams.lock().unwrap().iter().filter(|b| b["tools"].is_array()).count();
+        assert_eq!(n(&api), 3, "the broken round ran again once by itself");
+        let last = c.view()["page"]["messages"].as_array().unwrap().last().unwrap().clone();
+        assert_eq!(last["failed"], true, "{last}");
+        assert!(last["text"].as_str().unwrap().contains("broke off"), "{last}");
+        assert_eq!(last["actions"][0]["action"]["type"], "retry_round");
+        assert!(last["steps"].as_array().is_some_and(|x| !x.is_empty()), "the steps so far stay: {last}");
+        run(&c, Action::RetryRound);
+        assert_eq!(n(&api), 4);
+        let streams: Vec<Value> = api.streams.lock().unwrap().iter().filter(|b| b["tools"].is_array()).cloned().collect();
+        assert_eq!(streams[3]["turns"], streams[1]["turns"], "the same round, with the work done so far");
+        assert_eq!(texts(&c).last().unwrap(), "Rust 1.99 came out in October.");
+        assert!(c.view()["page"]["messages"].as_array().unwrap().iter().all(|m| m["failed"] != true));
         let _ = std::fs::remove_dir_all(&folder);
     }
 
