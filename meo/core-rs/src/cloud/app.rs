@@ -9199,7 +9199,44 @@ fn store_page(s: &State) -> Value {
                 if soon {
                     badges.push("Coming soon");
                 }
-                store_card(
+                // An installed app shows where its sign-in really stands, and the button that fixes it,
+                // here as well as on the Installed tab: "Installed" alone reads as "working".
+                let plugin = rows.iter().find(|p| p["name"].as_str() == Some(name));
+                let mut actions: Vec<Value> = Vec::new();
+                let mut tone = "";
+                if let (true, Some(p)) = (installed, plugin) {
+                    let auth = app_auth(s, p);
+                    let failed = listing_failure(s, p).is_some();
+                    if !auth.label.is_empty() && p["enabled"] == true {
+                        badges.push(auth.label);
+                    }
+                    if failed {
+                        badges.push("Tools unavailable");
+                    }
+                    tone = auth_tone(&auth, p["enabled"] == true);
+                    if failed && tone != "error" {
+                        tone = "warn";
+                    }
+                    if failed || matches!(auth.state, "needs_connect" | "needs_reauth") {
+                        if let Some((label, action)) = connect_action(p) {
+                            actions.push(button(&label, "primary", action));
+                        }
+                    }
+                }
+                if installed {
+                    actions.push(button(
+                        "Manage",
+                        "secondary",
+                        json!({ "type": "store_tab", "tab": "installed" }),
+                    ));
+                } else if !soon {
+                    actions.push(button(
+                        "Install",
+                        "primary",
+                        json!({ "type": "install_plugin", "id": id }),
+                    ));
+                }
+                let mut card = store_card(
                     format!("store:{id}"),
                     name,
                     e["description"].as_str().unwrap_or_default(),
@@ -9207,16 +9244,12 @@ fn store_page(s: &State) -> Value {
                     e["publisher"].as_str().unwrap_or_default(),
                     badges,
                     if installed { "installed" } else { "available" },
-                    if installed || soon {
-                        vec![]
-                    } else {
-                        vec![button(
-                            "Install",
-                            "primary",
-                            json!({ "type": "install_plugin", "id": id }),
-                        )]
-                    },
-                )
+                    actions,
+                );
+                if !tone.is_empty() {
+                    card["tone"] = json!(tone);
+                }
+                card
             };
             let matches = |e: &&Value| {
                 (category == "all"
@@ -10422,6 +10455,28 @@ mod tests {
         assert!(card["badges"].as_array().unwrap().iter().any(|b| b == "Access needed"), "{card}");
         let reconnect = card["actions"].as_array().unwrap().iter().find(|b| b["label"].as_str().is_some_and(|l| l.starts_with("Reconnect"))).unwrap();
         assert_eq!(reconnect["style"], "primary");
+    }
+
+    #[test]
+    fn discover_shows_the_sign_in_state_and_a_fix_button_of_installed_apps() {
+        let c = signed_in_core();
+        c.update(|s| {
+            s.plugins = Some(Ok(vec![
+                json!({ "id": "p1", "name": "Neon Postgres", "kind": "mcp", "enabled": true,
+                "remoteUrl": "https://mcp.neon.tech/mcp", "manifest": { "hasToken": true } }),
+            ]));
+            s.app_tools.insert("p1".into(), Err("mcp_response_too_large".into()));
+            s.route = "skills".into();
+            s.store.tab = "discover".into();
+        });
+        let page = c.view()["page"].clone();
+        let neon = page["sections"].as_array().unwrap().iter()
+            .flat_map(|sec| sec["cards"].as_array().cloned().unwrap_or_default())
+            .find(|card| card["title"] == "Neon Postgres")
+            .expect("Neon card in Discover");
+        assert!(neon["badges"].as_array().unwrap().iter().any(|b| b == "Tools unavailable"), "{neon}");
+        let labels: Vec<&str> = neon["actions"].as_array().unwrap().iter().filter_map(|b| b["label"].as_str()).collect();
+        assert!(labels.contains(&"Reconnect") && labels.contains(&"Manage"), "{labels:?}");
     }
 
     #[test]

@@ -49,6 +49,8 @@ raises a notice with the Reconnect button. After you were sent to authorize, com
 reads the apps again and says "X is connected." (or use **Check again**). Turning on an app that is not
 connected offers Connect. A new account with no apps is offered the Essentials bundle once.
 
+Discover shows the same state on an installed app's card (its badge, a *Tools unavailable* badge when its tools could not be read, and the same primary Connect/Reconnect button) plus a **Manage** button that opens Installed, so "Installed" never reads as "working". A failed tool listing also puts the reason on the card.
+
 Each connected card lists what the app may do: *Runs on its own* (list/get/search/read/fetch tools) and
 *Asks first* (everything else), following the composer's Permissions.
 
