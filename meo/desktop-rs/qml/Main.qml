@@ -1942,135 +1942,6 @@ ApplicationWindow {
                         }
                     }
 
-                    Rectangle {
-                        id: inspectorCard
-                        readonly property var info: window.page.inspector || ({})
-                        // The card fades and settles in from the right edge (and back out);
-                        // the reading column reserves its space from the start (`shown`).
-                        readonly property bool shown: !!info.visible
-                        opacity: shown ? 1 : 0
-                        visible: opacity > 0
-                        transform: Translate {
-                            x: inspectorCard.shown ? 0 : 12
-                            Behavior on x {
-                                NumberAnimation { duration: window.tSlow; easing.type: Easing.BezierSpline; easing.bezierCurve: MeoTheme.motionEasingEmphasizedDecelerate }
-                            }
-                        }
-                        Behavior on opacity {
-                            NumberAnimation { duration: window.tBase; easing.type: Easing.BezierSpline; easing.bezierCurve: MeoTheme.motionEasingStandard }
-                        }
-                        z: 2
-                        anchors.top: parent.top
-                        anchors.right: parent.right
-                        anchors.margins: 16
-                        width: 210
-                        height: inspectorColumn.implicitHeight + 24
-                        radius: 16
-                        color: MeoTheme.surfaceContainer
-                        border.color: MeoTheme.outlineVariant
-                        ColumnLayout {
-                            id: inspectorColumn
-                            x: 12
-                            y: 12
-                            width: parent.width - 24
-                            spacing: 4
-                            RowLayout {
-                                Layout.fillWidth: true
-                                Txt { text: inspectorCard.info.title || ""; typeRole: "label"; Layout.fillWidth: true }
-                                MeoIconButton { type: "standard"; size: "xs"; icon.name: "close"; onClicked: window.act(inspectorCard.info.hide) }
-                            }
-                            Repeater {
-                                model: inspectorCard.info.sections || []
-                                Column {
-                                    id: sec
-                                    required property var modelData
-                                    property bool open: modelData.open !== false
-                                    Layout.fillWidth: true
-                                    spacing: 3
-                                    Item {
-                                        width: parent.width
-                                        height: 28
-                                        RowLayout {
-                                            anchors.fill: parent
-                                            spacing: 4
-                                            MeoIcon { icon: sec.open ? "expand_more" : "chevron_right"; size: 16; color: MeoTheme.contentOnSurfaceVariant }
-                                            Txt { text: modelData.title || ""; typeRole: "label"; font.weight: Font.Medium; Layout.fillWidth: true; elide: Text.ElideRight }
-                                        }
-                                        HoverHandler { cursorShape: Qt.PointingHandCursor }
-                                        TapHandler { onTapped: sec.open = !sec.open }
-                                    }
-                                    Row {
-                                        visible: sec.open && !!modelData.bar
-                                        width: parent.width
-                                        height: 6
-                                        spacing: 1
-                                        Repeater {
-                                            model: (modelData.bar || {}).segments || []
-                                            Rectangle {
-                                                required property var modelData
-                                                required property int index
-                                                readonly property real sum: Math.max(1, ((sec.modelData.bar || {}).segments || []).reduce((n, x) => n + x.value, 0))
-                                                width: Math.max(2, (sec.width - 3) * modelData.value / sum)
-                                                height: 6
-                                                radius: 3
-                                                color: window.swatches[index % window.swatches.length]
-                                            }
-                                        }
-                                    }
-                                    Txt {
-                                        visible: sec.open && !!(modelData.bar || {}).label
-                                        text: (modelData.bar || {}).label || ""
-                                        typeRole: "label"
-                                        color: MeoTheme.contentOnSurfaceVariant
-                                    }
-                                    Repeater {
-                                        model: sec.open ? (modelData.rows || []).filter(r => r.label) : []
-                                        RowLayout {
-                                            required property var modelData
-                                            width: sec.width
-                                            Rectangle {
-                                                visible: !!modelData.status
-                                                width: 6; height: 6; radius: 3
-                                                color: modelData.status === "error" ? MeoTheme.error : modelData.status === "done" ? MeoTheme.primary : MeoTheme.outline
-                                            }
-                                            // Legend swatch of the context breakdown.
-                                            Rectangle {
-                                                visible: modelData.swatch !== undefined
-                                                width: 10; height: 10; radius: 3
-                                                color: window.swatches[(modelData.swatch || 0) % window.swatches.length]
-                                            }
-                                            Txt { text: modelData.label; typeRole: "label"; elide: Text.ElideRight; Layout.fillWidth: true }
-                                            Num { visible: modelData.value !== undefined && modelData.value !== null; text: String(modelData.value); typeRole: "label"; color: MeoTheme.contentOnSurfaceVariant }
-                                            Num { visible: !!modelData.percent; text: modelData.percent || ""; typeRole: "label"; Layout.preferredWidth: 36; horizontalAlignment: Text.AlignRight; color: MeoTheme.contentOnSurfaceVariant }
-                                        }
-                                    }
-                                    MeoButton {
-                                        visible: sec.open && !!modelData.action
-                                        text: modelData.action ? modelData.action.label : ""
-                                        type: "tonal"
-                                        size: "xs"
-                                        onClicked: window.act(modelData.action.action)
-                                    }
-                                    Repeater {
-                                        model: sec.open ? (modelData.links || []) : []
-                                        Txt {
-                                            required property var modelData
-                                            width: sec.width
-                                            text: modelData.title || modelData.url || ""
-                                            typeRole: "label"
-                                            color: MeoTheme.primary
-                                            elide: Text.ElideRight
-                                            MouseArea {
-                                                anchors.fill: parent
-                                                cursorShape: Qt.PointingHandCursor
-                                                onClicked: if (/^https?:\/\//.test(modelData.url || "")) Qt.openUrlExternally(modelData.url)
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
                     MeoIconButton {
                         visible: !!(window.page.inspector || {}).title && !(window.page.inspector || {}).visible
                         anchors.top: parent.top
@@ -2565,8 +2436,8 @@ ApplicationWindow {
 
                     ListView {
                         id: messages
-                        // A centered reading column; the details card, when shown, sits to its right.
-                        readonly property real reserved: inspectorCard.shown ? 232 : 0
+                        // A centered reading column; the details panel is docked beside the whole chat.
+                        readonly property real reserved: 0
                         anchors.top: parent.top
                         anchors.bottom: parent.bottom
                         anchors.topMargin: 8
@@ -3037,6 +2908,161 @@ ApplicationWindow {
                     }
                 }
             }
+            // Details: a docked side panel next to the chat (not a card over it). A header with the
+            // close button, then sections separated by hairlines; rows are icon, label, value.
+            Item {
+                id: inspectorCard
+                readonly property var info: window.page.inspector || ({})
+                readonly property bool shown: !!info.visible
+                Layout.fillHeight: true
+                Layout.preferredWidth: shown ? 296 : 0
+                Layout.minimumWidth: Layout.preferredWidth
+                Layout.maximumWidth: Layout.preferredWidth
+                clip: true
+                visible: Layout.preferredWidth > 0
+                Behavior on Layout.preferredWidth { NumberAnimation { duration: window.tSlow; easing.type: Easing.BezierSpline; easing.bezierCurve: MeoTheme.motionEasingEmphasizedDecelerate } }
+
+                Item {
+                    // Fixed width, so the content does not reflow while the panel slides open.
+                    width: 296
+                    height: parent.height
+                    Rectangle { width: window.hairline; height: parent.height; color: MeoTheme.outlineVariant }
+                    RowLayout {
+                        id: inspectorHeader
+                        x: 20
+                        y: 0
+                        width: parent.width - 32
+                        height: 52
+                        Txt { text: inspectorCard.info.title || ""; typeRole: "title"; typeSize: "small"; Layout.fillWidth: true }
+                        MeoIconButton { type: "standard"; size: "xs"; icon.name: "close"; toolTipText: qsTr("Close"); onClicked: window.act(inspectorCard.info.hide) }
+                    }
+                    Rectangle { x: 0; y: inspectorHeader.height; width: parent.width; height: window.hairline; color: MeoTheme.outlineVariant }
+                    Flickable {
+                        anchors.top: inspectorHeader.bottom
+                        anchors.topMargin: 1
+                        anchors.bottom: parent.bottom
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        contentHeight: inspectorColumn.implicitHeight + 24
+                        clip: true
+                        boundsBehavior: Flickable.StopAtBounds
+                        ScrollBar.vertical: ScrollBar {}
+                        ColumnLayout {
+                            id: inspectorColumn
+                            x: 20
+                            width: parent.width - 36
+                            spacing: 0
+                            Repeater {
+                                model: inspectorCard.info.sections || []
+                                ColumnLayout {
+                                    id: sec
+                                    required property var modelData
+                                    required property int index
+                                    property bool open: modelData.open !== false
+                                    Layout.fillWidth: true
+                                    spacing: 6
+                                    Rectangle { visible: sec.index > 0; Layout.fillWidth: true; Layout.topMargin: 12; Layout.bottomMargin: 4; height: window.hairline; color: MeoTheme.outlineVariant }
+                                    // Section title, with the fold control at its right end.
+                                    Item {
+                                        Layout.fillWidth: true
+                                        Layout.topMargin: sec.index > 0 ? 0 : 14
+                                        implicitHeight: 30
+                                        Txt { anchors.verticalCenter: parent.verticalCenter; text: sec.modelData.title || ""; typeRole: "label"; font.weight: Font.DemiBold; color: MeoTheme.contentOnSurface; elide: Text.ElideRight; width: parent.width - 28 }
+                                        MeoIcon { anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; icon: sec.open ? "expand_less" : "expand_more"; size: 18; color: MeoTheme.contentOnSurfaceVariant }
+                                        HoverHandler { cursorShape: Qt.PointingHandCursor }
+                                        TapHandler { onTapped: sec.open = !sec.open }
+                                    }
+                                    // Context breakdown: one rounded bar, its total under it.
+                                    Row {
+                                        visible: sec.open && !!sec.modelData.bar
+                                        Layout.fillWidth: true
+                                        Layout.topMargin: 2
+                                        spacing: 2
+                                        Repeater {
+                                            model: (sec.modelData.bar || {}).segments || []
+                                            Rectangle {
+                                                required property var modelData
+                                                required property int index
+                                                readonly property real sum: Math.max(1, ((sec.modelData.bar || {}).segments || []).reduce((n, x) => n + x.value, 0))
+                                                width: Math.max(4, (sec.width - 2 * Math.max(0, ((sec.modelData.bar || {}).segments || []).length - 1)) * modelData.value / sum)
+                                                height: 8
+                                                radius: 4
+                                                color: window.swatches[index % window.swatches.length]
+                                            }
+                                        }
+                                    }
+                                    Txt {
+                                        visible: sec.open && !!(sec.modelData.bar || {}).label
+                                        text: (sec.modelData.bar || {}).label || ""
+                                        typeRole: "label"
+                                        color: MeoTheme.contentOnSurfaceVariant
+                                    }
+                                    Repeater {
+                                        model: sec.open ? (sec.modelData.rows || []).filter(r => r.label) : []
+                                        RowLayout {
+                                            required property var modelData
+                                            Layout.fillWidth: true
+                                            Layout.minimumHeight: 30
+                                            spacing: 10
+                                            // One 16px slot for the row's marker: icon, status dot or legend swatch.
+                                            Item {
+                                                Layout.preferredWidth: 16
+                                                Layout.preferredHeight: 16
+                                                Layout.alignment: Qt.AlignVCenter
+                                                visible: !!modelData.icon || !!modelData.status || modelData.swatch !== undefined
+                                                MeoIcon { anchors.centerIn: parent; visible: !!modelData.icon; icon: modelData.icon || ""; size: 18; color: MeoTheme.contentOnSurfaceVariant }
+                                                Rectangle {
+                                                    anchors.centerIn: parent
+                                                    visible: !modelData.icon && !!modelData.status
+                                                    width: 8; height: 8; radius: 4
+                                                    color: modelData.status === "error" ? MeoTheme.error : modelData.status === "done" ? MeoTheme.primary : MeoTheme.outline
+                                                }
+                                                Rectangle {
+                                                    anchors.centerIn: parent
+                                                    visible: !modelData.icon && !modelData.status && modelData.swatch !== undefined
+                                                    width: 10; height: 10; radius: 3
+                                                    color: window.swatches[(modelData.swatch || 0) % window.swatches.length]
+                                                }
+                                            }
+                                            Txt { text: modelData.label; typeRole: "body"; typeSize: "small"; elide: Text.ElideRight; Layout.fillWidth: true; Layout.alignment: Qt.AlignVCenter }
+                                            Num { visible: modelData.value !== undefined && modelData.value !== null; text: String(modelData.value); typeRole: "label"; color: MeoTheme.contentOnSurfaceVariant; Layout.alignment: Qt.AlignVCenter }
+                                            Num { visible: !!modelData.percent; text: modelData.percent || ""; typeRole: "label"; Layout.preferredWidth: 36; horizontalAlignment: Text.AlignRight; color: MeoTheme.contentOnSurfaceVariant; Layout.alignment: Qt.AlignVCenter }
+                                        }
+                                    }
+                                    MeoButton {
+                                        visible: sec.open && !!sec.modelData.action
+                                        Layout.topMargin: 2
+                                        text: sec.modelData.action ? sec.modelData.action.label : ""
+                                        type: "tonal"
+                                        size: "xs"
+                                        onClicked: window.act(sec.modelData.action.action)
+                                    }
+                                    Repeater {
+                                        model: sec.open ? (sec.modelData.links || []) : []
+                                        Txt {
+                                            required property var modelData
+                                            Layout.fillWidth: true
+                                            Layout.minimumHeight: 26
+                                            verticalAlignment: Text.AlignVCenter
+                                            text: modelData.title || modelData.url || ""
+                                            typeRole: "body"
+                                            typeSize: "small"
+                                            color: MeoTheme.primary
+                                            elide: Text.ElideRight
+                                            MouseArea {
+                                                anchors.fill: parent
+                                                cursorShape: Qt.PointingHandCursor
+                                                onClicked: if (/^https?:\/\//.test(modelData.url || "")) Qt.openUrlExternally(modelData.url)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
         }
     }
 }
