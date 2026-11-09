@@ -43,8 +43,9 @@ echo "Smoke checks:"
 home=$(curl -s -o /dev/null -w '%{http_code}' "$site/")
 session=$(curl -s -o /dev/null -w '%{http_code}' "$site/api/meo/session")
 xsite=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Origin: https://evil.example' "$site/api/meo/x")
-live=$(curl -s "$site/" | grep -o 'assets/index-[^"]*\.js' | head -1)
-built=$(ls "$work/stage/site/assets" | grep -o '^index-[^ ]*\.js' | head -1)
+# `head -1` closes the pipe early; under pipefail that would end the script silently, hence `|| true`.
+live=$(curl -s "$site/" | grep -o 'assets/index-[^"]*\.js' | head -1 || true)
+built=$(ls "$work/stage/site/assets" | grep -o '^index-[^ ]*\.js' | head -1 || true)
 echo "  home=$home (want 200)  session=$session (want 401)  cross-site POST=$xsite (want 403)"
 echo "  live script=$live  built script=assets/$built"
 [ "$home" = 200 ] && [ "$session" = 401 ] && [ "$xsite" = 403 ] && [ "$live" = "assets/$built" ] \
