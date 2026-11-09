@@ -1,6 +1,6 @@
 # Harness alignment: Chat and Work like Claude Code, Codex and DeepSeek Harness
 
-Status: design, first slice landed (planning is opt-in by effort). Owner goals, in the owner's words: keep Meo AI's principles; move Chat, Work and tool calling toward Claude Code, Codex and the Claude Agent SDK; reuse DeepSeek Harness (`dsh`) plugin concepts, and its plugins directly where possible; prompt handling must be safe and convenient; an agent that can only read cannot work and is useless.
+Status: design, first slice landed (planning is opt-in by effort). Owner goals, in the owner's words: keep Meo AI's principles; move Chat, Work and tool calling toward Claude Code, Codex and the Claude Agent SDK; reuse DeepSeek Harness (`dsh`) plugin concepts, and its plugins directly where possible; prompt handling must be safe and convenient; an agent that can only read cannot work and is useless. Product mode and workspace semantics are defined in [Chat, Work and Code product model](../meo/docs/chat-work-product-model.md).
 
 ## Why the current Chat and Work feel slow
 
@@ -62,7 +62,9 @@ Principle already in AGENTS.md: prompts, Skills, MCP descriptions and UI data ne
 
 ## Chat
 
-Chat follows the same loop with a lighter tool set (search, fetch, files the user attached, memory, connected apps). No Router call for ordinary messages. "Move to Work" is offered when the model calls the `plan` tool with three or more steps, instead of a Router stage guessing.
+Chat uses lightweight tools (search, fetch, user-attached files, memory and connected-app lookups) and has no bound workspace, general filesystem, shell or Git authority. No Router call for ordinary messages. "Move to Work" is an explicit handoff when the user chooses it or accepts the offer; it binds a target device and workspace before workspace actions begin. Being in a Project can supply project instructions and memory, but does not grant folder access.
+
+Work has two task profiles, not two separate products: **General** for documents, research and file tasks, and **Code** for repository-aware development with Git, terminal, build and test tools. Both use the Work task lifecycle and permission gate; the profile selects Skills, tool availability and task guidance. Each run binds to one primary device and one workspace. A remote repository is cloned only into a user-selected empty destination; local workspace contents stay on that device unless the user explicitly exports or uploads them. See the product model for the full lifecycle and cross-device contract.
 
 ## Order of work
 
