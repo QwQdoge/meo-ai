@@ -138,3 +138,18 @@ Each slice is small, testable without a provider and ends in a visible change on
 - Which JEV model exactly (provider/id) and does it return only the percentage or also a reason?
 - Cross-device handoff: may a second device take over *execution* of a Work task (needs the workspace there too), or only continue the conversation and approvals?
 - Approver model: which role (`fast` or `router`), and should `auto` ever auto-allow writes outside the open workspace (proposal: never)?
+
+## When a tool task is over (core `turn`)
+
+A reply with a tool block always continues the loop (up to `MAX_TOOL_ROUNDS`). A reply without one is the end
+only if none of these says the work is not done; each of them sends one message back to the model, at most
+twice per user message (`agent.nudges`), and only after at least one tool already ran:
+
+1. **Announced, not called**: the reply ends by promising a next step ("我先…", "接下来", "next I'll…") or says it is not
+   finished ("尚未完成", "still need to…"). Questions to the user never count.
+2. **Open task list**: the reply's last `meo-tasks` block has an item that is not `[x]`. The tool prompt asks the model
+   to keep that list for multi-step work and not to end while an item is open.
+3. **Reflection**: the judge (when on) scored the final answer below 70 and gave advice; the advice goes back.
+
+Also: a failing check command (`verify`) always resumes; a bare "continue" message is never used as a web-search query;
+end-of-turn markers some providers leak (`<<<END_TURN_…>>>`) and word loops are removed before display.
