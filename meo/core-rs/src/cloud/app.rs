@@ -699,6 +699,10 @@ impl AppCore {
         // the session is missing or was refused, and signing in again is the way out.
         if text.contains("returned HTTP 401") {
             text = "Your Meo Account session ended. Sign in again.".into();
+        } else if text.contains("ai_model_or_endpoint_not_found") {
+            text = "The provider does not have that model (or its address is wrong). Pick another model in Settings > Models, or check the provider's address.".into();
+        } else if text.contains("ai_provider_authentication_failed") {
+            text = "The provider rejected your API key. Check or replace it in Settings > Models.".into();
         }
         self.update(|s| s.notice = Some((kind.to_owned(), text)));
     }
@@ -1800,14 +1804,28 @@ impl AppCore {
                 async move { api.chat_stream(&t, &body).await.map(Box::pin) }
             })
             .await;
-        if !matches!(&first, Err(ApiError::Status { code, .. }) if code == "ai_provider_rate_limited")
-        {
+        // Busy (rate limited), or not offered by this provider at all (a 404 for the model name):
+        // either way the same question goes once to another model, with fresh consent.
+        let missing = matches!(&first, Err(ApiError::Status { code, .. }) if code == "ai_model_or_endpoint_not_found");
+        let busy = matches!(&first, Err(ApiError::Status { code, .. }) if code == "ai_provider_rate_limited");
+        if !busy && !missing {
             return first;
         }
-        let Some(retry) = self.fallback_body(request).await else {
+        // For a missing model, start with the everyday default: it is the one that is known to answer.
+        let order: &[&str] = if missing {
+            &["default", "fast", "balanced", "thinking"]
+        } else {
+            &["fast", "balanced", "default", "thinking"]
+        };
+        let Some(retry) = self.fallback_body(request, order).await else {
             return first;
         };
-        self.notice("info", "That model is busy. Trying another one.");
+        if missing {
+            let name = request["model"].as_str().unwrap_or("That model");
+            self.notice("info", format!("{name} is not available on this provider. Trying another model."));
+        } else {
+            self.notice("info", "That model is busy. Trying another one.");
+        }
         self.call(|api, t| {
             let retry = retry.clone();
             async move { api.chat_stream(&t, &retry).await.map(Box::pin) }
@@ -1816,11 +1834,11 @@ impl AppCore {
     }
 
     /// The same request on a different model with fresh consent, or None when no other route exists.
-    async fn fallback_body(&self, request: &Value) -> Option<Value> {
+    async fn fallback_body(&self, request: &Value, order: &[&str]) -> Option<Value> {
         let current = request["model"].as_str().unwrap_or_default().to_owned();
         let (credential, model) = {
             let s = self.state.lock().unwrap();
-            ["fast", "balanced", "default", "thinking"]
+            order
                 .iter()
                 .filter_map(|r| router::resolve(&s.router, r, None).cloned())
                 .find(|(_, m)| *m != current)?
@@ -6676,12 +6694,48 @@ fn account_block(s: &State) -> Value {
     })
 }
 
-fn steps_label(count: usize) -> String {
-    if count == 1 {
-        "1 step".to_owned()
-    } else {
-        format!("{count} steps")
+/// Steps that are the plumbing of an answer (choosing the model, the model call, the answer
+/// itself): they always happen, so listing them only adds noise. What the user wants to see is what
+/// was actually done: a search, an image, a tool of a connected app, a check.
+fn is_internal_step(step: &Value) -> bool {
+    matches!(step["id"].as_str(), Some("router" | "model" | "answer"))
+}
+
+fn visible_steps(steps: &[Value]) -> Vec<Value> {
+    steps.iter().filter(|x| !is_internal_step(x)).cloned().collect()
+}
+
+/// One readable line for the steps of a finished answer, instead of "7 steps": what was used, with
+/// repeats counted ("Used GitHub ×4 · Searched the web").
+fn steps_summary(steps: &[Value]) -> String {
+    let mut parts: Vec<(String, usize)> = Vec::new();
+    for step in steps {
+        let title = step["title"].as_str().unwrap_or_default();
+        let part = match step["id"].as_str() {
+            Some("search") => "Searched the web".to_owned(),
+            Some("image") => "Made an image".to_owned(),
+            // "App / tool": group by the app.
+            _ => match title.split_once(" / ") {
+                Some((app, _)) => format!("Used {app}"),
+                None => title.to_owned(),
+            },
+        };
+        match parts.iter_mut().find(|(p, _)| *p == part) {
+            Some((_, n)) => *n += 1,
+            None => parts.push((part, 1)),
+        }
     }
+    let shown: Vec<String> = parts
+        .iter()
+        .take(3)
+        .map(|(p, n)| if *n > 1 { format!("{p} ×{n}") } else { p.clone() })
+        .collect();
+    let more = parts.len().saturating_sub(3);
+    let mut out = shown.join(" · ");
+    if more > 0 {
+        out.push_str(&format!(" · +{more} more"));
+    }
+    out
 }
 
 fn steps_empty(activity: &Option<(String, Vec<Value>)>) -> bool {
@@ -7907,9 +7961,10 @@ fn conversation_page(s: &State) -> Value {
                         "images": images.into_iter().map(|u| json!({ "url": u })).collect::<Vec<_>>(),
                     });
                     // Steps stored with the answer; the live steps below replace them while working.
-                    if !m.steps.is_empty() {
-                        message["steps"] = Value::Array(m.steps.clone());
-                        message["stepsLabel"] = json!(steps_label(m.steps.len()));
+                    let shown = visible_steps(&m.steps);
+                    if !shown.is_empty() {
+                        message["stepsLabel"] = json!(steps_summary(&shown));
+                        message["steps"] = Value::Array(shown);
                         message["stepsOpen"] = json!(false);
                     }
                     message
@@ -7934,10 +7989,11 @@ fn conversation_page(s: &State) -> Value {
         if running && streaming.is_none() {
             messages.push(json!({ "role": "assistant", "text": "", "streaming": true }));
         }
+        let shown = visible_steps(steps);
         let label = if running {
             "Working…".to_owned()
         } else {
-            steps_label(steps.len())
+            steps_summary(&shown)
         };
         if let Some(target) = messages.iter_mut().rev().find(|m| m["role"] == "assistant") {
             // After a finished answer only its latest message carries the steps.
@@ -7946,8 +8002,9 @@ fn conversation_page(s: &State) -> Value {
                     .messages
                     .get(active.as_deref().unwrap_or_default())
                     .is_some_and(|l| l.last().is_some_and(|m| m.role == "user"));
-            if latest {
-                target["steps"] = Value::Array(steps.clone());
+            // Nothing to list while only the plumbing ran: no steps box, just the live status.
+            if latest && !shown.is_empty() {
+                target["steps"] = Value::Array(shown);
                 target["stepsLabel"] = json!(label);
                 target["stepsOpen"] = json!(running);
             }
@@ -9748,7 +9805,7 @@ mod tests {
                 .insert("c1".into(), vec![message("m", "assistant", "hi")]);
         });
         let messages = c.view()["page"]["messages"].clone();
-        assert_eq!(messages[0]["stepsLabel"], "2 steps");
+        assert_eq!(messages[0]["stepsLabel"], "Searched the web", "the answer step is plumbing and is not listed");
         assert_eq!(messages[0]["stepsOpen"], false);
         assert_eq!(messages[0]["steps"][0]["items"][0]["url"], "https://a");
     }
@@ -9847,7 +9904,8 @@ mod tests {
         });
         let view = c.view();
         let messages = &view["page"]["messages"];
-        assert_eq!(messages[1]["stepsLabel"], "1 step");
+        assert!(messages[1]["steps"].is_null(), "an answer that only ran the plumbing lists no steps");
+        assert_eq!(messages[3]["stepsLabel"], "1. Search · Check");
         assert_eq!(messages[3]["steps"][1]["detail"], "91/100 · pass");
         assert_eq!(messages[3]["stepsOpen"], false);
         assert!(messages[0]["steps"].is_null(), "prompts carry no steps");
@@ -11262,6 +11320,16 @@ mod tests {
         });
         let fresh = c.view()["page"].clone();
         assert!(fresh["id"].is_null() && fresh["composer"]["editLast"].is_null());
+    }
+
+    #[test]
+    fn provider_errors_are_shown_in_plain_words() {
+        let c = signed_in_core();
+        c.notice("error", ApiError::Status { status: 502, code: "ai_model_or_endpoint_not_found".into() }.to_string());
+        let text = c.view()["notice"]["text"].as_str().unwrap().to_owned();
+        assert!(!text.contains("HTTP 502") && text.contains("Pick another model"), "{text}");
+        c.notice("error", ApiError::Status { status: 502, code: "ai_provider_authentication_failed".into() }.to_string());
+        assert!(c.view()["notice"]["text"].as_str().unwrap().contains("API key"));
     }
 
     #[test]
