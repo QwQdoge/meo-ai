@@ -43,6 +43,28 @@ ApplicationWindow {
     // The commands behind the menu bar and their shortcuts (Qt maps StandardKey per platform: Ctrl
     // on Linux/Windows, Cmd on macOS). Each shortcut is declared once, on its menu item.
     readonly property var appWindow: window
+
+    // What a step is doing, from its id and title (the core sends free text): the icon that
+    // stands for it and the sentence shown while it runs ("Editing files", "Connecting to ...").
+    function stepKind(step) {
+        const t = ((step && step.id) || "") + " " + ((step && step.title) || "")
+        const l = t.toLowerCase()
+        if (/connect|mcp|connector|oauth|authori[sz]/.test(l)) return { icon: "cable", live: qsTr("Connecting") + (step.title ? " · " + step.title : "") }
+        if (/search|web|browse|fetch|http/.test(l)) return { icon: "language", live: qsTr("Searching the web") }
+        if (/image|picture|draw/.test(l)) return { icon: "image", live: qsTr("Creating an image") }
+        if (/edit|write|patch|save|create file|apply|modif/.test(l)) return { icon: "edit_document", live: qsTr("Editing files") }
+        if (/read|open|list|find|grep|glob|scan|index/.test(l)) return { icon: "description", live: qsTr("Reading files") }
+        if (/run|command|shell|bash|exec|terminal|test|build|install/.test(l)) return { icon: "terminal", live: qsTr("Running a command") }
+        if (/model|router|reason|think|plan/.test(l)) return { icon: "psychology", live: qsTr("Thinking") }
+        if (/tool\d+/.test(l)) return { icon: "build", live: qsTr("Using tools") }
+        return { icon: "bolt", live: (step && step.title) || qsTr("Working") }
+    }
+    // The step a streaming answer is on now: the last one still running, else the last one.
+    function currentStep(steps) {
+        const list = steps || []
+        for (let i = list.length - 1; i >= 0; i--) if (list[i].status !== "done" && list[i].status !== "error") return list[i]
+        return list.length ? list[list.length - 1] : null
+    }
     readonly property bool nativeMenuBar: Qt.platform.os === "osx"
     function cmdNewChat() { window.act(((window.v.sidebar || {}).newChat || {}).action) }
     function cmdSettings() { const f = ((window.v.sidebar || {}).footer || [])[0]; if (f) window.act(f.action) }
@@ -1956,6 +1978,7 @@ ApplicationWindow {
 
 
                     // Three pulsing dots while the answer has not started yet.
+                    // Three dots that bounce in a wave (waiting for the first words).
                     component TypingDots: Row {
                         spacing: 5
                         Repeater {
@@ -1964,17 +1987,96 @@ ApplicationWindow {
                                 id: dot
                                 required property int index
                                 width: 7; height: 7; radius: 4
-                                color: MeoTheme.contentOnSurfaceVariant
-                                opacity: 0.35
-                                SequentialAnimation on opacity {
+                                color: MeoTheme.primary
+                                opacity: 0.4
+                                transform: Translate { id: lift }
+                                SequentialAnimation {
                                     running: !MeoTheme.reduceMotion
                                     loops: Animation.Infinite
-                                    PauseAnimation { duration: dot.index * 160 }
-                                    NumberAnimation { to: 1; duration: 320; easing.type: Easing.InOutQuad }
-                                    NumberAnimation { to: 0.35; duration: 320; easing.type: Easing.InOutQuad }
-                                    PauseAnimation { duration: (2 - dot.index) * 160 }
+                                    PauseAnimation { duration: dot.index * 140 }
+                                    ParallelAnimation {
+                                        NumberAnimation { target: dot; property: "opacity"; to: 1; duration: 260; easing.type: Easing.OutQuad }
+                                        NumberAnimation { target: lift; property: "y"; to: -4; duration: 260; easing.type: Easing.OutQuad }
+                                    }
+                                    ParallelAnimation {
+                                        NumberAnimation { target: dot; property: "opacity"; to: 0.4; duration: 340; easing.type: Easing.InOutQuad }
+                                        NumberAnimation { target: lift; property: "y"; to: 0; duration: 340; easing.type: Easing.InOutQuad }
+                                    }
+                                    PauseAnimation { duration: (2 - dot.index) * 140 + 200 }
                                 }
                             }
+                        }
+                    }
+                    // What the assistant is doing right now: an icon that breathes, the sentence
+                    // ("Thinking", "Editing files", "Connecting · Asana") with a light sweeping
+                    // across it, and how long it has been going once that is worth showing.
+                    component LiveStatus: Row {
+                        id: live
+                        property string icon: "psychology"
+                        property string label: qsTr("Thinking")
+                        property int seconds: 0
+                        spacing: 8
+                        Timer { interval: 1000; repeat: true; running: live.visible; onTriggered: live.seconds++ }
+                        Item {
+                            width: 20; height: 20
+                            anchors.verticalCenter: parent.verticalCenter
+                            Rectangle {
+                                id: halo
+                                anchors.centerIn: parent
+                                width: 20; height: 20; radius: 10
+                                color: MeoTheme.primary
+                                opacity: 0.12
+                                SequentialAnimation on scale {
+                                    running: !MeoTheme.reduceMotion && live.visible
+                                    loops: Animation.Infinite
+                                    NumberAnimation { to: 1.25; duration: 700; easing.type: Easing.InOutSine }
+                                    NumberAnimation { to: 0.9; duration: 700; easing.type: Easing.InOutSine }
+                                }
+                            }
+                            MeoIcon { anchors.centerIn: parent; icon: live.icon; size: 14; color: MeoTheme.primary }
+                        }
+                        Item {
+                            id: sweepBox
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: sweepText.implicitWidth
+                            height: sweepText.implicitHeight
+                            Behavior on width { NumberAnimation { duration: window.tBase; easing.type: Easing.OutCubic } }
+                            Txt {
+                                id: sweepText
+                                text: live.label + "…"
+                                typeRole: "label"
+                                font.weight: Font.Medium
+                                color: MeoTheme.contentOnSurfaceVariant
+                            }
+                            // The light: a soft highlight band that travels over the sentence.
+                            Rectangle {
+                                id: sweep
+                                visible: !MeoTheme.reduceMotion
+                                height: parent.height
+                                width: Math.max(40, parent.width * 0.35)
+                                x: -width
+                                gradient: Gradient {
+                                    orientation: Gradient.Horizontal
+                                    GradientStop { position: 0; color: "transparent" }
+                                    GradientStop { position: 0.5; color: Qt.alpha(MeoTheme.background, 0.75) }
+                                    GradientStop { position: 1; color: "transparent" }
+                                }
+                                NumberAnimation on x {
+                                    running: !MeoTheme.reduceMotion && live.visible
+                                    loops: Animation.Infinite
+                                    from: -sweep.width
+                                    to: sweepBox.width
+                                    duration: 1500
+                                    easing.type: Easing.InOutSine
+                                }
+                            }
+                        }
+                        Num {
+                            anchors.verticalCenter: parent.verticalCenter
+                            visible: live.seconds >= 5
+                            text: live.seconds >= 60 ? Math.floor(live.seconds / 60) + "m " + (live.seconds % 60) + "s" : live.seconds + "s"
+                            typeRole: "label"
+                            color: MeoTheme.outline
                         }
                     }
                     // Markdown: prose in one text block, fenced code as a code card of its own
@@ -2510,7 +2612,8 @@ ApplicationWindow {
                             // Steps of the answer (search, model, ...): collapsed once it is done.
                             Column {
                                 id: stepsBox
-                                visible: !!modelData.steps
+                                // Also while an answer is only just starting (no step yet), so the wait has a face.
+                                visible: !!modelData.steps || (messageItem.streaming && !modelData.text && !(modelData.blocks || []).length)
                                 width: parent.width
                                 height: visible ? implicitHeight : 0
                                 spacing: 2
@@ -2519,13 +2622,23 @@ ApplicationWindow {
                                 readonly property bool open: toggled ? manual : !!modelData.stepsOpen
                                 Item {
                                     width: stepsHeader.implicitWidth
-                                    height: 28
+                                    height: 30
+                                    readonly property var current: window.currentStep(modelData.steps)
+                                    readonly property var kind: window.stepKind(current)
                                     Row {
                                         id: stepsHeader
                                         anchors.verticalCenter: parent.verticalCenter
-                                        spacing: 4
-                                        MeoIcon { anchors.verticalCenter: parent.verticalCenter; icon: stepsBox.open ? "expand_more" : "chevron_right"; size: 16; color: MeoTheme.contentOnSurfaceVariant }
-                                        Txt { anchors.verticalCenter: parent.verticalCenter; text: modelData.stepsLabel || ""; typeRole: "label"; font.weight: Font.Medium; color: MeoTheme.contentOnSurfaceVariant }
+                                        spacing: 6
+                                        // Running: what it is doing now. Done: how many steps it took.
+                                        LiveStatus {
+                                            visible: messageItem.streaming
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            icon: parent.parent.current ? parent.parent.kind.icon : "psychology"
+                                            label: parent.parent.current ? parent.parent.kind.live : qsTr("Thinking")
+                                        }
+                                        MeoIcon { visible: !messageItem.streaming; anchors.verticalCenter: parent.verticalCenter; icon: "check_circle"; size: 16; color: MeoTheme.contentOnSurfaceVariant }
+                                        Txt { visible: !messageItem.streaming; anchors.verticalCenter: parent.verticalCenter; text: modelData.stepsLabel || ""; typeRole: "label"; font.weight: Font.Medium; color: MeoTheme.contentOnSurfaceVariant }
+                                        MeoIcon { visible: !!(modelData.steps || []).length; anchors.verticalCenter: parent.verticalCenter; icon: stepsBox.open ? "expand_less" : "expand_more"; size: 16; color: MeoTheme.contentOnSurfaceVariant }
                                     }
                                     HoverHandler { cursorShape: Qt.PointingHandCursor }
                                     TapHandler { onTapped: { stepsBox.manual = !stepsBox.open; stepsBox.toggled = true } }
@@ -2539,12 +2652,47 @@ ApplicationWindow {
                                         readonly property bool hasMore: !!modelData.detail || (modelData.items || []).length > 0
                                         x: 16
                                         width: stepsBox.width - 32
-                                        Text {
+                                        // New steps fade in; a running one pulses, a finished one settles to a check.
+                                        opacity: 0
+                                        NumberAnimation on opacity { to: 1; duration: window.tBase; easing.type: Easing.OutCubic }
+                                        Item {
                                             width: parent.width
-                                            elide: Text.ElideRight
-                                            color: MeoTheme.contentOnSurfaceVariant
-                                            font.pixelSize: 13 * MeoTheme.textScale
-                                            text: (stepRow.hasMore ? (stepRow.expanded ? "▾ " : "▸ ") : "   ") + (modelData.status === "done" ? "✓ " : modelData.status === "error" ? "✕ " : "… ") + modelData.title
+                                            height: 24
+                                            readonly property bool running: modelData.status !== "done" && modelData.status !== "error"
+                                            Item {
+                                                id: stepIcon
+                                                x: 0
+                                                width: 18; height: 24
+                                                MeoIcon {
+                                                    anchors.centerIn: parent
+                                                    icon: modelData.status === "done" ? "check" : modelData.status === "error" ? "close" : window.stepKind(modelData).icon
+                                                    size: 16
+                                                    color: modelData.status === "error" ? MeoTheme.error : modelData.status === "done" ? MeoTheme.contentOnSurfaceVariant : MeoTheme.primary
+                                                    SequentialAnimation on opacity {
+                                                        running: parent.parent.parent.running && !MeoTheme.reduceMotion
+                                                        loops: Animation.Infinite
+                                                        NumberAnimation { to: 0.45; duration: 650; easing.type: Easing.InOutSine }
+                                                        NumberAnimation { to: 1; duration: 650; easing.type: Easing.InOutSine }
+                                                    }
+                                                }
+                                            }
+                                            Text {
+                                                x: 26
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                width: parent.width - 26 - (stepRow.hasMore ? 20 : 0)
+                                                elide: Text.ElideRight
+                                                color: parent.running ? MeoTheme.contentOnSurface : MeoTheme.contentOnSurfaceVariant
+                                                font.pixelSize: 13 * MeoTheme.textScale
+                                                text: modelData.title
+                                            }
+                                            MeoIcon {
+                                                visible: stepRow.hasMore
+                                                anchors.right: parent.right
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                icon: stepRow.expanded ? "expand_less" : "expand_more"
+                                                size: 16
+                                                color: MeoTheme.contentOnSurfaceVariant
+                                            }
                                             MouseArea {
                                                 anchors.fill: parent
                                                 enabled: stepRow.hasMore
