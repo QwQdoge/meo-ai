@@ -5595,11 +5595,29 @@ impl AppCore {
             request["turns"] = Value::Array(turns);
         }
         let context = self.project_context(None);
+        let hints: Vec<String> = {
+            let s = self.state.lock().unwrap();
+            s.plugins
+                .as_ref()
+                .and_then(|r| r.as_ref().ok())
+                .map(|rows| {
+                    rows.iter()
+                        .filter(|p| p["enabled"] == true)
+                        .filter_map(|p| Some(format!("- {}: {}", p["name"].as_str()?, app_hint(p["remoteUrl"].as_str()?)?)))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        let guidance = if hints.is_empty() {
+            NATIVE_GUIDANCE.to_owned()
+        } else {
+            format!("{NATIVE_GUIDANCE}\n\n## Connected apps\n{}", hints.join("\n"))
+        };
         let current = request["prompt"].as_str().unwrap_or_default().to_owned();
         request["prompt"] = json!(if context.is_empty() {
-            format!("{NATIVE_GUIDANCE}\n\n{current}")
+            format!("{guidance}\n\n{current}")
         } else {
-            format!("{NATIVE_GUIDANCE}\n\n{context}\n\n{current}")
+            format!("{guidance}\n\n{context}\n\n{current}")
         });
         true
     }
@@ -5990,6 +6008,9 @@ impl AppCore {
             match listed {
                 Ok(tools) if !tools.is_empty() => {
                     out.push_str(&format!("- {name}:\n"));
+                    if let Some(hint) = p["remoteUrl"].as_str().and_then(app_hint) {
+                        out.push_str(&format!("  Hint: {hint}\n"));
+                    }
                     for t in tools.iter().take(40) {
                         let props: Vec<String> = t["inputSchema"]["properties"]
                             .as_object()
@@ -8839,6 +8860,17 @@ fn workspace_context(root: &str) -> String {
 #[cfg(target_arch = "wasm32")]
 fn workspace_context(_root: &str) -> String {
     String::new()
+}
+
+/// What a model must know to use a connected app well, from the server's address. GitHub's repository
+/// search leaves forks out unless asked (the user's own Meo AI repository is one), and ranks other
+/// people's projects first, so a plain search never finds it.
+fn app_hint(remote_url: &str) -> Option<&'static str> {
+    if remote_url.contains("api.githubcopilot.com") {
+        Some("search_repositories leaves forks out by default and ranks other people's projects first. To find the user's own repository: call get_me for the login, then search_repositories with the query `user:<login> <words> fork:true` (or `user:<login> fork:true` to list them all). To read code: get_file_contents with owner, repo and path (`/` lists the root); read README.md and AGENTS.md first.")
+    } else {
+        None
+    }
 }
 
 /// A short message that only asks to carry on ("继续，不要停", "keep going"): it has no topic of its own.
@@ -14109,6 +14141,9 @@ mod tests {
         assert!(search["description"].as_str().unwrap().starts_with("[GitHub 开发]"));
         assert!(tools.iter().any(|t| t["name"] == "github__get_file_contents"));
         assert!(!streams[0]["prompt"].as_str().unwrap().contains("meo-tool"), "no fenced-block instructions");
+        let prompt = streams[0]["prompt"].as_str().unwrap();
+        assert!(prompt.contains("## Connected apps") && prompt.contains("fork:true") && prompt.contains("get_me"),
+            "the GitHub hint that finds a fork: {prompt}");
         let _ = std::fs::remove_dir_all(&folder);
     }
 
@@ -14254,6 +14289,19 @@ mod tests {
         assert!(streams[1]["prompt"].as_str().unwrap().contains("cut off right after"));
         assert_eq!(texts(&c).last().unwrap(), "and the end.");
         let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn the_fenced_app_list_carries_the_github_hint_too() {
+        let c = signed_in_core();
+        c.update(|s| {
+            s.plugins = Some(Ok(vec![json!({ "id": "p1", "name": "GitHub", "kind": "mcp", "enabled": true,
+                "remoteUrl": "https://api.githubcopilot.com/mcp/", "manifest": {} })]));
+            s.app_tools.insert("p1".into(), Ok(vec![json!({ "name": "get_me", "description": "Who am I", "inputSchema": { "type": "object" } })]));
+        });
+        let text = futures_executor::block_on(c.app_instructions());
+        assert!(text.contains("Hint:") && text.contains("fork:true"), "{text}");
+        assert_eq!(app_hint("https://mcp.linear.app/mcp"), None);
     }
 
     #[test]
