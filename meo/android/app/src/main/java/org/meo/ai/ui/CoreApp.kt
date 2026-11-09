@@ -1,5 +1,15 @@
 package org.meo.ai.ui
 
+import androidx.compose.material.icons.rounded.ViewSidebar
+import androidx.compose.material.icons.rounded.Cable
+import androidx.compose.material.icons.rounded.Terminal
+import androidx.compose.material.icons.rounded.Build
+import androidx.compose.material.icons.rounded.Bolt
+import androidx.compose.material.icons.rounded.EditNote
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.ExpandLess
+import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
@@ -199,7 +209,7 @@ fun CoreApp(view: JSONObject, act: (JSONObject) -> Unit) {
                                 when (page.str("kind")) {
                                     "list" -> ListPage(page, act)
                                     "store" -> StorePage(page, act)
-                                    "settings" -> SettingsPage(page, act)
+                                    "settings" -> Box(Modifier.fillMaxSize())
                                     else -> UnavailablePage(page, act)
                                 }
                             }
@@ -211,10 +221,16 @@ fun CoreApp(view: JSONObject, act: (JSONObject) -> Unit) {
         if (sidebar == null) {
             content()
         } else if (wide) {
-            Row(Modifier.fillMaxSize()) {
+            // The window is the sidebar's tone; the page is a raised, rounded card on top of it.
+            Row(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainer)) {
                 ShellSidebar(sidebar, act, Modifier.width(if (sidebar.optBoolean("collapsed")) 60.dp else 260.dp).fillMaxHeight())
-                Box(Modifier.fillMaxHeight().width(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
-                Box(Modifier.weight(1f)) { content() }
+                Surface(
+                    modifier = Modifier.weight(1f).fillMaxHeight().padding(top = 8.dp, end = 8.dp, bottom = 8.dp),
+                    shape = RoundedCornerShape(20.dp),
+                    color = MaterialTheme.colorScheme.background,
+                    shadowElevation = 1.dp,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
+                ) { content() }
             }
         } else {
             ModalNavigationDrawer(
@@ -227,6 +243,7 @@ fun CoreApp(view: JSONObject, act: (JSONObject) -> Unit) {
                 },
             ) { content() }
         }
+        if (page.str("kind") == "settings") SettingsDialog(page, act, wide)
     }
 }
 
@@ -392,22 +409,140 @@ private fun ModeSwitch(modes: List<JSONObject>, act: Act, modifier: Modifier = M
     }
 }
 
-/** Three pulsing dots while the answer has not started. */
+/** Settings float over the app: one dialog card with the close button in its top-right corner
+ *  (a full screen on a phone). Back and a tap outside close it too. */
+@Composable
+private fun SettingsDialog(page: JSONObject, act: Act, wide: Boolean) {
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = { act.send(page.obj("close")) },
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Surface(
+            modifier = if (wide) Modifier.fillMaxWidth(0.92f).widthIn(max = 940.dp).fillMaxHeight(0.9f).heightIn(max = 660.dp) else Modifier.fillMaxSize(),
+            shape = RoundedCornerShape(if (wide) 24.dp else 0.dp),
+            color = MaterialTheme.colorScheme.surface,
+            shadowElevation = 6.dp,
+        ) {
+            Column(Modifier.fillMaxSize()) {
+                Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(page.str("title"), Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                    IconButton(onClick = { act.send(page.obj("close")) }) { Icon(Icons.Rounded.Close, contentDescription = "Close") }
+                }
+                androidx.compose.material3.HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Box(Modifier.weight(1f)) { SettingsPage(page, act) }
+            }
+        }
+    }
+}
+
+/** Three dots that bounce in a wave while the answer has not started. */
 @Composable
 private fun TypingDots() {
     val transition = androidx.compose.animation.core.rememberInfiniteTransition(label = "typing")
     Row(Modifier.padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
         repeat(3) { i ->
-            val alpha by transition.animateFloat(
-                initialValue = 0.35f,
-                targetValue = 1f,
+            val lift by transition.animateFloat(
+                initialValue = 0f,
+                targetValue = 0f,
                 animationSpec = androidx.compose.animation.core.infiniteRepeatable(
-                    androidx.compose.animation.core.tween(480, delayMillis = i * 160, easing = androidx.compose.animation.core.LinearEasing),
-                    androidx.compose.animation.core.RepeatMode.Reverse,
+                    animation = androidx.compose.animation.core.keyframes {
+                        durationMillis = 1100
+                        0f at 0
+                        1f at 330
+                        0f at 700
+                    },
+                    initialStartOffset = androidx.compose.animation.core.StartOffset(i * 140),
                 ),
                 label = "dot$i",
             )
-            Box(Modifier.size(7.dp).clip(RoundedCornerShape(50)).background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha)))
+            Box(
+                Modifier.size(7.dp)
+                    .graphicsLayer { translationY = -4.dp.toPx() * lift }
+                    .clip(RoundedCornerShape(50))
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.4f + 0.6f * lift)),
+            )
+        }
+    }
+}
+
+private class StepKind(val icon: androidx.compose.ui.graphics.vector.ImageVector, val live: String)
+
+/** What a step is doing, from its id and title (the core sends free text). */
+private fun stepKind(step: JSONObject?): StepKind {
+    if (step == null) return StepKind(Icons.Rounded.Psychology, "Thinking")
+    val title = step.str("title")
+    val l = (step.str("id") + " " + title).lowercase()
+    fun has(pattern: String) = Regex(pattern).containsMatchIn(l)
+    return when {
+        has("connect|mcp|connector|oauth|authori[sz]") -> StepKind(Icons.Rounded.Cable, if (title.isNotEmpty()) "Connecting · $title" else "Connecting")
+        has("search|web|browse|fetch|http") -> StepKind(Icons.Rounded.Language, "Searching the web")
+        has("image|picture|draw") -> StepKind(Icons.Rounded.Image, "Creating an image")
+        has("edit|write|patch|save|create file|apply|modif") -> StepKind(Icons.Rounded.EditNote, "Editing files")
+        has("read|open|list|find|grep|glob|scan|index") -> StepKind(Icons.Rounded.Description, "Reading files")
+        has("run|command|shell|bash|exec|terminal|test|build|install") -> StepKind(Icons.Rounded.Terminal, "Running a command")
+        has("model|router|reason|think|plan") -> StepKind(Icons.Rounded.Psychology, "Thinking")
+        has("tool\\d+") -> StepKind(Icons.Rounded.Build, "Using tools")
+        else -> StepKind(Icons.Rounded.Bolt, title.ifEmpty { "Working" })
+    }
+}
+
+/** The step a streaming answer is on now: the last one still running, else the last one. */
+private fun currentStep(steps: List<JSONObject>): JSONObject? =
+    steps.lastOrNull { it.str("status") != "done" && it.str("status") != "error" } ?: steps.lastOrNull()
+
+/** What the assistant is doing right now: a breathing icon, the sentence with a light sweeping
+ *  over it, and the elapsed time once it is worth showing. */
+@Composable
+private fun LiveStatus(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String) {
+    var seconds by remember { mutableStateOf(0) }
+    LaunchedEffect(Unit) { while (true) { kotlinx.coroutines.delay(1000); seconds += 1 } }
+    val transition = androidx.compose.animation.core.rememberInfiniteTransition(label = "live")
+    val halo by transition.animateFloat(
+        initialValue = 0.9f,
+        targetValue = 1.25f,
+        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+            androidx.compose.animation.core.tween(700, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+            androidx.compose.animation.core.RepeatMode.Reverse,
+        ),
+        label = "halo",
+    )
+    val sweep by transition.animateFloat(
+        initialValue = -300f,
+        targetValue = 600f,
+        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+            androidx.compose.animation.core.tween(1600, easing = androidx.compose.animation.core.LinearEasing),
+        ),
+        label = "sweep",
+    )
+    val base = MaterialTheme.colorScheme.onSurfaceVariant
+    val light = MaterialTheme.colorScheme.onSurface
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Box(Modifier.size(22.dp), contentAlignment = Alignment.Center) {
+            Box(
+                Modifier.size(22.dp)
+                    .graphicsLayer { scaleX = halo; scaleY = halo }
+                    .clip(RoundedCornerShape(50))
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)),
+            )
+            Icon(icon, contentDescription = null, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.primary)
+        }
+        Text(
+            label + "…",
+            style = MaterialTheme.typography.labelMedium.copy(
+                fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
+                brush = androidx.compose.ui.graphics.Brush.linearGradient(
+                    colors = listOf(base, light, base),
+                    start = androidx.compose.ui.geometry.Offset(sweep, 0f),
+                    end = androidx.compose.ui.geometry.Offset(sweep + 300f, 0f),
+                ),
+            ),
+        )
+        if (seconds >= 5) {
+            Text(
+                if (seconds >= 60) "${seconds / 60}m ${seconds % 60}s" else "${seconds}s",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.outline,
+            )
         }
     }
 }
@@ -717,13 +852,14 @@ private fun ShellSidebar(sb: JSONObject, act: Act, modifier: Modifier, forceExpa
     }
     Column(modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            if (!collapsed) {
-                ModeSwitch(sb.list("modes"), act, Modifier.weight(1f))
-            }
+            // The toggle sits at the top-left corner in both states; the Chat | Work switch follows it.
             if (!forceExpanded) {
                 IconButton(onClick = { act.send(sb.obj("toggle")) }) {
-                    Icon(if (collapsed) Icons.Rounded.ChevronRight else Icons.Rounded.ChevronLeft, contentDescription = "Collapse")
+                    Icon(Icons.Rounded.ViewSidebar, contentDescription = if (collapsed) "Show sidebar" else "Hide sidebar")
                 }
+            }
+            if (!collapsed) {
+                ModeSwitch(sb.list("modes"), act, Modifier.weight(1f))
             }
         }
         if (collapsed) {
@@ -918,13 +1054,17 @@ private fun ChatPane(page: JSONObject, prefs: JSONObject?, strings: JSONObject, 
             if (inspector != null) {
                 Box(Modifier.align(Alignment.TopEnd).padding(8.dp).zIndex(1f)) {
                     if (inspector.optBoolean("visible")) {
-                        Card(Modifier.width(220.dp)) {
-                            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Card(Modifier.width(268.dp)) {
+                            Column(Modifier.padding(horizontal = 14.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(inspector.str("title"), Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
-                                    IconButton(onClick = { act.send(inspector.obj("hide")) }, Modifier.size(24.dp)) { Icon(Icons.Rounded.Close, contentDescription = "Hide") }
+                                    Text(inspector.str("title"), Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+                                    IconButton(onClick = { act.send(inspector.obj("hide")) }, Modifier.size(28.dp)) { Icon(Icons.Rounded.Close, contentDescription = "Hide") }
                                 }
-                                inspector.list("sections").forEach { InspectorSection(it) }
+                                androidx.compose.material3.HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                                inspector.list("sections").forEachIndexed { i, sec ->
+                                    if (i > 0) androidx.compose.material3.HorizontalDivider(Modifier.padding(vertical = 6.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
+                                    InspectorSection(sec)
+                                }
                             }
                         }
                     } else {
@@ -935,7 +1075,13 @@ private fun ChatPane(page: JSONObject, prefs: JSONObject?, strings: JSONObject, 
             LazyColumn(
                 Modifier.fillMaxSize(),
                 state = listState,
-                contentPadding = PaddingValues(start = 16.dp, top = 8.dp, end = 16.dp, bottom = if (fresh) 8.dp else composerDp + 8.dp),
+                contentPadding = PaddingValues(
+                    start = 16.dp,
+                    top = 8.dp,
+                    // On a wide screen the Details card sits beside the chat, not over it.
+                    end = if (inspector?.optBoolean("visible") == true && androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp >= 840) 292.dp else 16.dp,
+                    bottom = if (fresh) 8.dp else composerDp + 8.dp,
+                ),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 items(messages) { MessageBubble(it, strings, act) }
@@ -1002,6 +1148,7 @@ private fun MessageBubble(message: JSONObject, strings: JSONObject, act: Act) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (message.has("steps")) Steps(message, act)
                     val blocks = message.list("blocks")
+                    if (streaming && !message.has("steps") && message.str("text").isEmpty() && blocks.isEmpty()) LiveStatus(Icons.Rounded.Psychology, "Thinking")
                     if (streaming && message.str("text").isEmpty() && blocks.isEmpty()) TypingDots()
                     if (blocks.isEmpty()) MarkdownText(stripIcons(text), Modifier.fillMaxWidth())
                     else blocks.forEachIndexed { i, block ->
@@ -1091,38 +1238,73 @@ private fun ControlChip(item: JSONObject, act: Act) {
     }
 }
 
-/** Collapsible list of what the core did for this answer (model, web search, ...). */
+/** Collapsible list of what the core did for this answer (model, web search, ...). While it runs
+ *  the header says what it is doing now; each step has an icon and the running one pulses. */
 @Composable
 private fun Steps(message: JSONObject, act: Act) {
     val auto = message.optBoolean("stepsOpen")
     var toggled by remember { mutableStateOf<Boolean?>(null) }
     val open = toggled ?: auto
     val context = LocalContext.current
-    Column(Modifier.fillMaxWidth().clickable { toggled = !open }.padding(vertical = 2.dp)) {
-        Text(
-            (if (open) "▾ " else "▸ ") + message.str("stepsLabel"),
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+    val steps = message.list("steps")
+    val running = message.optBoolean("streaming")
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    Column(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+        Row(
+            Modifier.clickable { toggled = !open }.padding(vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            if (running) {
+                val kind = stepKind(currentStep(steps))
+                LiveStatus(kind.icon, kind.live)
+            } else {
+                Icon(Icons.Rounded.CheckCircle, contentDescription = null, Modifier.size(16.dp), tint = muted)
+                Text(message.str("stepsLabel"), style = MaterialTheme.typography.labelMedium, color = muted)
+            }
+            Icon(if (open) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, contentDescription = null, Modifier.size(16.dp), tint = muted)
+        }
         if (open) {
-            message.list("steps").forEach { step ->
+            steps.forEach { step ->
                 var expanded by remember { mutableStateOf(false) }
                 val more = step.str("detail").isNotEmpty() || step.list("items").isNotEmpty()
-                val mark = when (step.str("status")) { "done" -> "✓ "; "error" -> "✕ "; else -> "… " }
-                Text(
-                    (if (more) (if (expanded) "▾ " else "▸ ") else "   ") + mark + step.str("title"),
-                    Modifier.padding(start = 16.dp).clickable(enabled = more) { expanded = !expanded },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                val status = step.str("status")
+                val live = status != "done" && status != "error"
+                val pulse by androidx.compose.animation.core.rememberInfiniteTransition(label = "step").animateFloat(
+                    initialValue = 1f,
+                    targetValue = if (live) 0.45f else 1f,
+                    animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+                        androidx.compose.animation.core.tween(650, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+                        androidx.compose.animation.core.RepeatMode.Reverse,
+                    ),
+                    label = "pulse",
                 )
+                Row(
+                    Modifier.fillMaxWidth().padding(start = 8.dp).clickable(enabled = more) { expanded = !expanded }.padding(vertical = 3.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    when (status) {
+                        "done" -> Icon(Icons.Rounded.Check, contentDescription = null, Modifier.size(16.dp), tint = muted)
+                        "error" -> Icon(Icons.Rounded.Close, contentDescription = null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.error)
+                        else -> Icon(stepKind(step).icon, contentDescription = null, Modifier.size(16.dp).graphicsLayer { alpha = pulse }, tint = MaterialTheme.colorScheme.primary)
+                    }
+                    Text(
+                        step.str("title"),
+                        Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (live) MaterialTheme.colorScheme.onSurface else muted,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (more) Icon(if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, contentDescription = null, Modifier.size(16.dp), tint = muted)
+                }
                 if (expanded && step.str("detail").isNotEmpty()) {
                     Text(
                         step.str("detail"),
                         Modifier.padding(start = 40.dp),
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = muted,
                     )
                 }
                 if (expanded) step.list("items").forEach { item ->
@@ -1400,16 +1582,15 @@ private fun InspectorSection(sec: JSONObject) {
     var open by remember { mutableStateOf(sec.optBoolean("open", true)) }
     val context = LocalContext.current
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-        Text(
-            (if (open) "▾ " else "▸ ") + sec.str("title"),
-            Modifier.clickable { open = !open },
-            style = MaterialTheme.typography.labelMedium,
-        )
+        Row(Modifier.fillMaxWidth().clickable { open = !open }.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(sec.str("title"), Modifier.weight(1f), style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Icon(if (open) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, contentDescription = null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
         if (open) {
             sec.obj("bar")?.let { bar ->
                 val segs = bar.list("segments")
                 val total = segs.sumOf { it.optDouble("value", 0.0) }.coerceAtLeast(1.0)
-                Row(Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)), horizontalArrangement = Arrangement.spacedBy(1.dp)) {
+                Row(Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                     segs.forEachIndexed { i, x ->
                         val w = (x.optDouble("value", 0.0) / total).toFloat().coerceAtLeast(0.01f)
                         Box(Modifier.weight(w).fillMaxHeight().background(if (i == 0) MaterialTheme.colorScheme.primary else if (i == 1) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.outlineVariant))
