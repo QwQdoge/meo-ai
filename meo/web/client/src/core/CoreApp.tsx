@@ -53,7 +53,7 @@ export default function CoreApp() {
   const page: Spec = view.page;
   return (
     <div className={`core-app${drawer ? " drawer-open" : ""}`} data-mode={view.route === "work" ? "work" : "chat"}>
-      {view.sidebar && view.page?.standalone !== true && <Sidebar sidebar={view.sidebar} strings={strings} act={act} open={drawer} setOpen={setDrawer} />}
+      {view.sidebar && <Sidebar sidebar={view.sidebar} strings={strings} act={act} open={drawer} setOpen={setDrawer} />}
       {view.sidebar && drawer && <div className="core-drawer-scrim" onClick={() => setDrawer(false)} />}
       {view.dialog && <Dialog dialog={view.dialog} act={act} />}
       <div className="core-main">
@@ -70,8 +70,9 @@ export default function CoreApp() {
           </Banner>
         )}
         {view.online === false && <Banner>{strings.offline ?? "Offline — showing saved data"}</Banner>}
-        <Page page={page} prefs={prefs} strings={strings} act={act} work={view.route === "work"} />
+        {page.kind === "settings" ? <main className="core-loading" aria-hidden /> : <Page page={page} prefs={prefs} strings={strings} act={act} work={view.route === "work"} />}
       </div>
+      {page.kind === "settings" && <SettingsDialog page={page} act={act} />}
     </div>
   );
 }
@@ -106,6 +107,7 @@ function Sidebar({ sidebar, strings, act, open, setOpen }: { sidebar: Spec; stri
   return (
     <aside className={`core-sidebar${collapsed ? " collapsed" : ""}${open ? " open" : ""}`} aria-label="Meo AI">
       <div className="core-side-top">
+        <button className="core-icon-btn core-collapse" aria-label={collapsed ? "Show sidebar" : "Hide sidebar"} title={collapsed ? "Show sidebar" : "Hide sidebar"} onClick={() => act(sidebar.toggle)}>{glyph(collapsed ? "expand" : "collapse", 20)}</button>
         <div className="core-modes" role="tablist">
           {(sidebar.modes ?? []).map((m: Spec) => (
             <button key={m.id} role="tab" aria-selected={!!m.selected} title={m.label} onClick={() => go(m.action)}>
@@ -113,7 +115,6 @@ function Sidebar({ sidebar, strings, act, open, setOpen }: { sidebar: Spec; stri
             </button>
           ))}
         </div>
-        <button className="core-icon-btn core-collapse" aria-label="Collapse sidebar" onClick={() => act(sidebar.toggle)}>{glyph(collapsed ? "expand" : "collapse", 20)}</button>
       </div>
       {!collapsed && sidebar.search && <SearchBox search={sidebar.search} act={act} />}
       {sidebar.newChat && (
@@ -328,11 +329,34 @@ function ListPage({ page, act }: { page: Spec; act: Act }) {
   );
 }
 
+/** Settings float over the app: a scrim, one dialog card, a close button in its top-right corner. */
+function SettingsDialog({ page, act }: { page: Spec; act: Act }) {
+  const close = () => page.close && act(page.close);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    ref.current?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      // A search field keeps its own Escape (it clears the text).
+      if (e.key === "Escape" && !(e.target instanceof HTMLInputElement && e.target.value)) close();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+  return (
+    <div className="core-modal" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) close(); }}>
+      <div className="core-modal-card" role="dialog" aria-modal="true" aria-label={page.title} tabIndex={-1} ref={ref}>
+        <SettingsPage page={page} act={act} />
+        {page.close && <button className="core-modal-close" aria-label="Close" title="Close (Esc)" onClick={close}><Icon name="close" size={18} /></button>}
+      </div>
+    </div>
+  );
+}
+
 function SettingsPage({ page, act }: { page: Spec; act: Act }) {
   const sections: Spec[] = page.sections ?? [];
   const current = sections.find((x) => x.id === page.selected) ?? sections[0];
   return (
-    <main className="core-settings">
+    <div className="core-settings">
       <div className="core-settings-card">
         <nav className="core-settings-nav" aria-label={page.title}>
           {page.search && <SettingsSearch search={page.search} act={act} />}
@@ -348,7 +372,6 @@ function SettingsPage({ page, act }: { page: Spec; act: Act }) {
         <div className="core-settings-body">
           <header className="core-header">
             <h1>{current?.label ?? page.title}</h1>
-            {page.close && <button className="core-close" aria-label="Close" onClick={() => act(page.close)}>✕</button>}
           </header>
           <div className="set-groups">
             {settingGroups(current?.items ?? []).map((g, i) => (
@@ -365,7 +388,7 @@ function SettingsPage({ page, act }: { page: Spec; act: Act }) {
           </div>
         </div>
       </div>
-    </main>
+    </div>
   );
 }
 
@@ -910,6 +933,45 @@ const sameMessage = (a: Spec, b: Spec) =>
   (a.actions?.length ?? 0) === (b.actions?.length ?? 0) &&
   (a.steps ? JSON.stringify(a.steps) : "") === (b.steps ? JSON.stringify(b.steps) : "");
 
+/** What a step is doing, from its id and title (the core sends free text). */
+const STEP_KINDS: [RegExp, string, string][] = [
+  [/connect|mcp|connector|oauth|authori[sz]/, "cable", "Connecting"],
+  [/search|web|browse|fetch|http/, "language", "Searching the web"],
+  [/image|picture|draw/, "image", "Creating an image"],
+  [/edit|write|patch|save|create file|apply|modif/, "edit_document", "Editing files"],
+  [/read|open|list|find|grep|glob|scan|index/, "description", "Reading files"],
+  [/run|command|shell|bash|exec|terminal|test|build|install/, "terminal", "Running a command"],
+  [/model|router|reason|think|plan/, "psychology", "Thinking"],
+  [/tool\d+/, "build", "Using tools"],
+];
+function stepKind(step?: Spec): { icon: string; live: string } {
+  if (!step) return { icon: "psychology", live: "Thinking" };
+  const l = `${step.id ?? ""} ${step.title ?? ""}`.toLowerCase();
+  for (const [re, icon, live] of STEP_KINDS) if (re.test(l)) return { icon, live: icon === "cable" && step.title ? `Connecting · ${step.title}` : live };
+  return { icon: "bolt", live: step.title || "Working" };
+}
+/** The step a streaming answer is on now: the last one still running, else the last one. */
+const currentStep = (steps: Spec[] = []): Spec | undefined =>
+  [...steps].reverse().find((x) => x.status !== "done" && x.status !== "error") ?? steps[steps.length - 1];
+
+/** What the assistant is doing right now: a breathing icon, the sentence with a light sweeping
+ *  over it, and the elapsed time once it is worth showing. */
+function LiveStatus({ icon, label }: { icon: string; label: string }) {
+  const [sec, setSec] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setSec((v) => v + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const time = sec >= 60 ? `${Math.floor(sec / 60)}m ${sec % 60}s` : `${sec}s`;
+  return (
+    <span className="core-live" role="status">
+      <span className="core-live-icon"><Icon name={icon} size={14} /></span>
+      <span className="core-live-text">{label}…</span>
+      {sec >= 5 && <span className="core-live-time">{time}</span>}
+    </span>
+  );
+}
+
 const MessageView = React.memo(
   function MessageView({ m, strings, act }: { m: Spec; strings: Spec; act: Act }) {
     return (
@@ -920,14 +982,17 @@ const MessageView = React.memo(
               <div className="core-bubble assistant">
                 {m.steps && (
                   <details className="core-steps" open={!!m.stepsOpen}>
-                    <summary>{m.stepsLabel}</summary>
+                    <summary>
+                      {m.streaming ? <LiveStatus icon={stepKind(currentStep(m.steps)).icon} label={stepKind(currentStep(m.steps)).live} /> : <><Icon name="check_circle" size={14} /> {m.stepsLabel}</>}
+                      <Icon name="expand_more" size={14} className="core-steps-chev" />
+                    </summary>
                     <ol>
                       {m.steps.map((st: Spec) => (
                         <li key={st.id} className={`step-${st.status}`}>
                           <details>
                             <summary>
                               <span className="core-step-mark" aria-hidden>
-                                {st.status === "done" ? <Icon name="check_circle" size={14} /> : st.status === "error" ? <Icon name="error" size={14} /> : <Icon name="progress_activity" size={14} className="spin" />}
+                                {st.status === "done" ? <Icon name="check" size={14} /> : st.status === "error" ? <Icon name="close" size={14} /> : <Icon name={stepKind(st).icon} size={14} className="core-pulse" />}
                               </span>
                               <b>{st.title}</b>
                             </summary>
@@ -945,6 +1010,7 @@ const MessageView = React.memo(
                     </ol>
                   </details>
                 )}
+                {m.streaming && !m.steps && !m.text && !(m.blocks ?? []).length && <LiveStatus icon="psychology" label="Thinking" />}
                 {m.streaming && !m.text && !(m.blocks ?? []).length && (
                   <span className="core-typing" role="status" aria-label={strings.thinking ?? "Thinking"}><i /><i /><i /></span>
                 )}

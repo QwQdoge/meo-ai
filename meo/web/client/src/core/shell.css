@@ -504,3 +504,62 @@
 .core-app .core-account-email { padding: 6px 10px; font-size: 12px; opacity: .65; }
 @keyframes core-pop { from { opacity: 0; transform: translateY(4px) scale(.98); } }
 @media (prefers-reduced-motion: reduce) { .core-app .core-account-menu { animation: none; } }
+
+/* ---------- Settings dialog, live status, docked details (shared look with desktop and Android) ---------- */
+.core-app .core-modal { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; padding: 24px; background: rgb(0 0 0 / .42);
+  animation: core-fade-in .2s var(--ease); }
+.core-app .core-modal-card { position: relative; width: min(940px, 100%); height: min(660px, 100%); display: flex; border-radius: 24px; outline: 0;
+  background: rgb(var(--surface-primary)); box-shadow: var(--elev-3), 0 0 0 var(--hair) rgb(var(--border-light)); overflow: hidden; animation: core-pop-in .2s var(--ease); }
+.core-app .core-modal-card .core-settings { flex: 1; min-width: 0; padding: 0; background: none; box-shadow: none; border-radius: 0; display: flex; }
+.core-app .core-modal-card .core-settings-card { flex: 1; border: 0; border-radius: 0; }
+/* The category column is one tone down from the page it controls. */
+.core-app .core-modal-card .core-settings-nav { background: color-mix(in srgb, rgb(var(--accent-primary)) 5%, rgb(var(--surface-secondary))); border-inline-end: var(--hair) solid rgb(var(--border-light)); }
+.core-app .core-modal-card .core-settings-body > .core-header { padding-inline-end: 44px; }
+.core-app .core-modal-close { position: absolute; inset-block-start: 12px; inset-inline-end: 12px; display: grid; place-items: center; width: 36px; height: 36px; padding: 0;
+  border: 0; border-radius: 50%; background: none; color: inherit; transition: background-color .2s var(--ease); }
+.core-app .core-modal-close:hover { background: var(--tonal-2); }
+@keyframes core-fade-in { from { opacity: 0; } }
+@keyframes core-pop-in { from { opacity: 0; transform: scale(.97); } }
+@media (max-width: 839px) { .core-app .core-modal { padding: 0; } .core-app .core-modal-card { width: 100%; height: 100%; border-radius: 0; } }
+
+.core-app .core-side-top { gap: 6px; }
+.core-app .collapsed .core-side-top { align-items: center; }
+
+/* Waiting for the first words: three dots in a wave. */
+.core-typing i { background: rgb(var(--accent-primary)); animation: core-wave 1.1s infinite ease-in-out; }
+.core-typing i:nth-child(2) { animation-delay: .14s; } .core-typing i:nth-child(3) { animation-delay: .28s; }
+@keyframes core-wave { 0%, 60%, 100% { opacity: .4; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-4px); } }
+
+/* What it is doing right now. */
+.core-live { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500; color: rgb(var(--text-secondary)); }
+.core-live-icon { position: relative; display: inline-grid; place-items: center; width: 22px; height: 22px; color: rgb(var(--accent-primary)); }
+.core-live-icon::before { content: ""; position: absolute; inset: 0; border-radius: 50%; background: rgb(var(--accent-primary)); opacity: .14; animation: core-halo 1.4s infinite ease-in-out; }
+.core-live-icon svg { position: relative; }
+.core-live-text { background: linear-gradient(100deg, currentColor 40%, rgb(var(--text-primary)) 50%, currentColor 60%) 200% 0 / 250% 100%; -webkit-background-clip: text; background-clip: text;
+  color: transparent; animation: core-sweep 1.6s infinite linear; }
+.core-live-time { font-variant-numeric: tabular-nums; font-weight: 400; opacity: .6; }
+@keyframes core-halo { 0%, 100% { transform: scale(.9); } 50% { transform: scale(1.25); } }
+@keyframes core-sweep { from { background-position: 200% 0; } to { background-position: -50% 0; } }
+.core-steps > summary { display: flex; align-items: center; gap: 6px; list-style: none; }
+.core-steps > summary::-webkit-details-marker { display: none; }
+.core-steps .core-steps-chev { transition: transform .2s var(--ease); }
+.core-steps[open] .core-steps-chev { transform: rotate(180deg); }
+.core-pulse { animation: core-blink 1.3s infinite ease-in-out; color: rgb(var(--accent-primary)); }
+@keyframes core-blink { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
+.core-steps > ol > li { animation: core-fade-in .2s var(--ease); }
+@media (prefers-reduced-motion: reduce) {
+  .core-live-icon::before, .core-live-text, .core-pulse, .core-typing i { animation: none; }
+  .core-live-text { color: inherit; background: none; }
+}
+:root[data-reduce-motion="true"] .core-live-icon::before, :root[data-reduce-motion="true"] .core-live-text { animation: none; }
+
+/* Details: a docked side panel with hairline-separated sections; rows are icon, label, value. */
+.core-app .core-inspector { width: 296px; padding: 0 14px 14px; border-radius: var(--r-l); }
+.core-app .core-inspector > header { padding: 14px 6px; border-bottom: var(--hair) solid rgb(var(--border-light)); font-size: 15px; font-weight: 600; }
+.core-app .core-isec { border-top: var(--hair) solid rgb(var(--border-light)); }
+.core-app .core-isec:first-of-type { border-top: 0; }
+.core-app .core-isec-head { padding: 12px 6px 6px; font-size: 13px; }
+.core-app .core-isec-body { gap: 2px; }
+.core-app .core-irow { min-height: 30px; font-size: 13px; }
+.core-app .core-bar { height: 8px; border-radius: 4px; gap: 2px; }
+.core-app .core-bar > i { border-radius: 4px; }
