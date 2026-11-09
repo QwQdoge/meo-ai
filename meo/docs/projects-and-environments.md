@@ -6,7 +6,9 @@ A **project** is where Chat and Work keep their context. Meo API stores its name
 instructions, chats and memories (so they follow the account to every device). On top of that, each
 **device** can link a project to an **environment**, and a project folder keeps the **goal, to-do
 list and notes** between sessions. All of it lives in `core-rs/src/cloud` (`project_env.rs` and
-`app.rs`); the clients only draw the project page.
+`app.rs`); the clients only draw the project page. For the distinction between conversation-only
+Chat and device-bound Work (including the General and Code profiles), see
+[Chat, Work and Code product model](chat-work-product-model.md).
 
 ## Environment (per device)
 
@@ -16,9 +18,11 @@ list and notes** between sessions. All of it lives in `core-rs/src/cloud` (`proj
 | GitHub repository | Tells the model which repository the project is about; it reaches issues, pull requests and remote files through the GitHub app (the project page shows whether that app is installed, on and signed in, with the button that fixes it). | This device |
 
 * **Starting Work in a project** (`start_project_work`, the "Work here" / "Start Work" buttons) files
-  the new task under the project and opens its folder. A chat or task that belongs to a project uses the
-  project's folder; anything else uses the general Work folder (`/workspace`, the composer's folder
-  chip). With the chip, choosing a folder while a project is open links it to the project.
+  the new task under the project and opens the folder linked to the selected target device. The user
+  must be able to see/confirm the target device; a saved default may preselect it but must not hide it.
+  A project task uses that device's linked folder; anything else uses the general Work folder
+  (`/workspace`, the composer's folder chip). With the chip, choosing a folder while a project is open
+  links it to the project on this device.
 * **Online** (no folder, or the web / Android clients): the repository link and the GitHub app are the
   environment. Local folders need the desktop app; the web and Android show that plainly instead of a
   button that cannot work.
