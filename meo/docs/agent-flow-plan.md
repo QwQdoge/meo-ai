@@ -23,6 +23,7 @@ you like me to carry out?" in English. Causes, all found in code:
 | "好的" and "can you see the context" sent to web search | The fenced path searched the web with the message itself as the query. | No search on the model's behalf when it has `web_search`, or when the message is not a lookup. |
 | "The file was cut before the part I need", then giving up | Results are capped at 14,000 characters with no way on. | The whole result is kept on the device; the cut note gives an id and `read_more {id, from}` reads the next part. |
 | Claimed the GitHub tools cannot do something, plan restated every round | No rule against either. | Prompt: never ask to repeat the request, check the tools before saying something cannot be done, one sentence between calls, report outcome / checked / not done. |
+| "Review the whole repo" stopped after one or two reads, every message, ending "I'll continue next" / "not done yet" | In a native run a reply that only said what it would do next (no call) was taken as the final answer; the stall check was off for native runs, and the grounding check then turned it into a disclaimer. | A native round whose own words announce a step without calling it is sent back with `<continue_work>` (up to 4 times per message), joined to the same answer and not grounding-checked. |
 | Avatar and settings overlap | Collapsed sidebar put avatar, gear and sync dot in one row. | Gear on the right (icon only); collapsed they stack; the sync state is a dot on the avatar. |
 
 ## The flow

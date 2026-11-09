@@ -474,6 +474,8 @@ struct AgentRun {
     verifies: usize,
     /// Times a reply that announced a next step without calling a tool was sent back for this message.
     nudges: usize,
+    /// Native rounds that said what they would do next but called nothing, sent back to do it.
+    stalls: usize,
     /// Files this message changed, with their diffs, for the Details card.
     changes: Vec<Value>,
 }
@@ -4973,8 +4975,6 @@ impl AppCore {
             } else {
                 None
             };
-        // A reply that announces a next step but calls nothing is not the end of the task.
-        let stalled = failure.is_none() && !tooling && fix.is_none() && self.agent_stalled(&reply);
         // Native runs: the model's own task list still has open items, so it is not finished
         // (the round driver of DeepSeek Harness: an active goal gets another round).
         let goal_round = if native && failure.is_none() && !tooling && !reply.trim().is_empty() {
@@ -4982,7 +4982,16 @@ impl AppCore {
         } else {
             None
         };
-        if goal_round.is_some() {
+        // A reply that announces a next step but calls nothing is not the end of the task (the task
+        // list's own driver goes first; a reply cut at the output limit is continued instead).
+        let stalled = failure.is_none()
+            && !tooling
+            && fix.is_none()
+            && goal_round.is_none()
+            && !(native && truncated)
+            // Only this round's own words: the text carried from earlier rounds already led to calls.
+            && self.agent_stalled(if native { reply.get(carry_len..).unwrap_or_default() } else { &reply });
+        if goal_round.is_some() || (native && stalled) {
             let joined = format!("{}\n\n", reply.trim_end());
             self.update(|s| {
                 if let Some(run) = s.agent.native.as_mut() {
@@ -5010,7 +5019,7 @@ impl AppCore {
             });
         }
         // A long answer to a run that used tools is checked against what was read, once.
-        let revise = if native && failure.is_none() && !tooling && !cut_off && goal_round.is_none() {
+        let revise = if native && failure.is_none() && !tooling && !cut_off && !stalled && goal_round.is_none() {
             Box::pin(self.grounding_revision(&reply)).await
         } else {
             None
@@ -5026,7 +5035,7 @@ impl AppCore {
         let resume = tooling || fix.is_some() || stalled || goal_round.is_some() || cut_off || revise.is_some();
         // Set below when the judge found the final answer lacking and there is a way to improve it.
         let mut reflect: Option<String> = None;
-        if native && (tooling || goal_round.is_some() || cut_off || revise.is_some()) {
+        if native && (tooling || goal_round.is_some() || cut_off || revise.is_some() || stalled) {
             // A round that only leads to a tool call is not stored as a message of its own.
             self.record_chat_usage(&pending, &reply, started).await;
         } else if !reply.is_empty() {
@@ -5111,6 +5120,14 @@ impl AppCore {
                     s.agent.nudges += 1;
                 });
                 Box::pin(self.turn(goal_round.unwrap_or_default(), false, false)).await;
+            }
+            None if stalled && native => {
+                self.update(|s| {
+                    s.agent.round += 1;
+                    s.agent.stalls += 1;
+                });
+                let prompt = "<continue_work>\nYour last reply said what you would do next but called no function, so nothing ran, and the run would have ended there. Call the function for that step now, without restating the plan. Keep calling functions until the request is answered in full; then give the final answer. If something blocks a step, say what in the final answer.\n</continue_work>".to_owned();
+                Box::pin(self.turn(prompt, false, false)).await;
             }
             None if tooling && native => Box::pin(self.agent_next_native(&id)).await,
             None if tooling => Box::pin(self.agent_next(&id, &reply)).await,
@@ -5551,12 +5568,17 @@ impl AppCore {
             .app_tools
             .values()
             .any(|r| r.as_ref().is_ok_and(|t| !t.is_empty()));
-        (s.agent.host.is_some() || pref_bool(&s, "chat.web_search", false) || apps)
-            && s.agent.round > 0
+        // A native run has functions whenever it is native; it gets its own, larger budget, since a
+        // model that narrates instead of calling would otherwise end a long task after a few reads.
+        let budget = if s.agent.native.is_some() {
+            s.agent.stalls < MAX_STALLS
+        } else {
+            (s.agent.host.is_some() || pref_bool(&s, "chat.web_search", false) || apps)
+                && s.agent.round > 0
+                && s.agent.nudges < 2
+        };
+        budget
             && s.agent.round < MAX_TOOL_ROUNDS
-            && s.agent.nudges < 2
-            // A native run has the protocol's own answer (calls, or none): no guessing.
-            && s.agent.native.is_none()
             && agent::parse_tool_calls(reply).is_empty()
             && (announces_next_step(reply) || has_unfinished_tasks(reply))
     }
@@ -7757,6 +7779,8 @@ fn has_verify_command(s: &State) -> bool {
 /// Tool calls one user message may run before Work stops and says so.
 /// Rounds of tool calls in one run: a review of a real project reads a dozen files and more.
 const MAX_TOOL_ROUNDS: usize = 20;
+/// Times one message's native run is sent back for saying what it would do without calling it.
+const MAX_STALLS: usize = 4;
 
 /// Shown to a model that has real functions: no format to learn, only how to behave. Whether it goes
 /// on is its own answer: it calls a function, or it replies with the final answer and no call.
@@ -14669,6 +14693,26 @@ mod tests {
         let n = api.streams.lock().unwrap().iter().filter(|b| b["tools"].is_array()).count();
         assert_eq!(n, 1, "no calls and no open tasks: finished");
         assert_eq!(texts(&c).last().unwrap(), "Just an answer.");
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn a_native_reply_that_only_says_what_it_will_do_is_sent_back_to_do_it() {
+        let folder = temp_folder("native-stall");
+        let call = r#"{"text":"","calls":[{"id":"a","name":"web_search","arguments":"{\"query\":\"rust\"}"}]}"#;
+        let api = fake_api(vec!["我先读取 README，再检查关键实现。", call, "Rust 1.99 came out in October."]);
+        let c = work_core(&api, &folder, "smart");
+        c.update(|s| {
+            s.route = "chat".into();
+            s.agent.host = None;
+            s.prefs.remove("work.workspace");
+            s.prefs.insert("chat.web_search".into(), json!(true));
+        });
+        run(&c, Action::Send { text: "review the whole repo".into() });
+        let streams: Vec<Value> = api.streams.lock().unwrap().iter().filter(|b| b["tools"].is_array()).cloned().collect();
+        assert_eq!(streams.len(), 3, "the announcement did not end the run");
+        assert!(streams[1]["prompt"].as_str().unwrap().contains("<continue_work>"));
+        assert!(texts(&c).last().unwrap().ends_with("Rust 1.99 came out in October."));
         let _ = std::fs::remove_dir_all(&folder);
     }
 
