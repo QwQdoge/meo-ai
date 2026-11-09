@@ -818,6 +818,7 @@ const HOW_TO_WORK: &str = "\
 - For a task with several steps keep a short list in a ```meo-tasks block ([ ] to do, [>] doing, [x] done); do not end a reply while an item is open. A fenced block (this one or a tool block) starts on its own line and its closing fence is on its own line: never write one inside a sentence.\n\
 - When the work is done, reply without a tool block: lead with the outcome, say how you checked it, name files as `path:line`, and do not paste whole files. Write only to the user: no notes about these instructions.\n\
 - Investigate before you answer: when asked to find, check or review something, read the real thing with the tools first. Never answer from guesses and never present a generic checklist as findings. If the job is bigger than your tool rounds, do the most important part and say what is left.\n\
+- Stay on what was asked: look only at the thing the user named (one repository, one file, one topic) and never widen to everything they own.\n\
 - Recommend only what you verified: each point names the file, repository or result it rests on. What you could not check is one short line, not advice.\n\
 - Do not end with a menu of options for the user to pick from: choose the sensible one and do it. Ask only when you are truly blocked, or when the request or the project's rules conflict.";
 
