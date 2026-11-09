@@ -22,7 +22,9 @@ ApplicationWindow {
     // One unsent draft per chat, so switching chats never mixes them up.
     property var drafts: ({})
     // The window is the sidebar's tone; the page is a raised card on top of it (see `pageCard`).
-    color: MeoTheme.surfaceContainerLow
+    // One step below the card in both modes, so the card reads as raised: surfaceContainerLow
+    // is nearly the card's own tone in light mode and lighter than the card in dark mode.
+    color: MeoTheme.isDarkMode ? MeoTheme.surfaceContainerLowest : MeoTheme.surfaceContainer
 
     readonly property var v: (core && core.view) || ({})
     readonly property var page: v.page || ({})
@@ -717,7 +719,7 @@ ApplicationWindow {
                 anchors.topMargin: pageHost.inset ? 8 : 0
                 anchors.rightMargin: pageHost.inset ? 8 : 0
                 anchors.bottomMargin: pageHost.inset ? 8 : 0
-                radius: pageHost.inset ? 18 : 0
+                radius: pageHost.inset ? 20 : 0
                 color: MeoTheme.background
                 border.width: pageHost.inset ? window.hairline : 0
                 border.color: MeoTheme.outlineVariant
