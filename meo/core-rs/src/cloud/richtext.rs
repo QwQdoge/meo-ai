@@ -70,8 +70,98 @@ fn task_list(body: &[&str]) -> Vec<Value> {
     body.iter().filter_map(|l| task(l)).take(20).collect()
 }
 
+/// Models sometimes write a fence in the middle of a sentence ("…the files.```meo-tasks [>] a [ ] b") or
+/// leave one open. This puts each fence on its own lines, splits an inline task list into its lines, closes
+/// an open task list, and drops a trailing fence with nothing in it, so the block parser sees what the model
+/// meant instead of drawing the raw backticks and an empty code card. Text inside fences is not touched.
+pub fn normalize_fences(text: &str) -> String {
+    if !text.contains("```") {
+        return text.to_owned();
+    }
+    let mut out: Vec<String> = Vec::new();
+    let mut open: Option<String> = None; // the info string of the fence we are inside
+    let mut open_at = 0usize; // index in `out` of the opening line
+    for raw in text.lines() {
+        let mut line = raw.to_owned();
+        if open.is_none() {
+            // A fence in the middle of a line starts a line of its own.
+            if let Some(at) = line.find("```") {
+                if at > 0 && !line[..at].trim().is_empty() {
+                    let (before, after) = line.split_at(at);
+                    out.push(before.trim_end().to_owned());
+                    line = after.to_owned();
+                }
+            }
+            if let Some(rest) = line.trim_start().strip_prefix("```") {
+                let rest = rest.trim();
+                let (info, tail) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
+                let tail = tail.trim();
+                if info == "meo-tasks" && !tail.is_empty() {
+                    // "```meo-tasks [x] a [>] b ```": the list on one line, maybe closed there too.
+                    let (body, closed) = match tail.strip_suffix("```") {
+                        Some(b) => (b.trim(), true),
+                        None => (tail, false),
+                    };
+                    out.push("```meo-tasks".to_owned());
+                    let mut current = String::new();
+                    let chars: Vec<char> = body.chars().collect();
+                    let mut k = 0;
+                    while k < chars.len() {
+                        let marker = k + 2 < chars.len()
+                            && chars[k] == '['
+                            && chars[k + 2] == ']'
+                            && matches!(chars[k + 1], 'x' | 'X' | '>' | '~' | ' ' | '-' | '/')
+                            && (k == 0 || chars[k - 1].is_whitespace());
+                        if marker && !current.trim().is_empty() {
+                            out.push(current.trim().to_owned());
+                            current.clear();
+                        }
+                        current.push(chars[k]);
+                        k += 1;
+                    }
+                    if !current.trim().is_empty() {
+                        out.push(current.trim().to_owned());
+                    }
+                    if closed {
+                        out.push("```".to_owned());
+                    } else {
+                        open = Some("meo-tasks".to_owned());
+                        open_at = out.len() - 1;
+                    }
+                    continue;
+                }
+                if tail.ends_with("```") && !tail.is_empty() {
+                    // A whole fence on one line ("```meo-tool {…}```"): left as it is.
+                    out.push(line);
+                    continue;
+                }
+                open = Some(info.to_owned());
+                open_at = out.len();
+                out.push(line);
+                continue;
+            }
+            out.push(line);
+        } else {
+            if line.trim_start().starts_with("```") {
+                open = None;
+            }
+            out.push(line);
+        }
+    }
+    if let Some(info) = open {
+        if info == "meo-tasks" {
+            out.push("```".to_owned());
+        } else if out[open_at + 1..].iter().all(|l| l.trim().is_empty()) {
+            // An open fence with nothing in it: no empty code card.
+            out.truncate(open_at);
+        }
+    }
+    out.join("\n")
+}
+
 /// The task list a Work answer ends with (its last `meo-tasks` block), if it has one.
 pub fn tasks(text: &str) -> Option<Vec<Value>> {
+    let text = normalize_fences(text);
     let lines: Vec<&str> = text.lines().collect();
     let mut found = None;
     let mut i = 0;
@@ -136,6 +226,7 @@ pub fn blocks(text: &str) -> Vec<Value> {
 }
 
 pub fn blocks_with(text: &str, native: bool) -> Vec<Value> {
+    let text = normalize_fences(text);
     let lines: Vec<&str> = text.lines().collect();
     let mut out = Vec::new();
     let mut file_index = 0usize;
@@ -376,5 +467,31 @@ mod file_tests {
         assert!(blocks("```file:a.md\nhalf")
             .iter()
             .all(|x| x["type"] != "file"));
+    }
+
+    #[test]
+    fn a_task_list_fence_written_inside_a_sentence_is_still_a_task_list() {
+        // The shape from a real chat: prose, then the fence on the same line, never closed.
+        let text = "已定位 meo-api。我会查看目录。```meo-tasks [x] 查找仓库 [>] 检查代码与文档 [ ] 整理建议";
+        let list = tasks(text).expect("the list is found");
+        assert_eq!(list.len(), 3);
+        assert_eq!(list[0]["state"], "done");
+        assert_eq!(list[1]["state"], "doing");
+        let drawn = blocks_with(text, false);
+        let all = drawn.iter().map(|b| b["text"].as_str().unwrap_or("")).collect::<Vec<_>>().join("\n");
+        assert!(all.contains("已定位 meo-api。我会查看目录。"), "{all}");
+        assert!(!all.contains("```"), "no raw backticks are shown: {all}");
+        assert!(drawn.iter().all(|b| b["type"] != "code"), "no code card");
+    }
+
+    #[test]
+    fn an_open_fence_with_nothing_in_it_is_not_drawn_but_real_code_is_kept() {
+        let empty = blocks_with("Done.\n```\n", false);
+        assert!(empty.iter().all(|b| !b["text"].as_str().unwrap_or("").contains("```")), "{empty:?}");
+        let code = "Look:\n```rust\nfn main() {}\n```\nok";
+        assert_eq!(normalize_fences(code), code, "ordinary fenced code is untouched");
+        let streaming = normalize_fences("Look:\n```rust\nfn main() {");
+        assert!(streaming.contains("fn main() {"), "a code block still being written stays");
+        assert_eq!(normalize_fences("no fences here"), "no fences here");
     }
 }
