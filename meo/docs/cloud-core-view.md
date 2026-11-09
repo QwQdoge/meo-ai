@@ -52,7 +52,7 @@ prompts rendered as chips; activating one dispatches its `send` action.
 An assistant message may carry `steps[{id,title,detail,status(running/done/error),items[{title,url}]}]`,
 `stepsLabel` ("Working…" while it runs, then one line of what was done, e.g. "Used GitHub ×4 · Searched
 the web") and `stepsOpen`. The plumbing steps (`router`, `model`, `answer`) are never listed; an answer
-that only ran those carries no `steps` at all (clients then show only their live status). Clients render a collapsible list under
+that only ran those carries no `steps` at all (clients then show only their live status). The label never repeats step titles: the plan is counted ("3 planned steps, 1 failed"), then what was used ("Used GitHub ×4 · Searched the web"). When one turn has several assistant messages, each step is listed once, on the message where it first appeared. Clients render a collapsible list under
 that label, expanded while `stepsOpen` is true (the core collapses it when the answer is done)
 unless the user toggled it. Steps listed today: web search (with result links), image, tools of connected apps, checks.
 

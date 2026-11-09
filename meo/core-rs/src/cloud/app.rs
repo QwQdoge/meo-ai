@@ -6710,19 +6710,45 @@ fn visible_steps(steps: &[Value]) -> Vec<Value> {
     steps.iter().filter(|x| !is_internal_step(x)).cloned().collect()
 }
 
-/// One readable line for the steps of a finished answer, instead of "7 steps": what was used, with
-/// repeats counted ("Used GitHub ×4 · Searched the web").
+/// A step of the plan the model wrote for a task (`s1`, `s2`, ...): its title is a whole sentence.
+fn is_plan_step(step: &Value) -> bool {
+    step["id"]
+        .as_str()
+        .and_then(|id| id.strip_prefix('s'))
+        .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
+}
+
+fn clip(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        text.to_owned()
+    } else {
+        format!("{}…", text.chars().take(max).collect::<String>().trim_end())
+    }
+}
+
+/// One short line for the steps of a finished answer, instead of "7 steps" or a run of long titles:
+/// the plan (how many steps, how many failed), then what was used, repeats counted
+/// ("3 planned steps · Used GitHub ×4 · Searched the web").
 fn steps_summary(steps: &[Value]) -> String {
+    let plan = steps.iter().filter(|x| is_plan_step(x)).count();
+    let failed = steps.iter().filter(|x| is_plan_step(x) && x["status"] == "error").count();
     let mut parts: Vec<(String, usize)> = Vec::new();
-    for step in steps {
+    if plan > 0 {
+        let mut text = if plan == 1 { "1 planned step".to_owned() } else { format!("{plan} planned steps") };
+        if failed > 0 {
+            text.push_str(&format!(", {failed} failed"));
+        }
+        parts.push((text, 1));
+    }
+    for step in steps.iter().filter(|x| !is_plan_step(x)) {
         let title = step["title"].as_str().unwrap_or_default();
         let part = match step["id"].as_str() {
             Some("search") => "Searched the web".to_owned(),
             Some("image") => "Made an image".to_owned(),
             // "App / tool": group by the app.
             _ => match title.split_once(" / ") {
-                Some((app, _)) => format!("Used {app}"),
-                None => title.to_owned(),
+                Some((app, _)) => format!("Used {}", clip(app, 24)),
+                None => clip(title, 28),
             },
         };
         match parts.iter_mut().find(|(p, _)| *p == part) {
@@ -8047,6 +8073,32 @@ fn conversation_page(s: &State) -> Value {
                 target["stepsLabel"] = json!(label);
                 target["stepsOpen"] = json!(running);
             }
+        }
+    }
+    // One turn can have several assistant messages (a tool round, then the answer), and each carries
+    // the steps so far: list every step once, on the message where it first appeared.
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for m in messages.iter_mut() {
+        if m["role"] == "user" {
+            seen.clear();
+            continue;
+        }
+        let Some(steps) = m["steps"].as_array().cloned() else { continue };
+        let fresh: Vec<Value> = steps
+            .into_iter()
+            .filter(|x| x["id"].as_str().is_none_or(|id| seen.insert(id.to_owned())))
+            .collect();
+        if fresh.is_empty() {
+            if let Some(o) = m.as_object_mut() {
+                o.remove("steps");
+                o.remove("stepsLabel");
+                o.remove("stepsOpen");
+            }
+        } else {
+            if m["stepsLabel"] != "Working…" {
+                m["stepsLabel"] = json!(steps_summary(&fresh));
+            }
+            m["steps"] = Value::Array(fresh);
         }
     }
     // An answer being generated on another device of the same account.
@@ -9944,7 +9996,7 @@ mod tests {
         let view = c.view();
         let messages = &view["page"]["messages"];
         assert!(messages[1]["steps"].is_null(), "an answer that only ran the plumbing lists no steps");
-        assert_eq!(messages[3]["stepsLabel"], "1. Search · Check");
+        assert_eq!(messages[3]["stepsLabel"], "1 planned step · Check");
         assert_eq!(messages[3]["steps"][1]["detail"], "91/100 · pass");
         assert_eq!(messages[3]["stepsOpen"], false);
         assert!(messages[0]["steps"].is_null(), "prompts carry no steps");
@@ -11395,6 +11447,27 @@ mod tests {
         assert_eq!(using_label(&c.state.lock().unwrap()), "loading models…");
         c.update(|s| s.loading_models = false);
         assert!(using_label(&c.state.lock().unwrap()).starts_with("no model yet"));
+    }
+
+    #[test]
+    fn the_steps_line_is_short_and_each_step_is_listed_once_per_turn() {
+        let c = signed_in_core();
+        let plan = |n: u32, status: &str| json!({ "id": format!("s{n}"), "title": format!("{n}. A very long sentence describing what this step of the plan is going to do in detail"), "detail": "", "status": status, "items": [] });
+        let mut first = message("a1", "assistant", "one");
+        first.steps = vec![plan(1, "done"), plan(2, "error"), json!({ "id": "search", "title": "Web search", "detail": "", "status": "done", "items": [] })];
+        let mut second = message("a2", "assistant", "two");
+        second.steps = vec![plan(1, "done"), plan(2, "error"), json!({ "id": "search", "title": "Web search", "detail": "", "status": "done", "items": [] }),
+            json!({ "id": "tool1", "title": "GitHub / get_file_contents", "detail": "", "status": "done", "items": [] })];
+        c.update(|s| {
+            s.active = Some("c1".into());
+            s.messages.insert("c1".into(), vec![message("u1", "user", "q"), first, second]);
+        });
+        let view = c.view();
+        let messages = &view["page"]["messages"];
+        assert_eq!(messages[1]["stepsLabel"], "2 planned steps, 1 failed · Searched the web");
+        assert_eq!(messages[1]["steps"].as_array().unwrap().len(), 3);
+        assert_eq!(messages[2]["steps"].as_array().unwrap().len(), 1, "the repeated steps are listed once");
+        assert_eq!(messages[2]["stepsLabel"], "Used GitHub");
     }
 
     #[test]

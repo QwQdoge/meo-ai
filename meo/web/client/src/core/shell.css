@@ -584,3 +584,9 @@
 }
 :root[data-reduce-motion="true"] .core-app .core-messages > .core-message:last-child,
 :root[data-reduce-motion="true"] .core-app .core-empty .core-suggest { animation: none; }
+
+/* The steps list is a boxed list of rows: no second set of numbers (the plan titles carry their own). */
+.core-app .core-bubble.assistant .core-steps > ol { list-style: none; padding: 0; margin: 6px 0 0; }
+.core-app .core-bubble.assistant .core-steps > ol > li { margin: 0; padding: 0 12px; }
+.core-app .core-steps li > details > summary > b { font-weight: 500; font-size: 13px; line-height: 1.4; overflow-wrap: anywhere; }
+.core-app .core-steps > summary { font-size: 13px; line-height: 1.4; color: rgb(var(--text-secondary)); }
