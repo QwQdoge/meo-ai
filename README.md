@@ -174,6 +174,7 @@ The maintained architecture and migration details are in:
 
 - [Ownership and migration boundary](docs/ownership.md)
 - [Product experience contract](docs/product-experience.md)
+- [Chat, Work and Code product model](meo/docs/chat-work-product-model.md)
 - [Native architecture](meo/docs/architecture.md)
 - [AgentService contract](meo/docs/agent-service-contract.md)
 - [SystemTool contract](meo/docs/system-tool-contract.md)
