@@ -3,7 +3,7 @@ import {
   Box, Brain, Check, ChevronDown, ChevronRight, CircleAlert, CircleCheck, CircleX, Cloud, Copy, FileText, Globe,
   Image as ImageIcon, Info, Lightbulb, Loader, Mail, OctagonAlert, Pencil, RefreshCw, Search, Send, Shield,
   SlidersHorizontal, Sparkles, TriangleAlert, Workflow, Briefcase, Folder, MessageSquare, Menu, MoreVertical, Monitor,
-  Cable, FilePen, Terminal, Wrench, Zap, ChevronUp, Flag, Circle, Ban,
+  Cable, FilePen, Terminal, Wrench, Zap, ChevronUp, Flag, Circle, Ban, Hourglass,
   PanelLeftClose, PanelLeftOpen, Paperclip, Plus, Puzzle, Settings, ArrowUp, ArrowDown, Square, X, type LucideIcon,
 } from "lucide-react";
 
@@ -18,7 +18,7 @@ const MAP: Record<string, LucideIcon> = {
   add: Plus, menu: Menu, more: MoreVertical, attach: Paperclip, arrow_up: ArrowUp, arrow_down: ArrowDown, stop: Square, close: X, device: Monitor,
   cable: Cable, edit_document: FilePen, terminal: Terminal, build: Wrench, bolt: Zap, expand_less: ChevronUp,
   collapse: PanelLeftClose, expand: PanelLeftOpen, chevron_right: ChevronRight, progress_activity: Loader,
-  flag: Flag, radio_button_unchecked: Circle, block: Ban,
+  flag: Flag, radio_button_unchecked: Circle, block: Ban, hourglass_empty: Hourglass,
 };
 
 export function hasIcon(name: string): boolean {

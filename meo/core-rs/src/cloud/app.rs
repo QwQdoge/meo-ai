@@ -841,6 +841,10 @@ impl AppCore {
                     if let Some((_, steps)) = s.activity.as_mut() {
                         for x in steps.iter_mut().filter(|x| x["status"] == "running") {
                             x["status"] = json!(if x["id"] == "answer" { "done" } else { "error" });
+                            // Not a failure: say what happened so the row does not read as an error.
+                            if x["id"] != "answer" && x["detail"].as_str().is_none_or(str::is_empty) {
+                                x["detail"] = json!("Stopped before it finished.");
+                            }
                         }
                     }
                 });
@@ -7215,6 +7219,7 @@ impl AppCore {
                 "copy": "Copy", "copied": "Copied", "dismiss": "Dismiss", "more": "More",
                 "send": "Send", "stop": "Stop", "offline": "Offline — showing saved data",
                 "jump": "Jump to the latest message", "thinking": "Thinking",
+                "waiting": "Waiting for the model",
             },
             "auth": {
                 "state": s.auth,

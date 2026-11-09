@@ -964,7 +964,7 @@ const STEP_KINDS: [RegExp, string, string][] = [
   [/tool\d+/, "build", "Using tools"],
 ];
 function stepKind(step?: Spec): { icon: string; live: string } {
-  if (!step) return { icon: "psychology", live: "Thinking" };
+  if (!step) return { icon: "hourglass_empty", live: "Waiting for the model" };
   const l = `${step.id ?? ""} ${step.title ?? ""}`.toLowerCase();
   for (const [re, icon, live] of STEP_KINDS) if (re.test(l)) return { icon, live: icon === "cable" && step.title ? `Connecting · ${step.title}` : live };
   return { icon: "bolt", live: step.title || "Working" };
@@ -986,7 +986,7 @@ function LiveStatus({ icon, label }: { icon: string; label: string }) {
     <span className="core-live" role="status">
       <span className="core-live-icon"><Icon name={icon} size={14} /></span>
       <span className="core-live-text">{label}…</span>
-      {sec >= 5 && <span className="core-live-time">{time}</span>}
+      {sec >= 5 && <span className="core-live-time" aria-hidden="true">{time}</span>}
     </span>
   );
 }
@@ -1031,10 +1031,7 @@ const MessageView = React.memo(
                     </ol>
                   </details>
                 )}
-                {m.streaming && !m.steps && !m.text && !(m.blocks ?? []).length && <LiveStatus icon="psychology" label="Thinking" />}
-                {m.streaming && !m.text && !(m.blocks ?? []).length && (
-                  <span className="core-typing" role="status" aria-label={strings.thinking ?? "Thinking"}><i /><i /><i /></span>
-                )}
+                {m.streaming && !m.steps && !m.text && !(m.blocks ?? []).length && <LiveStatus icon="hourglass_empty" label={strings.waiting ?? "Waiting for the model"} />}
                 <Blocks
                   blocks={withCaret(m.blocks?.length ? m.blocks : [{ type: "markdown", text: m.text }], !!m.streaming)}
                   streaming={!!m.streaming}
