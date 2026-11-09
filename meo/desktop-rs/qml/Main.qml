@@ -7,6 +7,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Dialogs
 import QtQuick.Shapes
+import Qt.labs.platform as Platform
 import MeoUI 1.0
 
 ApplicationWindow {
@@ -39,12 +40,91 @@ ApplicationWindow {
         }
     }
 
-    // Standard desktop shortcuts (Qt maps them per platform: Ctrl on Linux/Windows, Cmd on macOS).
-    Shortcut { sequences: [StandardKey.New]; onActivated: window.act(((window.v.sidebar || {}).newChat || {}).action) }
-    Shortcut { sequences: [StandardKey.Preferences, "Ctrl+,"]; onActivated: window.act(((window.v.sidebar || {}).footer || [])[0] ? window.v.sidebar.footer[0].action : null) }
-    Shortcut { sequence: "Ctrl+B"; onActivated: window.act((window.v.sidebar || {}).toggle) }
-    Shortcut { sequences: [StandardKey.Find]; onActivated: searchField.forceActiveFocus() }
-    Shortcut { sequences: [StandardKey.Quit]; onActivated: Qt.quit() }
+    // The commands behind the menu bar and their shortcuts (Qt maps StandardKey per platform: Ctrl
+    // on Linux/Windows, Cmd on macOS). Each shortcut is declared once, on its menu item.
+    readonly property var appWindow: window
+    readonly property bool nativeMenuBar: Qt.platform.os === "osx"
+    function cmdNewChat() { window.act(((window.v.sidebar || {}).newChat || {}).action) }
+    function cmdSettings() { const f = ((window.v.sidebar || {}).footer || [])[0]; if (f) window.act(f.action) }
+    function cmdToggleSidebar() { window.act((window.v.sidebar || {}).toggle) }
+    function cmdFind() { searchField.forceActiveFocus() }
+    // Cut / copy / paste / select all go to whatever text field has the focus.
+    function cmdEdit(name) {
+        const f = window.activeFocusItem
+        if (f && typeof f[name] === "function") f[name]()
+    }
+    function cmdFullScreen() { window.visibility = window.visibility === Window.FullScreen ? Window.Windowed : Window.FullScreen }
+    function cmdZoom() { window.visibility === Window.Maximized ? window.showNormal() : window.showMaximized() }
+
+    // macOS: the system menu bar at the top of the screen.
+    Loader {
+        active: window.nativeMenuBar
+        sourceComponent: Component {
+            Platform.MenuBar {
+                window: window.appWindow
+                Platform.Menu {
+                    title: qsTr("File")
+                    Platform.MenuItem { text: qsTr("New Chat"); shortcut: StandardKey.New; onTriggered: window.cmdNewChat() }
+                    Platform.MenuSeparator {}
+                    Platform.MenuItem { text: qsTr("Settings…"); shortcut: StandardKey.Preferences; role: Platform.MenuItem.PreferencesRole; onTriggered: window.cmdSettings() }
+                    Platform.MenuItem { text: qsTr("Close Window"); shortcut: StandardKey.Close; onTriggered: window.close() }
+                    Platform.MenuItem { text: qsTr("Quit Meo AI"); shortcut: StandardKey.Quit; role: Platform.MenuItem.QuitRole; onTriggered: Qt.quit() }
+                }
+                Platform.Menu {
+                    title: qsTr("Edit")
+                    Platform.MenuItem { text: qsTr("Cut"); shortcut: StandardKey.Cut; onTriggered: window.cmdEdit("cut") }
+                    Platform.MenuItem { text: qsTr("Copy"); shortcut: StandardKey.Copy; onTriggered: window.cmdEdit("copy") }
+                    Platform.MenuItem { text: qsTr("Paste"); shortcut: StandardKey.Paste; onTriggered: window.cmdEdit("paste") }
+                    Platform.MenuItem { text: qsTr("Select All"); shortcut: StandardKey.SelectAll; onTriggered: window.cmdEdit("selectAll") }
+                    Platform.MenuSeparator {}
+                    Platform.MenuItem { text: qsTr("Find Chats"); shortcut: StandardKey.Find; onTriggered: window.cmdFind() }
+                }
+                Platform.Menu {
+                    title: qsTr("View")
+                    Platform.MenuItem { text: qsTr("Toggle Sidebar"); shortcut: "Ctrl+B"; onTriggered: window.cmdToggleSidebar() }
+                    Platform.MenuItem { text: qsTr("Enter Full Screen"); shortcut: StandardKey.FullScreen; onTriggered: window.cmdFullScreen() }
+                }
+                Platform.Menu {
+                    title: qsTr("Window")
+                    Platform.MenuItem { text: qsTr("Minimize"); shortcut: "Ctrl+M"; onTriggered: window.showMinimized() }
+                    Platform.MenuItem { text: qsTr("Zoom"); onTriggered: window.cmdZoom() }
+                }
+            }
+        }
+    }
+
+    // Linux (KDE) and Windows: the menu bar inside the window.
+    Loader {
+        id: inWindowMenuBar
+        active: !window.nativeMenuBar
+        sourceComponent: Component {
+            MenuBar {
+                Menu {
+                    title: qsTr("&File")
+                    Action { text: qsTr("&New Chat"); shortcut: StandardKey.New; onTriggered: window.cmdNewChat() }
+                    MenuSeparator {}
+                    Action { text: qsTr("&Settings…"); shortcut: StandardKey.Preferences; onTriggered: window.cmdSettings() }
+                    MenuSeparator {}
+                    Action { text: qsTr("&Quit"); shortcut: StandardKey.Quit; onTriggered: Qt.quit() }
+                }
+                Menu {
+                    title: qsTr("&Edit")
+                    Action { text: qsTr("Cu&t"); shortcut: StandardKey.Cut; onTriggered: window.cmdEdit("cut") }
+                    Action { text: qsTr("&Copy"); shortcut: StandardKey.Copy; onTriggered: window.cmdEdit("copy") }
+                    Action { text: qsTr("&Paste"); shortcut: StandardKey.Paste; onTriggered: window.cmdEdit("paste") }
+                    Action { text: qsTr("Select &All"); shortcut: StandardKey.SelectAll; onTriggered: window.cmdEdit("selectAll") }
+                    MenuSeparator {}
+                    Action { text: qsTr("&Find Chats"); shortcut: StandardKey.Find; onTriggered: window.cmdFind() }
+                }
+                Menu {
+                    title: qsTr("&View")
+                    Action { text: qsTr("Toggle &Sidebar"); shortcut: "Ctrl+B"; onTriggered: window.cmdToggleSidebar() }
+                    Action { text: qsTr("&Full Screen"); shortcut: StandardKey.FullScreen; onTriggered: window.cmdFullScreen() }
+                }
+            }
+        }
+    }
+    menuBar: inWindowMenuBar.item
 
     // Craft tokens. A hairline is one device pixel whatever the screen scale (0.5 logical px at 2x),
     // and motion has five lengths only; MeoTheme drops them all to zero for reduced motion.
