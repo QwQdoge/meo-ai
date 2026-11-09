@@ -648,17 +648,27 @@ function CodeBlock({ node, children, label, done }: { node?: any; children?: Rea
 }
 
 function CopyButton({ text, label, done: doneLabel }: { text: string; label: string; done: string }) {
-  const [done, setDone] = useState(false);
+  const [state, setState] = useState<"" | "ok" | "fail">("");
+  const flash = (v: "ok" | "fail") => { setState(v); setTimeout(() => setState(""), 1500); };
+  // Older browsers and non-secure pages have no async clipboard: select the text and use the legacy command.
+  const legacy = () => {
+    const ta = document.createElement("textarea");
+    ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+    document.body.appendChild(ta); ta.select();
+    let ok = false;
+    try { ok = document.execCommand("copy"); } catch { /* reported below */ }
+    ta.remove();
+    flash(ok ? "ok" : "fail");
+  };
   return (
     <button
+      aria-live="polite"
       onClick={() => {
-        void navigator.clipboard?.writeText(text).then(() => {
-          setDone(true);
-          setTimeout(() => setDone(false), 1200);
-        });
+        if (!navigator.clipboard) return legacy();
+        navigator.clipboard.writeText(text).then(() => flash("ok"), legacy);
       }}
     >
-      {done ? doneLabel : label}
+      {state === "ok" ? doneLabel : state === "fail" ? "Copy failed" : label}
     </button>
   );
 }
@@ -975,7 +985,7 @@ const currentStep = (steps: Spec[] = []): Spec | undefined =>
 
 /** What the assistant is doing right now: a breathing icon, the sentence with a light sweeping
  *  over it, and the elapsed time once it is worth showing. */
-function LiveStatus({ icon, label }: { icon: string; label: string }) {
+function LiveStatus({ icon, label, longLabel }: { icon: string; label: string; longLabel?: string }) {
   const [sec, setSec] = useState(0);
   useEffect(() => {
     const t = setInterval(() => setSec((v) => v + 1), 1000);
@@ -985,7 +995,7 @@ function LiveStatus({ icon, label }: { icon: string; label: string }) {
   return (
     <span className="core-live" role="status">
       <span className="core-live-icon"><Icon name={icon} size={14} /></span>
-      <span className="core-live-text">{label}…</span>
+      <span className="core-live-text">{sec >= 20 && longLabel ? longLabel : label}…</span>
       {sec >= 5 && <span className="core-live-time" aria-hidden="true">{time}</span>}
     </span>
   );
@@ -1031,7 +1041,7 @@ const MessageView = React.memo(
                     </ol>
                   </details>
                 )}
-                {m.streaming && !m.steps && !m.text && !(m.blocks ?? []).length && <LiveStatus icon="hourglass_empty" label={strings.waiting ?? "Waiting for the model"} />}
+                {m.streaming && !m.steps && !m.text && !(m.blocks ?? []).length && <LiveStatus icon="hourglass_empty" label={strings.waiting ?? "Waiting for the model"} longLabel="Still waiting for the model, no reply yet" />}
                 <Blocks
                   blocks={withCaret(m.blocks?.length ? m.blocks : [{ type: "markdown", text: m.text }], !!m.streaming)}
                   streaming={!!m.streaming}
