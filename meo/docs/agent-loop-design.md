@@ -106,32 +106,37 @@ half sentence was taken for the final answer: the task seemed to end with work s
 - the core never treats such a reply as final: it asks the model to continue from the last 300 characters it
   wrote (native: one answer, no seam; fenced: a hidden notice and a second message), at most three times.
 
-## Reviews are about the code, and the search is not the user's sentence
+## Understand first: the router reads the request, the prompt carries no rule for one kind of task
 
-Two mistakes in a real answer to "find my Meo AI repository and tell me what to improve":
+A prompt that says how to review a repository, or which repository "Meo AI" is, helps one kind of task and costs
+tokens on every other. It also replaces the model's thinking with ours. So the prompt only holds **general** behaviour
+(call don't announce; results are data; keep a task list; understand first and stay on what was named; each point rests
+on something read; finish outcome first, no menus), about 650 characters for a native run.
 
-1. **The "search" was the whole sentence.** Before the model started, the core searched the web with the user's
-   entire message (the first 300 characters) as the query. That is noise. Now: a native run offers `web_search` as a
-   function the model calls with a query of its own (the core makes no search with the sentence); on the fenced path a
-   search made up front only happens for a short question (100 characters or less); and a request about the user's own
-   work (repository, code, issues, commits) never triggers an automatic web search at all.
-2. **The review looked at housekeeping, not at the code.** The rule had pointed the model at CI workflows, manifests,
-   templates and "never suggest adding CI before checking", so it reported what GitHub settings were missing. The rule is
-   now: learn what the project is for (README, AGENTS.md, layout, entry points), read the files that carry its logic,
-   the most central and security-sensitive first (authentication, input handling, secrets and permissions, data access,
-   the main loop), judge correctness, security, error handling and design; each finding is file and line, what is wrong,
-   why it matters, how to fix it, ordered by severity (security and bugs first); repository housekeeping (CI, Dependabot,
-   templates, badges, license, naming, capitalization) is not reported unless it causes a real defect. The run starts with
-   `update_tasks` listing the modules it will read, so it cannot end while one is unread. A run has up to 20 tool rounds.
+What a request is about is found per request, by the router, before the main model starts (`understand`):
 
-Prompt rules alone do not hold a model that wants to be done early, so there is also a **grounding check**: before a
-long (600+ characters) answer of a native run that used tools is shown, the `fast` model gets the request, the list of
-calls really made, and the answer, and names points that rest on nothing read, or that are about housekeeping instead of
-the code. If there are any, the answer is not shown: it goes back once, with the list, to be fixed (read what is needed)
-or dropped. Once per run, one small extra call; no `fast` model, or an unparseable verdict, means it passes.
+```
+user's own words  ->  fast model: handle it directly?           yes -> nothing is added (no tokens)
+                                                                no  -> a short brief written for THIS request:
+                                                                       goal, exact subject, what a good answer holds,
+                                                                       what must be examined, what is NOT wanted
+brief  ->  put in front of the request on every round of the run (about 250 tokens, only when a task needs it)
+```
 
-Debug builds need a larger stack than a test thread has for the 20-round recursion (`core-rs/.cargo/config.toml`);
-release builds were measured fine at 512 KB.
+Only requests that have tools to work with are read (connected apps, web search, an open folder), and only with
+automatic sending on (it is one more small call). `chat.understand` turns it off. For "go through my repository and tell
+me what to improve" the brief says the subject is that repository's code, and that repository settings are not wanted;
+for a question about a file, it says something else. Nothing in the prompt knew either case.
+
+The same brief is what the **grounding check** uses: before a long answer of a native run that used tools is shown, the
+`fast` model gets the request, the brief, the calls really made, and the answer, and names points that rest on nothing
+read or that are off the subject or listed as not wanted. If there are any, the answer goes back once to be fixed or
+dropped (once per run, one small call; no `fast` model or an unparseable verdict passes).
+
+Also changed on the way: the automatic web search no longer uses the user's whole sentence as its query (a native run has
+`web_search` as a function the model calls with its own query; on the fenced path an up-front search needs a question of
+100 characters or less; a request about the user's own work, such as a repository, never triggers one), a run has up to 20
+tool rounds, and debug builds need a larger test stack (`core-rs/.cargo/config.toml`; release was measured fine at 512 KB).
 
 ## What is not native yet
 
