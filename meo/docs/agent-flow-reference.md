@@ -158,6 +158,13 @@ DeepSeek Harness, OpenAI and Anthropic harnesses), not on text:
   / `invalid_request` at prepare; the core remembers that for the credential and uses the fenced
   protocol below. An open folder (desktop Work) also still uses the fenced protocol for now.
 
+- **Task list and rounds** (ported from DeepSeek Harness `todo` + `goal-round-driver`): next to the real tools the
+  model gets `update_tasks` (the whole list each time, `todo`/`doing`/`done`). The core keeps it, shows it in
+  Details, and does not count it as a tool round (its own cap: 12 updates). If the model ends a reply with no
+  calls while the list still has open items, the core does not finish: it sends one `<goal_round>` prompt (the
+  objective, the open tasks, what the model just said) and the run goes on, at most twice per message. No list,
+  or every item `done`, means the reply is final.
+
 Everything below describes that fenced protocol only.
 
 ## When a tool task is over in the fenced protocol (core `turn`)
