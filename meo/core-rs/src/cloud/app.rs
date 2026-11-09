@@ -698,7 +698,7 @@ impl AppCore {
         // A 401 from the API is never shown raw ("Meo API returned HTTP 401: unauthenticated"):
         // the session is missing or was refused, and signing in again is the way out.
         if text.contains("returned HTTP 401") {
-            text = "You are not signed in, or your session was refused. Sign out and sign in again.".into();
+            text = "Your Meo Account session ended. Sign in again.".into();
         }
         self.update(|s| s.notice = Some((kind.to_owned(), text)));
     }
@@ -1221,7 +1221,15 @@ impl AppCore {
         let result = match f(self.api.clone(), token).await {
             Err(e) if e.is_unauthorized() => {
                 let token = self.token(true).await.ok_or_else(unauthorized)?;
-                f(self.api.clone(), token).await
+                let second = f(self.api.clone(), token).await;
+                // A freshly refreshed token that the API still refuses means the login session
+                // behind it is gone (its `sid` row expired or was revoked, while the refresh token
+                // lives on). Staying half signed in only shows errors, so sign in again.
+                if matches!(&second, Err(e) if e.is_unauthorized()) {
+                    self.sign_out();
+                    self.notice("info", "Your Meo Account session ended. Sign in again.");
+                }
+                second
             }
             other => other,
         };
@@ -11137,7 +11145,7 @@ mod tests {
         c.notice("error", ApiError::Status { status: 401, code: "unauthenticated".into() }.to_string());
         let text = c.view()["notice"]["text"].as_str().unwrap().to_owned();
         assert!(!text.contains("HTTP 401"), "{text}");
-        assert!(text.contains("sign in"), "{text}");
+        assert!(text.contains("Sign in again"), "{text}");
     }
 
     #[test]
