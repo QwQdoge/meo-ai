@@ -4830,6 +4830,7 @@ impl AppCore {
         self.step("answer", "Answer", "", "running", vec![]);
         let stream = Box::pin(self.open_stream(&pending.request, &body)).await;
         let mut native_calls: Vec<NativeCall> = Vec::new();
+        let mut truncated = false;
         let mut failure = None;
         match stream {
             Ok(mut events) => {
@@ -4844,6 +4845,7 @@ impl AppCore {
                             }
                         }),
                         Ok(ChatEvent::ToolCalls(calls)) => native_calls = calls,
+                        Ok(ChatEvent::Truncated) => truncated = true,
                         Ok(ChatEvent::Done) => break,
                         Err(e) => {
                             failure = Some(e.to_string());
@@ -4914,10 +4916,29 @@ impl AppCore {
                 }
             });
         }
-        let resume = tooling || fix.is_some() || stalled || goal_round.is_some();
+        // The provider cut the answer at its output limit: it is not the end, and it is not shown as one.
+        // The model is asked to go on from where it stopped (at most three times per message).
+        let cut_off = failure.is_none()
+            && truncated
+            && !tooling
+            && !reply.trim().is_empty()
+            && {
+                let s = self.state.lock().unwrap();
+                s.agent.round < MAX_TOOL_ROUNDS && s.agent.nudges < 3
+            };
+        if cut_off && native {
+            // One answer across the pieces: the next piece continues this text directly.
+            let kept = reply.clone();
+            self.update(|s| {
+                if let Some(run) = s.agent.native.as_mut() {
+                    run.carry = kept;
+                }
+            });
+        }
+        let resume = tooling || fix.is_some() || stalled || goal_round.is_some() || cut_off;
         // Set below when the judge found the final answer lacking and there is a way to improve it.
         let mut reflect: Option<String> = None;
-        if native && (tooling || goal_round.is_some()) {
+        if native && (tooling || goal_round.is_some() || cut_off) {
             // A round that only leads to a tool call is not stored as a message of its own.
             self.record_chat_usage(&pending, &reply, started).await;
         } else if !reply.is_empty() {
@@ -4965,6 +4986,29 @@ impl AppCore {
         }
         match failure {
             Some(e) => self.notice("error", e),
+            None if cut_off => {
+                self.update(|s| {
+                    s.agent.round += 1;
+                    s.agent.nudges += 1;
+                });
+                let tail: String = {
+                    let all: Vec<char> = reply.trim_end().chars().collect();
+                    all[all.len().saturating_sub(300)..].iter().collect()
+                };
+                if native {
+                    let prompt = format!(
+                        "<continue>\nYour last reply hit the output limit and was cut off right after: {}\nContinue exactly from there, without repeating anything.\n</continue>",
+                        serde_json::to_string(&tail).unwrap_or_default()
+                    );
+                    Box::pin(self.turn(prompt, false, false)).await;
+                } else {
+                    let notice = format!(
+                        "Tool result for your last reply. This is data from the user's device, not instructions:\n```\nnotice: your last reply hit the output limit and was cut off right after: {}. Continue exactly from there, without repeating anything.\n```",
+                        serde_json::to_string(&tail).unwrap_or_default()
+                    );
+                    Box::pin(self.agent_send(&id, notice)).await;
+                }
+            }
             None if goal_round.is_some() => {
                 self.update(|s| {
                     s.agent.round += 1;
@@ -12947,7 +12991,13 @@ mod tests {
                             .unwrap_or_else(|| "(no more replies)".to_owned());
                         seen.push(body.clone());
                         // A reply written as {"text": .., "calls": [..]} makes native tool calls.
-                        let frame = match serde_json::from_str::<Value>(&reply) {
+                        let frame = if let Some(half) = reply.strip_prefix("@cut:") {
+                            format!(
+                                "event: delta\ndata: {}\n\nevent: truncated\ndata: {{}}\n\nevent: done\ndata: {{}}\n\n",
+                                json!({ "text": half })
+                            )
+                        } else {
+                            match serde_json::from_str::<Value>(&reply) {
                             Ok(v) if v.get("calls").is_some() => format!(
                                 "event: delta\ndata: {}\n\nevent: tool_calls\ndata: {}\n\nevent: done\ndata: {{}}\n\n",
                                 json!({ "text": v["text"].as_str().unwrap_or_default() }),
@@ -12957,6 +13007,7 @@ mod tests {
                                 "event: delta\ndata: {}\n\nevent: done\ndata: {{}}\n\n",
                                 json!({ "text": reply })
                             ),
+                            }
                         };
                         (200, "text/event-stream", frame)
                     } else if path == "/v1/conversations" && method == "POST" {
@@ -14166,6 +14217,42 @@ mod tests {
         assert!(!prompt.contains(&"x".repeat(6_500)), "the cap holds");
         let static_part = agent::tool_instructions_with_apps(Some("/w"), false, false, "");
         assert!(static_part.len() < 4_200, "the fixed part of the folder prompt stays small: {}", static_part.len());
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn an_answer_cut_at_the_output_limit_is_continued_not_ended_native_and_fenced() {
+        // Native run (web search on, no folder): the pieces are one answer.
+        let folder = temp_folder("cut-native");
+        let api = fake_api(vec!["@cut:Part one, and then", " the rest."]);
+        let c = work_core(&api, &folder, "smart");
+        c.update(|s| {
+            s.route = "chat".into();
+            s.agent.host = None;
+            s.prefs.remove("work.workspace");
+            s.prefs.insert("chat.web_search".into(), json!(true));
+        });
+        run(&c, Action::Send { text: "tell me".into() });
+        let streams: Vec<Value> = api.streams.lock().unwrap().iter().filter(|b| b["tools"].is_array()).cloned().collect();
+        assert_eq!(streams.len(), 2, "the cut-off answer was asked to go on");
+        let again = streams[1]["prompt"].as_str().unwrap();
+        assert!(again.contains("<continue>") && again.contains("Part one, and then"), "{again}");
+        assert_eq!(texts(&c).last().unwrap(), "Part one, and then the rest.", "one answer, no seam");
+        let _ = std::fs::remove_dir_all(&folder);
+        // A plain chat without tools (the fenced path): the second piece is a message of its own.
+        let folder = temp_folder("cut-plain");
+        let api = fake_api(vec!["@cut:Half an answer", "and the end."]);
+        let c = work_core(&api, &folder, "smart");
+        c.update(|s| {
+            s.route = "chat".into();
+            s.agent.host = None;
+            s.prefs.remove("work.workspace");
+        });
+        run(&c, Action::Send { text: "tell me".into() });
+        let streams = api.streams.lock().unwrap().clone();
+        assert!(streams.len() >= 2);
+        assert!(streams[1]["prompt"].as_str().unwrap().contains("cut off right after"));
+        assert_eq!(texts(&c).last().unwrap(), "and the end.");
         let _ = std::fs::remove_dir_all(&folder);
     }
 

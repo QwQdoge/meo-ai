@@ -95,6 +95,17 @@ Why that saves tokens and rounds:
 - Native runs use a short guidance block (`NATIVE_GUIDANCE`) instead of format instructions, because the format
   is the provider's.
 
+## The output limit (a cause of "it stopped half way")
+
+`meo-api` used to send `max_tokens: 2048` for every chat. A reasoning model spends that same budget on its
+thinking, so an answer was cut mid-sentence, and because the core never looked at `finish_reason: "length"`, the
+half sentence was taken for the final answer: the task seemed to end with work still to do. Now:
+
+- the budget follows the thinking level (low 2,048; medium 6,144; high 12,288; max 16,384);
+- `meo-api` sends a `truncated` event (before `tool_calls` and `done`) when the provider stopped for length;
+- the core never treats such a reply as final: it asks the model to continue from the last 300 characters it
+  wrote (native: one answer, no seam; fenced: a hidden notice and a second message), at most three times.
+
 ## What is not native yet
 
 - An open folder (desktop Work) still uses the fenced protocol (its tools are local). Porting `read_file`,

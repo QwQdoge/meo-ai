@@ -99,6 +99,8 @@ pub enum ChatEvent {
     Delta(String),
     /// The calls the model ended its reply with; none = the model is done. Comes before `Done`.
     ToolCalls(Vec<NativeCall>),
+    /// The provider stopped the answer at its output limit: what came is not the whole answer.
+    Truncated,
     Done,
 }
 
@@ -569,7 +571,7 @@ impl MeoApi {
                 }
                 loop {
                     if let Some(item) = state.next_frame() {
-                        if !matches!(item, Ok(ChatEvent::Delta(_) | ChatEvent::ToolCalls(_))) {
+                        if !matches!(item, Ok(ChatEvent::Delta(_) | ChatEvent::ToolCalls(_) | ChatEvent::Truncated)) {
                             state.finished = true;
                         }
                         return Some((item, state));
@@ -1112,6 +1114,7 @@ impl SseState {
                             })
                             .collect(),
                     ))),
+                    "truncated" => Some(Ok(ChatEvent::Truncated)),
                     "done" => Some(Ok(ChatEvent::Done)),
                     "error" => Some(Err(ApiError::Stream(
                         payload["message"]
@@ -1207,6 +1210,14 @@ mod tests {
         assert!(matches!(e.next_frame(), Some(Err(ApiError::Stream(m))) if m == "boom"));
         let mut partial = sse("event: delta\ndata: {\"text\":\"x\"}\n");
         assert!(partial.next_frame().is_none());
+    }
+
+    #[test]
+    fn sse_truncated_comes_before_done() {
+        let mut s = sse("event: delta\ndata: {\"text\":\"half\"}\n\nevent: truncated\ndata: {}\n\nevent: done\ndata: {}\n\n");
+        assert_eq!(s.next_frame().unwrap().unwrap(), ChatEvent::Delta("half".into()));
+        assert_eq!(s.next_frame().unwrap().unwrap(), ChatEvent::Truncated);
+        assert_eq!(s.next_frame().unwrap().unwrap(), ChatEvent::Done);
     }
 
     #[test]
