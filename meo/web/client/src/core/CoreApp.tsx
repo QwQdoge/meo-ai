@@ -928,12 +928,18 @@ function TuneButton({ toolbar, act }: { toolbar: Spec[]; act: Act }) {
   );
 }
 
+/** The plan card changes in place (same number of blocks), so it is compared by content. */
+const planKey = (m: Spec) => {
+  const p = (m.blocks ?? []).find((b: Spec) => b.type === "plan");
+  return p ? JSON.stringify([p.goal, p.items, p.live]) : "";
+};
+
 /** Everything that shows in one message, compared without its identity: stored messages never change,
  *  so a streamed token re-renders only the message being streamed, not the whole chat. */
 const sameMessage = (a: Spec, b: Spec) =>
   a.id === b.id && a.role === b.role && a.text === b.text && !!a.streaming === !!b.streaming &&
   !!a.stepsOpen === !!b.stepsOpen && a.stepsLabel === b.stepsLabel &&
-  (a.blocks?.length ?? 0) === (b.blocks?.length ?? 0) && (a.images?.length ?? 0) === (b.images?.length ?? 0) &&
+  (a.blocks?.length ?? 0) === (b.blocks?.length ?? 0) && planKey(a) === planKey(b) && (a.images?.length ?? 0) === (b.images?.length ?? 0) &&
   (a.actions?.length ?? 0) === (b.actions?.length ?? 0) &&
   (a.steps ? JSON.stringify(a.steps) : "") === (b.steps ? JSON.stringify(b.steps) : "");
 
@@ -1000,7 +1006,9 @@ const MessageView = React.memo(
                       <Icon name="expand_more" size={14} className="core-steps-chev" />
                     </summary>
                     <ol>
-                      {m.steps.map((st: Spec) => (
+                      {m.steps.map((st: Spec) => st.kind === "note" ? (
+                        <li key={st.id} className="step-note"><p>{st.title}</p></li>
+                      ) : (
                         <li key={st.id} className={`step-${st.status}`}>
                           <details>
                             <summary>

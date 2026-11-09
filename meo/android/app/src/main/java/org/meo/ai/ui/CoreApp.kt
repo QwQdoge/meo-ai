@@ -1154,7 +1154,7 @@ private fun MessageBubble(message: JSONObject, strings: JSONObject, act: Act) {
                     else blocks.forEachIndexed { i, block ->
                         val cursor = if (streaming && i == blocks.lastIndex) " ▍" else ""
                         when (block.str("type")) {
-                            "callout" -> CalloutBlock(block)
+                            "callout", "plan" -> CalloutBlock(block)
                             "draft" -> DraftBlock(block, strings)
                             "math" -> MathBlock(block)
                             "plot" -> PlotBlock(block)

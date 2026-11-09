@@ -197,6 +197,51 @@ pub fn tasks_markdown(list: &[Value]) -> String {
     text
 }
 
+/// The plan card of a run: the goal the model set and its task list, drawn live at the top of the
+/// answer and updated in place (`live` while the run works). `{type: "plan", goal, items, live}`;
+/// `title` and `text` are the same card as a callout for renderers that do not draw plans yet.
+pub fn plan_block(goal: Option<&Value>, tasks: &[Value], live: bool) -> Option<Value> {
+    let goal = goal.filter(|g| g["objective"].as_str().is_some_and(|o| !o.is_empty()));
+    if goal.is_none() && tasks.is_empty() {
+        return None;
+    }
+    let done = tasks.iter().filter(|t| t["state"] == "done").count();
+    let title = match goal {
+        Some(g) => {
+            let mark = match g["status"].as_str() {
+                Some("done") => "✓ ",
+                Some("blocked") => "⚠ ",
+                _ => "",
+            };
+            format!("{mark}{}", g["objective"].as_str().unwrap_or_default())
+        }
+        None => format!("Tasks · {done}/{}", tasks.len()),
+    };
+    let mut text = String::new();
+    if let Some(g) = goal {
+        if let Some(when) = g["doneWhen"].as_str().filter(|x| !x.is_empty()) {
+            text.push_str(&format!("*Done when:* {when}\n"));
+        }
+        if let Some(note) = g["note"].as_str().filter(|x| !x.is_empty()) {
+            text.push_str(&format!("*Note:* {note}\n"));
+        }
+    }
+    for t in tasks {
+        let title = t["title"].as_str().unwrap_or_default();
+        text.push_str(&match t["state"].as_str() {
+            Some("done") => format!("\n- [x] {title}"),
+            Some("doing") => format!("\n- [ ] **{title}**"),
+            _ => format!("\n- [ ] {title}"),
+        });
+    }
+    Some(json!({
+        "type": "plan", "tasks": true, "live": live, "kind": "tip",
+        "goal": goal.cloned().unwrap_or(Value::Null),
+        "items": tasks, "done": done, "total": tasks.len(),
+        "title": title, "text": text.trim(),
+    }))
+}
+
 /// The files the assistant wrote: fenced blocks whose language line is `file:<name>` (closed ones only).
 pub fn files(text: &str) -> Vec<(String, String)> {
     let lines: Vec<&str> = text.lines().collect();

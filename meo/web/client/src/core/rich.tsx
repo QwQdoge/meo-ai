@@ -91,6 +91,47 @@ export function Callout({ block, components }: { block: Spec; components?: Recor
   );
 }
 
+/** The run's goal and task list, updated in place while it works (`live`), kept with the answer after. */
+export function PlanCard({ block }: { block: Spec }) {
+  const goal: Spec | null = block.goal ?? null;
+  const items: Spec[] = block.items ?? [];
+  const done = items.filter((t) => t.state === "done").length;
+  const status: string = goal?.status ?? (items.length && done === items.length ? "done" : "active");
+  const pct = items.length ? Math.round((done / items.length) * 100) : status === "done" ? 100 : 0;
+  return (
+    <section className={`core-plan ${status}${block.live ? " live" : ""}`} aria-live="polite">
+      <header>
+        <span className="core-plan-mark">
+          <Icon name={status === "done" ? "check_circle" : status === "blocked" ? "block" : "flag"} size={16} />
+        </span>
+        <span className="core-plan-goal">{goal?.objective ?? "Tasks"}</span>
+        {items.length > 0 && <span className="core-plan-count">{done}/{items.length}</span>}
+      </header>
+      {goal?.doneWhen && <p className="core-plan-when">{goal.doneWhen}</p>}
+      {items.length > 0 && (
+        <div className="core-plan-bar" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
+          <i style={{ width: `${pct}%` }} />
+        </div>
+      )}
+      {items.length > 0 && (
+        <ol>
+          {items.map((t, i) => (
+            <li key={i} className={`task-${t.state}`}>
+              <Icon
+                name={t.state === "done" ? "check_circle" : t.state === "doing" ? "progress_activity" : "radio_button_unchecked"}
+                size={15}
+                className={t.state === "doing" && block.live ? "core-spin" : undefined}
+              />
+              <span>{t.title}</span>
+            </li>
+          ))}
+        </ol>
+      )}
+      {goal?.note && <p className="core-plan-note">{goal.note}</p>}
+    </section>
+  );
+}
+
 /** A ready-to-use draft (email, message): variants as tabs, subject, body, copy. */
 export function DraftCard({ block, copy, copied }: { block: Spec; copy: string; copied: string }) {
   const variants: Spec[] = block.variants ?? [];
@@ -134,6 +175,7 @@ export function Blocks({ blocks, components, copy, copied, streaming, act }: { b
       {blocks.map((b, i) => {
         if (b.type === "callout") return <Callout key={i} block={b} components={components} />;
         if (b.type === "file" && act) return <FileCard key={i} block={b} act={act} />;
+        if (b.type === "plan") return <PlanCard key="plan" block={b} />;
         if (b.type === "draft") return <DraftCard key={i} block={b} copy={copy} copied={copied} />;
         const last = streaming && i === blocks.length - 1;
         return <Markdown key={i} text={b.text + (last ? " ▍" : "")} components={components} />;

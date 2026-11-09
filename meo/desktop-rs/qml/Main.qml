@@ -2837,7 +2837,7 @@ ApplicationWindow {
                                             width: blocksColumn.width
                                             readonly property var block: blocksColumn.blockList[index] || ({})
                                             readonly property bool streaming: !!messageItem.streaming && index === blocksColumn.blockList.length - 1
-                                            sourceComponent: block.type === "callout" ? calloutBlock : block.type === "draft" ? draftBlock : block.type === "plot" ? plotBlock : block.type === "chart" ? chartBlock : block.type === "math" ? mathBlock : markdownBlock
+                                            sourceComponent: block.type === "callout" || block.type === "plan" ? calloutBlock : block.type === "draft" ? draftBlock : block.type === "plot" ? plotBlock : block.type === "chart" ? chartBlock : block.type === "math" ? mathBlock : markdownBlock
                                         }
                                     }
                                 }

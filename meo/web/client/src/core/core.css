@@ -242,6 +242,27 @@
 .core-callout.warning, .core-callout.caution { border-inline-start-color: #d98324; }
 .core-callout.important { border-inline-start-color: #b03a8c; }
 .core-callout.tip { border-inline-start-color: #2f8f5b; }
+.core-plan { border: var(--hair) solid rgb(var(--border-light)); border-radius: 14px; padding: 10px 14px; margin: 4px 0 12px; background: rgb(var(--surface-primary)); }
+.core-plan header { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 14px; }
+.core-plan-mark { display: inline-flex; color: rgb(var(--accent-primary)); }
+.core-plan.done .core-plan-mark { color: #2f8f5b; }
+.core-plan.blocked .core-plan-mark { color: #d98324; }
+.core-plan-goal { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.core-plan-count { font-weight: 500; font-size: 12px; color: rgb(var(--text-secondary)); font-variant-numeric: tabular-nums; }
+.core-plan-when, .core-plan-note { margin: 4px 0 0 24px; font-size: 12.5px; color: rgb(var(--text-secondary)); }
+.core-plan-bar { height: 3px; border-radius: 2px; background: rgb(var(--surface-tertiary)); margin: 8px 0 6px; overflow: hidden; }
+.core-plan-bar i { display: block; height: 100%; background: rgb(var(--accent-primary)); transition: width .4s var(--ease, ease); }
+.core-plan.done .core-plan-bar i { background: #2f8f5b; }
+.core-plan ol { list-style: none; margin: 0; padding: 0; }
+.core-plan li { display: flex; align-items: flex-start; gap: 8px; padding: 3px 0; font-size: 13.5px; line-height: 1.45; transition: color .2s; }
+.core-plan li .core-icon { flex: none; margin-top: 2px; color: rgb(var(--text-secondary)); }
+.core-plan li.task-done { color: rgb(var(--text-secondary)); }
+.core-plan li.task-done .core-icon { color: #2f8f5b; }
+.core-plan li.task-doing { font-weight: 600; }
+.core-plan li.task-doing .core-icon { color: rgb(var(--accent-primary)); }
+.core-plan .core-spin { animation: core-spin 1.2s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .core-plan .core-spin { animation: none; } .core-plan-bar i { transition: none; } }
+.core-steps li.step-note p { margin: 4px 0; padding-inline-start: 22px; font-size: 13px; color: rgb(var(--text-secondary)); line-height: 1.45; }
 .core-draft { border: var(--hair) solid rgb(var(--border-light)); border-radius: 14px; margin: 10px 0; overflow: hidden; background: rgb(var(--surface-primary)); }
 .core-draft-title { padding: 8px 14px 0; font-size: 12px; color: rgb(var(--text-secondary)); }
 .core-draft-tabs { display: flex; gap: 14px; padding: 8px 14px; border-bottom: var(--hair) solid rgb(var(--border-light)); }

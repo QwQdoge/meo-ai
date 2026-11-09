@@ -41,9 +41,25 @@ you like me to carry out?" in English. Causes, all found in code:
 6. **Rounds.** Each round carries the request (`<task>`), the brief and the task list. The goal-round
    driver keeps going while tasks are open; a reply cut at the output limit is continued; a reply that
    announces a step without calling it is sent back (at most twice).
-7. **Answer.** One answer on screen per user message, with the steps folded above it and the task list
-   at its top. Formatting rules (headings only for long answers, bold sparingly, anything to copy in its
+7. **Answer.** One answer on screen per user message: the plan card at its top, the steps folded above
+   it, and the final answer, which is only what the last round (the one with no call) wrote. What a
+   round wrote before its calls is a step (`noteN`), never part of the answer; a run that used functions
+   and then said nothing is asked once for the final answer (`<final_answer>`). Formatting rules (headings only for long answers, bold sparingly, anything to copy in its
    own fenced block) are in the server's `markdownGuide`.
+
+## Goal and to-do
+
+The model chooses what helps; a short question needs neither.
+
+- `set_goal {objective, done_when, status: active|done|blocked, note}`: for a request with a clear end
+  state. While the goal is active the run does not end (the goal round sends it back with the goal).
+- `update_tasks {tasks: [{title, state: todo|doing|done}]}`: for work with several parts. Open tasks
+  keep the run going the same way. At High/Max the router's "must examine" list seeds it.
+- Both are kept on the device (no approval, no tool round), with a shared allowance of 12 updates.
+- They draw one `plan` block (`{type: "plan", goal, items, done, total, live}`) at the top of the answer,
+  updated in place while the run works. It is saved with the answer as the `plan` step (detail = JSON
+  `{goal, tasks}`) and drawn again from there on every device. Web draws a card with progress; desktop and
+  Android draw its `title` + `text` as a callout until they have their own card.
 
 ## Files and repositories
 
