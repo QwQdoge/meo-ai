@@ -694,7 +694,12 @@ impl AppCore {
     }
 
     fn notice(&self, kind: &str, text: impl Into<String>) {
-        let text = text.into();
+        let mut text = text.into();
+        // A 401 from the API is never shown raw ("Meo API returned HTTP 401: unauthenticated"):
+        // the session is missing or was refused, and signing in again is the way out.
+        if text.contains("returned HTTP 401") {
+            text = "You are not signed in, or your session was refused. Sign out and sign in again.".into();
+        }
         self.update(|s| s.notice = Some((kind.to_owned(), text)));
     }
 
@@ -11124,6 +11129,15 @@ mod tests {
         });
         let fresh = c.view()["page"].clone();
         assert!(fresh["id"].is_null() && fresh["composer"]["editLast"].is_null());
+    }
+
+    #[test]
+    fn an_unauthorized_api_error_becomes_a_plain_sign_in_notice() {
+        let c = signed_in_core();
+        c.notice("error", ApiError::Status { status: 401, code: "unauthenticated".into() }.to_string());
+        let text = c.view()["notice"]["text"].as_str().unwrap().to_owned();
+        assert!(!text.contains("HTTP 401"), "{text}");
+        assert!(text.contains("sign in"), "{text}");
     }
 
     #[test]
