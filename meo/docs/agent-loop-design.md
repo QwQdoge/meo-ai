@@ -106,6 +106,26 @@ half sentence was taken for the final answer: the task seemed to end with work s
 - the core never treats such a reply as final: it asks the model to continue from the last 300 characters it
   wrote (native: one answer, no seam; fenced: a hidden notice and a second message), at most three times.
 
+## Answers that must earn their claims
+
+Prompt rules alone do not hold a model that wants to be done early. A real answer to "review my repository" was
+three tool calls, a README summary, and ten generic recommendations (add CI, Dependabot, CONTRIBUTING) for things the
+repository already had, after the model wrote that it had not looked at the workflows. So there are two structural
+guards on top of the rules ("stay on what was asked", "investigate before you answer", "recommend only what you
+verified", the review checklist: start with `update_tasks` listing what to inspect, a finding names file and line,
+never suggest adding something before checking it is missing):
+
+- **The task list gates the end** (see above): a review that starts with a list of what to inspect cannot finish
+  while items are open.
+- **The grounding check.** Before a long (600+ characters) answer of a native run that used tools is shown, the `fast`
+  model gets the user's request, the list of calls that were really made, and the answer, and names the points that
+  rest on nothing read ("add CI" with no workflow listed, claims about files never opened). If there are any, the
+  answer is not shown: it goes back once, with that list, to be fixed (read what is needed) or dropped. Once per
+  run, one extra small model call; no model for the `fast` role, or an unparseable verdict, means it passes.
+
+Debug builds need a larger stack than a test thread has for the 12-round recursion (`core-rs/.cargo/config.toml`);
+release builds were measured fine at 512 KB.
+
 ## What is not native yet
 
 - An open folder (desktop Work) still uses the fenced protocol (its tools are local). Porting `read_file`,

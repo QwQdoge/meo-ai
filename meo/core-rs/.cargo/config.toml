@@ -1,0 +1,6 @@
+
+[env]
+# The tool loop recurses once per round (turn -> stream -> tool -> turn ...), up to 12 rounds. Release builds
+# need well under 512 KB for that; debug builds, whose async frames are far larger, need more than the 2 MB a
+# test thread gets. Measured: `cargo test --release` passes at 512 KB; debug needs a bigger stack.
+RUST_MIN_STACK = "33554432"
