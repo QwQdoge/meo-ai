@@ -13705,9 +13705,9 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let origin = format!("http://{}", listener.local_addr().unwrap());
         // "@legacy" makes the fake refuse native tools at prepare, like a provider without them.
-        let legacy = replies.iter().any(|r| *r == "@legacy");
+        let legacy = replies.contains(&"@legacy");
         // "@reject-native": the provider refuses a stream request that carries native tools.
-        let reject = replies.iter().any(|r| *r == "@reject-native");
+        let reject = replies.contains(&"@reject-native");
         let replies: Vec<String> = replies.into_iter().filter(|r| *r != "@legacy" && *r != "@reject-native").map(str::to_owned).collect();
         let streams = Arc::new(Mutex::new(Vec::<Value>::new()));
         let store = Arc::new(Mutex::new(seed));
