@@ -32,9 +32,10 @@ lists only what has a value.
 └────────────────────┴───────────────────────────────────────────┴──────────────┘
 ```
 
-- **Mode switch** (top of the sidebar, big segmented control): `Chat` = Claude, `Work` =
-  Claude Code. Memory is shared; chat is conversation-first, work is task-first with a
-  different workflow. Mode = route (`chat` vs `work`).
+- **Mode switch** (top of the sidebar, big segmented control): `Chat` = conversation-first,
+  `Work` = task-first. Memory is shared; Chat and Work have different execution scopes.
+  Work contains **General** and **Code** task profiles; Code is a profile inside Work, not a
+  third top-level mode or a separate Agent Runtime.
 - **Sidebar order**: mode switch → search → **New chat** (prominent) → Plugins (skills +
   connectors) → Projects as a tree → plain Chats (Chat mode only; Work has no plain level,
   everything is filed under a project/category). A button collapses it to an icon rail
@@ -43,9 +44,12 @@ lists only what has a value.
 - **Composer**: grows with the text up to half the page by default, user-resizable; `+`
   attaches; send button; voice button only when a speech model exists (TODO).
 - **Controls row** (sliders wherever the choice is ordered, so they are quick to change):
-  1. Permissions (Chat: tool-call approval) — Ask every time → Allow low risk → Auto choose
-     → Allow all. (Work later adds per-tool rules.)
-  2. right side: Model/profile select, Thinking level slider, Sub-agents toggle.
+  1. Chat: tool-call approval for lightweight tools. Work: permission mode and, when applicable,
+     per-tool rules.
+  2. In Work, show the task profile (General / Code), the explicit target device and active
+     workspace. A saved device preference may preselect a target, but the selected device must
+     remain visible and changeable for each task.
+  3. Model/profile select, Thinking level slider and Sub-agents toggle.
 - **Thinking level**: Low = answer/edit directly; Medium; High = plan which tools are
   needed, call them, have a model review; Max = more rounds of model and tool calls, slower.
   Higher levels add recommended-delegation hints to the prompt (prompts to be written).
