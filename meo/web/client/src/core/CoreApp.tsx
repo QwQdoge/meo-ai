@@ -159,11 +159,12 @@ function Sidebar({ sidebar, strings, act, open, setOpen }: { sidebar: Spec; stri
           </section>
         ))}
       </div>
-      <div className="core-side-foot">
-        {sidebar.account && <AccountMenu account={sidebar.account} collapsed={collapsed} act={act} />}
+      {/* Account on the left, settings as an icon on the right; stacked (settings above) when collapsed. */}
+      <div className={`core-side-foot${sidebar.account ? " with-account" : ""}`}>
+        {sidebar.account && <AccountMenu account={sidebar.account} status={sidebar.status} collapsed={collapsed} act={act} />}
         {(sidebar.footer ?? []).map((f: Spec) => (
-          <button key={f.id} className="core-side-link" aria-current={f.selected ? "page" : undefined} title={f.label} onClick={() => go(f.action)}>
-            {glyph(f.icon)}{!collapsed && <span>{f.label}</span>}
+          <button key={f.id} className="core-side-link" aria-current={f.selected ? "page" : undefined} title={f.label} aria-label={f.label} onClick={() => go(f.action)}>
+            {glyph(f.icon)}{!collapsed && !sidebar.account && <span>{f.label}</span>}
           </button>
         ))}
       </div>
@@ -172,7 +173,7 @@ function Sidebar({ sidebar, strings, act, open, setOpen }: { sidebar: Spec; stri
 }
 
 /** Avatar and name at the foot of the sidebar; opens the account menu above it. */
-function AccountMenu({ account, collapsed, act }: { account: Spec; collapsed: boolean; act: Act }) {
+function AccountMenu({ account, status, collapsed, act }: { account: Spec; status?: Spec; collapsed: boolean; act: Act }) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -186,7 +187,10 @@ function AccountMenu({ account, collapsed, act }: { account: Spec; collapsed: bo
   return (
     <div className="core-account" ref={root}>
       <button className="core-account-btn" aria-haspopup="menu" aria-expanded={open} title={account.email} onClick={() => setOpen((v) => !v)}>
-        <span className="core-avatar" aria-hidden>{account.initial}</span>
+        <span className="core-avatar" aria-hidden>
+          {account.initial}
+          {status && <i className={`core-sync ${status.kind}`} title={status.label} />}
+        </span>
         {!collapsed && <span className="label">{account.name}</span>}
         {!collapsed && <Icon name="expand_more" size={14} />}
       </button>
@@ -1180,7 +1184,7 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
             </div>
           )}
           {messages.map((m, i) => (
-            <MessageView key={m.id ? m.id : `live${i}`} m={m} strings={strings} act={act} />
+            <MessageView key={`${page.id ?? "new"}:${i}`} m={m} strings={strings} act={act} />
           ))}
           <div ref={end} />
         </div>

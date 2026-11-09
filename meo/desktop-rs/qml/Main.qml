@@ -730,16 +730,24 @@ ApplicationWindow {
                     }
                 }
             }
-            RowLayout {
+            // Foot: avatar and name on the left (the sync state is a dot on the avatar), the settings gear
+            // on the right. Collapsed, the two stack (gear above the avatar) so nothing overlaps.
+            GridLayout {
                 Layout.fillWidth: true
-                spacing: 4
-                // Signed-in account: avatar and name open the account menu; the gear goes to Settings.
+                rowSpacing: 2
+                columnSpacing: 4
+                columns: sidebar.collapsed ? 1 : 2
                 Item {
                     id: accountBtn
                     visible: !!sidebar.sb.account
-                    Layout.fillWidth: true
+                    Layout.row: sidebar.collapsed ? 1 : 0
+                    Layout.column: 0
+                    Layout.fillWidth: !sidebar.collapsed
+                    Layout.preferredWidth: sidebar.collapsed ? 40 : -1
+                    Layout.alignment: Qt.AlignHCenter
                     Layout.preferredHeight: 36
                     readonly property var acct: sidebar.sb.account || {}
+                    readonly property var status: sidebar.sb.status || {}
                     Rectangle {
                         anchors.fill: parent
                         radius: 10
@@ -748,17 +756,29 @@ ApplicationWindow {
                     }
                     RowLayout {
                         anchors.fill: parent
-                        anchors.leftMargin: 6
+                        anchors.leftMargin: sidebar.collapsed ? 8 : 6
                         anchors.rightMargin: 6
                         spacing: 8
                         Rectangle {
                             Layout.preferredWidth: 24; Layout.preferredHeight: 24; radius: 12
                             color: MeoTheme.secondaryContainer
                             Txt { anchors.centerIn: parent; text: accountBtn.acct.initial || ""; typeRole: "label"; color: MeoTheme.contentOnSurface }
+                            Rectangle {
+                                visible: !!accountBtn.status.kind
+                                width: 9; height: 9; radius: 4.5
+                                anchors.right: parent.right; anchors.bottom: parent.bottom
+                                anchors.rightMargin: -2; anchors.bottomMargin: -2
+                                border.width: 2; border.color: MeoTheme.surfaceContainer
+                                color: accountBtn.status.kind === "live" ? MeoTheme.success
+                                     : accountBtn.status.kind === "offline" ? MeoTheme.error : MeoTheme.outline
+                            }
                         }
                         Txt { visible: !sidebar.collapsed; text: accountBtn.acct.name || ""; elide: Text.ElideRight; Layout.fillWidth: true }
                     }
                     HoverHandler { id: accountHover }
+                    ToolTip.delay: MeoTheme.tooltipShowDelay
+                    ToolTip.visible: accountHover.hovered && !accountMenu.visible
+                    ToolTip.text: (accountBtn.acct.email || "") + (accountBtn.status.label ? " · " + accountBtn.status.label : "")
                     TapHandler { onTapped: accountMenu.openAt(accountBtn, 0, -(accountMenu.implicitHeight || 260) - 6) }
                     AppMenu {
                         id: accountMenu
@@ -771,28 +791,17 @@ ApplicationWindow {
                     model: sidebar.sb.footer || []
                     SideLink {
                         required property var modelData
-                        Layout.fillWidth: !sidebar.sb.account
-                        Layout.preferredWidth: sidebar.sb.account ? 34 : -1
+                        Layout.row: 0
+                        Layout.column: sidebar.collapsed || !sidebar.sb.account ? 0 : 1
+                        Layout.alignment: Qt.AlignHCenter
+                        Layout.fillWidth: !sidebar.sb.account && !sidebar.collapsed
+                        Layout.preferredWidth: sidebar.sb.account || sidebar.collapsed ? 36 : -1
                         symbol: "settings"
                         label: sidebar.sb.account ? "" : modelData.label
                         compact: sidebar.collapsed || !!sidebar.sb.account
                         selected: !!modelData.selected
                         onClicked: window.act(modelData.action)
                     }
-                }
-                // Online / live-sync state at a glance.
-                Rectangle {
-                    visible: !!sidebar.sb.status
-                    Layout.preferredWidth: 10
-                    Layout.preferredHeight: 10
-                    Layout.rightMargin: 8
-                    radius: 5
-                    color: (sidebar.sb.status || {}).kind === "live" ? MeoTheme.success
-                         : (sidebar.sb.status || {}).kind === "offline" ? MeoTheme.error : MeoTheme.outline
-                    ToolTip.delay: MeoTheme.tooltipShowDelay
-                    ToolTip.visible: statusHover.hovered
-                    ToolTip.text: (sidebar.sb.status || {}).label || ""
-                    HoverHandler { id: statusHover }
                 }
             }
         }

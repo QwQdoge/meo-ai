@@ -67,6 +67,14 @@
 .core-app .core-row-menu ul { padding: 6px; border: 0; border-radius: var(--r-m); background: rgb(var(--surface-primary)); box-shadow: var(--elev-3); min-width: 160px; }
 .core-app .core-row-menu li button { padding: 7px 12px; border-radius: var(--r-s); }
 .core-app .core-side-foot { border: 0; padding-top: 4px; }
+.core-app .core-side-foot.with-account > .core-side-link { flex: none; width: 36px; height: 36px; padding: 0; justify-content: center; }
+.core-app .collapsed .core-side-foot { flex-direction: column-reverse; align-items: center; gap: 2px; }
+.core-app .collapsed .core-side-foot .core-account { flex: none; }
+.core-app .collapsed .core-side-foot .core-account-btn { width: 40px; height: 36px; padding: 0; justify-content: center; }
+.core-app .core-avatar { position: relative; }
+.core-app .core-sync { position: absolute; inset-inline-end: -2px; inset-block-end: -2px; width: 9px; height: 9px; border-radius: 50%; box-shadow: 0 0 0 2px rgb(var(--surface-secondary, var(--surface-primary))); background: rgb(var(--text-secondary)); }
+.core-app .core-sync.live { background: #34a853; }
+.core-app .core-sync.offline { background: #d93025; }
 
 /* ---------- Main sheet ---------- */
 .core-app .core-main { flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 6px 6px 6px 0; }

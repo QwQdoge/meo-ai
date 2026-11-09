@@ -184,7 +184,7 @@ pub fn tasks(text: &str) -> Option<Vec<Value>> {
 }
 
 /// A task list as Markdown every client already draws.
-fn tasks_markdown(list: &[Value]) -> String {
+pub fn tasks_markdown(list: &[Value]) -> String {
     let mut text = String::from("**Tasks**\n");
     for t in list {
         let title = t["title"].as_str().unwrap_or_default();
@@ -285,7 +285,8 @@ pub fn blocks_with(text: &str, native: bool) -> Vec<Value> {
                 let list = task_list(&lines[i + 1..stop]);
                 if !list.is_empty() {
                     flush(&mut markdown, &mut out);
-                    out.push(json!({ "type": "markdown", "text": tasks_markdown(&list) }));
+                    // Marked so a run that rewrites its list shows only the newest one.
+                    out.push(json!({ "type": "markdown", "text": tasks_markdown(&list), "tasks": true }));
                     i = stop + 1;
                     continue;
                 }
