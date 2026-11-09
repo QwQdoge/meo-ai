@@ -840,7 +840,7 @@ impl AppCore {
                 self.update(|s| {
                     if let Some((_, steps)) = s.activity.as_mut() {
                         for x in steps.iter_mut().filter(|x| x["status"] == "running") {
-                            x["status"] = json!(if x["id"] == "answer" { "done" } else { "error" });
+                            x["status"] = json!(if x["id"] == "answer" { "done" } else { "stopped" });
                             // Not a failure: say what happened so the row does not read as an error.
                             if x["id"] != "answer" && x["detail"].as_str().is_none_or(str::is_empty) {
                                 x["detail"] = json!("Stopped before it finished.");
@@ -7767,10 +7767,29 @@ fn visible_steps(steps: &[Value]) -> Vec<Value> {
             let mut x = x.clone();
             if is_note_step(&x) {
                 x["kind"] = json!("note");
+            } else {
+                x["kind"] = json!(step_action(&x));
             }
             x
         })
         .collect()
+}
+
+/// What a step does, for the icon and the sentence shown while it runs. Decided here once so the
+/// three clients do not each guess from the title: connect, web, image, edit, read, run, think, tool, other.
+fn step_action(step: &Value) -> &'static str {
+    let id = step["id"].as_str().unwrap_or_default();
+    let l = format!("{id} {}", step["title"].as_str().unwrap_or_default()).to_lowercase();
+    let has = |words: &[&str]| words.iter().any(|w| l.contains(w));
+    if has(&["connect", "mcp", "connector", "oauth", "authoriz", "authoris"]) { "connect" }
+    else if has(&["search", "web", "browse", "fetch", "http"]) { "web" }
+    else if has(&["image", "picture", "draw"]) { "image" }
+    else if has(&["edit", "write", "patch", "save", "create file", "apply", "modif"]) { "edit" }
+    else if has(&["read", "open", "list", "find", "grep", "glob", "scan", "index"]) { "read" }
+    else if has(&["run", "command", "shell", "bash", "exec", "terminal", "test", "build", "install"]) { "run" }
+    else if has(&["model", "router", "reason", "think", "plan"]) { "think" }
+    else if id.starts_with("tool") { "tool" }
+    else { "other" }
 }
 
 /// The plan card stored with an answer (its `plan` step), drawn again at the top of that answer.

@@ -962,26 +962,21 @@ function withCaret(blocks: Spec[], streaming: boolean): Spec[] {
   return [...blocks.slice(0, at), { ...last, text: last.text + " ▍" }];
 }
 
-/** What a step is doing, from its id and title (the core sends free text). */
-const STEP_KINDS: [RegExp, string, string][] = [
-  [/connect|mcp|connector|oauth|authori[sz]/, "cable", "Connecting"],
-  [/search|web|browse|fetch|http/, "language", "Searching the web"],
-  [/image|picture|draw/, "image", "Creating an image"],
-  [/edit|write|patch|save|create file|apply|modif/, "edit_document", "Editing files"],
-  [/read|open|list|find|grep|glob|scan|index/, "description", "Reading files"],
-  [/run|command|shell|bash|exec|terminal|test|build|install/, "terminal", "Running a command"],
-  [/model|router|reason|think|plan/, "psychology", "Thinking"],
-  [/tool\d+/, "build", "Using tools"],
-];
+/** What a step is doing: the core sends `kind`; the icon and sentence for each kind live here. */
+const STEP_KINDS: Record<string, [string, string]> = {
+  connect: ["cable", "Connecting"], web: ["language", "Searching the web"], image: ["image", "Creating an image"],
+  edit: ["edit_document", "Editing files"], read: ["description", "Reading files"], run: ["terminal", "Running a command"],
+  think: ["psychology", "Thinking"], tool: ["build", "Using tools"],
+};
 function stepKind(step?: Spec): { icon: string; live: string } {
   if (!step) return { icon: "hourglass_empty", live: "Waiting for the model" };
-  const l = `${step.id ?? ""} ${step.title ?? ""}`.toLowerCase();
-  for (const [re, icon, live] of STEP_KINDS) if (re.test(l)) return { icon, live: icon === "cable" && step.title ? `Connecting · ${step.title}` : live };
-  return { icon: "bolt", live: step.title || "Working" };
+  const k = STEP_KINDS[step.kind];
+  if (!k) return { icon: "bolt", live: step.title || "Working" };
+  return { icon: k[0], live: step.kind === "connect" && step.title ? `Connecting · ${step.title}` : k[1] };
 }
 /** The step a streaming answer is on now: the last one still running, else the last one. */
 const currentStep = (steps: Spec[] = []): Spec | undefined =>
-  [...steps].reverse().find((x) => x.status !== "done" && x.status !== "error") ?? steps[steps.length - 1];
+  [...steps].reverse().find((x) => !["done", "error", "stopped"].includes(x.status)) ?? steps[steps.length - 1];
 
 /** What the assistant is doing right now: a breathing icon, the sentence with a light sweeping
  *  over it, and the elapsed time once it is worth showing. */
@@ -1023,7 +1018,7 @@ const MessageView = React.memo(
                           <details>
                             <summary>
                               <span className="core-step-mark" aria-hidden>
-                                {st.status === "done" ? <Icon name="check" size={14} /> : st.status === "error" ? <Icon name="close" size={14} /> : <Icon name={stepKind(st).icon} size={14} className="core-pulse" />}
+                                {st.status === "done" ? <Icon name="check" size={14} /> : st.status === "stopped" ? <Icon name="block" size={14} /> : st.status === "error" ? <Icon name="close" size={14} /> : <Icon name={stepKind(st).icon} size={14} className="core-pulse" />}
                               </span>
                               <b>{st.title}</b>
                             </summary>

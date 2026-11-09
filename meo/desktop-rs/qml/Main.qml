@@ -47,22 +47,23 @@ ApplicationWindow {
     // What a step is doing, from its id and title (the core sends free text): the icon that
     // stands for it and the sentence shown while it runs ("Editing files", "Connecting to ...").
     function stepKind(step) {
-        const t = ((step && step.id) || "") + " " + ((step && step.title) || "")
-        const l = t.toLowerCase()
-        if (/connect|mcp|connector|oauth|authori[sz]/.test(l)) return { icon: "cable", live: qsTr("Connecting") + (step.title ? " · " + step.title : "") }
-        if (/search|web|browse|fetch|http/.test(l)) return { icon: "language", live: qsTr("Searching the web") }
-        if (/image|picture|draw/.test(l)) return { icon: "image", live: qsTr("Creating an image") }
-        if (/edit|write|patch|save|create file|apply|modif/.test(l)) return { icon: "edit_document", live: qsTr("Editing files") }
-        if (/read|open|list|find|grep|glob|scan|index/.test(l)) return { icon: "description", live: qsTr("Reading files") }
-        if (/run|command|shell|bash|exec|terminal|test|build|install/.test(l)) return { icon: "terminal", live: qsTr("Running a command") }
-        if (/model|router|reason|think|plan/.test(l)) return { icon: "psychology", live: qsTr("Thinking") }
-        if (/tool\d+/.test(l)) return { icon: "build", live: qsTr("Using tools") }
+        // The core decides what a step does (`kind`); this only maps it to an icon and a sentence.
+        switch (step && step.kind) {
+        case "connect": return { icon: "cable", live: qsTr("Connecting") + (step.title ? " · " + step.title : "") }
+        case "web": return { icon: "language", live: qsTr("Searching the web") }
+        case "image": return { icon: "image", live: qsTr("Creating an image") }
+        case "edit": return { icon: "edit_document", live: qsTr("Editing files") }
+        case "read": return { icon: "description", live: qsTr("Reading files") }
+        case "run": return { icon: "terminal", live: qsTr("Running a command") }
+        case "think": return { icon: "psychology", live: qsTr("Thinking") }
+        case "tool": return { icon: "build", live: qsTr("Using tools") }
+        }
         return { icon: "bolt", live: (step && step.title) || qsTr("Working") }
     }
     // The step a streaming answer is on now: the last one still running, else the last one.
     function currentStep(steps) {
         const list = steps || []
-        for (let i = list.length - 1; i >= 0; i--) if (list[i].status !== "done" && list[i].status !== "error") return list[i]
+        for (let i = list.length - 1; i >= 0; i--) if (["done", "error", "stopped"].indexOf(list[i].status) < 0) return list[i]
         return list.length ? list[list.length - 1] : null
     }
     readonly property bool nativeMenuBar: Qt.platform.os === "osx"
@@ -2675,14 +2676,14 @@ ApplicationWindow {
                                         Item {
                                             width: parent.width
                                             height: 24
-                                            readonly property bool running: modelData.status !== "done" && modelData.status !== "error"
+                                            readonly property bool running: ["done", "error", "stopped"].indexOf(modelData.status) < 0
                                             Item {
                                                 id: stepIcon
                                                 x: 0
                                                 width: 18; height: 24
                                                 MeoIcon {
                                                     anchors.centerIn: parent
-                                                    icon: modelData.status === "done" ? "check" : modelData.status === "error" ? "close" : window.stepKind(modelData).icon
+                                                    icon: modelData.status === "done" ? "check" : modelData.status === "stopped" ? "block" : modelData.status === "error" ? "close" : window.stepKind(modelData).icon
                                                     size: 16
                                                     color: modelData.status === "error" ? MeoTheme.error : modelData.status === "done" ? MeoTheme.contentOnSurfaceVariant : MeoTheme.primary
                                                     SequentialAnimation on opacity {

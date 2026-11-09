@@ -5,6 +5,8 @@ import androidx.compose.material.icons.rounded.Cable
 import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.material.icons.rounded.Build
 import androidx.compose.material.icons.rounded.Bolt
+import androidx.compose.material.icons.rounded.Block
+import androidx.compose.material.icons.rounded.HourglassEmpty
 import androidx.compose.material.icons.rounded.EditNote
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ExpandLess
@@ -469,26 +471,25 @@ private class StepKind(val icon: androidx.compose.ui.graphics.vector.ImageVector
 
 /** What a step is doing, from its id and title (the core sends free text). */
 private fun stepKind(step: JSONObject?): StepKind {
-    if (step == null) return StepKind(Icons.Rounded.Psychology, "Thinking")
+    if (step == null) return StepKind(Icons.Rounded.HourglassEmpty, "Waiting for the model")
     val title = step.str("title")
-    val l = (step.str("id") + " " + title).lowercase()
-    fun has(pattern: String) = Regex(pattern).containsMatchIn(l)
-    return when {
-        has("connect|mcp|connector|oauth|authori[sz]") -> StepKind(Icons.Rounded.Cable, if (title.isNotEmpty()) "Connecting · $title" else "Connecting")
-        has("search|web|browse|fetch|http") -> StepKind(Icons.Rounded.Language, "Searching the web")
-        has("image|picture|draw") -> StepKind(Icons.Rounded.Image, "Creating an image")
-        has("edit|write|patch|save|create file|apply|modif") -> StepKind(Icons.Rounded.EditNote, "Editing files")
-        has("read|open|list|find|grep|glob|scan|index") -> StepKind(Icons.Rounded.Description, "Reading files")
-        has("run|command|shell|bash|exec|terminal|test|build|install") -> StepKind(Icons.Rounded.Terminal, "Running a command")
-        has("model|router|reason|think|plan") -> StepKind(Icons.Rounded.Psychology, "Thinking")
-        has("tool\\d+") -> StepKind(Icons.Rounded.Build, "Using tools")
+    // The core decides what a step does (`kind`); this only maps it to an icon and a sentence.
+    return when (step.str("kind")) {
+        "connect" -> StepKind(Icons.Rounded.Cable, if (title.isNotEmpty()) "Connecting · $title" else "Connecting")
+        "web" -> StepKind(Icons.Rounded.Language, "Searching the web")
+        "image" -> StepKind(Icons.Rounded.Image, "Creating an image")
+        "edit" -> StepKind(Icons.Rounded.EditNote, "Editing files")
+        "read" -> StepKind(Icons.Rounded.Description, "Reading files")
+        "run" -> StepKind(Icons.Rounded.Terminal, "Running a command")
+        "think" -> StepKind(Icons.Rounded.Psychology, "Thinking")
+        "tool" -> StepKind(Icons.Rounded.Build, "Using tools")
         else -> StepKind(Icons.Rounded.Bolt, title.ifEmpty { "Working" })
     }
 }
 
 /** The step a streaming answer is on now: the last one still running, else the last one. */
 private fun currentStep(steps: List<JSONObject>): JSONObject? =
-    steps.lastOrNull { it.str("status") != "done" && it.str("status") != "error" } ?: steps.lastOrNull()
+    steps.lastOrNull { it.str("status") !in setOf("done", "error", "stopped") } ?: steps.lastOrNull()
 
 /** What the assistant is doing right now: a breathing icon, the sentence with a light sweeping
  *  over it, and the elapsed time once it is worth showing. */
@@ -1269,7 +1270,7 @@ private fun Steps(message: JSONObject, act: Act) {
                 var expanded by remember { mutableStateOf(false) }
                 val more = step.str("detail").isNotEmpty() || step.list("items").isNotEmpty()
                 val status = step.str("status")
-                val live = status != "done" && status != "error"
+                val live = status !in setOf("done", "error", "stopped")
                 val pulse by androidx.compose.animation.core.rememberInfiniteTransition(label = "step").animateFloat(
                     initialValue = 1f,
                     targetValue = if (live) 0.45f else 1f,
@@ -1287,6 +1288,7 @@ private fun Steps(message: JSONObject, act: Act) {
                     when (status) {
                         "done" -> Icon(Icons.Rounded.Check, contentDescription = null, Modifier.size(16.dp), tint = muted)
                         "error" -> Icon(Icons.Rounded.Close, contentDescription = null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.error)
+                        "stopped" -> Icon(Icons.Rounded.Block, contentDescription = null, Modifier.size(16.dp), tint = muted)
                         else -> Icon(stepKind(step).icon, contentDescription = null, Modifier.size(16.dp).graphicsLayer { alpha = pulse }, tint = MaterialTheme.colorScheme.primary)
                     }
                     Text(
