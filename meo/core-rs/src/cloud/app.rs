@@ -561,6 +561,9 @@ struct State {
     /// The host has created the core and will dispatch `start`, which has not read the saved session
     /// yet: until then the view is a loading state, not a sign-in page for someone who is signed in.
     starting: bool,
+    /// Signed in and still reading the providers' models and the model settings (a slow provider
+    /// can take many seconds): "no model yet" would be wrong to say until that is done.
+    loading_models: bool,
     /// Per project, on this device: its folder and GitHub repository.
     project_env: HashMap<String, project_env::ProjectEnv>,
     /// The `.agent/` state of each project folder, as last read (shown on the project page).
@@ -1245,6 +1248,7 @@ impl AppCore {
     // ---- data ----------------------------------------------------------
 
     async fn load_all(&self) {
+        self.update(|s| s.loading_models = true);
         // Independent requests run side by side; only what needs the credential list waits for it.
         let (conversations, credentials) = futures_util::join!(
             self.call(|api, t| async move { api.list_conversations(&t).await }),
@@ -1299,6 +1303,7 @@ impl AppCore {
         // The sidebar's Projects tree needs the list on every page.
         self.update(|s| s.projects = Some(projects.map_err(|e| e.to_string())));
         self.bootstrap_router().await;
+        self.update(|s| s.loading_models = false);
         self.offer_essentials();
         let route = self.state.lock().unwrap().route.clone();
         self.load_route(&route).await;
@@ -7335,6 +7340,7 @@ fn using_label(s: &State) -> String {
                 name
             }
         }
+        _ if s.loading_models => "loading models…".to_owned(),
         _ => "no model yet — connect a provider in Meo Account".to_owned(),
     }
 }
@@ -11380,6 +11386,15 @@ mod tests {
         assert!(hint["text"].as_str().unwrap().contains("model not found"), "{hint}");
         let fine = editor.iter().find(|i| i["id"] == "pf_hint_default").unwrap();
         assert!(!fine["text"].as_str().unwrap().contains("model not found"));
+    }
+
+    #[test]
+    fn while_models_load_the_composer_says_so_instead_of_no_model() {
+        let c = signed_in_core();
+        c.update(|s| s.loading_models = true);
+        assert_eq!(using_label(&c.state.lock().unwrap()), "loading models…");
+        c.update(|s| s.loading_models = false);
+        assert!(using_label(&c.state.lock().unwrap()).starts_with("no model yet"));
     }
 
     #[test]
