@@ -8715,6 +8715,14 @@ fn app_auth(s: &State, p: &Value) -> AppAuth {
         }
     };
     let account = matches!(sign_in, SignIn::Account(_));
+    // Linked for sign-in only: the account has no token for this service, so its tools cannot run.
+    if account && has && p["accountAccess"] == false && issue.is_none() {
+        return AppAuth {
+            state: "needs_reauth",
+            label: "Access needed",
+            sign_in,
+        };
+    }
     match (has, issue) {
         (_, Some(true)) | (true, Some(false)) => AppAuth {
             state: "needs_reauth",
@@ -8789,16 +8797,24 @@ fn auth_tone(auth: &AppAuth, on: bool) -> &'static str {
 fn plugin_buttons(s: &State, p: &Value, id: &str) -> Vec<Value> {
     let url = p["remoteUrl"].as_str().unwrap_or_default();
     let auth = app_auth(s, p);
-    let fix = matches!(auth.state, "needs_connect" | "needs_reauth");
+    // Signed in on paper, but its tools could not be read: the way out is to sign in again.
+    let failed = listing_failure(s, p).is_some();
+    let fix = failed || matches!(auth.state, "needs_connect" | "needs_reauth");
     let style = if fix { "primary" } else { "secondary" };
     let mut actions: Vec<Value> = Vec::new();
     match (auth.sign_in, connect_action(p)) {
-        // A linked account that works can still be asked for more access.
-        (SignIn::Account(provider), _) if auth.state == "connected" => actions.push(button(
-            "More access",
-            "secondary",
-            json!({ "type": "connect_account", "provider": provider, "grant": true }),
-        )),
+        // A linked account that works can still be asked for more access (and, when its tools
+        // could not be read, to sign in again).
+        (SignIn::Account(provider), connect) if auth.state == "connected" => {
+            if let (true, Some((label, action))) = (failed, connect) {
+                actions.push(button(&label, "primary", action));
+            }
+            actions.push(button(
+                "More access",
+                "secondary",
+                json!({ "type": "connect_account", "provider": provider, "grant": true }),
+            ));
+        }
         (_, Some((label, action))) => actions.push(button(&label, style, action)),
         _ => {}
     }
@@ -8818,7 +8834,7 @@ fn plugin_buttons(s: &State, p: &Value, id: &str) -> Vec<Value> {
             ));
         }
     }
-    if s.awaiting_auth.iter().any(|a| a == id) {
+    if failed || s.awaiting_auth.iter().any(|a| a == id) {
         actions.push(button(
             "Check again",
             "secondary",
@@ -8831,6 +8847,18 @@ fn plugin_buttons(s: &State, p: &Value, id: &str) -> Vec<Value> {
         json!({ "type": "uninstall_plugin", "id": id }),
     ));
     actions
+}
+
+/// Why an enabled app's tools could not be read (kept from the last listing), if they could not.
+/// Without it a failed listing looked like "no permissions" with nothing to do about it.
+fn listing_failure<'a>(s: &'a State, p: &Value) -> Option<&'a str> {
+    if p["enabled"] != true {
+        return None;
+    }
+    match s.app_tools.get(p["id"].as_str()?)? {
+        Err(message) => Some(message.as_str()),
+        Ok(_) => None,
+    }
 }
 
 /// What a connected app may do, and what asks first: the permission the user is granting it.
@@ -9122,9 +9150,15 @@ fn store_page(s: &State) -> Value {
                         plugin_buttons(s, p, id),
                     );
                     card["switch"] = plugin_switch(id, on);
-                    card["tone"] = json!(auth_tone(&app_auth(s, p), on_now));
+                    let failure = listing_failure(s, p);
+                    let tone = auth_tone(&app_auth(s, p), on_now);
+                    card["tone"] = json!(if failure.is_some() && tone != "error" { "warn" } else { tone });
                     if let Some(detail) = tool_permissions(s, p) {
                         card["detail"] = json!(detail);
+                    } else if let Some(message) = failure {
+                        card["detail"] = json!(format!("Could not read its tools: {message}"));
+                    } else if on_now && matches!(s.app_tools.get(id), Some(Ok(tools)) if tools.is_empty()) {
+                        card["detail"] = json!("This app offers no tools.");
                     }
                     card
                 })
@@ -10372,6 +10406,42 @@ mod tests {
             Some(true)
         );
         assert_eq!(auth_problem("HTTP 503 upstream down"), None);
+    }
+
+    #[test]
+    fn a_linked_account_without_a_token_asks_for_access_instead_of_saying_linked() {
+        let c = signed_in_core();
+        c.update(|s| {
+            s.plugins = Some(Ok(vec![
+                json!({ "id": "p1", "name": "GitHub", "kind": "mcp", "enabled": false,
+                "remoteUrl": "https://api.githubcopilot.com/mcp/", "linkedAccount": true, "accountAccess": false, "manifest": {} }),
+            ]));
+        });
+        let cards = installed_cards(&c);
+        let card = &cards[0];
+        assert!(card["badges"].as_array().unwrap().iter().any(|b| b == "Access needed"), "{card}");
+        let reconnect = card["actions"].as_array().unwrap().iter().find(|b| b["label"].as_str().is_some_and(|l| l.starts_with("Reconnect"))).unwrap();
+        assert_eq!(reconnect["style"], "primary");
+    }
+
+    #[test]
+    fn a_failed_tool_listing_says_why_and_offers_reconnect_even_when_signed_in() {
+        let c = signed_in_core();
+        c.update(|s| {
+            s.plugins = Some(Ok(vec![
+                json!({ "id": "p1", "name": "Neon Postgres", "kind": "mcp", "enabled": true,
+                "remoteUrl": "https://mcp.neon.tech/mcp", "manifest": { "hasToken": true } }),
+            ]));
+            s.app_tools.insert("p1".into(), Err("mcp_server_error".into()));
+        });
+        let cards = installed_cards(&c);
+        let card = &cards[0];
+        assert_eq!(card["tone"], "warn");
+        assert!(card["detail"].as_str().unwrap().contains("mcp_server_error"), "{card}");
+        let labels: Vec<&str> = card["actions"].as_array().unwrap().iter().filter_map(|b| b["label"].as_str()).collect();
+        assert!(labels.contains(&"Reconnect") && labels.contains(&"Check again"), "{labels:?}");
+        let reconnect = card["actions"].as_array().unwrap().iter().find(|b| b["label"] == "Reconnect").unwrap();
+        assert_eq!(reconnect["style"], "primary");
     }
 
     #[test]
