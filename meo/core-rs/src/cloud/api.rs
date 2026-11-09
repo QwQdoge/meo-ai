@@ -86,9 +86,19 @@ fn chat_task() -> String {
     "chat".to_owned()
 }
 
+/// A tool call the model made (native tool calling): `arguments` is the JSON text it wrote.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NativeCall {
+    pub id: String,
+    pub name: String,
+    pub arguments: String,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChatEvent {
     Delta(String),
+    /// The calls the model ended its reply with; none = the model is done. Comes before `Done`.
+    ToolCalls(Vec<NativeCall>),
     Done,
 }
 
@@ -559,7 +569,7 @@ impl MeoApi {
                 }
                 loop {
                     if let Some(item) = state.next_frame() {
-                        if !matches!(item, Ok(ChatEvent::Delta(_))) {
+                        if !matches!(item, Ok(ChatEvent::Delta(_) | ChatEvent::ToolCalls(_))) {
                             state.finished = true;
                         }
                         return Some((item, state));
@@ -1088,6 +1098,20 @@ impl SseState {
                         .as_str()
                         .filter(|t| !t.is_empty())
                         .map(|t| Ok(ChatEvent::Delta(t.to_owned()))),
+                    "tool_calls" => Some(Ok(ChatEvent::ToolCalls(
+                        payload["calls"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|c| {
+                                Some(NativeCall {
+                                    id: c["id"].as_str()?.to_owned(),
+                                    name: c["name"].as_str()?.to_owned(),
+                                    arguments: c["arguments"].as_str().unwrap_or("{}").to_owned(),
+                                })
+                            })
+                            .collect(),
+                    ))),
                     "done" => Some(Ok(ChatEvent::Done)),
                     "error" => Some(Err(ApiError::Stream(
                         payload["message"]
@@ -1183,6 +1207,16 @@ mod tests {
         assert!(matches!(e.next_frame(), Some(Err(ApiError::Stream(m))) if m == "boom"));
         let mut partial = sse("event: delta\ndata: {\"text\":\"x\"}\n");
         assert!(partial.next_frame().is_none());
+    }
+
+    #[test]
+    fn sse_tool_calls_come_before_done() {
+        let mut s = sse("event: tool_calls\ndata: {\"calls\":[{\"id\":\"c1\",\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\\\"a\\\"}\"}]}\n\nevent: done\ndata: {}\n\n");
+        assert_eq!(
+            s.next_frame().unwrap().unwrap(),
+            ChatEvent::ToolCalls(vec![NativeCall { id: "c1".into(), name: "read_file".into(), arguments: "{\"path\":\"a\"}".into() }])
+        );
+        assert_eq!(s.next_frame().unwrap().unwrap(), ChatEvent::Done);
     }
 
     #[test]

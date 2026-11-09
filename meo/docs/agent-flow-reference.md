@@ -139,7 +139,28 @@ Each slice is small, testable without a provider and ends in a visible change on
 - Cross-device handoff: may a second device take over *execution* of a Work task (needs the workspace there too), or only continue the conversation and approvals?
 - Approver model: which role (`fast` or `router`), and should `auto` ever auto-allow writes outside the open workspace (proposal: never)?
 
-## When a tool task is over (core `turn`)
+## Native tool calling (chat without an open folder)
+
+A chat with connected apps or web search runs on the provider's own tool calling (the approach of
+DeepSeek Harness, OpenAI and Anthropic harnesses), not on text:
+
+- `meo-api` takes `tools[]` (name, description, JSON Schema) and `turns[]` (finished call/result round
+  trips of this run) beside the normal request, forwards them as real `tools` and `tool` messages, and
+  streams the model's calls back as one `tool_calls` event before `done`. It never runs a tool and drops
+  any call to a name that was not declared. Both fields are part of the consent hash.
+- The core offers `web_search` and every tool of every enabled connected app as its own function, with the
+  app's real input schema (at most 60 functions, 70,000 schema characters). The model's reply either has
+  calls (the first one is gated and run like any tool call, the others are answered "not run") or it has
+  none, and then it is the final answer. Nothing is guessed from the wording.
+- The rounds of a run are one answer: prose carries over, intermediate rounds are not stored as messages,
+  the finished rounds travel in `turns`.
+- A provider without native tools (Gemini) or a server from before them answers `native_tools_not_supported`
+  / `invalid_request` at prepare; the core remembers that for the credential and uses the fenced
+  protocol below. An open folder (desktop Work) also still uses the fenced protocol for now.
+
+Everything below describes that fenced protocol only.
+
+## When a tool task is over in the fenced protocol (core `turn`)
 
 A reply with a tool block always continues the loop (up to `MAX_TOOL_ROUNDS`). A reply without one is the end
 only if none of these says the work is not done; each of them sends one message back to the model, at most
