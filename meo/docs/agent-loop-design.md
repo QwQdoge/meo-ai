@@ -106,24 +106,31 @@ half sentence was taken for the final answer: the task seemed to end with work s
 - the core never treats such a reply as final: it asks the model to continue from the last 300 characters it
   wrote (native: one answer, no seam; fenced: a hidden notice and a second message), at most three times.
 
-## Answers that must earn their claims
+## Reviews are about the code, and the search is not the user's sentence
 
-Prompt rules alone do not hold a model that wants to be done early. A real answer to "review my repository" was
-three tool calls, a README summary, and ten generic recommendations (add CI, Dependabot, CONTRIBUTING) for things the
-repository already had, after the model wrote that it had not looked at the workflows. So there are two structural
-guards on top of the rules ("stay on what was asked", "investigate before you answer", "recommend only what you
-verified", the review checklist: start with `update_tasks` listing what to inspect, a finding names file and line,
-never suggest adding something before checking it is missing):
+Two mistakes in a real answer to "find my Meo AI repository and tell me what to improve":
 
-- **The task list gates the end** (see above): a review that starts with a list of what to inspect cannot finish
-  while items are open.
-- **The grounding check.** Before a long (600+ characters) answer of a native run that used tools is shown, the `fast`
-  model gets the user's request, the list of calls that were really made, and the answer, and names the points that
-  rest on nothing read ("add CI" with no workflow listed, claims about files never opened). If there are any, the
-  answer is not shown: it goes back once, with that list, to be fixed (read what is needed) or dropped. Once per
-  run, one extra small model call; no model for the `fast` role, or an unparseable verdict, means it passes.
+1. **The "search" was the whole sentence.** Before the model started, the core searched the web with the user's
+   entire message (the first 300 characters) as the query. That is noise. Now: a native run offers `web_search` as a
+   function the model calls with a query of its own (the core makes no search with the sentence); on the fenced path a
+   search made up front only happens for a short question (100 characters or less); and a request about the user's own
+   work (repository, code, issues, commits) never triggers an automatic web search at all.
+2. **The review looked at housekeeping, not at the code.** The rule had pointed the model at CI workflows, manifests,
+   templates and "never suggest adding CI before checking", so it reported what GitHub settings were missing. The rule is
+   now: learn what the project is for (README, AGENTS.md, layout, entry points), read the files that carry its logic,
+   the most central and security-sensitive first (authentication, input handling, secrets and permissions, data access,
+   the main loop), judge correctness, security, error handling and design; each finding is file and line, what is wrong,
+   why it matters, how to fix it, ordered by severity (security and bugs first); repository housekeeping (CI, Dependabot,
+   templates, badges, license, naming, capitalization) is not reported unless it causes a real defect. The run starts with
+   `update_tasks` listing the modules it will read, so it cannot end while one is unread. A run has up to 20 tool rounds.
 
-Debug builds need a larger stack than a test thread has for the 12-round recursion (`core-rs/.cargo/config.toml`);
+Prompt rules alone do not hold a model that wants to be done early, so there is also a **grounding check**: before a
+long (600+ characters) answer of a native run that used tools is shown, the `fast` model gets the request, the list of
+calls really made, and the answer, and names points that rest on nothing read, or that are about housekeeping instead of
+the code. If there are any, the answer is not shown: it goes back once, with the list, to be fixed (read what is needed)
+or dropped. Once per run, one small extra call; no `fast` model, or an unparseable verdict, means it passes.
+
+Debug builds need a larger stack than a test thread has for the 20-round recursion (`core-rs/.cargo/config.toml`);
 release builds were measured fine at 512 KB.
 
 ## What is not native yet
