@@ -828,6 +828,14 @@ impl AppCore {
             Action::Send { text } => self.send(text).await,
             Action::Stop => {
                 self.cancel.store(true, Ordering::SeqCst);
+                // Stopped between rounds: nothing is left running on the page.
+                self.update(|s| {
+                    if let Some((_, steps)) = s.activity.as_mut() {
+                        for x in steps.iter_mut().filter(|x| x["status"] == "running") {
+                            x["status"] = json!(if x["id"] == "answer" { "done" } else { "error" });
+                        }
+                    }
+                });
                 self.remote_stop().await;
             }
             Action::ApproveConsent => {
@@ -4975,13 +4983,10 @@ impl AppCore {
             .map(|(_, t)| t)
             .unwrap_or_default();
         self.hooks.busy(false);
-        self.step(
-            "answer",
-            "Answer",
-            "",
-            if failure.is_some() { "error" } else { "done" },
-            vec![],
-        );
+        // The run is still in progress until its last round ends (below): between rounds nothing
+        // else may be running (a task-list update, the tool not started yet), and the steps and the
+        // plan card would drop off the page for that moment.
+        self.step("answer", "Answer", "", if failure.is_some() { "error" } else { "running" }, vec![]);
         // The answer asks for a tool: it is not the final answer, so it is not scored yet.
         let tooling = failure.is_none()
             && if native {
@@ -5215,6 +5220,7 @@ impl AppCore {
                 Box::pin(self.agent_send(&id, text)).await;
             }
             None => {
+                self.step("answer", "Answer", "", "done", vec![]);
                 self.hooks.changed();
                 self.notify_answer(&id, &reply);
                 let first_round = self
@@ -6595,6 +6601,7 @@ impl AppCore {
         let still_here = self.state.lock().unwrap().active.as_deref() == Some(id);
         if !still_here || self.cancel.load(Ordering::SeqCst) {
             self.update(|s| s.agent.round = 0);
+            self.step("answer", "Answer", "", "done", vec![]);
             return;
         }
         self.maybe_compact(id).await;
@@ -14884,6 +14891,42 @@ mod tests {
         let stored = stored_plan(&saved).expect("the plan is stored as a step");
         assert_eq!(stored["goal"]["doneWhen"], "every module read");
         assert_eq!(stored["live"], false);
+        assert!(c.activity_steps("c1").iter().all(|x| x["status"] != "running"), "the finished run is not left working");
+        assert_ne!(c.view()["page"]["messages"].as_array().unwrap().last().unwrap()["streaming"], true);
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn between_rounds_the_steps_and_the_plan_card_stay_on_the_page() {
+        let folder = temp_folder("native-gap");
+        let api = fake_api(vec!["Hi."]);
+        let c = work_core(&api, &folder, "smart");
+        c.update(|s| {
+            s.route = "chat".into();
+            s.agent.host = None;
+            s.prefs.remove("work.workspace");
+            s.prefs.insert("chat.web_search".into(), json!(true));
+        });
+        run(&c, Action::Send { text: "review it".into() });
+        // The moment after a round ended with a task-list call: no text streaming, no tool running.
+        c.update(|s| {
+            s.streaming = None;
+            s.messages.get_mut("c1").unwrap().pop();
+            s.activity = Some((
+                "c1".into(),
+                vec![
+                    json!({ "id": "tool1", "title": "GitHub / get_file_contents", "detail": "", "status": "done", "items": [] }),
+                    json!({ "id": "answer", "title": "Answer", "detail": "", "status": "running", "items": [] }),
+                ],
+            ));
+            let run = s.agent.native.get_or_insert_with(NativeRun::default);
+            run.tasks = vec![json!({ "title": "Read the core", "state": "doing" })];
+        });
+        let last = c.view()["page"]["messages"].as_array().unwrap().last().unwrap().clone();
+        assert_eq!(last["streaming"], true, "{last}");
+        assert_eq!(last["blocks"][0]["type"], "plan", "{last}");
+        assert_eq!(last["blocks"][0]["live"], true);
+        assert!(last["steps"].as_array().unwrap().iter().any(|x| x["id"] == "tool1"), "{last}");
         let _ = std::fs::remove_dir_all(&folder);
     }
 
