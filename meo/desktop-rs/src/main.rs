@@ -287,6 +287,8 @@ fn main() {
         last_refresh: Mutex::new(std::time::Instant::now()),
         callbacks: Mutex::new(Some(callback_tx)),
     });
+    // `MEO_AI_DEMO=1`: sample data, nothing stored, no network, for UI work and screenshots.
+    let demo = env::var_os("MEO_AI_DEMO").is_some();
     let core = AppCore::new(
         OAuthConfig {
             account_origin: env::var("MEO_ACCOUNT_ORIGIN").unwrap_or_else(|_| cloud::ACCOUNT_ORIGIN.into()),
@@ -294,9 +296,12 @@ fn main() {
             client_id: cloud::DESKTOP_CLIENT_ID.into(),
             redirect_uri: cloud::DESKTOP_REDIRECT_URI.into(),
         },
-        Arc::new(FileStorage::default_location()),
+        if demo { Arc::new(cloud::MemoryStorage::default()) } else { Arc::new(FileStorage::default_location()) },
         hooks,
     );
+    if demo {
+        core.load_demo();
+    }
     {
         let mut backend = object.borrow_mut();
         backend.core = Some(core.clone());
@@ -337,7 +342,9 @@ fn main() {
 
     // Live sync with the user's other devices; runs for the life of the app.
     let realtime = core.clone();
-    rt.spawn(async move { realtime.dispatch(Action::Realtime).await });
+    if !demo {
+        rt.spawn(async move { realtime.dispatch(Action::Realtime).await });
+    }
 
     let startup = core.clone();
     let host_locale = env::var("LC_ALL")
@@ -345,6 +352,9 @@ fn main() {
         .or_else(|_| env::var("LANG"))
         .unwrap_or_default();
     rt.spawn(async move {
+        if demo {
+            return;
+        }
         startup.dispatch(Action::SetLocale { locale: host_locale }).await;
         startup.dispatch(Action::Start).await;
         if let Some(url) = callback {

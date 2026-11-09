@@ -538,6 +538,40 @@ const KEY_MODELS: &str = "models";
 const KEY_PENDING_AUTH: &str = "pending_auth";
 
 impl AppCore {
+    /// Developer preview: a signed-in state with sample conversations and answers, no network and
+    /// no account. The desktop client uses it for `MEO_AI_DEMO=1` so the UI can be worked on and
+    /// screenshotted offline.
+    pub fn load_demo(&self) {
+        let chat = |id: &str, role: &str, text: &str| ChatMessage {
+            id: id.into(),
+            role: role.into(),
+            text: text.into(),
+            steps: Vec::new(),
+        };
+        self.update(|s| {
+            s.auth = AuthState::SignedIn;
+            s.conversations = vec![
+                ConversationSummary { id: "d1".into(), title: "Why is my build slow?".into(), updated_at: "2026-11-07T09:30:00Z".into(), project_id: None, mode: Some("chat".into()) },
+                ConversationSummary { id: "d2".into(), title: "Refactor the settings page".into(), updated_at: "2026-11-07T08:10:00Z".into(), project_id: None, mode: Some("work".into()) },
+                ConversationSummary { id: "d3".into(), title: "Trip planning, Kyoto".into(), updated_at: "2026-11-06T20:00:00Z".into(), project_id: None, mode: Some("chat".into()) },
+                ConversationSummary { id: "d4".into(), title: "Explain Rust lifetimes".into(), updated_at: "2026-11-05T12:00:00Z".into(), project_id: None, mode: Some("chat".into()) },
+            ];
+            s.active = Some("d1".into());
+            s.messages.insert(
+                "d1".into(),
+                vec![
+                    chat("m1", "user", "Why is my cargo build so slow on the second run? Nothing changed."),
+                    chat(
+                        "m2",
+                        "assistant",
+                        "A few common causes, most likely first:\n\n1. **Incremental off.** `CARGO_INCREMENTAL=0` forces full rebuilds of your crate.\n2. **Changing env vars or flags** between runs invalidates the cache.\n3. **A build script** that always reruns because it prints `cargo:rerun-if-changed` for a file that changes.\n\nTry this to see what is rebuilding:\n\n```sh\ncargo build -v 2>&1 | grep -E 'Fresh|Compiling'\n```\n\nIf only your own crate shows `Compiling`, check the build script first.",
+                    ),
+                    chat("m3", "user", "It is the build script. How do I stop it rerunning?"),
+                ],
+            );
+        });
+    }
+
     pub fn new(
         oauth: OAuthConfig,
         storage: Arc<dyn Storage>,
