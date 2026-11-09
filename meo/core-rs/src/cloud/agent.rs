@@ -876,7 +876,8 @@ When the work is done, reply without a tool block and say what you did and how y
     } + &if apps.is_empty() {
         String::new()
     } else {
-        format!("\n\nConnected apps:\n{apps}")
+        // The nesting is easy to get wrong ("app needs \"app\""): show the whole call once.
+        format!("\n\nTo call a tool of a connected app, put the app, the tool and its arguments inside args: {{\"tool\":\"app\",\"args\":{{\"app\":\"<app name from the list>\",\"name\":\"<tool name>\",\"args\":{{...}}}}}}\n\nConnected apps:\n{apps}")
     }
 }
 

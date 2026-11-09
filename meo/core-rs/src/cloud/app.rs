@@ -5252,7 +5252,7 @@ impl AppCore {
             && s.agent.round < MAX_TOOL_ROUNDS
             && s.agent.nudges < 2
             && agent::parse_tool_calls(reply).is_empty()
-            && announces_next_step(reply)
+            && (announces_next_step(reply) || has_unfinished_tasks(reply))
     }
 
     fn agent_permission(&self) -> agent::Permission {
@@ -8006,7 +8006,7 @@ fn rendered(m: &ChatMessage) -> std::sync::Arc<Rendered> {
         return found.clone();
     }
     let shown = if m.role == "assistant" {
-        tool_free_text(&m.text)
+        clean_reply(&tool_free_text(&m.text))
     } else {
         m.text.clone()
     };
@@ -8077,7 +8077,8 @@ fn conversation_page(s: &State) -> Value {
         .as_ref()
         .filter(|(id, _)| Some(id) == active.as_ref());
     if let Some((_, text)) = streaming {
-        messages.push(json!({ "role": "assistant", "text": text, "streaming": true, "blocks": richtext::blocks(text) }));
+        let text = clean_reply(text);
+        messages.push(json!({ "role": "assistant", "text": text, "streaming": true, "blocks": richtext::blocks(&text) }));
     }
     // Steps of the current / last answer, collapsed under it.
     if let Some((_, steps)) = s
@@ -8301,6 +8302,48 @@ fn approval_text(s: &State, p: &PendingTool) -> String {
     text
 }
 
+/// The task list the reply ends with still has something to do or in progress: the work is not over.
+fn has_unfinished_tasks(reply: &str) -> bool {
+    richtext::tasks(reply).is_some_and(|list| list.iter().any(|t| t["state"] != "done"))
+}
+
+/// What some providers and models leak into a reply: an end-of-turn marker (`<<<END_TURN_..>>>`) and
+/// then a run of one short word repeated ("ok ok ok ..."). Neither is an answer; neither is shown.
+fn clean_reply(text: &str) -> String {
+    let mut out = text.to_owned();
+    while let Some(start) = out.find("<<<END_TURN") {
+        match out[start..].find(">>>") {
+            Some(end) => out.replace_range(start..start + end + 3, ""),
+            None => {
+                out.truncate(start);
+                break;
+            }
+        }
+    }
+    out.lines()
+        .map(|line| {
+            let words: Vec<&str> = line.split_whitespace().collect();
+            let mut keep: Vec<&str> = Vec::new();
+            let mut i = 0;
+            while i < words.len() {
+                let mut j = i;
+                while j < words.len() && words[j] == words[i] {
+                    j += 1;
+                }
+                // Six or more of the same short token in a row is a loop, not text.
+                if j - i >= 6 && words[i].chars().count() <= 6 {
+                    i = j;
+                } else {
+                    keep.extend_from_slice(&words[i..j]);
+                    i = j;
+                }
+            }
+            if keep.len() == words.len() { line.to_owned() } else { keep.join(" ") }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// The end of a reply promises more work ("先读取 README", "next I'll check the tests") instead of
 /// finishing. A question to the user is not a promise.
 fn announces_next_step(reply: &str) -> bool {
@@ -8311,13 +8354,16 @@ fn announces_next_step(reply: &str) -> bool {
     }
     let tail: String = {
         let all: Vec<char> = text.chars().collect();
-        all[all.len().saturating_sub(120)..].iter().collect::<String>().to_lowercase()
+        all[all.len().saturating_sub(200)..].iter().collect::<String>().to_lowercase()
     };
     // Only wording that means "I am about to do this now". Plain "I will ..." / "我会 ..." also ends
     // many finished answers ("I will leave the file as it is."), so it is not enough.
     [
         "我先", "接下来", "下一步", "让我", "再检查", "再读取", "再查看",
+        // The reply itself says the work is not done.
+        "尚未完成", "还没有读取", "需要继续", "继续读取", "继续检查", "继续查看",
         "let me ", "next, i", "next i'll", "next i will", "now i'll", "now i will", "i'll now",
+        "still need to", "not finished", "haven't finished", "not done yet",
     ]
     .iter()
     .any(|p| tail.contains(p))
@@ -11541,6 +11587,26 @@ mod tests {
         // Only the end counts: a promise made long ago and kept is not one.
         let long = format!("我先看看。{}所以结论是：结构清晰，测试齐全，没有明显问题。", "详细分析。".repeat(40));
         assert!(!announces_next_step(&long));
+    }
+
+    #[test]
+    fn leaked_end_markers_and_word_loops_are_not_shown() {
+        let leaked = "I will search again.\n<<<END_TURN_eff4f8a3_4c74763c>>> ok ok ok ok ok ok ok ok ok ok ok ok\nDone.";
+        let clean = clean_reply(leaked);
+        assert!(!clean.contains("END_TURN") && !clean.contains("ok ok"), "{clean}");
+        assert!(clean.contains("I will search again.") && clean.contains("Done."));
+        assert_eq!(clean_reply("ok then, ok? fine"), "ok then, ok? fine", "ordinary text is untouched");
+        assert_eq!(clean_reply("a\n\n  b"), "a\n\n  b", "layout is untouched");
+    }
+
+    #[test]
+    fn unfinished_task_lists_and_admitted_incompleteness_are_not_the_end() {
+        let open = "已确认目录。\n```meo-tasks\n[x] 定位仓库\n[>] 阅读项目文件\n[ ] 给出建议\n```";
+        assert!(has_unfinished_tasks(open));
+        assert!(!has_unfinished_tasks("done\n```meo-tasks\n[x] one\n[x] two\n```"));
+        assert!(!has_unfinished_tasks("no list"));
+        assert!(announces_next_step("当前这一步需要继续读取仓库文件；我尚未完成代码审查，也没有运行测试。"));
+        assert!(announces_next_step("I have not finished reading it, I still need to open the tests."));
     }
 
     #[test]
