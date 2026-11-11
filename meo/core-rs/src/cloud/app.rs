@@ -4588,11 +4588,8 @@ impl AppCore {
         // Chat and Work alike: tell the model how to ask for tools (every round, the saved history
         // does not carry these instructions). An open folder gives the file and command tools, the
         // search switch gives web search, which works on every device.
-        // A greeting or thanks has nothing to look up: offering tools only invites the model to invent
-        // a task from memory or earlier chats ("你好" once started a GitHub repository review).
-        let small_talk = !continuing_round && !continuing && is_small_talk(&text);
-        let native = !small_talk && Box::pin(self.add_native_tools(&mut request, &credential, search)).await;
-        if !native && !small_talk {
+        let native = Box::pin(self.add_native_tools(&mut request, &credential, search)).await;
+        if !native {
             Box::pin(self.add_tool_prompt(&mut request)).await;
         }
         let route_label =
@@ -9546,24 +9543,6 @@ fn is_continuation(text: &str) -> bool {
             .any(|p| t.contains(p))
 }
 
-/// A greeting, thanks or farewell and nothing else ("你好", "hello!", "谢谢"): answered in words, with no
-/// tools, no plan and no goal. Only whole-message matches count, so "你好，帮我看下仓库" is a real request.
-fn is_small_talk(text: &str) -> bool {
-    let t: String = text
-        .trim()
-        .to_lowercase()
-        .chars()
-        .filter(|c| c.is_alphanumeric())
-        .collect();
-    t.chars().count() <= 12
-        && [
-            "你好", "您好", "你好呀", "你好啊", "哈喽", "嗨", "在吗", "早", "早上好", "上午好", "下午好", "晚上好", "晚安",
-            "谢谢", "谢谢你", "多谢", "感谢", "拜拜", "再见", "好的", "好", "嗯", "ok", "okay", "hi", "hello", "hey",
-            "hiya", "yo", "thanks", "thankyou", "thx", "bye", "goodbye", "goodmorning", "goodevening", "goodnight",
-        ]
-        .contains(&t.as_str())
-}
-
 /// The task list the reply ends with still has something to do or in progress: the work is not over.
 fn has_unfinished_tasks(reply: &str) -> bool {
     richtext::tasks(reply).is_some_and(|list| list.iter().any(|t| t["state"] != "done"))
@@ -11046,17 +11025,6 @@ fn list_page(
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn a_greeting_alone_is_small_talk_but_a_request_is_not() {
-        for t in ["你好", "你好！", " Hello ", "谢谢", "thanks!", "Good morning"] {
-            assert!(is_small_talk(t), "{t}");
-        }
-        for t in ["你好，帮我看下我的仓库", "hi, review my repo", "继续", "找到我的meo ai仓库"] {
-            assert!(!is_small_talk(t), "{t}");
-        }
-    }
-
-
     #[test]
     fn github_links_become_skill_sources() {
         let a = parse_github_skill("https://github.com/anthropics/skills/tree/main/skills/pdf")
