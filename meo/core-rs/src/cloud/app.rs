@@ -15022,7 +15022,7 @@ mod tests {
         run(&c, Action::Send { text: "review it".into() });
         let streams: Vec<Value> = api.streams.lock().unwrap().iter().filter(|b| b["tools"].is_array()).cloned().collect();
         assert_eq!(streams.len(), 4, "the call, the partial answer, the driver's round, the final answer");
-        assert!(streams[1]["turns"][0]["results"][0]["output"].as_str().unwrap().contains("0 of 2 done"));
+        assert!(streams[1]["turns"][0]["results"][0]["output"].as_str().unwrap().contains("1 todo, 1 doing, 0 done"));
         let round = streams[2]["prompt"].as_str().unwrap();
         assert!(round.contains("<goal_round>") && round.contains("[ ] Report") && round.contains("Partial answer."), "{round}");
         assert_eq!(texts(&c).last().unwrap(), "All done.", "the final answer is written on its own");
