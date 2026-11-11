@@ -54,7 +54,7 @@ jobs:
       - name: Update targeted dependency graphs
         run: |
           cargo update --manifest-path meo/core-rs/Cargo.toml -p lopdf -p reqwest -p zip
-          cargo update --manifest-path meo/desktop-rs/Cargo.toml -p lopdf -p reqwest -p zip
+          cargo update --manifest-path meo/desktop-rs/Cargo.toml -p lopdf -p reqwest -p zip@2.6.1
       - name: Check formatting
         run: |
           cargo fmt --manifest-path meo/core-rs/Cargo.toml --check
