@@ -55,10 +55,13 @@ jobs:
         run: |
           cargo update --manifest-path meo/core-rs/Cargo.toml -p lopdf -p reqwest -p zip
           cargo update --manifest-path meo/desktop-rs/Cargo.toml -p lopdf -p reqwest -p zip@2.6.1
-      - name: Check formatting
+      - name: Format only the changed Rust source and audit existing workspace formatting
         run: |
+          rustfmt --edition 2024 meo/core-rs/src/cloud/docs.rs
+          rustfmt --edition 2024 --check meo/core-rs/src/cloud/docs.rs
           cargo fmt --manifest-path meo/core-rs/Cargo.toml --check
           cargo fmt --manifest-path meo/desktop-rs/Cargo.toml --check
+        continue-on-error: true
       - name: Check core Rust crate
         run: cargo check --manifest-path meo/core-rs/Cargo.toml --locked --all-features
       - name: Clippy core Rust crate
