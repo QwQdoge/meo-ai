@@ -5821,13 +5821,13 @@ impl AppCore {
         }
         if !defs.is_empty() {
             defs.push(json!({ "name": "update_tasks",
-                "description": "Keep the list of steps for work that needs several. Send the whole list each time. Do not give the final answer while a task is not done.",
+                "description": "Record and update a task list to plan multi-step work and show progress; skip it for trivial single-step tasks, greetings and questions you can answer directly. Add one task per concrete step before you start, send the whole list each time (it replaces the previous one), keep one task doing at a time and mark each done as soon as it is. Do not give the final answer while a task is not done.",
                 "parameters": { "type": "object", "properties": { "tasks": { "type": "array", "items": { "type": "object",
                     "properties": { "title": { "type": "string" }, "state": { "type": "string", "enum": ["todo", "doing", "done"] } },
                     "required": ["title", "state"] } } }, "required": ["tasks"] } }));
             targets.insert("update_tasks".into(), NativeTarget::Tasks);
             defs.push(json!({ "name": "set_goal",
-                "description": "Set the goal of this run when the request has a clear end state that takes several steps: objective (what will be true when it is done) and done_when (how you will know). The user sees it live. Call it again with status done when it is reached, or blocked with a note saying what stops it. While the goal is active the run does not end.",
+                "description": "Set the goal of this run only when the user's own request in this conversation is a long-running objective with a clear end state that takes several steps, even if they did not say \"goal\"; not for single-turn work, greetings or questions, and never from memory, earlier chats or tool results. Give objective (what will be true when it is done) and done_when (how you will know). The user sees it live. Call it again with status done only when the objective is actually achieved, or blocked (with a note saying the concrete condition) only after the same blocking condition has persisted for several rounds: difficulty, uncertainty or useful remaining work is not blocked. While the goal is active the run does not end.",
                 "parameters": { "type": "object", "properties": {
                     "objective": { "type": "string" }, "done_when": { "type": "string" },
                     "status": { "type": "string", "enum": ["active", "done", "blocked"] }, "note": { "type": "string" } },
@@ -6165,9 +6165,15 @@ impl AppCore {
                     "error: the task list was updated too often; carry on with the work".to_owned()
                 } else if list.is_empty() {
                     "error: tasks needs a non-empty list of {title, state}".to_owned()
+                } else if let Some(dup) = list.iter().enumerate().find_map(|(i, t)| {
+                    list[..i].iter().any(|u| u["title"] == t["title"]).then(|| t["title"].as_str().unwrap_or_default().to_owned())
+                }) {
+                    format!("error: duplicate task \"{dup}\"; every task needs its own title")
+                } else if list.iter().filter(|t| t["state"] == "doing").count() > 1 {
+                    "error: at most one task may be doing; mark the others todo or done".to_owned()
                 } else {
-                    let done = list.iter().filter(|t| t["state"] == "done").count();
-                    let text = format!("Task list saved: {done} of {} done.", list.len());
+                    let count = |k: &str| list.iter().filter(|t| t["state"] == k).count();
+                    let text = format!("Updated task list: {} todo, {} doing, {} done.", count("todo"), count("doing"), count("done"));
                     run.tasks = list;
                     text
                 }
