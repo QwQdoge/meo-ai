@@ -667,13 +667,15 @@ struct RemoteLink {
     task_host: Option<String>,
     /// Controller side: what the host asks about (host id, text).
     approval: Option<(String, String)>,
+    /// Host side: the permission level the controlling device asked for (`ask`, `low`, `smart`, `all`).
+    requested: Option<String>,
     /// The background jobs each host last reported (device id → rows).
     jobs: BTreeMap<String, Vec<Value>>,
 }
 
 /// Work the realtime loop runs beside the event stream, so approvals and stop keep arriving.
 enum RemoteJob {
-    Task { from: String, text: String, project: Option<String> },
+    Task { from: String, text: String, project: Option<String>, permission: Option<String> },
     Decide { allow: bool },
 }
 
@@ -4098,9 +4100,17 @@ impl AppCore {
                 "options": remote::run_on_options(&s.remote.devices),
             }));
         }
+        if enabled && remote::can_host() {
+            let cap = s.prefs.get("remote.max_permission").and_then(Value::as_str).unwrap_or("smart");
+            items.push(json!({
+                "id": "dev_max_permission", "kind": "select", "label": "Tasks from my other devices may run with up to",
+                "binding": "remote.max_permission", "value": cap,
+                "options": PERMISSIONS.iter().map(|(v, l)| json!({ "value": v, "label": l })).collect::<Vec<_>>(),
+            }));
+        }
         items.push(json!({
             "id": "dev_safety", "kind": "info", "label": "Safety",
-            "value": "Only devices signed in to your own account can reach each other. Passwords never leave the device that runs the command. A task sent from another device never runs with Allow all: risky actions still need your approval on the controlling device.",
+            "value": "Only devices signed in to your own account can reach each other. A task sent from another device runs here at the lower of this limit and the level chosen on the device that sent it. Below Full access, anything that needs a yes is asked on the device that sent the task. At Full access on both ends it runs without asking, anywhere on this computer. Passwords never leave the device that runs the command.",
         }));
         items
     }
@@ -4137,9 +4147,12 @@ impl AppCore {
             return;
         }
         // The project of this chat goes along: that device works in the folder it has bound to the same project.
-        let project = project_of_view(&self.state.lock().unwrap());
+        let (project, level) = {
+            let s = self.state.lock().unwrap();
+            (project_of_view(&s), permission_value(&s))
+        };
         self.update(|s| s.remote.task_host = Some(device.id.clone()));
-        self.remote_send(remote::message("task", &device.id, json!({ "text": text, "project": project })))
+        self.remote_send(remote::message("task", &device.id, json!({ "text": text, "project": project, "permission": level })))
             .await;
         self.notice(
             "info",
@@ -4241,6 +4254,7 @@ impl AppCore {
                 from,
                 text: data["text"].as_str()?.to_owned(),
                 project: data["project"].as_str().filter(|p| !p.is_empty() && p.len() <= 64).map(str::to_owned),
+                permission: data["permission"].as_str().filter(|p| matches!(*p, "ask" | "low" | "smart" | "all")).map(str::to_owned),
             }),
             "remote.decision" => {
                 let s = self.state.lock().unwrap();
@@ -4275,7 +4289,7 @@ impl AppCore {
 
     async fn remote_job(&self, job: RemoteJob) {
         match job {
-            RemoteJob::Task { from, text, project } => {
+            RemoteJob::Task { from, text, project, permission } => {
                 let busy = {
                     let s = self.state.lock().unwrap();
                     s.streaming.is_some()
@@ -4292,22 +4306,11 @@ impl AppCore {
                         .remote_refuse(&from, "That device is busy with another task.")
                         .await;
                 }
-                // A folder is not needed when this device lets the model drive its browser or screen.
-                let device_tools = {
-                    let s = self.state.lock().unwrap();
-                    s.prefs.get("work.browser").and_then(Value::as_str).is_some_and(|m| m != "off") || pref_bool(&s, "work.computer_use", false)
-                };
-                // A project this device has a folder for is enough: the task runs there.
-                let project_folder = project.as_ref().is_some_and(|p| {
-                    self.state.lock().unwrap().project_env.get(p).and_then(|e| e.folder.clone()).is_some_and(|f| std::path::Path::new(&f).is_dir())
-                });
-                if self.ensure_host().is_none() && !device_tools && !project_folder {
-                    return self
-                        .remote_refuse(&from, "Open a folder in Work on that device first, or turn on Browser control or Computer control in its Settings > Permissions.")
-                        .await;
-                }
+                // No folder is needed: a task for a project runs in the folder this device bound to it, and one
+                // without runs from a scratch folder that reaches the rest of the computer with approval.
                 self.update(|s| {
                     s.remote.controller = Some(from.clone());
+                    s.remote.requested = permission.clone();
                     s.files.clear();
                     s.new_chat_project = project.clone();
                     s.active = None;
@@ -4351,7 +4354,10 @@ impl AppCore {
         if waiting {
             return;
         }
-        self.update(|s| s.remote.controller = None);
+        self.update(|s| {
+            s.remote.controller = None;
+            s.remote.requested = None;
+        });
         let m = remote::message(
             "status",
             &to,
@@ -6601,7 +6607,8 @@ impl AppCore {
             // a private empty folder, and nothing else of the machine opens up.
             let wants_device = s.prefs.get("work.browser").and_then(Value::as_str).is_some_and(|m| m != "off")
                 || pref_bool(&s, "work.computer_use", false);
-            if folder.is_none() && wants_device && remote::can_host() && remote::platform() != "android" {
+            let remote_task = s.remote.controller.is_some();
+            if folder.is_none() && (wants_device || remote_task) && remote::can_host() && remote::platform() != "android" {
                 scratch = true;
                 Some(scratch_folder())
             } else {
@@ -6672,13 +6679,16 @@ impl AppCore {
 
     fn agent_permission(&self) -> agent::Permission {
         let s = self.state.lock().unwrap();
-        let level = agent::Permission::parse(&permission_value(&s));
-        // A task sent from another device never runs with full access, even when this device is set to
-        // Allow all: risky actions still reach the approver and the controlling device.
-        if s.remote.controller.is_some() && level == agent::Permission::All {
-            return agent::Permission::Smart;
+        // A task sent from another device runs at the lower of what this device allows remote tasks
+        // (Settings > Devices, "Auto choose" unless changed) and what the controlling device asked for. Both
+        // can be Full access: then it runs freely, as the user chose on both ends. Below that, whatever
+        // needs a yes is asked on the controlling device.
+        if s.remote.controller.is_some() {
+            let cap = agent::Permission::parse(s.prefs.get("remote.max_permission").and_then(Value::as_str).unwrap_or("smart"));
+            let asked = s.remote.requested.as_deref().map_or(agent::Permission::Smart, agent::Permission::parse);
+            return cap.min(asked);
         }
-        level
+        agent::Permission::parse(&permission_value(&s))
     }
 
     /// The functions a native run offers: web search, and every tool of the connected apps with its
@@ -10901,9 +10911,19 @@ fn run_on_control(s: &State) -> Option<Value> {
     if !matches!(s.route.as_str(), "work" | "chat") || !pref_bool(s, "remote.enabled", true) {
         return None;
     }
-    let options = remote::run_on_options(&s.remote.devices);
+    let mut options = remote::run_on_options(&s.remote.devices);
     if options.len() < 2 {
         return None;
+    }
+    // In a project, the devices that have a folder bound to it say so: that is where its files are.
+    if let Some(env) = project_of_view(s).and_then(|id| s.project_env.get(&id)) {
+        for option in options.iter_mut() {
+            let has = option["value"].as_str().is_some_and(|v| env.elsewhere.get(v).is_some_and(|e| !e.folders.is_empty()));
+            if has {
+                let label = format!("{} · has this project's folder", option["label"].as_str().unwrap_or_default());
+                option["label"] = json!(label);
+            }
+        }
     }
     let chosen = s
         .prefs
@@ -13390,6 +13410,7 @@ mod tests {
                 "dev_pc",
                 "dev_phone",
                 "dev_target",
+                "dev_max_permission",
                 "dev_safety"
             ]
         );
@@ -13418,22 +13439,37 @@ mod tests {
     }
 
     #[test]
-    fn a_task_from_another_device_never_runs_with_full_access() {
+    fn a_task_from_another_device_runs_at_the_lower_of_this_devices_limit_and_the_controllers_level() {
         let c = signed_in_core();
         c.update(|s| {
             s.prefs.insert("chat.permission".into(), json!("all"));
         });
+        // This device's own slider is for tasks started here.
         assert_eq!(c.agent_permission(), agent::Permission::All);
         c.update(|s| s.remote.controller = Some("phone".into()));
+        // By default remote tasks go up to Auto choose, however high the controller asks.
+        c.update(|s| s.remote.requested = Some("all".into()));
         assert_eq!(c.agent_permission(), agent::Permission::Smart);
+        // A controller that asks for less gets less.
+        c.update(|s| s.remote.requested = Some("ask".into()));
+        assert_eq!(c.agent_permission(), agent::Permission::Ask);
+        // The user can lift the limit to Full access on this device: both ends then agree and it runs freely.
         c.update(|s| {
-            s.prefs.insert("chat.permission".into(), json!("ask"));
+            s.prefs.insert("remote.max_permission".into(), json!("all"));
+            s.remote.requested = Some("all".into());
         });
-        assert_eq!(
-            c.agent_permission(),
-            agent::Permission::Ask,
-            "stricter levels are kept"
-        );
+        assert_eq!(c.agent_permission(), agent::Permission::All);
+        // And lower it: the controller cannot go above it.
+        c.update(|s| {
+            s.prefs.insert("remote.max_permission".into(), json!("low"));
+        });
+        assert_eq!(c.agent_permission(), agent::Permission::Low);
+        // An older controller that sends no level is held to Auto choose or the limit, whichever is lower.
+        c.update(|s| {
+            s.prefs.insert("remote.max_permission".into(), json!("all"));
+            s.remote.requested = None;
+        });
+        assert_eq!(c.agent_permission(), agent::Permission::Smart);
     }
 
     fn installed_cards(c: &AppCore) -> Vec<Value> {
@@ -14206,6 +14242,27 @@ mod tests {
         assert_eq!(root, project.canonicalize().unwrap().display().to_string());
         let _ = std::fs::remove_dir_all(&folder);
         let _ = std::fs::remove_dir_all(&project);
+    }
+
+    #[test]
+    fn run_on_says_which_device_has_the_projects_folder() {
+        let c = signed_in_core();
+        c.update(|s| {
+            for (id, name) in [("pc", "Studio PC"), ("nas", "NAS")] {
+                s.remote.devices.insert(id.into(), remote::Device { id: id.into(), name: name.into(), platform: "linux", hosts: true });
+            }
+            s.route = "work".into();
+            s.active = None;
+            s.new_chat_project = Some("p1".into());
+            s.project_env.insert("p1".into(), project_env::ProjectEnv {
+                elsewhere: [("pc".to_owned(), project_env::Elsewhere { device: "Studio PC".into(), folders: vec!["/home/me/site".into()], at: 1 })].into_iter().collect(),
+                ..Default::default()
+            });
+        });
+        let control = run_on_control(&c.state.lock().unwrap()).unwrap();
+        let labels: Vec<&str> = control["options"].as_array().unwrap().iter().filter_map(|o| o["label"].as_str()).collect();
+        assert!(labels.contains(&"Studio PC (linux) · has this project's folder"), "{labels:?}");
+        assert!(labels.contains(&"NAS (linux)"), "{labels:?}");
     }
 
     #[test]
@@ -15828,9 +15885,9 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn a_device_without_a_folder_hosts_a_task_only_when_it_lets_the_model_drive_the_browser_or_screen() {
+    fn a_device_without_a_folder_takes_a_goal_and_works_from_a_scratch_folder() {
         let folder = temp_folder("remote-nofolder");
-        let api = fake_api(vec!["On it.", "Title", "On it.", "Title"]);
+        let api = fake_api(vec!["Done: nothing to change.", "Title"]);
         let c = work_core(&api, &folder, "low");
         c.update(|s| {
             s.agent.host = None;
@@ -15838,22 +15895,12 @@ mod tests {
         });
         let me = c.client_id.clone();
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let task = event("remote.task", "phone", &me, json!({ "text": "open the news site" }));
-        // Nothing allows device tools yet: refused, and the controller is told what to switch on.
-        let job = c.remote_job_for(&task).unwrap();
-        rt.block_on(c.remote_job(job));
+        let task = event("remote.task", "phone", &me, json!({ "text": "find the biggest file in my downloads", "permission": "low" }));
+        rt.block_on(c.remote_job(c.remote_job_for(&task).unwrap()));
         let sent = api.remotes.lock().unwrap().clone();
-        assert_eq!(sent[0]["state"], "refused");
-        assert!(sent[0]["reason"].as_str().unwrap().contains("Browser control or Computer control"), "{sent:?}");
-        // With computer control on, the same task runs (in the private scratch folder).
-        c.update(|s| {
-            s.prefs.insert("work.computer_use".into(), json!(true));
-        });
-        let job = c.remote_job_for(&task).unwrap();
-        rt.block_on(c.remote_job(job));
-        let sent = api.remotes.lock().unwrap().clone();
-        assert!(sent.iter().any(|m| m["state"] == "started"), "{sent:?}");
-        assert!(c.state.lock().unwrap().agent.scratch);
+        assert!(sent.iter().any(|m| m["state"] == "started"), "no folder is needed: {sent:?}");
+        assert!(!sent.iter().any(|m| m["state"] == "refused"), "{sent:?}");
+        assert!(sent.iter().any(|m| m["state"] == "done"), "the controller is told when it is over: {sent:?}");
         let _ = std::fs::remove_dir_all(&folder);
     }
 

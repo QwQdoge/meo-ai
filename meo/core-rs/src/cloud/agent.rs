@@ -439,6 +439,21 @@ pub enum Permission {
 }
 
 impl Permission {
+    /// 0 for Ask up to 3 for Full access.
+    pub fn rank(self) -> u8 {
+        match self {
+            Permission::Ask => 0,
+            Permission::Low => 1,
+            Permission::Smart => 2,
+            Permission::All => 3,
+        }
+    }
+
+    /// The stricter of two levels.
+    pub fn min(self, other: Self) -> Self {
+        if self.rank() <= other.rank() { self } else { other }
+    }
+
     pub fn parse(value: &str) -> Self {
         match value {
             "low" => Permission::Low,
