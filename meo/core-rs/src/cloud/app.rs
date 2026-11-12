@@ -8812,12 +8812,25 @@ impl AppCore {
             clip(user, 500),
             clip(reply, 800)
         );
-        // The title model first; when its provider is down, the model that just answered (a model that
-        // answered is known to be up).
+        // The title model first; when its provider is down or rejects the request, the model that was asked to
+        // answer, then the everyday routes: the first one that replies writes the title.
         let mut candidates = vec![(credential.clone(), model.clone())];
-        if !used.0.is_empty() && used != (credential.clone(), model.clone()) {
+        if !used.0.is_empty() && !used.1.is_empty() {
             candidates.push(used.clone());
         }
+        {
+            let s = self.state.lock().unwrap();
+            for route in ["default", "fast", "balanced"] {
+                if let Some(c) = router::resolve(&s.router, route, None) {
+                    candidates.push(c.clone());
+                }
+            }
+        }
+        let mut seen: Vec<(String, String)> = Vec::new();
+        candidates.retain(|c| !c.1.is_empty() && !seen.contains(c) && {
+            seen.push(c.clone());
+            true
+        });
         let mut text = None;
         for choice in &candidates {
             text = self.ask_model_for("title", choice, &prompt).await;
