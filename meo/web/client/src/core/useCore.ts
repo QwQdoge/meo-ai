@@ -24,6 +24,12 @@ export function useCore() {
   useEffect(() => {
     let disposed = false;
     let clock = 0;
+    // Listeners added on the page itself are removed again when the core is dropped.
+    const cleanups: Array<() => void> = [];
+    const listen = (target: EventTarget, type: string, fn: EventListener, opts?: AddEventListenerOptions) => {
+      target.addEventListener(type, fn, opts);
+      cleanups.push(() => target.removeEventListener(type, fn, opts));
+    };
     // The core reports a change for every streamed chunk. Reading the whole view and re-rendering
     // for each one froze long chats, so at most one refresh is done per animation frame (about
     // every 100 ms in a background tab, where frames do not run).
@@ -56,9 +62,9 @@ export function useCore() {
         );
         // Only notify from the background; ask for permission on the first click.
         const report = () => instance.dispatch(JSON.stringify({ type: "set_foreground", visible: !document.hidden }));
-        document.addEventListener("visibilitychange", report);
+        listen(document, "visibilitychange", report);
         if (typeof Notification !== "undefined" && Notification.permission === "default")
-          addEventListener("click", () => void Notification.requestPermission(), { once: true });
+          listen(window, "click", () => void Notification.requestPermission(), { once: true });
         core.current = instance;
         setView(JSON.parse(instance.view()));
         instance.dispatch(JSON.stringify({ type: "set_locale", locale: navigator.language }));
@@ -76,7 +82,7 @@ export function useCore() {
         }
         const open = (path: string) => instance.dispatch(JSON.stringify({ type: "open_path", path }));
         // Back and forward buttons.
-        window.addEventListener("popstate", () => { if (!disposed && core.current === instance) open(location.pathname); });
+        listen(window, "popstate", () => { if (!disposed && core.current === instance) open(location.pathname); });
         // The address the tab was opened at is applied once the user is signed in (after the sign-in
         // redirect, when there was one); until then the address bar is left alone.
         const first = sessionStorage.getItem(WANTED);
@@ -100,6 +106,7 @@ export function useCore() {
     return () => {
       disposed = true;
       window.clearInterval(clock);
+      cleanups.forEach((undo) => undo());
       core.current?.free();
       core.current = null;
     };

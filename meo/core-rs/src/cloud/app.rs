@@ -771,6 +771,8 @@ struct State {
     open_project: Option<String>,
     /// Where closing Settings goes back to: the route and project that were open before it.
     settings_back: Option<(String, Option<String>)>,
+    /// Whether Work (not Chat) was the mode before a page like Projects or Settings opened; those pages keep it.
+    mode_work: bool,
     project_memories: Vec<Value>,
     project_chats: Vec<ConversationSummary>,
     /// The user's own memories (Settings > Personalization).
@@ -2556,6 +2558,11 @@ impl AppCore {
             }
             .into();
             s.new_chat_project = None;
+            // Chats opened earlier stay in memory only up to a point (they are also cached on disk).
+            if s.messages.len() > 30 {
+                let keep: Vec<String> = s.active.iter().cloned().chain(s.streaming.as_ref().map(|(c, _)| c.clone())).collect();
+                s.messages.retain(|k, _| keep.contains(k));
+            }
         });
         let key = format!("messages-{id}");
         if let Some(cached) = self.load_json::<Vec<ChatMessage>>(&key) {
@@ -3085,6 +3092,7 @@ impl AppCore {
                 if route == "settings" {
                     Self::remember_back(s);
                 }
+                Self::note_mode(s);
                 s.route = route.clone();
                 s.open_project = None;
             });
@@ -3095,12 +3103,24 @@ impl AppCore {
     async fn open_settings(&self, section: String) {
         self.update(|s| {
             Self::remember_back(s);
+            Self::note_mode(s);
             s.route = "settings".into();
             s.open_project = None;
             s.settings_section = section;
             s.settings_query.clear();
         });
         self.load_route("settings").await;
+    }
+
+    /// Keeps the Chat or Work mode while a page that belongs to neither (Projects, Plugins, Settings) is open.
+    fn note_mode(s: &mut State) {
+        if s.route == "work" || s.route == "chat" {
+            s.mode_work = s.route == "work";
+        }
+    }
+
+    fn in_work(s: &State) -> bool {
+        s.route == "work" || (s.route != "chat" && s.mode_work)
     }
 
     /// Notes the page Settings opened over, unless Settings itself is already showing.
@@ -3156,6 +3176,7 @@ impl AppCore {
 
     async fn open_project(&self, id: String) {
         self.update(|s| {
+            Self::note_mode(s);
             s.route = "projects".into();
             s.open_project = Some(id.clone());
             s.project_memories.clear();
@@ -6619,6 +6640,7 @@ impl AppCore {
             let finished: Vec<String> = {
                 let mut s = self.state.lock().unwrap();
                 let mut out = Vec::new();
+                s.jobs_seen.retain(|k, _| rows.iter().any(|r| &r.0 == k));
                 for (id, label, status, running, _) in &rows {
                     let was = s.jobs_seen.insert(id.clone(), *running);
                     if was == Some(true) && !running {
@@ -8920,6 +8942,7 @@ impl AppCore {
             "online": s.online,
             "sync": { "live": s.sync_live, "devices": s.sync_devices },
             "route": s.route,
+            "mode": if Self::in_work(&s) { "work" } else { "chat" },
             "path": if signed_in { Self::path_of(&s) } else { "/".into() },
             "navigation": if signed_in { self.manifest.nav_json(&s.route) } else { json!([]) },
             "sidebar": if signed_in { self.sidebar(&s) } else { Value::Null },
@@ -9291,7 +9314,7 @@ impl AppCore {
 }
 
 fn shell_sidebar(s: &State) -> Value {
-    let work = s.route == "work";
+    let work = AppCore::in_work(s);
     let active = s.active.as_ref();
     let chat_item = |c: &ConversationSummary| {
         json!({
@@ -14773,6 +14796,19 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn pages_opened_from_work_keep_the_work_mode() {
+        let c = signed_in_core();
+        c.update(|s| s.route = "work".into());
+        futures_executor::block_on(c.dispatch(Action::Navigate { route: "skills".into() }));
+        let v = c.view();
+        assert_eq!(v["mode"], "work");
+        let modes = v["sidebar"]["modes"].as_array().unwrap();
+        assert!(modes.iter().any(|m| m["id"] == "work" && m["selected"] == true));
+        futures_executor::block_on(c.dispatch(Action::Navigate { route: "chat".into() }));
+        assert_eq!(c.view()["mode"], "chat");
     }
 
     #[test]

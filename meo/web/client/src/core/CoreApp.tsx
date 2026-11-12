@@ -52,7 +52,7 @@ export default function CoreApp() {
 
   const page: Spec = view.page;
   return (
-    <div className={`core-app${drawer ? " drawer-open" : ""}`} data-mode={view.route === "work" ? "work" : "chat"}>
+    <div className={`core-app${drawer ? " drawer-open" : ""}`} data-mode={view.mode === "work" ? "work" : "chat"}>
       {view.sidebar && <Sidebar sidebar={view.sidebar} strings={strings} act={act} open={drawer} setOpen={setDrawer} />}
       {view.sidebar && drawer && <div className="core-drawer-scrim" onClick={() => setDrawer(false)} />}
       {view.dialog && <Dialog dialog={view.dialog} act={act} />}
