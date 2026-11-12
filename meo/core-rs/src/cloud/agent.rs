@@ -558,8 +558,22 @@ pub fn path_escapes(path: &str) -> bool {
         || p.chars().nth(1) == Some(':')
 }
 
+/// True when `path` is written inside one of `roots` (absolute, no `..`): a folder bound to the project.
+fn inside_bound_folder(path: &str, roots: &[String]) -> bool {
+    let p = std::path::Path::new(path.trim());
+    p.is_absolute()
+        && !p.components().any(|c| matches!(c, std::path::Component::ParentDir))
+        && roots.iter().any(|r| !r.trim().is_empty() && p.starts_with(r.trim_end_matches('/')))
+}
+
 /// The decision for one call. The hard rules run first and cannot be overridden by the approver.
 pub fn gate(permission: Permission, tool: &Tool) -> Gate {
+    gate_in(permission, tool, &[])
+}
+
+/// As [`gate`], where `bound` are folders bound to the project in use: a path inside one is as good as a path
+/// inside the open folder, so it needs no question.
+pub fn gate_in(permission: Permission, tool: &Tool, bound: &[String]) -> Gate {
     // Asking the user and presenting a plan are the user's own conversation, never an action to approve.
     if matches!(tool, Tool::AskUser { .. } | Tool::ExitPlan { .. }) {
         return Gate::Allow;
@@ -584,7 +598,7 @@ pub fn gate(permission: Permission, tool: &Tool) -> Gate {
         }
     }
     for path in tool_paths(tool) {
-        if path_escapes(&path) {
+        if !inside_bound_folder(&path, bound) && path_escapes(&path) {
             return Gate::Ask(format!("{path} is outside the workspace"));
         }
         let lower = path.to_lowercase();
@@ -1317,6 +1331,20 @@ pub const MAX_RESULT_CHARS: usize = 14_000;
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_folder_bound_to_the_project_needs_no_question_but_the_rest_of_the_machine_still_does() {
+        let bound = vec!["/home/me/notes".to_owned(), "/mnt/drive/work".to_owned()];
+        let read = |p: &str| Tool::ReadFile { path: p.into(), start: None, end: None };
+        let edit = |p: &str| Tool::SearchReplace { path: p.into(), old: "a".into(), new: "b".into() };
+        assert_eq!(gate_in(Permission::Smart, &read("/mnt/drive/work/a.txt"), &bound), Gate::Allow);
+        assert_eq!(gate_in(Permission::Smart, &edit("/home/me/notes/x.md"), &bound), Gate::Approver, "a write follows the level, not the folder");
+        assert!(matches!(gate_in(Permission::Smart, &read("/etc/hosts"), &bound), Gate::Ask(_)), "outside every bound folder it asks");
+        assert!(matches!(gate_in(Permission::Smart, &read("/home/me/notes/../.ssh/id_rsa"), &bound), Gate::Ask(_)), "no way out through ..");
+        assert!(matches!(gate_in(Permission::Smart, &read("/home/me/notes-private/x"), &bound), Gate::Ask(_)), "a sibling with the same prefix is not inside");
+        assert!(matches!(gate_in(Permission::Smart, &read("/home/me/notes/.env"), &bound), Gate::Ask(_)), "secrets still ask");
+        assert_eq!(gate_in(Permission::All, &read("/etc/hosts"), &[]), Gate::Allow, "Full access allows anything");
+    }
+
 
     #[test]
     fn a_cut_result_says_how_to_read_the_rest() {

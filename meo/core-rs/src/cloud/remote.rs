@@ -10,6 +10,9 @@
 //!   remote.approval {to, text}                      the host asks the controller to allow an action
 //!   remote.decision {to, allow}                     the controller's answer
 //!   remote.stop     {to}                            stop the running answer
+//!   remote.jobs_query {to}                          ask a host for its background jobs
+//!   remote.jobs     {to, rows}                      the host's jobs: id, label, status, running, seconds
+//!   remote.job_stop {to, id}                        stop one of the host's background jobs
 //!
 //! Passwords never travel through here: a command that asks for one is answered on the device
 //! that runs it.

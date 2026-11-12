@@ -96,6 +96,11 @@ pub enum Action {
     StopJob {
         id: String,
     },
+    /// The Stop button of a background job running on another of the user's devices.
+    RemoteStopJob {
+        device: String,
+        id: String,
+    },
     Start,
     SignIn,
     SignOut,
@@ -155,6 +160,30 @@ pub enum Action {
     },
     ClearProjectFolder {
         id: String,
+    },
+    /// The prompt for one more folder of a project (a path on this device).
+    BeginAddProjectFolder {
+        id: String,
+    },
+    AddProjectFolder {
+        id: String,
+        text: String,
+    },
+    RemoveProjectFolder {
+        id: String,
+        index: usize,
+    },
+    /// The prompt for a cloud file or folder of a project (a link, optionally `name | link`).
+    BeginAddProjectSource {
+        id: String,
+    },
+    AddProjectSource {
+        id: String,
+        text: String,
+    },
+    RemoveProjectSource {
+        id: String,
+        index: usize,
     },
     BeginLinkRepo {
         id: String,
@@ -638,6 +667,8 @@ struct RemoteLink {
     task_host: Option<String>,
     /// Controller side: what the host asks about (host id, text).
     approval: Option<(String, String)>,
+    /// The background jobs each host last reported (device id → rows).
+    jobs: BTreeMap<String, Vec<Value>>,
 }
 
 /// Work the realtime loop runs beside the event stream, so approvals and stop keep arriving.
@@ -1031,6 +1062,66 @@ impl AppCore {
             Action::PickProjectFolder { .. } => {}
             Action::SetProjectFolder { id, path } => self.set_project_folder(id, path).await,
             Action::ClearProjectFolder { id } => self.set_project_env(&id, |e| e.folder = None),
+            Action::BeginAddProjectFolder { id } => self.prompt(
+                "Add a folder to this project",
+                "Type the folder's path on this device. Work in the project can read and change it without asking, within your Permissions.",
+                "",
+                false,
+                input_button("Add", "primary", json!({ "type": "add_project_folder", "id": id })),
+            ),
+            Action::AddProjectFolder { id, text } => {
+                self.update(|s| s.dialog = None);
+                #[cfg(not(target_arch = "wasm32"))]
+                match Host::open(&folder_from_path(text.trim())) {
+                    Ok(host) => {
+                        let root = host.root().to_owned();
+                        self.set_project_env(&id, |e| {
+                            if e.folder.as_deref() != Some(root.as_str()) && !e.folders.contains(&root) {
+                                if e.folder.is_none() { e.folder = Some(root.clone()) } else { e.folders.push(root.clone()) }
+                            }
+                        });
+                        self.notice("info", format!("{root} is part of this project."));
+                    }
+                    Err(e) => self.notice("error", e),
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let _ = (id, text);
+                    self.notice("error", "The web app cannot open a folder on this device.");
+                }
+            }
+            Action::RemoveProjectFolder { id, index } => self.set_project_env(&id, |e| {
+                if index < e.folders.len() {
+                    e.folders.remove(index);
+                }
+            }),
+            Action::BeginAddProjectSource { id } => self.prompt(
+                "Add a cloud file or folder",
+                "Paste its link (Google Drive, OneDrive, Dropbox, Notion, any web address), or `name | link`. Meo reads it through the matching app once it is connected on the Plugins page.",
+                "",
+                false,
+                input_button("Add", "primary", json!({ "type": "add_project_source", "id": id })),
+            ),
+            Action::AddProjectSource { id, text } => {
+                self.update(|s| s.dialog = None);
+                match project_env::parse_source(&text) {
+                    Some(source) => {
+                        let label = source.label.clone();
+                        self.set_project_env(&id, |e| {
+                            if !e.sources.iter().any(|x| x.url == source.url) {
+                                e.sources.push(source.clone());
+                            }
+                        });
+                        self.notice("info", format!("{label} is part of this project."));
+                    }
+                    None => self.notice("error", "That is not a web address. Paste the link, or `name | link`."),
+                }
+            }
+            Action::RemoveProjectSource { id, index } => self.set_project_env(&id, |e| {
+                if index < e.sources.len() {
+                    e.sources.remove(index);
+                }
+            }),
             Action::BeginLinkRepo { id } => self.prompt(
                 "Link a GitHub repository",
                 "Type owner/name or paste the repository's address. Meo uses the GitHub app for issues, pull requests and files that are not in the folder.",
@@ -1186,6 +1277,7 @@ impl AppCore {
                     self.notice("error", out.text);
                 }
             }
+            Action::RemoteStopJob { device, id } => self.remote_stop_job(&device, &id).await,
             Action::StopJob { id } => {
                 let host = self.state.lock().unwrap().agent.host.clone();
                 match host.map(|h| h.stop_job(&id)) {
@@ -2318,6 +2410,7 @@ impl AppCore {
 
     async fn load_route(&self, route: &str) {
         match route {
+            "schedule" => self.remote_query_jobs().await,
             "settings" => {
                 self.refresh_profiles().await;
                 self.refresh_memories().await;
@@ -2802,6 +2895,17 @@ impl AppCore {
             out.push_str(&format!(
                 "\nGitHub repository: {repo}. For its issues, pull requests and files that are not in the folder, use the GitHub app (it only works while the app is connected); the folder, if open, is a checkout of it."
             ));
+        }
+        if !env.folders.is_empty() {
+            out.push_str("\nMore folders bound to this project (read and change them like the main folder, by absolute path, without asking): ");
+            out.push_str(&env.folders.join(", "));
+            out.push('.');
+        }
+        if !env.sources.is_empty() {
+            out.push_str("\nFiles and folders of this project that live online (reach them with the matching connected app, by link; if the app is not connected, tell the user to connect it on the Plugins page):");
+            for source in &env.sources {
+                out.push_str(&format!("\n- {}: {}", source.label, source.url));
+            }
         }
         if let Some(root) = folder {
             out.push('\n');
@@ -4024,6 +4128,22 @@ impl AppCore {
         );
     }
 
+    /// Controller: asks every online device that can host for its background jobs.
+    async fn remote_query_jobs(&self) {
+        if !self.remote_enabled() {
+            return;
+        }
+        let hosts: Vec<String> = self.state.lock().unwrap().remote.devices.values().filter(|d| d.hosts).map(|d| d.id.clone()).collect();
+        for id in hosts {
+            self.remote_send(remote::message("jobs_query", &id, json!({}))).await;
+        }
+    }
+
+    /// Controller: stops a background job on another device.
+    async fn remote_stop_job(&self, device: &str, id: &str) {
+        self.remote_send(remote::message("job_stop", device, json!({ "id": id }))).await;
+    }
+
     /// Controller: stop the task running on the host.
     async fn remote_stop(&self) {
         let host = self.state.lock().unwrap().remote.task_host.clone();
@@ -4236,6 +4356,34 @@ impl AppCore {
                     }
                     _ => {}
                 }
+            }
+            // A device of the same account asks for this device's background jobs, or to stop one.
+            "remote.jobs_query" | "remote.job_stop" => {
+                if data["to"].is_null() || from.is_empty() || !self.remote_enabled() || !remote::can_host() {
+                    return;
+                }
+                let host = self.state.lock().unwrap().agent.host.clone();
+                if name == "remote.job_stop" {
+                    if let (Some(h), Some(job)) = (&host, data["id"].as_str()) {
+                        let _ = h.stop_job(job);
+                    }
+                }
+                let rows: Vec<Value> = host
+                    .map(|h| h.job_rows())
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|(id, label, status, running, secs)| json!({ "id": id, "label": label, "status": status, "running": running, "secs": secs }))
+                    .collect();
+                self.remote_send(remote::message("jobs", &from, json!({ "rows": rows }))).await;
+            }
+            "remote.jobs" => {
+                if from.is_empty() || !self.remote_enabled() {
+                    return;
+                }
+                let rows: Vec<Value> = data["rows"].as_array().cloned().unwrap_or_default().into_iter().take(40).collect();
+                self.update(|s| {
+                    s.remote.jobs.insert(from, rows);
+                });
             }
             "remote.approval" => {
                 let text = data["text"].as_str().unwrap_or_default().to_owned();
@@ -6164,6 +6312,7 @@ impl AppCore {
         }
         // The page showing jobs and tasks keeps its ages and statuses current.
         if self.state.lock().unwrap().route == "schedule" {
+            self.remote_query_jobs().await;
             self.hooks.changed();
         }
         let due = {
@@ -7106,7 +7255,16 @@ impl AppCore {
                 )
                 .await;
         }
-        match agent::gate(self.agent_permission(), &call.tool) {
+        // The folders bound to the project in use (and the open folder itself) are not "outside": no question.
+        let bound: Vec<String> = {
+            let s = self.state.lock().unwrap();
+            let mut roots: Vec<String> = s.agent.host.iter().map(|h| h.root().to_owned()).collect();
+            if let Some(env) = project_of_view(&s).and_then(|id| s.project_env.get(&id)) {
+                roots.extend(env.all_folders());
+            }
+            roots
+        };
+        match agent::gate_in(self.agent_permission(), &call.tool, &bound) {
             agent::Gate::Allow => Box::pin(self.agent_execute(id, call)).await,
             agent::Gate::Deny(reason) => Box::pin(self.agent_refuse(id, call, &reason)).await,
             agent::Gate::Ask(reason) => {
@@ -10269,14 +10427,49 @@ fn schedule_page(s: &State) -> Value {
             })
         })
         .collect();
+    // The jobs of the user's other devices, as they last reported them.
+    let mut remote_sections: Vec<Value> = Vec::new();
+    for d in s.remote.devices.values().filter(|d| d.hosts) {
+        let items: Vec<Value> = s
+            .remote
+            .jobs
+            .get(&d.id)
+            .map(|rows| {
+                rows.iter()
+                    .map(|j| {
+                        let running = j["running"].as_bool().unwrap_or(false);
+                        let secs = j["secs"].as_u64().unwrap_or(0);
+                        let age = match secs {
+                            0..=59 => format!("{secs}s"),
+                            60..=3599 => format!("{}m {}s", secs / 60, secs % 60),
+                            _ => format!("{}h {}m", secs / 3600, secs % 3600 / 60),
+                        };
+                        let status = j["status"].as_str().unwrap_or_default();
+                        let id = j["id"].as_str().unwrap_or_default();
+                        json!({
+                            "id": format!("{}-{id}", d.id), "title": j["label"], "subtitle": format!("{id} · {age}"), "badge": status,
+                            "tone": if running { "ok" } else if status.starts_with("failed") { "warn" } else { "muted" },
+                            "actions": if running { vec![btn("Stop", "danger", json!({ "type": "remote_stop_job", "device": d.id, "id": id }))] } else { vec![] },
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        remote_sections.push(json!({
+            "id": format!("jobs-{}", d.id), "title": format!("Background jobs on {} ({})", d.name, d.platform), "items": items,
+            "empty": if s.remote.jobs.contains_key(&d.id) { "No background jobs on that device." } else { "Asking that device…" },
+        }));
+    }
+    let mut sections = vec![
+        json!({ "id": "tasks", "title": "Scheduled tasks", "items": tasks,
+              "empty": "No scheduled tasks. Ask Meo, for example: every weekday at 9 send me a summary of my open tasks. They are sent while Meo is open." }),
+        json!({ "id": "jobs", "title": "Background jobs on this device", "items": jobs,
+              "empty": if rows.is_none() { "Background jobs run on a computer, in Work or chat with tools." } else { "No background jobs. Meo starts one for a long command such as a dev server." } }),
+    ];
+    sections.extend(remote_sections);
     json!({
         "kind": "list", "title": "Scheduled & jobs",
-        "sections": [
-            { "id": "tasks", "title": "Scheduled tasks", "items": tasks,
-              "empty": "No scheduled tasks. Ask Meo, for example: every weekday at 9 send me a summary of my open tasks. They are sent while Meo is open." },
-            { "id": "jobs", "title": "Background jobs", "items": jobs,
-              "empty": if rows.is_none() { "Background jobs run in Work, with a folder open." } else { "No background jobs. Meo starts one for a long command such as a dev server." } },
-        ],
+        "sections": sections,
         "actions": [button("Refresh", "secondary", json!({ "type": "refresh" }))],
     })
 }
@@ -11165,8 +11358,6 @@ fn project_of_view(s: &State) -> Option<String> {
     }
 }
 
-/// The folder Work runs in: the open project's folder when it has one on this device, else the folder
-/// chosen for Work in general.
 /// The private empty folder a chat without a folder runs its browser and computer tools in.
 #[cfg(target_arch = "wasm32")]
 fn scratch_folder() -> String {
@@ -11180,6 +11371,8 @@ fn scratch_folder() -> String {
     dir.display().to_string()
 }
 
+/// The folder Work runs in: the open project's folder when it has one on this device, else the folder
+/// chosen for Work in general.
 fn effective_workspace(s: &State) -> Option<String> {
     if let Some(folder) = project_of_view(s)
         .and_then(|id| s.project_env.get(&id).and_then(|e| e.folder.clone()))
@@ -11312,6 +11505,32 @@ fn project_page(s: &State, id: &str) -> Value {
         }),
         folder_buttons,
     ));
+    // More folders of the same project, and files that live online: a project is a place that spans both.
+    for (i, extra) in env.folders.iter().enumerate() {
+        environment.push(own_item(
+            format!("env_extra_{i}"),
+            "Another folder",
+            extra,
+            vec![button("Remove", "secondary", json!({ "type": "remove_project_folder", "id": id, "index": i }))],
+        ));
+    }
+    if can_host {
+        environment.push(json!({ "id": "env_add_folder", "kind": "button", "label": "Add another folder", "style": "secondary",
+            "action": { "type": "begin_add_project_folder", "id": id } }));
+    }
+    environment.push(json!({ "id": "env_h_cloud", "kind": "heading", "label": "Cloud files" }));
+    for (i, source) in env.sources.iter().enumerate() {
+        environment.push(own_item(
+            format!("env_source_{i}"),
+            &source.label,
+            &source.url,
+            vec![button("Remove", "secondary", json!({ "type": "remove_project_source", "id": id, "index": i }))],
+        ));
+    }
+    environment.push(json!({ "id": "env_add_source", "kind": "button", "label": "Add a cloud file or folder", "style": "secondary",
+        "action": { "type": "begin_add_project_source", "id": id } }));
+    environment.push(json!({ "id": "env_cloud_note", "kind": "hint",
+        "text": "Links to files and folders in a cloud drive or any web address. Work in the project is told about them and reaches them through the connected app (Google Drive, OneDrive, Dropbox, Notion, ...), so connect the app on the Plugins page. Nothing is copied to this device." }));
     environment.push(json!({ "id": "env_folder_note", "kind": "hint",
         "text": "A project's folder is remembered on this device only. Starting Work in the project opens this folder, so Meo can read it, change it and run commands there, within your Permissions." }));
     environment.push(json!({ "id": "env_h_repo", "kind": "heading", "label": "GitHub" }));
@@ -13801,6 +14020,39 @@ mod tests {
     }
 
     #[test]
+    fn a_project_binds_several_folders_and_cloud_files_and_work_is_told_about_all_of_them() {
+        let main = temp_folder("proj-main");
+        let extra = temp_folder("proj-extra");
+        let c = signed_in_core();
+        let d = |a: Action| futures_executor::block_on(c.dispatch(a));
+        d(Action::SetProjectFolder { id: "p1".into(), path: main.display().to_string() });
+        d(Action::AddProjectFolder { id: "p1".into(), text: extra.display().to_string() });
+        d(Action::AddProjectFolder { id: "p1".into(), text: extra.display().to_string() });
+        d(Action::AddProjectSource { id: "p1".into(), text: "Budget | https://docs.google.com/spreadsheets/d/xyz".into() });
+        d(Action::AddProjectSource { id: "p1".into(), text: "https://drive.google.com/drive/folders/abc".into() });
+        d(Action::AddProjectSource { id: "p1".into(), text: "no link here".into() });
+        let env = c.state.lock().unwrap().project_env.get("p1").cloned().unwrap();
+        assert_eq!(env.folders.len(), 1, "the same folder twice is one");
+        assert_eq!(env.sources.len(), 2, "a bad link is not added");
+        assert!(c.storage.load(KEY_PROJECT_ENV).unwrap().contains("Budget"), "kept for the next start");
+        c.update(|s| {
+            s.active = None;
+            s.new_chat_project = Some("p1".into());
+        });
+        let context = c.project_context(Some(&main.display().to_string()));
+        assert!(context.contains("More folders bound to this project") && context.contains(&extra.canonicalize().unwrap().display().to_string()), "{context}");
+        assert!(context.contains("- Budget: https://docs.google.com/spreadsheets/d/xyz"), "{context}");
+        let page = project_page(&c.state.lock().unwrap(), "p1").to_string();
+        assert!(page.contains("env_extra_0") && page.contains("env_source_1") && page.contains("Add a cloud file or folder"), "{page}");
+        d(Action::RemoveProjectSource { id: "p1".into(), index: 0 });
+        d(Action::RemoveProjectFolder { id: "p1".into(), index: 0 });
+        let env = c.state.lock().unwrap().project_env.get("p1").cloned().unwrap();
+        assert_eq!((env.folders.len(), env.sources.len()), (0, 1));
+        let _ = std::fs::remove_dir_all(&main);
+        let _ = std::fs::remove_dir_all(&extra);
+    }
+
+    #[test]
     fn a_profile_generation_dialog_asks_for_wishes() {
         let c = signed_in_core();
         futures_executor::block_on(c.dispatch(Action::BeginGenerateProfile));
@@ -16084,12 +16336,13 @@ mod tests {
         run(&c, Action::Send { text: "investigate".into() });
         let streams = api.streams.lock().unwrap().clone();
         // The parent saw both reports under their names (the second got agent-1).
+        // The two run side by side, so which request reaches the fake server first is not fixed: check what must hold either way.
         let after_fan = streams[3]["prompt"].as_str().unwrap();
-        assert!(after_fan.contains("## reader (done)") && after_fan.contains("The notes hold one todo."), "{after_fan}");
-        assert!(after_fan.contains("## agent-1 (done)") && after_fan.contains("notes.txt"), "{after_fan}");
+        assert!(after_fan.contains("## reader (done)") && after_fan.contains("## agent-1 (done)"), "{after_fan}");
+        assert!(after_fan.contains("The notes hold one todo.") && after_fan.contains("The folder has notes.txt."), "{after_fan}");
         // The second sub-agent was a fork: it knows the conversation; the first did not.
-        assert!(!streams[1]["prompt"].as_str().unwrap().contains("conversation so far"));
-        assert!(streams[2]["prompt"].as_str().unwrap().contains("conversation so far"), "{}", streams[2]["prompt"]);
+        let forks = [1, 2].iter().filter(|i| streams[**i]["prompt"].as_str().unwrap().contains("conversation so far")).count();
+        assert_eq!(forks, 1, "exactly one of the two helpers was given the conversation");
         let taken = streams[4]["prompt"].as_str().unwrap();
         assert!(taken.contains("already exists in this run"), "{taken}");
         let listed = streams[5]["prompt"].as_str().unwrap();
@@ -16570,6 +16823,63 @@ mod tests {
         run(&c, Action::Send { text: "and now?".into() });
         let later = api.streams.lock().unwrap().iter().filter_map(|x| x["prompt"].as_str()).find(|p| p.contains("and now?")).unwrap().to_owned();
         assert!(later.contains("UTC+08:00") && !later.contains("not known yet"), "{later}");
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn another_device_sees_this_devices_jobs_and_can_stop_one() {
+        let folder = temp_folder("remote-jobs");
+        let start = "```meo-tool\n{\"tool\":\"start_job\",\"args\":{\"command\":\"sleep 30\",\"label\":\"sleeper\"}}\n```";
+        let api = fake_api(vec![start, "Started.", "Title"]);
+        let host = work_core(&api, &folder, "all");
+        run(&host, Action::Send { text: "start a sleeper".into() });
+        let me = host.client_id.clone();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        // A device of the account asks; this device answers it, and only it.
+        let ask = |name: &str, extra: Value| {
+            let mut data = extra;
+            data["origin"] = json!("laptop");
+            data["to"] = json!(me.clone());
+            (name.to_owned(), data)
+        };
+        let (name, data) = ask("remote.jobs_query", json!({}));
+        rt.block_on(host.on_remote_message(&name, &data, false));
+        let sent = api.remotes.lock().unwrap().clone();
+        let reply = sent.iter().rev().find(|m| m["type"] == "remote.jobs").expect("the jobs are reported");
+        assert_eq!(reply["to"], "laptop");
+        assert_eq!(reply["rows"][0]["label"], "sleeper");
+        assert_eq!(reply["rows"][0]["running"], true);
+        // A message for another device is ignored.
+        let before = api.remotes.lock().unwrap().len();
+        let mut other = data.clone();
+        other["to"] = json!("someone-else");
+        rt.block_on(host.on_remote_message("remote.jobs_query", &other, false));
+        assert_eq!(api.remotes.lock().unwrap().len(), before);
+        // Stopping it from the other device ends it and is reported back.
+        let (name, data) = ask("remote.job_stop", json!({ "id": "job-1" }));
+        rt.block_on(host.on_remote_message(&name, &data, false));
+        for _ in 0..100 {
+            if !host.state.lock().unwrap().agent.host.as_ref().unwrap().job_rows().iter().any(|r| r.3) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(!host.state.lock().unwrap().agent.host.as_ref().unwrap().job_rows().iter().any(|r| r.3), "the job was stopped");
+        // The controller keeps what a host reports and shows it on the Scheduled page with a Stop button.
+        let api2 = fake_api(vec!["ok"]);
+        let controller = work_core(&api2, &folder, "all");
+        controller.update(|s| {
+            s.remote.devices.insert("desk".into(), remote::Device { id: "desk".into(), name: "Studio PC".into(), platform: "linux", hosts: true });
+            s.route = "schedule".into();
+        });
+        let report = json!({ "origin": "desk", "to": controller.client_id, "rows": [{ "id": "job-7", "label": "npm run dev", "status": "running", "running": true, "secs": 75 }] });
+        rt.block_on(controller.on_remote_message("remote.jobs", &report, false));
+        let page = controller.view()["page"].clone();
+        let section = page["sections"].as_array().unwrap().iter().find(|x| x["id"] == "jobs-desk").expect("a section for that device");
+        assert!(section["title"].as_str().unwrap().contains("Studio PC"));
+        assert_eq!(section["items"][0]["subtitle"], "job-7 · 1m 15s");
+        assert_eq!(section["items"][0]["actions"][0]["action"], json!({ "type": "remote_stop_job", "device": "desk", "id": "job-7" }));
         let _ = std::fs::remove_dir_all(&folder);
     }
 

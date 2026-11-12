@@ -31,12 +31,46 @@ pub struct ProjectEnv {
     /// `owner/name` on GitHub.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repo: Option<String>,
+    /// More folders on this device that belong to the project. Work in the project may read and change them
+    /// without asking, like the main folder.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub folders: Vec<String>,
+    /// Files and folders that live online (a cloud drive, a document): reached through the connected app.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sources: Vec<Source>,
+}
+
+/// Something of the project that is not on this device.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Source {
+    pub label: String,
+    pub url: String,
 }
 
 impl ProjectEnv {
     pub fn is_empty(&self) -> bool {
-        self.folder.is_none() && self.repo.is_none()
+        self.folder.is_none() && self.repo.is_none() && self.folders.is_empty() && self.sources.is_empty()
     }
+
+    /// Every folder of the project on this device: the main one first.
+    pub fn all_folders(&self) -> Vec<String> {
+        self.folder.iter().chain(self.folders.iter()).cloned().collect()
+    }
+}
+
+/// `name | https://...` or just a link, as a cloud source; `None` when it is not an http(s) address.
+pub fn parse_source(input: &str) -> Option<Source> {
+    let (label, url) = match input.split_once('|') {
+        Some((l, u)) => (l.trim(), u.trim()),
+        None => ("", input.trim()),
+    };
+    let parsed = url::Url::parse(url).ok().filter(|u| matches!(u.scheme(), "http" | "https") && u.host_str().is_some())?;
+    let label: String = if label.is_empty() {
+        format!("{}{}", parsed.host_str().unwrap_or_default().trim_start_matches("www."), parsed.path().trim_end_matches('/'))
+    } else {
+        label.to_owned()
+    };
+    Some(Source { label: label.chars().take(80).collect(), url: parsed.to_string().chars().take(2000).collect() })
 }
 
 /// `owner/name` from `owner/name`, `github.com/owner/name`, an https or ssh GitHub address (with or
@@ -314,6 +348,27 @@ pub fn prompt_block(state: &AgentState) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_cloud_source_is_a_web_address_with_an_optional_name() {
+        let a = parse_source("https://drive.google.com/drive/folders/abc").unwrap();
+        assert_eq!(a.label, "drive.google.com/drive/folders/abc");
+        let b = parse_source("Budget sheet | https://docs.google.com/spreadsheets/d/xyz/edit").unwrap();
+        assert_eq!((b.label.as_str(), b.url.as_str()), ("Budget sheet", "https://docs.google.com/spreadsheets/d/xyz/edit"));
+        assert!(parse_source("not a link").is_none());
+        assert!(parse_source("file:///etc/passwd").is_none(), "only http(s)");
+        assert!(parse_source("javascript:alert(1)").is_none());
+    }
+
+    #[test]
+    fn a_project_lists_every_folder_main_one_first() {
+        let env = ProjectEnv { folder: Some("/a".into()), folders: vec!["/b".into()], ..Default::default() };
+        assert_eq!(env.all_folders(), ["/a", "/b"]);
+        assert!(!env.is_empty());
+        assert!(ProjectEnv::default().is_empty());
+        let only_cloud = ProjectEnv { sources: vec![Source { label: "x".into(), url: "https://x.test/".into() }], ..Default::default() };
+        assert!(!only_cloud.is_empty(), "a project with only cloud files is still bound to something");
+    }
+
     use super::*;
 
     fn temp(name: &str) -> PathBuf {
