@@ -152,10 +152,15 @@ private fun inline(text: String, codeBackground: androidx.compose.ui.graphics.Co
     }
 
 @Composable
-private fun Rich(text: String, modifier: Modifier = Modifier, style: androidx.compose.ui.text.TextStyle = MaterialTheme.typography.bodyLarge) {
+private fun Rich(text: String, modifier: Modifier = Modifier, style: androidx.compose.ui.text.TextStyle = MaterialTheme.typography.bodyLarge, caret: Boolean = false) {
     val scheme = MaterialTheme.colorScheme
     val uri = LocalUriHandler.current
-    val annotated = inline(text, scheme.surfaceContainerHigh, scheme.primary)
+    val parsed = inline(text, scheme.surfaceContainerHigh, scheme.primary)
+    // The caret follows the last character without being part of the text, so it never changes how it parses.
+    val annotated = if (!caret) parsed else androidx.compose.ui.text.buildAnnotatedString {
+        append(parsed)
+        withStyle(androidx.compose.ui.text.SpanStyle(color = scheme.primary)) { append(" ▍") }
+    }
     ClickableText(
         text = annotated,
         modifier = modifier,
@@ -167,27 +172,30 @@ private fun Rich(text: String, modifier: Modifier = Modifier, style: androidx.co
 }
 
 @Composable
-fun MarkdownText(text: String, modifier: Modifier = Modifier) {
+fun MarkdownText(text: String, modifier: Modifier = Modifier, caret: Boolean = false) {
     val blocks = remember(text) { parseMarkdown(text) }
+    val tail = blocks.indexOfLast { it is MdBlock.Heading || it is MdBlock.Paragraph || it is MdBlock.Item || it is MdBlock.Quote }
     Column(modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        blocks.forEach { block ->
+        blocks.forEachIndexed { at, block ->
+            val end = caret && at == tail
             when (block) {
                 is MdBlock.Heading -> Rich(
                     block.text,
+                    caret = end,
                     style = when (block.level) {
                         1 -> MaterialTheme.typography.headlineSmall
                         2 -> MaterialTheme.typography.titleLarge
                         else -> MaterialTheme.typography.titleMedium
                     },
                 )
-                is MdBlock.Paragraph -> Rich(block.text)
+                is MdBlock.Paragraph -> Rich(block.text, caret = end)
                 is MdBlock.Item -> Row(Modifier.padding(start = (block.depth * 16).dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(block.marker, style = MaterialTheme.typography.bodyLarge)
-                    Rich(block.text)
+                    Rich(block.text, caret = end)
                 }
                 is MdBlock.Quote -> Row(Modifier.height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Box(Modifier.width(3.dp).fillMaxHeight().background(MaterialTheme.colorScheme.outline))
-                    Rich(block.text, style = MaterialTheme.typography.bodyLarge.copy(fontStyle = FontStyle.Italic))
+                    Rich(block.text, caret = end, style = MaterialTheme.typography.bodyLarge.copy(fontStyle = FontStyle.Italic))
                 }
                 is MdBlock.Code -> CodeBlockView(block)
                 is MdBlock.Table -> TableView(block)

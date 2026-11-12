@@ -31,6 +31,7 @@ import androidx.compose.material.icons.rounded.AccountTree
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.ArrowDownward
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.Description
@@ -1131,7 +1132,7 @@ private fun ChatPane(page: JSONObject, prefs: JSONObject?, strings: JSONObject, 
 private fun MessageBubble(message: JSONObject, strings: JSONObject, act: Act) {
     val mine = message.str("role") == "user"
     val streaming = message.optBoolean("streaming")
-    val text = message.str("text") + if (streaming && message.str("text").isNotEmpty()) " ▍" else ""
+    val text = message.str("text")
     val clipboard = LocalClipboardManager.current
     Column(Modifier.fillMaxWidth(), horizontalAlignment = if (mine) Alignment.End else Alignment.Start) {
         if (mine) {
@@ -1151,9 +1152,9 @@ private fun MessageBubble(message: JSONObject, strings: JSONObject, act: Act) {
                     val blocks = message.list("blocks")
                     if (streaming && !message.has("steps") && message.str("text").isEmpty() && blocks.isEmpty()) LiveStatus(Icons.Rounded.Psychology, "Thinking")
                     if (streaming && message.str("text").isEmpty() && blocks.isEmpty()) TypingDots()
-                    if (blocks.isEmpty()) MarkdownText(stripIcons(text), Modifier.fillMaxWidth())
+                    if (blocks.isEmpty()) MarkdownText(stripIcons(text), Modifier.fillMaxWidth(), caret = streaming && text.isNotEmpty())
                     else blocks.forEachIndexed { i, block ->
-                        val cursor = if (streaming && i == blocks.lastIndex) " ▍" else ""
+                        val caret = streaming && i == blocks.lastIndex
                         when (block.str("type")) {
                             "question" -> QuestionBlock(block, act)
                             "callout", "plan" -> CalloutBlock(block, act)
@@ -1161,7 +1162,7 @@ private fun MessageBubble(message: JSONObject, strings: JSONObject, act: Act) {
                             "math" -> MathBlock(block)
                             "plot" -> PlotBlock(block)
                             "chart" -> ChartBlock(block)
-                            else -> MarkdownText(stripIcons(block.str("text")) + cursor, Modifier.fillMaxWidth())
+                            else -> MarkdownText(stripIcons(block.str("text")), Modifier.fillMaxWidth(), caret = caret)
                         }
                     }
                     message.list("images").forEach { image ->
@@ -1249,9 +1250,10 @@ private fun Steps(message: JSONObject, act: Act) {
     val open = toggled ?: auto
     val context = LocalContext.current
     val steps = message.list("steps")
-    val running = message.optBoolean("streaming")
+    val running = message.optBoolean("streaming") || message.optBoolean("stepsLive")
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
-    Column(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+    // Steps arriving, opening or closing change the height smoothly instead of jumping.
+    Column(Modifier.fillMaxWidth().padding(vertical = 2.dp).animateContentSize()) {
         Row(
             Modifier.clickable { toggled = !open }.padding(vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,

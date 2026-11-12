@@ -2121,11 +2121,29 @@ ApplicationWindow {
                     Component {
                         id: prose
                         TextEdit {
+                            id: proseText
                             readOnly: true
                             selectByMouse: true
                             wrapMode: Text.Wrap
                             textFormat: TextEdit.MarkdownText
-                            text: part.text + (live && isLast ? " ▍" : "")
+                            // The caret is drawn after the last character, not written into the text,
+                            // so it never changes how the Markdown is parsed or laid out.
+                            text: part.text
+                            Rectangle {
+                                readonly property bool shown: live && isLast
+                                readonly property rect at: proseText.positionToRectangle(proseText.length)
+                                visible: shown
+                                x: at.x + 2; y: at.y + 2
+                                width: 2; height: Math.max(8, at.height - 4)
+                                radius: 1
+                                color: MeoTheme.primary
+                                SequentialAnimation on opacity {
+                                    running: parent.shown && !MeoTheme.reduceMotion
+                                    loops: Animation.Infinite
+                                    NumberAnimation { to: 0.2; duration: 500; easing.type: Easing.InOutSine }
+                                    NumberAnimation { to: 1; duration: 500; easing.type: Easing.InOutSine }
+                                }
+                            }
                             onLinkActivated: link => { if (/^https?:\/\//.test(link)) Qt.openUrlExternally(link) }
                             HoverHandler { cursorShape: parent.hoveredLink ? Qt.PointingHandCursor : Qt.IBeamCursor }
                             color: MeoTheme.contentOnSurface
@@ -2659,7 +2677,7 @@ ApplicationWindow {
                         function fingerprint(m) {
                             return (m.id || "") + "|" + m.role + "|" + (m.streaming ? 1 : 0) + "|"
                                 + (m.blocks ? m.blocks.length : 0) + "|" + (m.steps ? m.steps.length : 0) + "|"
-                                + (m.stepsOpen ? 1 : 0) + "|" + (m.stepsLabel || "") + "|"
+                                + (m.stepsOpen ? 1 : 0) + "|" + (m.stepsLive ? 1 : 0) + "|" + (m.stepsLabel || "") + "|"
                                 + (m.actions ? m.actions.length : 0) + "|" + (m.images ? m.images.length : 0)
                         }
                         function syncMessages(list) {
@@ -2713,6 +2731,9 @@ ApplicationWindow {
                                 visible: !!modelData.steps || (messageItem.streaming && !modelData.text && !(modelData.blocks || []).length)
                                 width: parent.width
                                 height: visible ? implicitHeight : 0
+                                clip: true
+                                // Steps arriving, opening or closing change the height smoothly instead of jumping.
+                                Behavior on height { enabled: !MeoTheme.reduceMotion; NumberAnimation { duration: window.tBase; easing.type: Easing.OutCubic } }
                                 spacing: 2
                                 property bool toggled: false
                                 property bool manual: false
@@ -2728,13 +2749,13 @@ ApplicationWindow {
                                         spacing: 6
                                         // Running: what it is doing now. Done: how many steps it took.
                                         LiveStatus {
-                                            visible: messageItem.streaming
+                                            visible: messageItem.streaming || !!modelData.stepsLive
                                             anchors.verticalCenter: parent.verticalCenter
                                             icon: parent.parent.current ? parent.parent.kind.icon : "psychology"
                                             label: parent.parent.current ? parent.parent.kind.live : qsTr("Thinking")
                                         }
-                                        MeoIcon { visible: !messageItem.streaming; anchors.verticalCenter: parent.verticalCenter; icon: "check_circle"; size: 16; color: MeoTheme.contentOnSurfaceVariant }
-                                        Txt { visible: !messageItem.streaming; anchors.verticalCenter: parent.verticalCenter; text: modelData.stepsLabel || ""; typeRole: "label"; font.weight: Font.Medium; color: MeoTheme.contentOnSurfaceVariant }
+                                        MeoIcon { visible: !messageItem.streaming && !modelData.stepsLive; anchors.verticalCenter: parent.verticalCenter; icon: "check_circle"; size: 16; color: MeoTheme.contentOnSurfaceVariant }
+                                        Txt { visible: !messageItem.streaming && !modelData.stepsLive; anchors.verticalCenter: parent.verticalCenter; text: modelData.stepsLabel || ""; typeRole: "label"; font.weight: Font.Medium; color: MeoTheme.contentOnSurfaceVariant }
                                         MeoIcon { visible: !!(modelData.steps || []).length; anchors.verticalCenter: parent.verticalCenter; icon: stepsBox.open ? "expand_less" : "expand_more"; size: 16; color: MeoTheme.contentOnSurfaceVariant }
                                     }
                                     HoverHandler { cursorShape: Qt.PointingHandCursor }
