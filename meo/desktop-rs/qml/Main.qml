@@ -1047,14 +1047,98 @@ ApplicationWindow {
                 Layout.leftMargin: 16
                 Layout.rightMargin: 16
                 clip: true
-                spacing: 4
-                model: window.page.items || []
-                delegate: MeoListItem {
+                spacing: 6
+                // One list, or several titled sections (Scheduled tasks, Background jobs): flattened to rows.
+                model: {
+                    const groups = window.page.sections || [{ items: window.page.items || [] }]
+                    const rows = []
+                    for (const g of groups) {
+                        if (g.title) rows.push({ kind: "heading", text: g.title })
+                        const items = g.items || []
+                        if (!items.length && g.empty) rows.push({ kind: "empty", text: g.empty })
+                        for (const it of items) rows.push({ kind: "item", item: it })
+                    }
+                    return rows
+                }
+                delegate: Loader {
+                    id: rowLoader
+                    required property var modelData
+                    readonly property var row: modelData
                     width: ListView.view.width
-                    headline: modelData.title || ""
-                    supportingText: modelData.subtitle || ""
-                    interactive: !!modelData.action
-                    onClicked: window.act(modelData.action)
+                    sourceComponent: row.kind === "heading" ? headingRow
+                        : row.kind === "empty" ? emptyRow
+                        : (row.item.actions || row.item.badge) ? actionRow : plainRow
+                    Component {
+                        id: headingRow
+                        Txt { topPadding: 14; text: rowLoader.row.text; typeRole: "label"; font.weight: Font.Medium; color: MeoTheme.contentOnSurfaceVariant }
+                    }
+                    Component {
+                        id: emptyRow
+                        Txt { width: rowLoader.width; text: rowLoader.row.text; wrapMode: Text.Wrap; color: MeoTheme.contentOnSurfaceVariant }
+                    }
+                    Component {
+                        id: plainRow
+                        MeoListItem {
+                            width: rowLoader.width
+                            headline: rowLoader.row.item.title || ""
+                            supportingText: rowLoader.row.item.subtitle || ""
+                            interactive: !!rowLoader.row.item.action
+                            onClicked: window.act(rowLoader.row.item.action)
+                        }
+                    }
+                    // A row with a status badge and its own buttons.
+                    Component {
+                        id: actionRow
+                        Rectangle {
+                            width: rowLoader.width
+                            height: rowBody.implicitHeight + 24
+                            radius: 14
+                            color: MeoTheme.surfaceContainerHigh
+                            RowLayout {
+                                id: rowBody
+                                x: 12; y: 12
+                                width: parent.width - 24
+                                spacing: 12
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 4
+                                    RowLayout {
+                                        spacing: 8
+                                        Txt { text: rowLoader.row.item.title || ""; font.weight: Font.Medium }
+                                        Rectangle {
+                                            visible: !!rowLoader.row.item.badge
+                                            radius: 10
+                                            implicitWidth: badgeText.implicitWidth + 16
+                                            implicitHeight: badgeText.implicitHeight + 4
+                                            color: rowLoader.row.item.tone === "ok" ? MeoTheme.primaryContainer : MeoTheme.surfaceContainerHighest
+                                            Txt {
+                                                id: badgeText
+                                                anchors.centerIn: parent
+                                                text: rowLoader.row.item.badge || ""
+                                                typeRole: "label"
+                                                color: rowLoader.row.item.tone === "ok" ? MeoTheme.contentOnPrimaryContainer
+                                                    : rowLoader.row.item.tone === "warn" ? MeoTheme.error : MeoTheme.contentOnSurfaceVariant
+                                            }
+                                        }
+                                    }
+                                    Txt {
+                                        Layout.fillWidth: true
+                                        visible: !!rowLoader.row.item.subtitle
+                                        text: rowLoader.row.item.subtitle || ""
+                                        wrapMode: Text.Wrap
+                                        maximumLineCount: 4
+                                        elide: Text.ElideRight
+                                        typeRole: "label"
+                                        color: MeoTheme.contentOnSurfaceVariant
+                                    }
+                                }
+                                Row {
+                                    spacing: 6
+                                    Repeater { model: rowLoader.row.item.actions || []; ActionButton { spec: modelData } }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

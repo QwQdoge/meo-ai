@@ -626,3 +626,12 @@
   .core-steps::details-content, .core-steps li > details::details-content { transition: none; }
   .core-steps > ol > li { animation: none; }
 }
+
+/* Row buttons on the Scheduled page: small pills in a line, not full-width list buttons. */
+.core-app .core-page .core-list .core-row-actions button { width: auto; display: inline-flex; flex-direction: row; align-items: center; padding: 5px 12px; border-radius: 999px; background: var(--tonal-2); font-size: 12.5px; }
+.core-app .core-page .core-list .core-row-actions button.primary { background: rgb(var(--accent-primary)); color: var(--on-accent); }
+.core-app .core-page .core-list .core-row-actions button.danger { color: rgb(var(--status-error-strong)); }
+.core-app .core-page .core-list .core-row-actions { flex-wrap: nowrap; flex: none; }
+.core-app .core-page .core-list .core-row { background: var(--tonal); border-color: transparent; }
+.core-app .core-page .core-list .core-row span { font-size: inherit; }
+.core-badge { box-shadow: inset 0 0 0 1px rgb(var(--border-light)); }

@@ -77,7 +77,7 @@ for (const feature of features.items) {
   );
 }
 const pages = rows("pages");
-const renderers = ["conversation", "work", "projects", "skills", "settings"];
+const renderers = ["conversation", "work", "projects", "skills", "schedule", "settings"];
 const states = [
   "loading",
   "empty",

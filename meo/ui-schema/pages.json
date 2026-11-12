@@ -5,7 +5,11 @@
       "id": "chat",
       "renderer": "conversation",
       "feature": "chat",
-      "sections": ["messages", "composer", "response_details"],
+      "sections": [
+        "messages",
+        "composer",
+        "response_details"
+      ],
       "states": [
         "loading",
         "empty",
@@ -21,7 +25,13 @@
       "id": "work",
       "renderer": "work",
       "feature": "work",
-      "sections": ["target", "runs", "progress", "approvals", "artifacts"],
+      "sections": [
+        "target",
+        "runs",
+        "progress",
+        "approvals",
+        "artifacts"
+      ],
       "states": [
         "loading",
         "empty",
@@ -45,21 +55,60 @@
         "conversations",
         "workspaces"
       ],
-      "states": ["loading", "empty", "ready", "error", "offline", "unavailable"]
+      "states": [
+        "loading",
+        "empty",
+        "ready",
+        "error",
+        "offline",
+        "unavailable"
+      ]
     },
     {
       "id": "skills",
       "renderer": "skills",
       "feature": "skills",
-      "sections": ["catalog", "enabled", "permissions", "availability"],
-      "states": ["loading", "empty", "ready", "error", "offline", "unavailable"]
+      "sections": [
+        "catalog",
+        "enabled",
+        "permissions",
+        "availability"
+      ],
+      "states": [
+        "loading",
+        "empty",
+        "ready",
+        "error",
+        "offline",
+        "unavailable"
+      ]
+    },
+    {
+      "id": "schedule",
+      "renderer": "schedule",
+      "feature": "schedule",
+      "sections": [
+        "tasks",
+        "jobs"
+      ],
+      "states": [
+        "ready",
+        "empty"
+      ]
     },
     {
       "id": "settings",
       "renderer": "settings",
       "feature": "settings",
-      "sections": ["settings_catalog"],
-      "states": ["loading", "ready", "error", "offline"]
+      "sections": [
+        "settings_catalog"
+      ],
+      "states": [
+        "loading",
+        "ready",
+        "error",
+        "offline"
+      ]
     }
   ]
 }

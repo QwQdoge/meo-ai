@@ -337,3 +337,17 @@
 .core-choice span { font-size: 12.5px; }
 .core-question input, .core-question textarea { padding: 9px 12px; border-radius: 12px; border: var(--hair) solid rgb(var(--border-light)); background: rgb(var(--surface-secondary)); color: inherit; font: inherit; resize: vertical; }
 .core-question-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+/* Lists with sections, a status badge and buttons on each row (Scheduled tasks, Background jobs). */
+.core-list-section { margin-block: 18px 6px; }
+.core-list-section h2 { margin: 0 0 8px; font-size: 13px; font-weight: 600; color: rgb(var(--text-secondary)); letter-spacing: .02em; }
+.core-list .core-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: var(--hair, 1px) solid rgb(var(--border-light)); border-radius: 14px; margin-bottom: 8px; }
+.core-row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.core-row-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.core-row-sub { font-size: 12.5px; color: rgb(var(--text-secondary)); white-space: pre-line; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.core-row-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.core-row-actions .core-button { padding: 5px 12px; font-size: 12.5px; }
+.core-badge { font-size: 11.5px; padding: 1px 8px; border-radius: 999px; background: rgb(var(--surface-tertiary)); color: rgb(var(--text-secondary)); font-variant-numeric: tabular-nums; }
+.core-badge.ok { background: rgb(var(--accent-primary) / .14); color: rgb(var(--accent-primary)); }
+.core-badge.warn { background: rgb(214 150 30 / .16); color: #a86a00; }
+@media (max-width: 600px) { .core-list .core-row { flex-direction: column; align-items: stretch; } .core-row-actions { justify-content: flex-start; } }

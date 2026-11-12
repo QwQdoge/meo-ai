@@ -85,6 +85,7 @@ import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Stop
+import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Work
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -255,6 +256,7 @@ private fun navigationIcon(symbol: String): ImageVector = when (symbol) {
     "work" -> Icons.Rounded.Work
     "folder" -> Icons.Rounded.Folder
     "extension" -> Icons.Rounded.Extension
+    "schedule" -> Icons.Rounded.Schedule
     "settings" -> Icons.Rounded.Settings
     else -> Icons.Rounded.AutoAwesome
 }
@@ -589,15 +591,80 @@ private fun ListPage(page: JSONObject, act: Act) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        LazyColumn(Modifier.weight(1f).fillMaxWidth()) {
-            items(page.list("items")) { item ->
-                val action = item.obj("action")
-                val subtitle = item.str("subtitle")
-                ListItem(
-                    headlineContent = { Text(item.str("title")) },
-                    supportingContent = if (subtitle.isNotEmpty()) { { Text(subtitle, maxLines = 2) } } else null,
-                    modifier = if (action != null) Modifier.clickable { act(action) } else Modifier,
-                )
+        // One list, or several titled sections (Scheduled tasks, Background jobs).
+        val groups = page.list("sections").ifEmpty {
+            listOf(JSONObject().put("items", page.optJSONArray("items") ?: org.json.JSONArray()))
+        }
+        LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 16.dp)) {
+            groups.forEach { group ->
+                val title = group.str("title")
+                val rows = group.list("items")
+                if (title.isNotEmpty()) item {
+                    Text(
+                        title,
+                        Modifier.padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 4.dp),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (rows.isEmpty() && group.str("empty").isNotEmpty()) item {
+                    Text(
+                        group.str("empty"),
+                        Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                items(rows) { item ->
+                    if (item.has("actions") || item.has("badge")) {
+                        ActionRow(item, act)
+                    } else {
+                        val action = item.obj("action")
+                        val subtitle = item.str("subtitle")
+                        ListItem(
+                            headlineContent = { Text(item.str("title")) },
+                            supportingContent = if (subtitle.isNotEmpty()) { { Text(subtitle, maxLines = 2) } } else null,
+                            modifier = if (action != null) Modifier.clickable { act(action) } else Modifier,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** A list row with a status badge and its own buttons (a scheduled task, a background job). */
+@Composable
+private fun ActionRow(item: JSONObject, act: Act) {
+    val tone = item.str("tone")
+    val badgeBackground = if (tone == "ok") MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHighest
+    val badgeText = when (tone) {
+        "ok" -> MaterialTheme.colorScheme.onPrimaryContainer
+        "warn" -> MaterialTheme.colorScheme.error
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    Surface(
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(item.str("title"), Modifier.weight(1f, fill = false), style = MaterialTheme.typography.titleSmall, maxLines = 2)
+                if (item.str("badge").isNotEmpty()) {
+                    Surface(shape = RoundedCornerShape(10.dp), color = badgeBackground) {
+                        Text(item.str("badge"), Modifier.padding(horizontal = 8.dp, vertical = 2.dp), style = MaterialTheme.typography.labelSmall, color = badgeText)
+                    }
+                }
+            }
+            if (item.str("subtitle").isNotEmpty()) {
+                Text(item.str("subtitle"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 4, overflow = TextOverflow.Ellipsis)
+            }
+            val actions = item.list("actions")
+            if (actions.isNotEmpty()) {
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    actions.forEach { ActionButton(it, act) }
+                }
             }
         }
     }

@@ -87,6 +87,15 @@ pub enum Action {
         #[serde(default)]
         utc_offset_min: i32,
     },
+    /// A button on the Scheduled page: `op` is pause, resume, run or delete.
+    ScheduleOp {
+        id: String,
+        op: String,
+    },
+    /// The Stop button of a background job on the Scheduled page.
+    StopJob {
+        id: String,
+    },
     Start,
     SignIn,
     SignOut,
@@ -1157,6 +1166,25 @@ impl AppCore {
                 self.persist_router().await;
             }
             Action::Tick { utc_offset_min } => self.tick(utc_offset_min).await,
+            Action::ScheduleOp { id, op } => {
+                let (action, args) = if op == "run" {
+                    ("schedule_run", json!({ "id": id }))
+                } else {
+                    ("schedule_edit", json!({ "id": id, "op": op }))
+                };
+                let out = self.run_schedule(action, &args);
+                if !out.ok {
+                    self.notice("error", out.text);
+                }
+            }
+            Action::StopJob { id } => {
+                let host = self.state.lock().unwrap().agent.host.clone();
+                match host.map(|h| h.stop_job(&id)) {
+                    Some(Ok(_)) => self.hooks.changed(),
+                    Some(Err(e)) => self.notice("error", e),
+                    None => {}
+                }
+            }
             Action::SetForeground { visible } => {
                 self.update(|s| s.foreground = visible);
                 if visible {
@@ -6049,6 +6077,10 @@ impl AppCore {
                 self.notice("info", text);
             }
         }
+        // The page showing jobs and tasks keeps its ages and statuses current.
+        if self.state.lock().unwrap().route == "schedule" {
+            self.hooks.changed();
+        }
         let due = {
             let mut s = self.state.lock().unwrap();
             s.utc_offset = utc_offset_min;
@@ -8176,6 +8208,7 @@ impl AppCore {
                     }
                 },
                 "skills" => store_page(&s),
+                "schedule" => schedule_page(&s),
                 "settings" => self.settings_page(&s),
                 _ => json!({
                     "kind": "unavailable",
@@ -8637,6 +8670,8 @@ fn shell_sidebar(s: &State) -> Value {
     let mut sections = vec![
         json!({ "id": "plugins", "kind": "link", "label": "Plugins", "icon": "skills", "selected": s.route == "skills",
             "action": { "type": "navigate", "route": "skills" } }),
+        json!({ "id": "schedule", "kind": "link", "label": "Scheduled", "icon": "schedule", "selected": s.route == "schedule",
+            "action": { "type": "navigate", "route": "schedule" } }),
         json!({ "id": "projects", "kind": "tree", "label": "Projects", "icon": "projects", "selected": s.route == "projects" && s.open_project.is_none(),
             "action": { "type": "navigate", "route": "projects" }, "items": projects }),
     ];
@@ -10021,6 +10056,63 @@ fn router_controls(s: &State) -> Vec<Value> {
         items.push(json!({ "id": "router_add", "label": "Add custom route", "kind": "button", "style": "secondary", "action": { "type": "add_custom_route" } }));
     }
     items
+}
+
+/// The Scheduled page: scheduled tasks and (in Work) background jobs, each row with its own buttons.
+fn schedule_page(s: &State) -> Value {
+    let now = super::now_secs();
+    let btn = |label: &str, style: &str, action: Value| json!({ "label": label, "style": style, "action": action });
+    let tasks: Vec<Value> = s
+        .schedule
+        .iter()
+        .map(|t| {
+            let mut actions = Vec::new();
+            if t.active && !t.ended {
+                actions.push(btn("Run now", "secondary", json!({ "type": "schedule_op", "id": t.id, "op": "run" })));
+                actions.push(btn("Pause", "secondary", json!({ "type": "schedule_op", "id": t.id, "op": "pause" })));
+            } else {
+                actions.push(btn("Resume", "primary", json!({ "type": "schedule_op", "id": t.id, "op": "resume" })));
+            }
+            actions.push(btn("Delete", "danger", json!({ "type": "schedule_op", "id": t.id, "op": "delete" })));
+            let sent = if t.deliveries == 0 { String::new() } else { format!(" · sent {}×", t.deliveries) };
+            let prompt: String = t.prompt.chars().take(160).collect();
+            json!({
+                "id": t.id, "title": t.title,
+                "subtitle": format!("{}{}\n{}", t.timing_text(), sent, prompt),
+                "badge": t.status_text(now),
+                "tone": if t.ended || !t.active { "muted" } else if t.due(now) { "warn" } else { "ok" },
+                "actions": actions,
+            })
+        })
+        .collect();
+    let rows = s.agent.host.as_ref().map(|h| h.job_rows());
+    let jobs: Vec<Value> = rows
+        .clone()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(id, label, status, running, secs)| {
+            let age = match secs {
+                0..=59 => format!("{secs}s"),
+                60..=3599 => format!("{}m {}s", secs / 60, secs % 60),
+                _ => format!("{}h {}m", secs / 3600, secs % 3600 / 60),
+            };
+            json!({
+                "id": id, "title": label, "subtitle": format!("{id} · {age}"), "badge": status,
+                "tone": if running { "ok" } else if status.starts_with("failed") { "warn" } else { "muted" },
+                "actions": if running { vec![btn("Stop", "danger", json!({ "type": "stop_job", "id": id }))] } else { vec![] },
+            })
+        })
+        .collect();
+    json!({
+        "kind": "list", "title": "Scheduled & jobs",
+        "sections": [
+            { "id": "tasks", "title": "Scheduled tasks", "items": tasks,
+              "empty": "No scheduled tasks. Ask Meo, for example: every weekday at 9 send me a summary of my open tasks. They are sent while Meo is open." },
+            { "id": "jobs", "title": "Background jobs", "items": jobs,
+              "empty": if rows.is_none() { "Background jobs run in Work, with a folder open." } else { "No background jobs. Meo starts one for a long command such as a dev server." } },
+        ],
+        "actions": [button("Refresh", "secondary", json!({ "type": "refresh" }))],
+    })
 }
 
 fn sign_in_page(s: &State) -> Value {
@@ -12258,7 +12350,7 @@ mod tests {
         let c = signed_in_core();
         c.update(|s| s.conversations = vec![conversation("c1", "Old title")]);
         let view = c.view();
-        let item = &view["sidebar"]["sections"][2]["items"][0];
+        let item = &view["sidebar"]["sections"][3]["items"][0];
         assert_eq!(
             item["menu"][0]["action"],
             json!({ "type": "begin_rename", "id": "c1" })
@@ -12573,11 +12665,11 @@ mod tests {
         let sections = &view["sidebar"]["sections"];
         assert_eq!(view["sidebar"]["modes"][0]["selected"], true);
         assert_eq!(
-            sections[1]["items"][0]["children"][0]["title"],
+            sections[2]["items"][0]["children"][0]["title"],
             "In project"
         );
         assert_eq!(
-            sections[2]["items"].as_array().unwrap().len(),
+            sections[3]["items"].as_array().unwrap().len(),
             1,
             "only plain chats at the top level"
         );
@@ -14136,7 +14228,7 @@ mod tests {
         let first = sidebar(&c);
         assert_eq!(first, sidebar(&c), "nothing changed, same sidebar");
         let titles = |v: &Value| -> Vec<String> {
-            v["sections"][2]["items"]
+            v["sections"][3]["items"]
                 .as_array()
                 .unwrap()
                 .iter()
@@ -14147,7 +14239,7 @@ mod tests {
         c.update(|s| s.conversations[0].title = "New title".into());
         assert_eq!(titles(&sidebar(&c)), ["New title", "Other"]);
         c.update(|s| s.active = Some("c2".into()));
-        assert_eq!(sidebar(&c)["sections"][2]["items"][1]["selected"], true);
+        assert_eq!(sidebar(&c)["sections"][3]["items"][1]["selected"], true);
         c.update(|s| s.work_ids = vec!["c2".into()]);
         assert_eq!(titles(&sidebar(&c)), ["New title"]);
         c.update(|s| {
@@ -14155,11 +14247,11 @@ mod tests {
         });
         assert_eq!(sidebar(&c)["collapsed"], true);
         c.update(|s| s.show_archived = true);
-        assert_eq!(sidebar(&c)["sections"][2]["label"], "Archived");
+        assert_eq!(sidebar(&c)["sections"][3]["label"], "Archived");
         c.update(|s| s.projects = Some(Ok(vec![json!({ "id": "p1", "name": "Trip" })])));
-        assert_eq!(sidebar(&c)["sections"][1]["items"][0]["title"], "Trip");
+        assert_eq!(sidebar(&c)["sections"][2]["items"][0]["title"], "Trip");
         c.update(|s| s.projects = Some(Ok(vec![json!({ "id": "p1", "name": "Renamed" })])));
-        assert_eq!(sidebar(&c)["sections"][1]["items"][0]["title"], "Renamed");
+        assert_eq!(sidebar(&c)["sections"][2]["items"][0]["title"], "Renamed");
     }
 
     #[test]
@@ -16134,6 +16226,36 @@ mod tests {
         let create = agent::Tool::Schedule { action: "schedule_create", args: json!({}) };
         assert_eq!(agent::gate(agent::Permission::Low, &list), agent::Gate::Allow);
         assert!(matches!(agent::gate(agent::Permission::Low, &create), agent::Gate::Ask(_)));
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn the_scheduled_page_lists_tasks_with_buttons_that_change_them() {
+        let folder = temp_folder("schedule-page");
+        let api = fake_api(vec!["ok"]);
+        let c = work_core(&api, &folder, "all");
+        c.run_schedule("schedule_create", &json!({ "title": "Standup", "prompt": "Summarise yesterday", "timing": { "kind": "weekly", "time": "09:30", "weekdays": [1, 2, 3, 4, 5] } }));
+        c.update(|s| {
+            s.agent.host = None;
+            s.route = "schedule".into();
+        });
+        let page = c.view()["page"].clone();
+        assert_eq!((page["kind"].as_str(), page["title"].as_str()), (Some("list"), Some("Scheduled & jobs")));
+        let task = &page["sections"][0]["items"][0];
+        assert_eq!(task["title"], "Standup");
+        assert!(task["subtitle"].as_str().unwrap().contains("Mon, Tue, Wed, Thu, Fri at 09:30"));
+        let labels: Vec<&str> = task["actions"].as_array().unwrap().iter().filter_map(|a| a["label"].as_str()).collect();
+        assert_eq!(labels, ["Run now", "Pause", "Delete"]);
+        assert!(page["sections"][1]["empty"].as_str().unwrap().contains("Work"), "jobs need a folder");
+        let sidebar = c.view()["sidebar"]["sections"].as_array().unwrap().iter().any(|x| x["id"] == "schedule" && x["selected"] == true);
+        assert!(sidebar, "the sidebar link is selected on this page");
+        run(&c, Action::ScheduleOp { id: "s1".into(), op: "pause".into() });
+        let task = c.view()["page"]["sections"][0]["items"][0].clone();
+        assert_eq!(task["badge"], "paused");
+        assert_eq!(task["actions"][0]["label"], "Resume");
+        run(&c, Action::ScheduleOp { id: "s1".into(), op: "delete".into() });
+        assert!(c.view()["page"]["sections"][0]["items"].as_array().unwrap().is_empty());
+        assert!(c.view()["page"]["sections"][0]["empty"].as_str().unwrap().contains("No scheduled tasks"));
         let _ = std::fs::remove_dir_all(&folder);
     }
 

@@ -1,0 +1,339 @@
+{
+  "sidebar": {
+    "modes": [
+      {
+        "label": "Chat",
+        "icon": "chat",
+        "selected": true,
+        "action": {
+          "type": "set_mode",
+          "mode": "chat"
+        },
+        "id": "modes-0"
+      },
+      {
+        "label": "Work",
+        "icon": "work",
+        "selected": false,
+        "action": {
+          "type": "set_mode",
+          "mode": "work"
+        },
+        "id": "modes-1"
+      }
+    ],
+    "toggle": {
+      "type": "toggle_sidebar"
+    },
+    "collapsed": false,
+    "search": {
+      "placeholder": "Search",
+      "value": "",
+      "action": {
+        "type": "search"
+      }
+    },
+    "newChat": {
+      "label": "New chat",
+      "action": {
+        "type": "new_chat"
+      }
+    },
+    "sections": [
+      {
+        "kind": "link",
+        "label": "Plugins",
+        "icon": "skills",
+        "action": {
+          "type": "open_store"
+        },
+        "id": "sections-0",
+        "selected": false
+      },
+      {
+        "kind": "link",
+        "label": "Scheduled",
+        "icon": "schedule",
+        "action": {
+          "type": "navigate",
+          "route": "schedule"
+        },
+        "id": "schedule",
+        "selected": true
+      },
+      {
+        "kind": "tree",
+        "label": "Projects",
+        "icon": "projects",
+        "action": {
+          "type": "open_projects"
+        },
+        "items": [
+          {
+            "title": "MeoArch",
+            "action": {
+              "type": "open_project",
+              "id": "1"
+            },
+            "children": [
+              {
+                "title": "Design review",
+                "action": {
+                  "type": "open_chat",
+                  "id": "c1"
+                },
+                "id": "children-0"
+              }
+            ],
+            "id": "items-0"
+          },
+          {
+            "title": "Research",
+            "action": {
+              "type": "open_project",
+              "id": "2"
+            },
+            "children": [],
+            "id": "items-1"
+          }
+        ],
+        "id": "sections-1"
+      },
+      {
+        "kind": "list",
+        "label": "Chats",
+        "tabs": [],
+        "items": [
+          {
+            "title": "Explain the router plan",
+            "selected": true,
+            "action": {
+              "type": "open_chat",
+              "id": "c2"
+            },
+            "menu": [
+              {
+                "label": "Rename",
+                "action": {
+                  "type": "rename",
+                  "id": "c2"
+                },
+                "id": "menu-0"
+              },
+              {
+                "label": "Delete",
+                "action": {
+                  "type": "delete",
+                  "id": "c2"
+                },
+                "id": "menu-1"
+              }
+            ],
+            "id": "items-0"
+          },
+          {
+            "title": "Rust lifetimes question",
+            "action": {
+              "type": "open_chat",
+              "id": "c3"
+            },
+            "menu": [],
+            "id": "items-1"
+          },
+          {
+            "title": "Trip ideas",
+            "action": {
+              "type": "open_chat",
+              "id": "c4"
+            },
+            "menu": [],
+            "id": "items-2"
+          }
+        ],
+        "id": "sections-2"
+      }
+    ],
+    "footer": [
+      {
+        "label": "Settings",
+        "selected": false,
+        "action": {
+          "type": "open_settings"
+        },
+        "id": "footer-0",
+        "icon": "settings"
+      }
+    ],
+    "status": {
+      "kind": "live",
+      "label": "Live sync"
+    },
+    "account": {
+      "name": "mingyue",
+      "email": "mingyue@example.com",
+      "initial": "M",
+      "menu": [
+        {
+          "id": "settings",
+          "label": "Settings",
+          "icon": "settings",
+          "shortcut": "Ctrl+,",
+          "action": {
+            "type": "navigate",
+            "route": "settings"
+          }
+        },
+        {
+          "id": "usage",
+          "label": "Usage",
+          "icon": "usage",
+          "action": {
+            "type": "open_settings",
+            "section": "usage"
+          }
+        },
+        {
+          "id": "language",
+          "label": "Language",
+          "icon": "language",
+          "action": {
+            "type": "open_settings",
+            "section": "general"
+          }
+        },
+        {
+          "divider": true
+        },
+        {
+          "id": "sign_out",
+          "label": "Log out",
+          "icon": "logout",
+          "action": {
+            "type": "sign_out"
+          }
+        }
+      ]
+    }
+  },
+  "page": {
+    "kind": "list",
+    "title": "Scheduled & jobs",
+    "actions": [
+      {
+        "label": "Refresh",
+        "style": "secondary",
+        "action": {
+          "type": "refresh"
+        }
+      }
+    ],
+    "sections": [
+      {
+        "id": "tasks",
+        "title": "Scheduled tasks",
+        "items": [
+          {
+            "id": "s1",
+            "title": "Standup summary",
+            "subtitle": "Mon, Tue, Wed, Thu, Fri at 09:30 · sent 3×\nSummarise yesterday's commits and today's open tasks",
+            "badge": "next 2026-11-13 09:30",
+            "tone": "ok",
+            "actions": [
+              {
+                "label": "Run now",
+                "style": "secondary",
+                "action": {
+                  "type": "schedule_op",
+                  "id": "s1",
+                  "op": "run"
+                }
+              },
+              {
+                "label": "Pause",
+                "style": "secondary",
+                "action": {
+                  "type": "schedule_op",
+                  "id": "s1",
+                  "op": "pause"
+                }
+              },
+              {
+                "label": "Delete",
+                "style": "danger",
+                "action": {
+                  "type": "schedule_op",
+                  "id": "s1",
+                  "op": "delete"
+                }
+              }
+            ]
+          },
+          {
+            "id": "s2",
+            "title": "Water the plants",
+            "subtitle": "every 6 hour(s)\nRemind me to water the plants",
+            "badge": "paused",
+            "tone": "muted",
+            "actions": [
+              {
+                "label": "Resume",
+                "style": "primary",
+                "action": {
+                  "type": "schedule_op",
+                  "id": "s2",
+                  "op": "resume"
+                }
+              },
+              {
+                "label": "Delete",
+                "style": "danger",
+                "action": {
+                  "type": "schedule_op",
+                  "id": "s2",
+                  "op": "delete"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "jobs",
+        "title": "Background jobs",
+        "items": [
+          {
+            "id": "job-1",
+            "title": "npm run dev",
+            "subtitle": "job-1 · 12m 4s",
+            "badge": "running",
+            "tone": "ok",
+            "actions": [
+              {
+                "label": "Stop",
+                "style": "danger",
+                "action": {
+                  "type": "stop_job",
+                  "id": "job-1"
+                }
+              }
+            ]
+          },
+          {
+            "id": "job-2",
+            "title": "cargo build --release",
+            "subtitle": "job-2 · 3m 18s",
+            "badge": "completed (exit code 0)",
+            "tone": "muted",
+            "actions": []
+          }
+        ]
+      }
+    ]
+  },
+  "prefs": {},
+  "online": true,
+  "strings": {
+    "jump": "Jump to the latest message",
+    "thinking": "Thinking"
+  }
+}

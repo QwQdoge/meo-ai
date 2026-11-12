@@ -311,6 +311,8 @@ function Unavailable({ page, act }: { page: Spec; act: Act }) {
 }
 
 function ListPage({ page, act }: { page: Spec; act: Act }) {
+  // A page is one list, or several titled sections (Scheduled tasks, Background jobs, ...).
+  const groups: Spec[] = page.sections ?? [{ id: "items", items: page.items ?? [] }];
   return (
     <main className="core-page">
       <header className="core-header">
@@ -319,16 +321,39 @@ function ListPage({ page, act }: { page: Spec; act: Act }) {
       </header>
       {page.loading && <div className="core-spinner" role="progressbar" />}
       {page.empty && <p className="core-muted">{page.empty.title}</p>}
-      <ul className="core-list">
-        {(page.items ?? []).map((item: Spec) => (
-          <li key={item.id}>
-            <button disabled={!item.action} onClick={() => act(item.action)}>
-              <strong>{item.title}</strong>
-              {item.subtitle && <span>{item.subtitle}</span>}
-            </button>
-          </li>
-        ))}
-      </ul>
+      {groups.map((g: Spec) => (
+        <section key={g.id} className="core-list-section">
+          {g.title && <h2>{g.title}</h2>}
+          {g.empty && !(g.items ?? []).length && <p className="core-muted">{g.empty}</p>}
+          <ul className="core-list">
+            {(g.items ?? []).map((item: Spec) => (
+              <li key={item.id} className={item.actions || item.badge ? "core-row" : undefined}>
+                {item.actions || item.badge ? (
+                  <>
+                    <div className="core-row-main">
+                      <div className="core-row-title">
+                        <strong>{item.title}</strong>
+                        {item.badge && <span className={`core-badge ${item.tone ?? ""}`}>{item.badge}</span>}
+                      </div>
+                      {item.subtitle && <span className="core-row-sub">{item.subtitle}</span>}
+                    </div>
+                    <div className="core-row-actions">
+                      {(item.actions ?? []).map((a: Spec, i: number) => (
+                        <button key={i} className={`core-button ${a.style ?? "secondary"}`} onClick={() => act(a.action)}>{a.label}</button>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <button disabled={!item.action} onClick={() => act(item.action)}>
+                    <strong>{item.title}</strong>
+                    {item.subtitle && <span>{item.subtitle}</span>}
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      ))}
     </main>
   );
 }
