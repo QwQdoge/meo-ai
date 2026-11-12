@@ -941,7 +941,7 @@ function TuneButton({ toolbar, act }: { toolbar: Spec[]; act: Act }) {
 /** The plan card changes in place (same number of blocks), so it is compared by content. */
 const planKey = (m: Spec) => {
   const p = (m.blocks ?? []).find((b: Spec) => b.type === "plan");
-  return p ? JSON.stringify([p.goal, p.items, p.live]) : "";
+  return p ? JSON.stringify([p.goal, p.items, p.live, p.actions]) : "";
 };
 
 /** Everything that shows in one message, compared without its identity: stored messages never change,

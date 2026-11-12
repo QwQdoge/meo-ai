@@ -92,7 +92,7 @@ export function Callout({ block, components }: { block: Spec; components?: Recor
 }
 
 /** The run's goal and task list, updated in place while it works (`live`), kept with the answer after. */
-export function PlanCard({ block }: { block: Spec }) {
+export function PlanCard({ block, act }: { block: Spec; act?: (action: Spec) => void }) {
   const goal: Spec | null = block.goal ?? null;
   const items: Spec[] = block.items ?? [];
   const done = items.filter((t) => t.state === "done").length;
@@ -128,6 +128,16 @@ export function PlanCard({ block }: { block: Spec }) {
         </ol>
       )}
       {goal?.note && <p className="core-plan-note">{goal.note}</p>}
+      {act && goal?.maxRounds != null && <p className="core-plan-note">Rounds {goal.roundsUsed ?? 0}/{goal.maxRounds}</p>}
+      {act && (block.actions ?? []).length > 0 && (
+        <div className="core-plan-actions">
+          {(block.actions as Spec[]).map((a, i) => (
+            <button key={i} className="core-plan-btn" disabled={!!a.disabled} onClick={() => act(a.action)}>
+              {a.icon && <Icon name={a.icon} size={14} />} {a.label}
+            </button>
+          ))}
+        </div>
+      )}
     </section>
   );
 }
@@ -175,7 +185,7 @@ export function Blocks({ blocks, components, copy, copied, streaming, act }: { b
       {blocks.map((b, i) => {
         if (b.type === "callout") return <Callout key={i} block={b} components={components} />;
         if (b.type === "file" && act) return <FileCard key={i} block={b} act={act} />;
-        if (b.type === "plan") return <PlanCard key="plan" block={b} />;
+        if (b.type === "plan") return <PlanCard key="plan" block={b} act={act} />;
         if (b.type === "draft") return <DraftCard key={i} block={b} copy={copy} copied={copied} />;
         const last = streaming && i === blocks.length - 1;
         return <Markdown key={i} text={b.text + (last ? " ▍" : "")} components={components} />;

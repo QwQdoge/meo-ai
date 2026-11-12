@@ -1155,7 +1155,7 @@ private fun MessageBubble(message: JSONObject, strings: JSONObject, act: Act) {
                     else blocks.forEachIndexed { i, block ->
                         val cursor = if (streaming && i == blocks.lastIndex) " ▍" else ""
                         when (block.str("type")) {
-                            "callout", "plan" -> CalloutBlock(block)
+                            "callout", "plan" -> CalloutBlock(block, act)
                             "draft" -> DraftBlock(block, strings)
                             "math" -> MathBlock(block)
                             "plot" -> PlotBlock(block)
@@ -1333,7 +1333,7 @@ private fun stripIcons(text: String): String = text.replace(Regex(":icon\\[[^\\]
 
 /** A highlighted note (tip, warning, ...) with a coloured edge. */
 @Composable
-private fun CalloutBlock(block: JSONObject) {
+private fun CalloutBlock(block: JSONObject, act: Act = {}) {
     val accent = when (block.str("kind")) {
         "warning", "caution", "important" -> MaterialTheme.colorScheme.error
         "note", "info" -> MaterialTheme.colorScheme.outline
@@ -1345,6 +1345,22 @@ private fun CalloutBlock(block: JSONObject) {
             Column(Modifier.padding(start = 10.dp, top = 8.dp, bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 if (block.str("title").isNotEmpty()) Text(block.str("title"), style = MaterialTheme.typography.labelLarge)
                 MarkdownText(stripIcons(block.str("text")), Modifier.fillMaxWidth())
+                // The goal card's controls (Pause, Edit, Rounds, Resume): the core sends the actions.
+                val actions = block.list("actions")
+                if (actions.isNotEmpty()) {
+                    Row(
+                        Modifier.horizontalScroll(androidx.compose.foundation.rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        actions.forEach { a ->
+                            OutlinedButton(
+                                onClick = { a.obj("action")?.let(act) },
+                                enabled = !a.optBoolean("disabled"),
+                                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                            ) { Text(a.str("label"), style = MaterialTheme.typography.labelMedium) }
+                        }
+                    }
+                }
             }
         }
     }

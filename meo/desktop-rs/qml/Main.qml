@@ -2233,6 +2233,23 @@ ApplicationWindow {
                                     color: MeoTheme.contentOnSurface
                                     font.pixelSize: 14 * MeoTheme.textScale
                                 }
+                                // The goal card's controls (Pause, Edit, Rounds, Resume): the core sends the actions.
+                                Flow {
+                                    visible: (block.actions || []).length > 0
+                                    width: parent.width
+                                    spacing: 6
+                                    Repeater {
+                                        model: block.actions || []
+                                        MeoButton {
+                                            required property var modelData
+                                            text: modelData.label
+                                            type: "outlined"
+                                            size: "xs"
+                                            enabled: !modelData.disabled
+                                            onClicked: window.act(modelData.action)
+                                        }
+                                    }
+                                }
                             }
                         }
                     }

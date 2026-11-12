@@ -255,6 +255,7 @@ pub fn plan_block(goal: Option<&Value>, tasks: &[Value], live: bool) -> Option<V
             let mark = match g["status"].as_str() {
                 Some("done") => "✓ ",
                 Some("blocked") => "⚠ ",
+                Some("paused") => "⏸ ",
                 _ => "",
             };
             format!("{mark}{}", g["objective"].as_str().unwrap_or_default())
@@ -269,6 +270,9 @@ pub fn plan_block(goal: Option<&Value>, tasks: &[Value], live: bool) -> Option<V
         if let Some(note) = g["note"].as_str().filter(|x| !x.is_empty()) {
             text.push_str(&format!("*Note:* {note}\n"));
         }
+        if let Some(max) = g["maxRounds"].as_u64() {
+            text.push_str(&format!("*Rounds:* {}/{max}\n", g["roundsUsed"].as_u64().unwrap_or(0)));
+        }
     }
     for t in tasks {
         let title = t["title"].as_str().unwrap_or_default();
@@ -278,8 +282,22 @@ pub fn plan_block(goal: Option<&Value>, tasks: &[Value], live: bool) -> Option<V
             _ => format!("\n- [ ] {title}"),
         });
     }
+    // What the user can do with a live goal; the answer's own Resume is added where it is stored.
+    let max = goal.and_then(|g| g["maxRounds"].as_i64()).unwrap_or(2);
+    let actions = match goal.and_then(|g| g["status"].as_str()) {
+        Some("active") if live => json!([
+            { "label": "Pause", "icon": "pause", "action": { "type": "goal_pause" } },
+            { "label": "Edit", "icon": "edit", "action": { "type": "begin_edit_goal" } },
+            { "label": "Rounds −", "icon": "remove", "action": { "type": "goal_rounds", "delta": -1 }, "disabled": max <= 1 },
+            { "label": "Rounds +", "icon": "add", "action": { "type": "goal_rounds", "delta": 1 }, "disabled": max >= 10 },
+        ]),
+        Some("paused") if live => json!([
+            { "label": "Edit", "icon": "edit", "action": { "type": "begin_edit_goal" } },
+        ]),
+        _ => json!([]),
+    };
     Some(json!({
-        "type": "plan", "tasks": true, "live": live, "kind": "tip",
+        "type": "plan", "tasks": true, "live": live, "kind": "tip", "actions": actions,
         "goal": goal.cloned().unwrap_or(Value::Null),
         "items": tasks, "done": done, "total": tasks.len(),
         "title": title, "text": text.trim(),
