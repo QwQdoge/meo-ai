@@ -11,6 +11,7 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// The directory (inside the project folder) that holds the persistent state.
@@ -38,6 +39,29 @@ pub struct ProjectEnv {
     /// Files and folders that live online (a cloud drive, a document): reached through the connected app.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sources: Vec<Source>,
+    /// When the shared part (repository and cloud files) last changed, in unix seconds: the newer one wins
+    /// when two devices disagree.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub shared_at: i64,
+    /// When this device's folders last changed.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub folders_at: i64,
+    /// The folders the project has on the user's other devices (device id → what it last said). Shown for
+    /// information; a path from another computer is never opened here.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub elsewhere: BTreeMap<String, Elsewhere>,
+}
+
+fn is_zero(n: &i64) -> bool {
+    *n == 0
+}
+
+/// One other device's folders for a project.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Elsewhere {
+    pub device: String,
+    pub folders: Vec<String>,
+    pub at: i64,
 }
 
 /// Something of the project that is not on this device.
@@ -49,13 +73,69 @@ pub struct Source {
 
 impl ProjectEnv {
     pub fn is_empty(&self) -> bool {
-        self.folder.is_none() && self.repo.is_none() && self.folders.is_empty() && self.sources.is_empty()
+        self.folder.is_none() && self.repo.is_none() && self.folders.is_empty() && self.sources.is_empty() && self.elsewhere.is_empty()
     }
 
     /// Every folder of the project on this device: the main one first.
     pub fn all_folders(&self) -> Vec<String> {
         self.folder.iter().chain(self.folders.iter()).cloned().collect()
     }
+}
+
+/// What this device tells the others about a project: the shared part, and its own folders.
+pub fn snapshot(id: &str, env: &ProjectEnv, device_name: &str) -> serde_json::Value {
+    serde_json::json!({
+        "project": id,
+        "repo": env.repo,
+        "sources": env.sources,
+        "sharedAt": env.shared_at,
+        "device": device_name,
+        "folders": env.all_folders(),
+        "foldersAt": env.folders_at,
+    })
+}
+
+/// Takes what another device said about a project, if it is newer than what this device has. The
+/// shared part is replaced as a whole (the newer change wins, deletions included); the other device's
+/// folders are kept apart and only for display. Everything is checked again here: it came over the wire.
+/// Returns whether anything changed.
+pub fn merge(env: &mut ProjectEnv, incoming: &serde_json::Value, from: &str) -> bool {
+    let mut changed = false;
+    let shared_at = incoming["sharedAt"].as_i64().unwrap_or(0);
+    if shared_at > env.shared_at {
+        let repo = incoming["repo"].as_str().and_then(parse_repo);
+        let sources: Vec<Source> = incoming["sources"]
+            .as_array()
+            .map(|list| {
+                list.iter()
+                    .filter_map(|s| {
+                        let source = parse_source(&format!("{} | {}", s["label"].as_str().unwrap_or_default().replace('|', " "), s["url"].as_str().unwrap_or_default()))?;
+                        Some(source)
+                    })
+                    .take(50)
+                    .collect()
+            })
+            .unwrap_or_default();
+        env.repo = repo;
+        env.sources = sources;
+        env.shared_at = shared_at;
+        changed = true;
+    }
+    let folders_at = incoming["foldersAt"].as_i64().unwrap_or(0);
+    if !from.is_empty() && folders_at > env.elsewhere.get(from).map_or(0, |e| e.at) {
+        let folders: Vec<String> = incoming["folders"]
+            .as_array()
+            .map(|l| l.iter().filter_map(|f| f.as_str()).filter(|f| !f.is_empty() && f.len() <= 500 && !f.contains('\0')).map(str::to_owned).take(20).collect())
+            .unwrap_or_default();
+        let device: String = incoming["device"].as_str().unwrap_or("Device").trim().chars().take(40).collect();
+        if folders.is_empty() {
+            env.elsewhere.remove(from);
+        } else {
+            env.elsewhere.insert(from.to_owned(), Elsewhere { device, folders, at: folders_at });
+        }
+        changed = true;
+    }
+    changed
 }
 
 /// `name | https://...` or just a link, as a cloud source; `None` when it is not an http(s) address.
@@ -348,6 +428,51 @@ pub fn prompt_block(state: &AgentState) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_newer_shared_part_wins_and_another_devices_folders_are_kept_apart() {
+        let mut mine = ProjectEnv { repo: Some("me/old".into()), shared_at: 100, folder: Some("/mine".into()), ..Default::default() };
+        let from_laptop = serde_json::json!({
+            "project": "p1", "repo": "me/new", "sharedAt": 200,
+            "sources": [{ "label": "Budget", "url": "https://docs.google.com/spreadsheets/d/x" }],
+            "device": "Laptop", "folders": ["/home/laptop/work"], "foldersAt": 150,
+        });
+        assert!(merge(&mut mine, &from_laptop, "laptop"));
+        assert_eq!(mine.repo.as_deref(), Some("me/new"));
+        assert_eq!(mine.sources.len(), 1);
+        assert_eq!(mine.folder.as_deref(), Some("/mine"), "this device's own folder is never replaced");
+        assert_eq!(mine.elsewhere["laptop"].folders, ["/home/laptop/work"]);
+        assert_eq!(mine.elsewhere["laptop"].device, "Laptop");
+        // The same message again, or an older one, changes nothing.
+        assert!(!merge(&mut mine, &from_laptop, "laptop"));
+        let older = serde_json::json!({ "repo": "me/ancient", "sharedAt": 50, "sources": [], "folders": ["/x"], "foldersAt": 10, "device": "Laptop" });
+        assert!(!merge(&mut mine, &older, "laptop"));
+        assert_eq!(mine.repo.as_deref(), Some("me/new"));
+        // A newer message that removed everything clears it too (a deletion is a change).
+        let cleared = serde_json::json!({ "repo": null, "sharedAt": 300, "sources": [], "folders": [], "foldersAt": 400, "device": "Laptop" });
+        assert!(merge(&mut mine, &cleared, "laptop"));
+        assert!(mine.repo.is_none() && mine.sources.is_empty() && mine.elsewhere.is_empty());
+    }
+
+    #[test]
+    fn what_comes_over_the_wire_is_checked_again() {
+        let mut env = ProjectEnv::default();
+        let hostile = serde_json::json!({
+            "repo": "not a repo", "sharedAt": 5,
+            "sources": [
+                { "label": "ok", "url": "https://x.test/a" },
+                { "label": "bad", "url": "javascript:alert(1)" },
+                { "label": "file", "url": "file:///etc/passwd" },
+            ],
+            "device": "d".repeat(500), "folders": ["/ok", "bad\0path", "x".repeat(600)], "foldersAt": 5,
+        });
+        assert!(merge(&mut env, &hostile, "dev"));
+        assert!(env.repo.is_none());
+        assert_eq!(env.sources.iter().map(|s| s.label.as_str()).collect::<Vec<_>>(), ["ok"]);
+        assert_eq!(env.elsewhere["dev"].folders, ["/ok"]);
+        assert_eq!(env.elsewhere["dev"].device.len(), 40);
+        assert!(!merge(&mut env, &hostile, ""), "a message without a sender adds no device");
+    }
+
     #[test]
     fn a_cloud_source_is_a_web_address_with_an_optional_name() {
         let a = parse_source("https://drive.google.com/drive/folders/abc").unwrap();

@@ -673,7 +673,7 @@ struct RemoteLink {
 
 /// Work the realtime loop runs beside the event stream, so approvals and stop keep arriving.
 enum RemoteJob {
-    Task { from: String, text: String },
+    Task { from: String, text: String, project: Option<String> },
     Decide { allow: bool },
 }
 
@@ -697,6 +697,8 @@ struct State {
     utc_known: bool,
     /// Background jobs the user has already been told about (id → was running when last seen).
     jobs_seen: HashMap<String, bool>,
+    /// Projects whose bindings changed here and are not yet told to the other devices.
+    projects_to_share: Vec<String>,
     remote: RemoteLink,
     auth: AuthState,
     session: Option<Session>,
@@ -2748,11 +2750,26 @@ impl AppCore {
 
     /// Changes what a project is linked to on this device, keeps it, and reads its `.agent/` again.
     fn set_project_env(&self, id: &str, change: impl FnOnce(&mut project_env::ProjectEnv)) {
+        let now = super::now_secs();
         self.update(|s| {
             let entry = s.project_env.entry(id.to_owned()).or_default();
+            let before = (entry.repo.clone(), entry.sources.clone(), entry.all_folders());
             change(entry);
+            // What changed is stamped, so another device can tell which side is newer; the change is told to
+            // the other devices on the next tick.
+            let shared_changed = before.0 != entry.repo || before.1 != entry.sources;
+            let folders_changed = before.2 != entry.all_folders();
+            if shared_changed {
+                entry.shared_at = now.max(entry.shared_at + 1);
+            }
+            if folders_changed {
+                entry.folders_at = now.max(entry.folders_at + 1);
+            }
             if entry.is_empty() {
                 s.project_env.remove(id);
+            }
+            if (shared_changed || folders_changed) && !s.projects_to_share.iter().any(|p| p == id) {
+                s.projects_to_share.push(id.to_owned());
             }
         });
         let all = self.state.lock().unwrap().project_env.clone();
@@ -4119,13 +4136,42 @@ impl AppCore {
         if text.is_empty() {
             return;
         }
+        // The project of this chat goes along: that device works in the folder it has bound to the same project.
+        let project = project_of_view(&self.state.lock().unwrap());
         self.update(|s| s.remote.task_host = Some(device.id.clone()));
-        self.remote_send(remote::message("task", &device.id, json!({ "text": text })))
+        self.remote_send(remote::message("task", &device.id, json!({ "text": text, "project": project })))
             .await;
         self.notice(
             "info",
             format!("Sent to {}. It runs there; follow it here.", device.name),
         );
+    }
+
+    /// Tells another device (or all of them) what this device has bound to its projects. One message per
+    /// project, so none outgrows the relay's limit. A project that was emptied is told too: it clears the others.
+    async fn remote_share_projects(&self, to: Option<&str>, only: Option<&[String]>) {
+        if !self.remote_enabled() {
+            return;
+        }
+        let name = self.device_name();
+        let shots: Vec<Value> = {
+            let s = self.state.lock().unwrap();
+            let ids: Vec<String> = match only {
+                Some(list) => list.to_vec(),
+                None => s.project_env.keys().cloned().collect(),
+            };
+            ids.iter()
+                .take(100)
+                .map(|id| project_env::snapshot(id, &s.project_env.get(id).cloned().unwrap_or_default(), &name))
+                .collect()
+        };
+        for mut shot in shots {
+            shot["type"] = json!("remote.projects");
+            if let Some(to) = to {
+                shot["to"] = json!(to);
+            }
+            self.remote_send(shot).await;
+        }
     }
 
     /// Controller: asks every online device that can host for its background jobs.
@@ -4194,6 +4240,7 @@ impl AppCore {
             "remote.task" => Some(RemoteJob::Task {
                 from,
                 text: data["text"].as_str()?.to_owned(),
+                project: data["project"].as_str().filter(|p| !p.is_empty() && p.len() <= 64).map(str::to_owned),
             }),
             "remote.decision" => {
                 let s = self.state.lock().unwrap();
@@ -4228,7 +4275,7 @@ impl AppCore {
 
     async fn remote_job(&self, job: RemoteJob) {
         match job {
-            RemoteJob::Task { from, text } => {
+            RemoteJob::Task { from, text, project } => {
                 let busy = {
                     let s = self.state.lock().unwrap();
                     s.streaming.is_some()
@@ -4250,7 +4297,11 @@ impl AppCore {
                     let s = self.state.lock().unwrap();
                     s.prefs.get("work.browser").and_then(Value::as_str).is_some_and(|m| m != "off") || pref_bool(&s, "work.computer_use", false)
                 };
-                if self.ensure_host().is_none() && !device_tools {
+                // A project this device has a folder for is enough: the task runs there.
+                let project_folder = project.as_ref().is_some_and(|p| {
+                    self.state.lock().unwrap().project_env.get(p).and_then(|e| e.folder.clone()).is_some_and(|f| std::path::Path::new(&f).is_dir())
+                });
+                if self.ensure_host().is_none() && !device_tools && !project_folder {
                     return self
                         .remote_refuse(&from, "Open a folder in Work on that device first, or turn on Browser control or Computer control in its Settings > Permissions.")
                         .await;
@@ -4258,7 +4309,7 @@ impl AppCore {
                 self.update(|s| {
                     s.remote.controller = Some(from.clone());
                     s.files.clear();
-                    s.new_chat_project = None;
+                    s.new_chat_project = project.clone();
                     s.active = None;
                     s.route = "work".into();
                 });
@@ -4327,6 +4378,10 @@ impl AppCore {
                 if data["reply"].as_bool() == Some(true) && !from.is_empty() {
                     self.remote_announce(false, Some(&from)).await;
                 }
+                // Two devices that meet tell each other what they have bound; the newer change wins.
+                if !from.is_empty() {
+                    self.remote_share_projects(Some(&from), None).await;
+                }
             }
             "remote.status" => {
                 let host = self
@@ -4375,6 +4430,27 @@ impl AppCore {
                     .map(|(id, label, status, running, secs)| json!({ "id": id, "label": label, "status": status, "running": running, "secs": secs }))
                     .collect();
                 self.remote_send(remote::message("jobs", &from, json!({ "rows": rows }))).await;
+            }
+            "remote.projects" => {
+                if from.is_empty() || !self.remote_enabled() {
+                    return;
+                }
+                let Some(id) = data["project"].as_str().filter(|p| !p.is_empty() && p.len() <= 64) else { return };
+                let id = id.to_owned();
+                let changed = {
+                    let mut s = self.state.lock().unwrap();
+                    let entry = s.project_env.entry(id.clone()).or_default();
+                    let changed = project_env::merge(entry, data, &from);
+                    if entry.is_empty() {
+                        s.project_env.remove(&id);
+                    }
+                    changed
+                };
+                if changed {
+                    let all = self.state.lock().unwrap().project_env.clone();
+                    self.save_json(KEY_PROJECT_ENV, &all);
+                    self.hooks.changed();
+                }
             }
             "remote.jobs" => {
                 if from.is_empty() || !self.remote_enabled() {
@@ -6309,6 +6385,11 @@ impl AppCore {
                 self.hooks.notify("Background job", &text);
                 self.notice("info", text);
             }
+        }
+        // Bindings changed here since the last tick go to the user's other devices.
+        let pending: Vec<String> = std::mem::take(&mut self.state.lock().unwrap().projects_to_share);
+        if !pending.is_empty() {
+            self.remote_share_projects(None, Some(&pending)).await;
         }
         // The page showing jobs and tasks keeps its ages and statuses current.
         if self.state.lock().unwrap().route == "schedule" {
@@ -11515,8 +11596,18 @@ fn project_page(s: &State, id: &str) -> Value {
         ));
     }
     if can_host {
-        environment.push(json!({ "id": "env_add_folder", "kind": "button", "label": "Add another folder", "style": "secondary",
+        environment.push(json!({ "id": "env_pick_folder", "kind": "button", "label": "Choose a folder to add", "style": "secondary",
+            "action": { "type": "pick_project_folder", "id": id, "add": true } }));
+        environment.push(json!({ "id": "env_add_folder", "kind": "button", "label": "Type a folder path", "style": "secondary",
             "action": { "type": "begin_add_project_folder", "id": id } }));
+    }
+    for (device_id, other) in &env.elsewhere {
+        environment.push(own_item(
+            format!("env_elsewhere_{device_id}"),
+            &format!("On {}", other.device),
+            &other.folders.join("\n"),
+            vec![],
+        ));
     }
     environment.push(json!({ "id": "env_h_cloud", "kind": "heading", "label": "Cloud files" }));
     for (i, source) in env.sources.iter().enumerate() {
@@ -14050,6 +14141,71 @@ mod tests {
         assert_eq!((env.folders.len(), env.sources.len()), (0, 1));
         let _ = std::fs::remove_dir_all(&main);
         let _ = std::fs::remove_dir_all(&extra);
+    }
+
+    #[test]
+    fn project_bindings_reach_the_other_devices_and_theirs_reach_this_one() {
+        let main = temp_folder("sync-main");
+        let api = fake_api(vec!["ok"]);
+        let c = work_core(&api, &main, "all");
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let me = c.client_id.clone();
+        // A change made here is told to the others on the next tick, once.
+        futures_executor::block_on(c.dispatch(Action::AddProjectSource { id: "p1".into(), text: "Budget | https://docs.google.com/spreadsheets/d/xyz".into() }));
+        rt.block_on(c.tick(0));
+        let told: Vec<Value> = api.remotes.lock().unwrap().iter().filter(|m| m["type"] == "remote.projects").cloned().collect();
+        assert_eq!(told.len(), 1, "{told:?}");
+        assert_eq!(told[0]["project"], "p1");
+        assert_eq!(told[0]["sources"][0]["label"], "Budget");
+        assert!(told[0]["to"].is_null(), "everyone gets it");
+        rt.block_on(c.tick(0));
+        assert_eq!(api.remotes.lock().unwrap().iter().filter(|m| m["type"] == "remote.projects").count(), 1, "not again");
+        // Another device's newer change arrives and replaces the shared part; its folders are shown, not used.
+        let incoming = json!({
+            "origin": "laptop", "to": me, "project": "p1", "repo": "acme/site", "sharedAt": i64::MAX / 2,
+            "sources": [], "device": "Laptop", "folders": ["/home/me/site"], "foldersAt": 7,
+        });
+        rt.block_on(c.on_remote_message("remote.projects", &incoming, false));
+        let env = c.state.lock().unwrap().project_env.get("p1").cloned().unwrap();
+        assert_eq!(env.repo.as_deref(), Some("acme/site"));
+        assert!(env.sources.is_empty(), "the newer change removed the cloud file");
+        assert!(env.folder.is_none() && env.elsewhere["laptop"].folders == ["/home/me/site"]);
+        assert!(c.storage.load(KEY_PROJECT_ENV).unwrap().contains("acme/site"), "kept for the next start");
+        assert!(project_page(&c.state.lock().unwrap(), "p1").to_string().contains("On Laptop"));
+        // A device that appears is told everything this one has.
+        c.update(|s| {
+            s.project_env.entry("p2".into()).or_default().repo = Some("me/other".into());
+        });
+        let hello = json!({ "origin": "phone", "to": me, "name": "Phone", "platform": "android", "hosts": false, "reply": false });
+        rt.block_on(c.on_remote_message("remote.hello", &hello, false));
+        let to_phone: Vec<Value> = api.remotes.lock().unwrap().iter().filter(|m| m["type"] == "remote.projects" && m["to"] == "phone").cloned().collect();
+        assert_eq!(to_phone.len(), 2, "{to_phone:?}");
+        let _ = std::fs::remove_dir_all(&main);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_task_from_another_device_runs_in_the_folder_this_device_bound_to_the_same_project() {
+        let folder = temp_folder("sync-task-main");
+        let project = temp_folder("sync-task-project");
+        std::fs::write(project.join("marker.txt"), "here").unwrap();
+        let api = fake_api(vec!["On it.", "Title"]);
+        let c = work_core(&api, &folder, "low");
+        c.update(|s| {
+            s.agent.host = None;
+            s.prefs.remove("work.workspace");
+            s.project_env.insert("p1".into(), project_env::ProjectEnv { folder: Some(project.display().to_string()), ..Default::default() });
+        });
+        let me = c.client_id.clone();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let task = event("remote.task", "phone", &me, json!({ "text": "look around", "project": "p1" }));
+        rt.block_on(c.remote_job(c.remote_job_for(&task).unwrap()));
+        let sent = api.remotes.lock().unwrap().clone();
+        assert!(sent.iter().any(|m| m["state"] == "started"), "no folder of its own is needed: {sent:?}");
+        let root = c.state.lock().unwrap().agent.host.as_ref().map(|h| h.root().to_owned()).unwrap_or_default();
+        assert_eq!(root, project.canonicalize().unwrap().display().to_string());
+        let _ = std::fs::remove_dir_all(&folder);
+        let _ = std::fs::remove_dir_all(&project);
     }
 
     #[test]

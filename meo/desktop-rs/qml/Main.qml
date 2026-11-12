@@ -173,6 +173,7 @@ ApplicationWindow {
     function act(action) {
         if (action && action.type === "pick_project_folder") {
             projectFolderDialog.projectId = action.id
+            projectFolderDialog.adding = !!action.add
             projectFolderDialog.open()
             return
         }
@@ -272,8 +273,12 @@ ApplicationWindow {
     FolderDialog {
         id: projectFolderDialog
         property string projectId: ""
-        title: qsTr("Choose this project's folder")
-        onAccepted: window.act({ type: "set_project_folder", id: projectId, path: selectedFolder.toString() })
+        // Adding another folder to the project, not replacing its main one.
+        property bool adding: false
+        title: adding ? qsTr("Choose a folder to add to this project") : qsTr("Choose this project's folder")
+        onAccepted: window.act(adding
+            ? { type: "add_project_folder", id: projectId, text: selectedFolder.toString() }
+            : { type: "set_project_folder", id: projectId, path: selectedFolder.toString() })
     }
 
     // Folder picker for Work; the core opens and remembers the folder (`set_workspace`).
