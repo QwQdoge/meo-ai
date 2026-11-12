@@ -179,6 +179,11 @@ impl Workspace {
         &self.jobs
     }
 
+    /// The same registry, to read without taking the workspace's lock (which a running command holds).
+    pub fn jobs_handle(&self) -> std::sync::Arc<super::jobs::Jobs> {
+        self.jobs.clone()
+    }
+
     pub fn root(&self) -> &Path {
         &self.root
     }
@@ -270,6 +275,7 @@ impl Workspace {
             Tool::Subagent { .. }
             | Tool::Schedule { .. }
             | Tool::Chats { .. }
+            | Tool::Tasks { .. }
             | Tool::WebSearch { .. }
             | Tool::ReadMore { .. }
             | Tool::Mcp { .. }

@@ -974,7 +974,7 @@ const planKey = (m: Spec) => {
  *  so a streamed token re-renders only the message being streamed, not the whole chat. */
 const sameMessage = (a: Spec, b: Spec) =>
   a.id === b.id && a.role === b.role && a.text === b.text && !!a.streaming === !!b.streaming &&
-  !!a.stepsOpen === !!b.stepsOpen && !!a.stepsLive === !!b.stepsLive && a.stepsLabel === b.stepsLabel &&
+  !!a.stepsOpen === !!b.stepsOpen && !!a.stepsLive === !!b.stepsLive && a.remote === b.remote && a.stepsLabel === b.stepsLabel &&
   (a.blocks?.length ?? 0) === (b.blocks?.length ?? 0) && planKey(a) === planKey(b) && (a.images?.length ?? 0) === (b.images?.length ?? 0) &&
   (a.actions?.length ?? 0) === (b.actions?.length ?? 0) &&
   (a.steps ? JSON.stringify(a.steps) : "") === (b.steps ? JSON.stringify(b.steps) : "");
@@ -1024,7 +1024,7 @@ const MessageView = React.memo(
                 {m.steps && (
                   <details className="core-steps" open={!!m.stepsOpen}>
                     <summary>
-                      {m.streaming || m.stepsLive ? <LiveStatus icon={stepKind(currentStep(m.steps)).icon} label={stepKind(currentStep(m.steps)).live} /> : <><Icon name="check_circle" size={14} /> {m.stepsLabel}</>}
+                      {m.streaming || m.stepsLive ? <LiveStatus icon={stepKind(currentStep(m.steps)).icon} label={m.remote ? `${stepKind(currentStep(m.steps)).live} · ${m.remote}` : stepKind(currentStep(m.steps)).live} /> : <><Icon name="check_circle" size={14} /> {m.stepsLabel}</>}
                       <Icon name="expand_more" size={14} className="core-steps-chev" />
                     </summary>
                     <ol>

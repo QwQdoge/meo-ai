@@ -1328,7 +1328,7 @@ private fun Steps(message: JSONObject, act: Act) {
         ) {
             if (running) {
                 val kind = stepKind(currentStep(steps))
-                LiveStatus(kind.icon, kind.live)
+                LiveStatus(kind.icon, kind.live + message.str("remote").let { if (it.isEmpty()) "" else " · $it" })
             } else {
                 Icon(Icons.Rounded.CheckCircle, contentDescription = null, Modifier.size(16.dp), tint = muted)
                 Text(message.str("stepsLabel"), style = MaterialTheme.typography.labelMedium, color = muted)

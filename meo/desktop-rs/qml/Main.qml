@@ -2775,7 +2775,7 @@ ApplicationWindow {
                         function fingerprint(m) {
                             return (m.id || "") + "|" + m.role + "|" + (m.streaming ? 1 : 0) + "|"
                                 + (m.blocks ? m.blocks.length : 0) + "|" + (m.steps ? m.steps.length : 0) + "|"
-                                + (m.stepsOpen ? 1 : 0) + "|" + (m.stepsLive ? 1 : 0) + "|" + (m.stepsLabel || "") + "|"
+                                + (m.stepsOpen ? 1 : 0) + "|" + (m.stepsLive ? 1 : 0) + "|" + (m.remote || "") + "|" + (m.stepsLabel || "") + "|"
                                 + (m.actions ? m.actions.length : 0) + "|" + (m.images ? m.images.length : 0)
                         }
                         function syncMessages(list) {
@@ -2850,7 +2850,7 @@ ApplicationWindow {
                                             visible: messageItem.streaming || !!modelData.stepsLive
                                             anchors.verticalCenter: parent.verticalCenter
                                             icon: parent.parent.current ? parent.parent.kind.icon : "psychology"
-                                            label: parent.parent.current ? parent.parent.kind.live : qsTr("Thinking")
+                                            label: (parent.parent.current ? parent.parent.kind.live : qsTr("Thinking")) + (modelData.remote ? " · " + modelData.remote : "")
                                         }
                                         MeoIcon { visible: !messageItem.streaming && !modelData.stepsLive; anchors.verticalCenter: parent.verticalCenter; icon: "check_circle"; size: 16; color: MeoTheme.contentOnSurfaceVariant }
                                         Txt { visible: !messageItem.streaming && !modelData.stepsLive; anchors.verticalCenter: parent.verticalCenter; text: modelData.stepsLabel || ""; typeRole: "label"; font.weight: Font.Medium; color: MeoTheme.contentOnSurfaceVariant }

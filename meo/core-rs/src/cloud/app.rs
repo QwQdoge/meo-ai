@@ -585,6 +585,10 @@ impl NativeRun {
 /// The tool loop of the current Work message: Codex-style turns of "answer, tool, result, answer".
 #[derive(Default)]
 struct AgentRun {
+    /// The task list of a run on the fenced protocol (a native run keeps it in `NativeRun`).
+    tasks: Vec<Value>,
+    /// Sub-agents working right now (name, task): they show in the run's progress card until they report.
+    working: Vec<(String, String)>,
     /// This run has no folder bound to it: its host is an empty private scratch folder. Nothing is refused for
     /// that: the permission level decides, and the user's approval opens any other place on the computer.
     scratch: bool,
@@ -669,6 +673,10 @@ struct RemoteLink {
     approval: Option<(String, String)>,
     /// Host side: the permission level the controlling device asked for (`ask`, `low`, `smart`, `all`).
     requested: Option<String>,
+    /// Host side: when progress was last sent to the controller (unix seconds).
+    progress_sent: i64,
+    /// Controller side: what the host last said about the task running there.
+    progress: Option<Value>,
     /// The background jobs each host last reported (device id → rows).
     jobs: BTreeMap<String, Vec<Value>>,
 }
@@ -4160,6 +4168,44 @@ impl AppCore {
         );
     }
 
+    /// Host: tells the controller what the task is doing now: the progress card, the latest steps and what is being
+    /// written. At most once a second unless forced; the controller draws it like a local run.
+    async fn remote_progress(&self, force: bool) {
+        let now = super::now_secs();
+        let sent = {
+            let mut s = self.state.lock().unwrap();
+            let Some(to) = s.remote.controller.clone() else { return };
+            if !force && now <= s.remote.progress_sent {
+                return;
+            }
+            s.remote.progress_sent = now;
+            let steps: Vec<Value> = s
+                .activity
+                .as_ref()
+                .map(|(_, steps)| {
+                    let shown = visible_steps(steps);
+                    let from = shown.len().saturating_sub(12);
+                    shown[from..]
+                        .iter()
+                        .map(|x| json!({ "id": x["id"], "title": x["title"], "detail": clip(x["detail"].as_str().unwrap_or_default(), 160), "status": x["status"], "kind": x["kind"] }))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let text: String = s
+                .streaming
+                .as_ref()
+                .map(|(_, t)| {
+                    let t = clean_reply(t);
+                    let skip = t.chars().count().saturating_sub(1500);
+                    t.chars().skip(skip).collect()
+                })
+                .unwrap_or_default();
+            let payload = json!({ "plan": progress_of(&s, true), "steps": steps, "text": text, "waiting": s.agent.pending.is_some() });
+            (to, payload)
+        };
+        self.remote_send(remote::message("progress", &sent.0, sent.1)).await;
+    }
+
     /// Tells another device (or all of them) what this device has bound to its projects. One message per
     /// project, so none outgrows the relay's limit. A project that was emptied is told too: it clears the others.
     async fn remote_share_projects(&self, to: Option<&str>, only: Option<&[String]>) {
@@ -4322,6 +4368,7 @@ impl AppCore {
                     json!({ "state": "started" }),
                 ))
                 .await;
+                self.remote_progress(true).await;
                 self.send(text).await;
             }
             RemoteJob::Decide { allow } => {
@@ -4401,7 +4448,10 @@ impl AppCore {
                 match data["state"].as_str().unwrap_or_default() {
                     "started" => self.notice("info", format!("{host} started the task.")),
                     "refused" => {
-                        self.update(|s| s.remote.task_host = None);
+                        self.update(|s| {
+                            s.remote.task_host = None;
+                            s.remote.progress = None;
+                        });
                         let why = data["reason"].as_str().unwrap_or("It did not start.");
                         self.notice("error", format!("{host}: {why}"));
                     }
@@ -4409,6 +4459,7 @@ impl AppCore {
                         self.update(|s| {
                             s.remote.task_host = None;
                             s.remote.approval = None;
+                            s.remote.progress = None;
                         });
                         if let Some(id) = data["conversationId"].as_str() {
                             self.refresh_conversations().await;
@@ -4436,6 +4487,22 @@ impl AppCore {
                     .map(|(id, label, status, running, secs)| json!({ "id": id, "label": label, "status": status, "running": running, "secs": secs }))
                     .collect();
                 self.remote_send(remote::message("jobs", &from, json!({ "rows": rows }))).await;
+            }
+            "remote.progress" => {
+                let mine = self.state.lock().unwrap().remote.task_host.as_deref() == Some(from.as_str());
+                if !mine {
+                    return;
+                }
+                let steps: Vec<Value> = data["steps"].as_array().cloned().unwrap_or_default().into_iter().take(12).collect();
+                let text: String = data["text"].as_str().unwrap_or_default().chars().take(1500).collect();
+                let mut plan = data["plan"].clone();
+                // The host's own buttons (pause, edit) act on the host's goal, not on anything here.
+                if plan.is_object() {
+                    plan["actions"] = json!([]);
+                }
+                self.update(|s| {
+                    s.remote.progress = Some(json!({ "plan": plan, "steps": steps, "text": text, "waiting": data["waiting"] == true }));
+                });
             }
             "remote.projects" => {
                 if from.is_empty() || !self.remote_enabled() {
@@ -5454,11 +5521,14 @@ impl AppCore {
                         break;
                     }
                     match event {
-                        Ok(ChatEvent::Delta(text)) => self.update(|s| {
-                            if let Some((_, buffer)) = s.streaming.as_mut() {
-                                buffer.push_str(&text);
-                            }
-                        }),
+                        Ok(ChatEvent::Delta(text)) => {
+                            self.update(|s| {
+                                if let Some((_, buffer)) = s.streaming.as_mut() {
+                                    buffer.push_str(&text);
+                                }
+                            });
+                            self.remote_progress(false).await;
+                        }
                         Ok(ChatEvent::ToolCalls(calls)) => native_calls = calls,
                         Ok(ChatEvent::Truncated) => truncated = true,
                         Ok(ChatEvent::Done) => break,
@@ -5619,7 +5689,7 @@ impl AppCore {
                 }
             }
             // The run's plan card is stored with the answer as a step, so it stays after the run.
-            let plan = self.state.lock().unwrap().agent.native.as_ref().and_then(|n| n.plan(false));
+            let plan = progress_of(&self.state.lock().unwrap(), false);
             if let Some(plan) = plan {
                 let detail = json!({ "goal": plan["goal"], "tasks": plan["items"] }).to_string();
                 self.step("plan", "Plan", &detail, "done", vec![]);
@@ -6109,6 +6179,8 @@ impl AppCore {
                 named.push((name, job));
             }
         }
+        // They show in the progress card while they work.
+        self.update(|s| s.agent.working = named.iter().map(|(n, j)| (n.clone(), j.task.clone())).collect());
         let background = if named.iter().any(|(_, j)| j.fork) { self.fork_background() } else { String::new() };
         let any_writer = named.iter().any(|(_, j)| j.write);
         let results: Vec<(agent::Outcome, String)> = if any_writer {
@@ -6125,6 +6197,7 @@ impl AppCore {
             }))
             .await
         };
+        self.update(|s| s.agent.working.clear());
         let mut report = Vec::new();
         let mut finished = Vec::new();
         for ((name, job), (outcome, notes)) in named.into_iter().zip(results) {
@@ -6199,6 +6272,39 @@ impl AppCore {
             })
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    /// `update_tasks` on the fenced protocol: checked like the native one, then kept as the run's progress.
+    fn run_fenced_tasks(&self, tasks: &Value) -> agent::Outcome {
+        let list: Vec<Value> = tasks
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|t| {
+                        let title = t["title"].as_str()?.trim();
+                        let state = match t["state"].as_str()? {
+                            "done" => "done",
+                            "doing" => "doing",
+                            _ => "todo",
+                        };
+                        (!title.is_empty()).then(|| json!({ "title": title, "state": state }))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        if list.is_empty() {
+            return agent::Outcome::fail("update_tasks needs a non-empty list of {title, state}");
+        }
+        if let Some(dup) = list.iter().enumerate().find_map(|(i, t)| list[..i].iter().any(|u| u["title"] == t["title"]).then(|| t["title"].as_str().unwrap_or_default().to_owned())) {
+            return agent::Outcome::fail(format!("duplicate task \"{dup}\"; every task needs its own title"));
+        }
+        if list.iter().filter(|t| t["state"] == "doing").count() > 1 {
+            return agent::Outcome::fail("at most one task may be doing; mark the others todo or done");
+        }
+        let count = |k: &str| list.iter().filter(|t| t["state"] == k).count();
+        let text = format!("Updated task list: {} todo, {} doing, {} done.", count("todo"), count("doing"), count("done"));
+        self.update(|s| s.agent.tasks = list);
+        agent::Outcome::done(text)
     }
 
     /// `search_chats` and `read_chat`: what the user said in earlier chats, returned as data.
@@ -8002,6 +8108,7 @@ impl AppCore {
             self.step(&step_id, &title, "Done", "done", vec![]);
             return Box::pin(self.agent_send(id, text)).await;
         }
+        self.remote_progress(true).await;
         let jobs_host = host.clone();
         let mut outcome = match (&call.tool, host) {
             (agent::Tool::WebSearch { query }, _) => self.run_web_search(query).await,
@@ -8013,6 +8120,7 @@ impl AppCore {
             (agent::Tool::AgentSend { agent, message }, Some(host)) => self.send_agent(&host, agent, message).await,
             (agent::Tool::AgentList, _) => self.list_agents(),
             (agent::Tool::Schedule { action, args }, _) => self.run_schedule(action, args),
+            (agent::Tool::Tasks { tasks }, _) => self.run_fenced_tasks(tasks),
             (agent::Tool::Chats { action, args }, _) => self.run_chats(action, args).await,
             (tool, Some(host)) => host.run(tool.clone()).await,
             (_, None) => agent::Outcome::fail("no folder is open on this device"),
@@ -8027,6 +8135,7 @@ impl AppCore {
                 .collect();
             self.update(|s| s.agent.shots = shots);
         }
+        self.remote_progress(true).await;
         // A background job that finished since the last result is told to the model once, with this one.
         if let Some(jobs) = jobs_host.as_ref().map(|h| h.settled_jobs()).filter(|j| !j.is_empty()) {
             outcome.text.push_str(&format!("\n\n[Background jobs]\n{}", jobs.join("\n")));
@@ -8049,6 +8158,7 @@ impl AppCore {
             if outcome.ok { "done" } else { "error" },
             vec![],
         );
+        self.remote_progress(true).await;
         // The tool may have updated .agent/ (goal, to-do): the project page and details card follow.
         let open = project_of_view(&self.state.lock().unwrap());
         if let Some(project) = open {
@@ -9230,6 +9340,32 @@ fn step_action(step: &Value) -> &'static str {
 }
 
 /// The plan card stored with an answer (its `plan` step), drawn again at the top of that answer.
+/// The progress card of the run: the goal and task list (native or fenced), then the sub-agents that work or
+/// reported, then the background jobs still running. One card for every long task, drawn the same on
+/// every device, and sent as it is to a device that controls this one.
+fn progress_of(s: &State, live: bool) -> Option<Value> {
+    let (goal, mut tasks) = match s.agent.native.as_ref() {
+        Some(n) => (n.goal.clone(), n.tasks.clone()),
+        None => (None, s.agent.tasks.clone()),
+    };
+    for (name, task) in &s.agent.working {
+        tasks.push(json!({ "title": format!("{name}: {}", clip(task, 80)), "state": "doing", "kind": "agent" }));
+    }
+    for child in &s.agent.children {
+        let done = child.status == "done";
+        let mark = if done { "" } else { "✗ " };
+        tasks.push(json!({ "title": format!("{mark}{}: {}", child.name, clip(&child.task, 80)), "state": if done { "done" } else { "todo" }, "kind": "agent" }));
+    }
+    if live {
+        for (id, label, _status, running, _secs) in s.agent.host.iter().flat_map(|h| h.job_rows()) {
+            if running {
+                tasks.push(json!({ "title": format!("Job {id}: {}", clip(&label, 80)), "state": "doing", "kind": "job" }));
+            }
+        }
+    }
+    richtext::plan_block(goal.as_ref(), &tasks, live)
+}
+
 fn stored_plan(steps: &[Value]) -> Option<Value> {
     let step = steps.iter().find(|x| x["id"] == "plan")?;
     let saved: Value = serde_json::from_str(step["detail"].as_str()?).ok()?;
@@ -10750,7 +10886,7 @@ fn conversation_page(s: &State) -> Value {
             // The run's own task list (native `update_tasks`) lives at the top of the answer and
             // changes in place, instead of being written out again as text each round.
             if latest {
-                if let Some(block) = s.agent.native.as_ref().and_then(|n| n.plan(running || streaming.is_some())) {
+                if let Some(block) = progress_of(s, running || streaming.is_some()) {
                     let mut blocks = target["blocks"].as_array().cloned().unwrap_or_default();
                     if blocks.is_empty() && !target["text"].as_str().unwrap_or_default().is_empty() {
                         blocks = richtext::blocks(target["text"].as_str().unwrap_or_default());
@@ -10788,8 +10924,29 @@ fn conversation_page(s: &State) -> Value {
             m["steps"] = Value::Array(fresh);
         }
     }
+    // A task this device sent to another one: its progress card, its latest steps and what it is writing, drawn
+    // like a local run (the host sends them as it works).
+    let remote_progress = s.remote.task_host.as_ref().zip(s.remote.progress.as_ref());
+    if let Some((host, p)) = remote_progress {
+        let name = s.remote.devices.get(host).map_or("the other device", |d| d.name.as_str());
+        let mut blocks: Vec<Value> = Vec::new();
+        if p["plan"].is_object() {
+            blocks.push(p["plan"].clone());
+        }
+        let text = p["text"].as_str().unwrap_or_default();
+        if !text.is_empty() {
+            blocks.extend(richtext::blocks(&richtext::close_open_markdown(text)));
+        }
+        let waiting = p["waiting"] == true;
+        messages.push(json!({
+            "role": "assistant", "text": text, "streaming": true, "blocks": blocks,
+            "steps": p["steps"], "stepsOpen": true, "stepsLive": true,
+            "stepsLabel": if waiting { format!("Waiting for your OK · {name}") } else { format!("Working on {name}…") },
+            "remote": name,
+        }));
+    }
     // An answer being generated on another device of the same account.
-    if streaming.is_none() {
+    if streaming.is_none() && remote_progress.is_none() {
         if let Some(run) = s
             .remote_run
             .as_ref()
@@ -14266,6 +14423,82 @@ mod tests {
     }
 
     #[test]
+    fn a_task_sent_to_another_device_shows_its_progress_live_like_a_local_run() {
+        let folder = temp_folder("progress");
+        std::fs::write(folder.join("notes.txt"), "todo\n").unwrap();
+        let tasks = "```meo-tool\n{\"tool\":\"update_tasks\",\"args\":{\"tasks\":[{\"title\":\"Read the notes\",\"state\":\"doing\"},{\"title\":\"Report\",\"state\":\"todo\"}]}}\n```";
+        let api = fake_api(vec![tasks, READ, "All done.", "Title"]);
+        let host = work_core(&api, &folder, "all");
+        let me = host.client_id.clone();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let task = event("remote.task", "phone", &me, json!({ "text": "go through my notes", "permission": "all" }));
+        host.update(|s| {
+            s.prefs.insert("remote.max_permission".into(), json!("all"));
+        });
+        rt.block_on(host.remote_job(host.remote_job_for(&task).unwrap()));
+        // The host told the controller, more than once, with the card and the steps.
+        let sent = api.remotes.lock().unwrap().clone();
+        let progress: Vec<&Value> = sent.iter().filter(|m| m["type"] == "remote.progress").collect();
+        assert!(progress.len() >= 2, "{sent:?}");
+        assert!(progress.iter().all(|m| m["to"] == "phone"));
+        let with_card = progress.iter().find(|m| m["plan"]["type"] == "plan").expect("the task list is part of the progress");
+        assert_eq!(with_card["plan"]["items"][0]["title"], "Read the notes");
+        assert!(progress.iter().any(|m| m["steps"].as_array().is_some_and(|s| s.iter().any(|x| x["title"].as_str().is_some_and(|t| t.contains("Read notes.txt"))))), "the steps are told too");
+        // The controller draws it as a live answer with the same card and steps box.
+        let api2 = fake_api(vec!["ok"]);
+        let controller = work_core(&api2, &folder, "all");
+        controller.update(|s| {
+            s.remote.devices.insert("desk".into(), remote::Device { id: "desk".into(), name: "Studio PC".into(), platform: "linux", hosts: true });
+            s.remote.task_host = Some("desk".into());
+        });
+        let mut update = (*with_card).clone();
+        update["origin"] = json!("desk");
+        update["to"] = json!(controller.client_id);
+        rt.block_on(controller.on_remote_message("remote.progress", &update, false));
+        let messages = controller.view()["page"]["messages"].as_array().cloned().unwrap_or_default();
+        let live = messages.last().expect("a live message");
+        assert_eq!(live["streaming"], true);
+        assert_eq!(live["stepsLabel"], "Working on Studio PC…");
+        assert_eq!(live["blocks"][0]["type"], "plan");
+        assert_eq!(live["blocks"][0]["actions"], json!([]), "the host's goal buttons do nothing here");
+        assert!(live["steps"].as_array().is_some_and(|s| !s.is_empty()));
+        // Only the device the task went to may report on it.
+        let stranger = json!({ "origin": "other", "to": controller.client_id, "plan": null, "steps": [], "text": "fake" });
+        rt.block_on(controller.on_remote_message("remote.progress", &stranger, false));
+        assert_eq!(controller.state.lock().unwrap().remote.progress.as_ref().unwrap()["text"], with_card["text"]);
+        // When the host is done the card goes and the finished conversation takes its place.
+        let done = json!({ "origin": "desk", "to": controller.client_id, "state": "done" });
+        rt.block_on(controller.on_remote_message("remote.status", &done, false));
+        assert!(controller.state.lock().unwrap().remote.progress.is_none());
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn every_long_task_feeds_the_same_progress_card() {
+        let c = signed_in_core();
+        c.update(|s| {
+            s.agent.tasks = vec![json!({ "title": "Collect", "state": "done" }), json!({ "title": "Write", "state": "doing" })];
+            s.agent.working = vec![("reader".into(), "read the whole repository and summarise it for me please".into())];
+            s.agent.children.push(Child { name: "checker".into(), task: "check the tests".into(), write: false, fork: false, status: "done", report: String::new(), notes: String::new() });
+            s.agent.children.push(Child { name: "failer".into(), task: "break things".into(), write: false, fork: false, status: "failed", report: String::new(), notes: String::new() });
+        });
+        let card = progress_of(&c.state.lock().unwrap(), true).unwrap();
+        let rows: Vec<(String, String)> = card["items"].as_array().unwrap().iter().map(|t| (t["title"].as_str().unwrap().to_owned(), t["state"].as_str().unwrap().to_owned())).collect();
+        assert_eq!(rows[0], ("Collect".into(), "done".into()));
+        assert_eq!(rows[2].1, "doing", "a working sub-agent is a doing row");
+        assert!(rows[2].0.starts_with("reader: read the whole repository"));
+        assert_eq!(rows[3], ("checker: check the tests".into(), "done".into()));
+        assert_eq!(rows[4], ("✗ failer: break things".into(), "todo".into()), "a failed one is marked");
+        assert_eq!(card["total"], 5);
+        // A fenced update_tasks keeps the list and validates it like the native one.
+        let ok = c.run_fenced_tasks(&json!([{ "title": "a", "state": "doing" }, { "title": "b", "state": "todo" }]));
+        assert!(ok.ok && ok.text.contains("1 todo, 1 doing, 0 done"), "{}", ok.text);
+        assert!(!c.run_fenced_tasks(&json!([{ "title": "a", "state": "doing" }, { "title": "b", "state": "doing" }])).ok);
+        assert!(!c.run_fenced_tasks(&json!([{ "title": "a", "state": "todo" }, { "title": "a", "state": "todo" }])).ok);
+        assert!(!c.run_fenced_tasks(&json!([])).ok);
+    }
+
+    #[test]
     fn a_profile_generation_dialog_asks_for_wishes() {
         let c = signed_in_core();
         futures_executor::block_on(c.dispatch(Action::BeginGenerateProfile));
@@ -15855,7 +16088,8 @@ mod tests {
             std::fs::read_to_string(folder.join("notes.txt")).unwrap(),
             "todo\n"
         );
-        let sent = api.remotes.lock().unwrap().clone();
+        // (Progress reports go along while it works; they are checked in their own test.)
+        let sent: Vec<Value> = api.remotes.lock().unwrap().iter().filter(|m| m["type"] != "remote.progress").cloned().collect();
         let kinds: Vec<&str> = sent.iter().filter_map(|m| m["type"].as_str()).collect();
         assert_eq!(kinds, ["remote.status", "remote.approval"], "{sent:?}");
         assert!(sent.iter().all(|m| m["to"] == "phone"));
@@ -17592,7 +17826,7 @@ mod tests {
         assert!(prompt.contains("(truncated: read_file for the rest)"), "a huge rules file is capped");
         assert!(!prompt.contains(&"x".repeat(6_500)), "the cap holds");
         let static_part = agent::tool_instructions_with_apps(Some("/w"), false, false, "");
-        assert!(static_part.len() < 4_600, "the fixed part of the folder prompt stays small: {}", static_part.len());
+        assert!(static_part.len() < 4_800, "the fixed part of the folder prompt stays small: {}", static_part.len());
         let _ = std::fs::remove_dir_all(&folder);
     }
 

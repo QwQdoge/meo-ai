@@ -28,6 +28,9 @@ mod native {
         root: String,
         passwords: Option<Arc<Passwords>>,
         mcp: Arc<Mutex<crate::cloud::mcp_local::Manager>>,
+        /// The folder's background jobs, read without the workspace lock: a running command holds that lock
+        /// for as long as it runs, and the app must be able to look at the jobs meanwhile.
+        jobs: Arc<crate::cloud::jobs::Jobs>,
     }
 
     /// Where the user's answer to a password question goes.
@@ -213,6 +216,7 @@ mod native {
 
         fn with_store(ws: Workspace, store: PathBuf) -> Result<Self, String> {
             let root = ws.root().display().to_string();
+            let jobs = ws.jobs_handle();
             // The newest saved checkpoint that still holds files is the one `/rewind` undoes, even
             // after the app was restarted.
             let checkpoint = checkpoint_dirs(&store)
@@ -229,6 +233,7 @@ mod native {
                 mcp: Arc::new(Mutex::new(crate::cloud::mcp_local::Manager::new(
                     Path::new(&root),
                 ))),
+                jobs,
                 root,
                 passwords: Passwords::start(),
             })
@@ -243,20 +248,20 @@ mod native {
 
         /// Background jobs that settled since the last call (each once), for the model's next result.
         pub fn settled_jobs(&self) -> Vec<String> {
-            self.inner.lock().unwrap().ws.jobs().settled_notices()
+            self.jobs.settled_notices()
         }
 
         /// The folder's background jobs as text, and the same as rows (id, label, status, running, seconds).
         pub fn jobs_text(&self) -> String {
-            self.inner.lock().unwrap().ws.jobs().list()
+            self.jobs.list()
         }
 
         pub fn job_rows(&self) -> Vec<(String, String, String, bool, u64)> {
-            self.inner.lock().unwrap().ws.jobs().rows()
+            self.jobs.rows()
         }
 
         pub fn stop_job(&self, id: &str) -> Result<String, String> {
-            self.inner.lock().unwrap().ws.jobs().stop(id)
+            self.jobs.stop(id)
         }
 
         pub fn root(&self) -> &str {
@@ -661,6 +666,7 @@ impl Host {
             Tool::Subagent { .. }
             | Tool::Schedule { .. }
             | Tool::Chats { .. }
+            | Tool::Tasks { .. }
             | Tool::AgentSend { .. }
             | Tool::AgentList
             | Tool::WebSearch { .. }
