@@ -527,6 +527,13 @@ impl MeoApi {
         Ok(body["results"].as_array().cloned().unwrap_or_default())
     }
 
+    /// Reads one page as text or markdown (`POST /v1/fetch/web`). A non-2xx status of the page itself is part
+    /// of the result; a refused or failed fetch is an error with the server's stable `web_*` code.
+    pub async fn web_fetch(&self, token: &str, url: &str) -> Result<Value, ApiError> {
+        self.request(token, Method::POST, "/v1/fetch/web", Some(json!({ "url": url })))
+            .await
+    }
+
     /// Returns the consent preview Meo API requires before inference.
     pub async fn chat_prepare(&self, token: &str, input: &Value) -> Result<Value, ApiError> {
         let body = self

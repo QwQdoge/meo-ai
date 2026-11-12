@@ -246,7 +246,8 @@ impl Workspace {
             | Tool::Mcp { .. }
             | Tool::App { .. }
             | Tool::AskUser { .. }
-            | Tool::ExitPlan { .. } => fail("this tool is run by the app, not by the folder"),
+            | Tool::ExitPlan { .. }
+            | Tool::WebFetch { .. } => fail("this tool is run by the app, not by the folder"),
         }
     }
 
