@@ -650,6 +650,7 @@ impl Host {
             Tool::Job(_) => Outcome::fail("background jobs cannot run in a browser; use the desktop app"),
             Tool::Subagent { .. }
             | Tool::Schedule { .. }
+            | Tool::Chats { .. }
             | Tool::AgentSend { .. }
             | Tool::AgentList
             | Tool::WebSearch { .. }

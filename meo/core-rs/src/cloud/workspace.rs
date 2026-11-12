@@ -249,6 +249,7 @@ impl Workspace {
             Tool::Job(op) => self.job(op, env),
             Tool::Subagent { .. }
             | Tool::Schedule { .. }
+            | Tool::Chats { .. }
             | Tool::WebSearch { .. }
             | Tool::ReadMore { .. }
             | Tool::Mcp { .. }
