@@ -10,6 +10,8 @@ pub mod api;
 pub mod app;
 pub mod auth;
 pub mod compaction;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod computer;
 pub mod docs;
 pub mod host;
 #[cfg(not(target_arch = "wasm32"))]

@@ -247,6 +247,7 @@ impl Workspace {
                 timeout_secs,
             } => self.command(command, *timeout_secs, env),
             Tool::Job(op) => self.job(op, env),
+            Tool::Computer { action, args } => super::computer::run(action, args),
             Tool::Subagent { .. }
             | Tool::Schedule { .. }
             | Tool::Chats { .. }

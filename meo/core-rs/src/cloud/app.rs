@@ -7063,6 +7063,15 @@ impl AppCore {
                 .agent_refuse(id, call, "plan mode is on: read and search only; present the plan with exit_plan_mode and wait for approval before changing anything")
                 .await;
         }
+        if matches!(call.tool, agent::Tool::Computer { .. }) && !pref_bool(&self.state.lock().unwrap(), "work.computer_use", false) {
+            return self
+                .agent_refuse(
+                    id,
+                    call,
+                    "computer control is off: the user can turn it on in Settings > Permissions; until then use the browser, file and command tools, or tell the user what to do on screen",
+                )
+                .await;
+        }
         if matches!(call.tool, agent::Tool::Subagent { .. } | agent::Tool::AgentSend { .. } | agent::Tool::AgentList)
             && !pref_bool(&self.state.lock().unwrap(), "chat.subagents", false)
         {
@@ -7437,15 +7446,25 @@ impl AppCore {
             let current = request["prompt"].as_str().unwrap_or_default().to_owned();
             let host = self.state.lock().unwrap().agent.host.clone();
             // "Browser control" (Settings > Permissions) puts Playwright MCP among the local servers.
-            let browser = {
+            let (browser, computer) = {
                 let s = self.state.lock().unwrap();
-                s.prefs.get("work.browser").and_then(Value::as_str).unwrap_or("off").to_owned()
+                (
+                    s.prefs.get("work.browser").and_then(Value::as_str).unwrap_or("off").to_owned(),
+                    pref_bool(&s, "work.computer_use", false),
+                )
             };
             let mcp = match host {
                 Some(h) => {
                     h.set_browser(&browser);
                     let listed = h.mcp_instructions().await;
-                    if browser == "off" { listed } else { format!("{listed}\n\n{}", agent::BROWSER_GUIDANCE) }
+                    let mut text = listed;
+                    if browser != "off" {
+                        text = format!("{text}\n\n{}", agent::BROWSER_GUIDANCE);
+                    }
+                    if computer {
+                        text = format!("{text}\n\n{}", agent::COMPUTER_GUIDANCE);
+                    }
+                    text
                 }
                 None => String::new(),
             };
@@ -11991,6 +12010,14 @@ fn permission_items(s: &State) -> Vec<Value> {
             "id": "browser_explain", "kind": "hint",
             "text": "Lets Work open and use a real browser (Playwright, started with npx, so Node.js is needed). Temporary: a fresh browser each time, nothing saved, no logins. Meo's own profile: a separate browser profile kept in Meo's data folder, so a site you sign in to there stays signed in for Meo. My Chrome: Meo drives your own Chrome with your sign-ins and cookies through the Playwright MCP Bridge extension, which you install in Chrome and which asks you to approve each tab it may control. Looking at a page needs no approval; clicking, typing and opening addresses follow your approval level. Pages are untrusted: the model is told never to type your passwords or card numbers and to ask before anything irreversible. Page text and screenshots go to your AI provider.",
         }),
+        json!({
+            "id": "computer_control", "label": "Computer control", "kind": "toggle", "binding": "work.computer_use",
+            "value": s.prefs.get("work.computer_use").cloned().unwrap_or(json!(false)),
+        }),
+        json!({
+            "id": "computer_explain", "kind": "hint",
+            "text": "Lets Work look at your screen and use the mouse and keyboard, for what a browser, files and commands cannot do. Desktop only. It uses tools your system already has: screencapture and cliclick on macOS, xdotool on X11, ydotool on Wayland; Meo tells you which one is missing. A screenshot is a look and runs without asking; clicking, typing and pressing keys follow your approval level, so keep it below Full access if you want to approve each one. Screenshots go to your AI provider, so close windows with private content first. The model is told never to type your passwords or card numbers and to stop at password prompts and CAPTCHAs.",
+        }),
         own_item(
             "perm_plugins".into(),
             "Apps, skills and MCP servers",
@@ -13232,7 +13259,7 @@ mod tests {
             .iter()
             .map(|i| i["id"].as_str().unwrap())
             .collect();
-        assert_eq!(ids, ["permission", "perm_explain", "browser_control", "browser_explain", "perm_plugins"]);
+        assert_eq!(ids, ["permission", "perm_explain", "browser_control", "browser_explain", "computer_control", "computer_explain", "perm_plugins"]);
         assert!(
             page["sections"]
                 .as_array()
@@ -16361,6 +16388,38 @@ mod tests {
         let create = agent::Tool::Schedule { action: "schedule_create", args: json!({}) };
         assert_eq!(agent::gate(agent::Permission::Low, &list), agent::Gate::Allow);
         assert!(matches!(agent::gate(agent::Permission::Low, &create), agent::Gate::Ask(_)));
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn computer_control_is_refused_until_the_user_turns_it_on() {
+        let folder = temp_folder("computer-off");
+        let shot = "```meo-tool\n{\"tool\":\"computer_screenshot\",\"args\":{}}\n```";
+        let api = fake_api(vec![shot, "I cannot look at the screen."]);
+        let c = work_core(&api, &folder, "all");
+        run(&c, Action::Send { text: "what is on my screen".into() });
+        let streams = api.streams.lock().unwrap().clone();
+        assert!(streams[1]["prompt"].as_str().unwrap().contains("computer control is off"), "{}", streams[1]["prompt"]);
+        assert!(!streams[0]["prompt"].as_str().unwrap().contains("## Computer control"), "no tools are described while it is off");
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_screenshot_from_a_tool_goes_to_the_model_with_the_next_round_and_only_that_one() {
+        let folder = temp_folder("shots");
+        let server = "import sys, json\nfor line in sys.stdin:\n    m = json.loads(line)\n    if 'id' not in m:\n        continue\n    meth = m['method']\n    if meth == 'initialize':\n        r = {'protocolVersion': '2025-06-18', 'capabilities': {'tools': {}}, 'serverInfo': {'name': 'f', 'version': '1'}}\n    elif meth == 'tools/list':\n        r = {'tools': [{'name': 'shot', 'description': 'screenshot', 'inputSchema': {'type': 'object', 'properties': {}}}]}\n    elif meth == 'tools/call':\n        r = {'content': [{'type': 'text', 'text': 'page'}, {'type': 'image', 'mimeType': 'image/png', 'data': 'iVBORw0KGgo='}]}\n    else:\n        r = {}\n    print(json.dumps({'jsonrpc': '2.0', 'id': m['id'], 'result': r}), flush=True)\n";
+        std::fs::write(folder.join("server.py"), server).unwrap();
+        std::fs::write(folder.join(".mcp.json"), r#"{"mcpServers":{"fake":{"command":"python3","args":["server.py"]}}}"#).unwrap();
+        let call = "```meo-tool\n{\"tool\":\"mcp\",\"args\":{\"server\":\"fake\",\"name\":\"shot\",\"args\":{}}}\n```";
+        let api = fake_api(vec![call, "I see the page.", "Title"]);
+        let c = work_core(&api, &folder, "all");
+        run(&c, Action::Send { text: "take a screenshot".into() });
+        let streams = api.streams.lock().unwrap().clone();
+        assert!(streams[0]["images"].is_null(), "the first round has no picture");
+        assert_eq!(streams[1]["images"][0]["mimeType"], "image/png", "{}", streams[1]);
+        assert_eq!(streams[1]["images"][0]["data"], "iVBORw0KGgo=");
+        assert!(streams[1]["prompt"].as_str().unwrap().contains("attached to this message"), "{}", streams[1]["prompt"]);
         let _ = std::fs::remove_dir_all(&folder);
     }
 

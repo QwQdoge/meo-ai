@@ -657,6 +657,7 @@ impl Host {
                 "commands cannot run in a browser; use the desktop app, or edit files and tell the user what to run",
             ),
             Tool::Job(_) => Outcome::fail("background jobs cannot run in a browser; use the desktop app"),
+            Tool::Computer { .. } => Outcome::fail("computer control needs the desktop app"),
             Tool::Subagent { .. }
             | Tool::Schedule { .. }
             | Tool::Chats { .. }
