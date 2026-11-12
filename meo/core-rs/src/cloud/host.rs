@@ -690,6 +690,7 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let host = Host::open_with_store(folder.to_str().unwrap(), store.clone()).unwrap();
         host.new_checkpoint();
+        assert!(rt.block_on(host.run(Tool::ReadFile { path: "a.txt".into(), start: None, end: None })).ok);
         let edit = rt.block_on(host.run(Tool::SearchReplace {
             path: "a.txt".into(),
             old: "one".into(),
@@ -893,6 +894,7 @@ mod changes_tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let host = Host::open_with_store(folder.to_str().unwrap(), store).unwrap();
         host.new_checkpoint();
+        assert!(rt.block_on(host.run(Tool::ReadFile { path: "a.txt".into(), start: None, end: None })).ok);
         let out = rt.block_on(host.run(Tool::SearchReplace {
             path: "a.txt".into(),
             old: "one".into(),

@@ -6,10 +6,12 @@
 //! for the model, never as panics: the model decides how to recover.
 
 use super::agent::{apply_hunks, parse_patch, replace_once, unified_diff, FileOp, Outcome, Tool};
+use std::collections::HashMap;
 use std::fs;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 const MAX_READ_BYTES: usize = 200_000;
@@ -148,6 +150,18 @@ impl Checkpoint {
 #[derive(Debug, Clone)]
 pub struct Workspace {
     root: PathBuf,
+    /// What the model has read or written in this folder, by file: a fingerprint of the content. An edit
+    /// needs the file to have been read and to be unchanged since (the read-before-edit rule of
+    /// DeepSeek Harness' `fs-observation-policy`). Not persisted: a new run reads again.
+    observed: Arc<Mutex<HashMap<PathBuf, u64>>>,
+}
+
+/// A fingerprint of a file's text, to tell whether it changed since it was read.
+fn stamp(text: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut h);
+    h.finish()
 }
 
 impl Workspace {
@@ -156,7 +170,7 @@ impl Workspace {
         if !root.is_dir() {
             return Err(format!("{path} is not a folder"));
         }
-        Ok(Self { root })
+        Ok(Self { root, observed: Arc::default() })
     }
 
     pub fn root(&self) -> &Path {
@@ -272,6 +286,28 @@ impl Workspace {
         }
     }
 
+    fn observe(&self, file: &Path, text: &str) {
+        if let Ok(mut seen) = self.observed.lock() {
+            seen.insert(file.to_path_buf(), stamp(text));
+        }
+    }
+
+    fn forget(&self, file: &Path) {
+        if let Ok(mut seen) = self.observed.lock() {
+            seen.remove(file);
+        }
+    }
+
+    /// An existing file may be edited only after the model read it, and only while it is unchanged since.
+    fn check_observed(&self, path: &str, file: &Path, text: &str) -> Result<(), String> {
+        let seen = self.observed.lock().ok().and_then(|m| m.get(file).copied());
+        match seen {
+            None => Err(format!("{path}: read it with read_file before editing, so the edit rests on its current content")),
+            Some(s) if s != stamp(text) => Err(format!("{path} changed since you read it; read it again, then retry the edit")),
+            Some(_) => Ok(()),
+        }
+    }
+
     fn read_file(&self, path: &str, start: Option<usize>, end: Option<usize>) -> Outcome {
         let file = match self.resolve(path) {
             Ok(f) => f,
@@ -285,6 +321,7 @@ impl Workspace {
             return fail(format!("{path} is a binary file"));
         }
         let truncated = bytes.len() > MAX_READ_BYTES;
+        self.observe(&file, &String::from_utf8_lossy(&bytes));
         let text = String::from_utf8_lossy(&bytes[..bytes.len().min(MAX_READ_BYTES)]).into_owned();
         let first = start.unwrap_or(1).max(1);
         let last = end.unwrap_or(usize::MAX);
@@ -406,13 +443,19 @@ impl Workspace {
             Ok(t) => t,
             Err(e) => return fail(format!("cannot read {path}: {e}")),
         };
+        if let Err(e) = self.check_observed(path, &file, &text) {
+            return fail(e);
+        }
         let updated = match replace_once(&text, old, new) {
             Ok(u) => u,
             Err(e) => return fail(format!("{path}: {e}")),
         };
         checkpoint.record(&file);
-        match fs::write(&file, updated) {
-            Ok(()) => done(format!("edited {path}")),
+        match fs::write(&file, &updated) {
+            Ok(()) => {
+                self.observe(&file, &updated);
+                done(format!("edited {path}"))
+            }
             Err(e) => fail(format!("cannot write {path}: {e}")),
         }
     }
@@ -450,6 +493,10 @@ impl Workspace {
                     if !file.is_file() {
                         return fail(format!("{path} does not exist"));
                     }
+                    let text = fs::read_to_string(&file).unwrap_or_default();
+                    if let Err(e) = self.check_observed(path, &file, &text) {
+                        return fail(e);
+                    }
                     writes.push(Write::Remove(file));
                     report.push(format!("deleted {path}"));
                 }
@@ -462,6 +509,9 @@ impl Workspace {
                         Ok(t) => t,
                         Err(e) => return fail(format!("cannot read {path}: {e}")),
                     };
+                    if let Err(e) = self.check_observed(path, &file, &text) {
+                        return fail(e);
+                    }
                     match apply_hunks(&text, hunks) {
                         Ok(updated) => writes.push(Write::Put(file, updated)),
                         Err(e) => return fail(format!("{path}: {e}")),
@@ -477,15 +527,17 @@ impl Workspace {
                     if let Some(parent) = file.parent() {
                         let _ = fs::create_dir_all(parent);
                     }
-                    if let Err(e) = fs::write(&file, content) {
+                    if let Err(e) = fs::write(&file, &content) {
                         return fail(format!("cannot write {}: {e}", self.show(&file)));
                     }
+                    self.observe(&file, &content);
                 }
                 Write::Remove(file) => {
                     checkpoint.record(&file);
                     if let Err(e) = fs::remove_file(&file) {
                         return fail(format!("cannot delete {}: {e}", self.show(&file)));
                     }
+                    self.forget(&file);
                 }
             }
         }
@@ -707,6 +759,7 @@ mod tests {
         t.write("a.txt", "one\ntwo\n");
         let ws = t.ws();
         let mut cp = Checkpoint::default();
+        assert!(ws.run(&Tool::ReadFile { path: "a.txt".into(), start: None, end: None }, &mut cp).ok);
         let edit = ws.run(
             &Tool::SearchReplace {
                 path: "a.txt".into(),
@@ -741,6 +794,7 @@ mod tests {
         let dir = saved.0.join("cp");
         let mut cp = Checkpoint::on_disk(dir.clone());
         assert!(!dir.exists(), "nothing is written before the first change");
+        assert!(ws.run(&Tool::ReadFile { path: "a.txt".into(), start: None, end: None }, &mut cp).ok);
         let edit = ws.run(
             &Tool::SearchReplace {
                 path: "a.txt".into(),
@@ -833,10 +887,34 @@ mod tests {
     }
 
     #[test]
+    fn an_edit_needs_the_file_read_first_and_unchanged_since() {
+        let t = Tmp::new();
+        t.write("a.txt", "one\n");
+        let ws = t.ws();
+        let edit = |old: &str, new: &str| {
+            run(&ws, Tool::SearchReplace { path: "a.txt".into(), old: old.into(), new: new.into() })
+        };
+        let unread = edit("one", "1");
+        assert!(!unread.ok && unread.text.contains("read it with read_file"), "{}", unread.text);
+        assert_eq!(fs::read_to_string(t.0.join("a.txt")).unwrap(), "one\n");
+        assert!(run(&ws, Tool::ReadFile { path: "a.txt".into(), start: Some(1), end: Some(1) }).ok);
+        assert!(edit("one", "1").ok, "a read allows the edit, and the edit keeps the file observed");
+        assert!(edit("1", "2").ok, "no second read needed after its own edit");
+        t.write("a.txt", "changed elsewhere\n");
+        let stale = edit("changed", "x");
+        assert!(!stale.ok && stale.text.contains("changed since you read it"), "{}", stale.text);
+        let patch = run(&ws, Tool::ApplyPatch { patch: "*** Begin Patch\n*** Delete File: a.txt\n*** End Patch".into() });
+        assert!(!patch.ok && patch.text.contains("changed since"), "{}", patch.text);
+        let new = run(&ws, Tool::ApplyPatch { patch: "*** Begin Patch\n*** Add File: n.txt\n+hi\n*** End Patch".into() });
+        assert!(new.ok, "a new file needs no read: {}", new.text);
+    }
+
+    #[test]
     fn exact_edits_refuse_ambiguous_or_missing_text() {
         let t = Tmp::new();
         t.write("a.txt", "x x\n");
         let ws = t.ws();
+        assert!(run(&ws, Tool::ReadFile { path: "a.txt".into(), start: None, end: None }).ok);
         let twice = run(
             &ws,
             Tool::SearchReplace {

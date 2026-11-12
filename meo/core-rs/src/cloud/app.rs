@@ -12905,7 +12905,8 @@ mod tests {
         // this side: the folder is the project's, the write is an ordinary one, and the views follow.
         let dir = project_dir("e2e");
         let edit = "```meo-tool\n{\"tool\":\"search_replace\",\"args\":{\"path\":\".agent/TODO.md\",\"old\":\"## Next\",\"new\":\"## Next\\n- [~] write docs\"}}\n```";
-        let api = fake_api(vec![edit, "Started on the docs; the list is updated."]);
+        let read = "```meo-tool\n{\"tool\":\"read_file\",\"args\":{\"path\":\".agent/TODO.md\"}}\n```";
+        let api = fake_api(vec![read, edit, "Started on the docs; the list is updated."]);
         let c = work_core(&api, &dir, "all");
         // Make the open conversation a project chat whose folder is `dir`.
         c.update(|s| {
@@ -14671,7 +14672,7 @@ mod tests {
     fn rewind_restores_the_files_the_last_message_changed() {
         let folder = temp_folder("rewind");
         std::fs::write(folder.join("notes.txt"), "todo\n").unwrap();
-        let api = fake_api(vec![EDIT, FINISH]);
+        let api = fake_api(vec![READ, EDIT, FINISH]);
         let c = work_core(&api, &folder, "all");
         run(
             &c,
@@ -14954,7 +14955,7 @@ mod tests {
         let folder = temp_folder("verify");
         std::fs::write(folder.join("notes.txt"), "todo\n").unwrap();
         // Bad edit, a claim of success, then (after the failed check) the fix and a second claim.
-        let api = fake_api(vec![EDIT_BAD, "All done.", EDIT_FIX, "Fixed it."]);
+        let api = fake_api(vec![READ, EDIT_BAD, "All done.", EDIT_FIX, "Fixed it."]);
         let c = work_core(&api, &folder, "all");
         run(
             &c,
@@ -14973,8 +14974,8 @@ mod tests {
             "done\n"
         );
         let streams = api.streams.lock().unwrap().clone();
-        assert_eq!(streams.len(), 4);
-        let after_claim = streams[2]["prompt"].as_str().unwrap();
+        assert_eq!(streams.len(), 5);
+        let after_claim = streams[3]["prompt"].as_str().unwrap();
         assert!(
             after_claim.contains("The check `grep -q done notes.txt` failed"),
             "{after_claim}"
@@ -15017,7 +15018,7 @@ mod tests {
             .iter()
             .all(|b| !b["prompt"].as_str().unwrap().contains("failed:")));
         // Files changed and the check never passes: three tries, then it says so and stops.
-        let api = fake_api(vec![EDIT, "Done 1.", "Done 2.", "Done 3.", "never asked"]);
+        let api = fake_api(vec![READ, EDIT, "Done 1.", "Done 2.", "Done 3.", "never asked"]);
         let c = work_core(&api, &folder, "all");
         run(
             &c,
@@ -15033,8 +15034,8 @@ mod tests {
         );
         assert_eq!(
             api.streams.lock().unwrap().len(),
-            4,
-            "the edit and three claims"
+            5,
+            "the read, the edit and three claims"
         );
         let notice = c.view()["notice"]["text"].as_str().unwrap().to_owned();
         assert!(
@@ -15048,7 +15049,7 @@ mod tests {
     fn the_folder_and_the_check_survive_a_restart_and_rewind_still_works() {
         let folder = temp_folder("restart");
         std::fs::write(folder.join("notes.txt"), "todo\n").unwrap();
-        let api = fake_api(vec![EDIT, FINISH]);
+        let api = fake_api(vec![READ, EDIT, FINISH]);
         let storage: Arc<MemoryStorage> = Arc::new(MemoryStorage::default());
         let make = |s: Arc<MemoryStorage>| {
             AppCore::new(
