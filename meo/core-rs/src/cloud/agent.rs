@@ -924,6 +924,22 @@ numbers, and what you could not find. You have at most {SUBAGENT_ROUNDS} rounds.
     )
 }
 
+/// Consecutive identical calls (same tool, same arguments) at which the model is reminded to change
+/// approach (the thresholds of DeepSeek Harness' `repeat-tool-reminder`). Advisory: the call still runs.
+pub const REPEAT_THRESHOLDS: [usize; 3] = [3, 5, 8];
+
+/// The reminder that goes after the result of the `count`-th identical call in a row, if this count is a
+/// threshold. The first is short; later ones name the call so the model can decide what to change.
+pub fn repeat_reminder(count: usize, call: &str) -> Option<String> {
+    let at = REPEAT_THRESHOLDS.iter().position(|t| *t == count)?;
+    let preview: String = call.chars().take(200).collect();
+    Some(if at == 0 {
+        "<reminder>You are repeating the exact same tool call with identical arguments. Analyze the previous result before calling again: if the task is not complete, try a different approach or different arguments instead of repeating the call.</reminder>".to_owned()
+    } else {
+        format!("<reminder>This exact call has now been made {count} times in a row: {preview}{}. The result has not changed. Stop repeating it: use what the result already told you, gather different evidence, or finish and say what you could not do.</reminder>", if call.chars().count() > 200 { "…" } else { "" })
+    })
+}
+
 /// The message that carries a tool result back to the model.
 pub fn observation(call: &ToolCall, outcome: &str) -> String {
     observation_kept(call, outcome, None)

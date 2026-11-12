@@ -488,6 +488,8 @@ impl NativeRun {
 /// The tool loop of the current Work message: Codex-style turns of "answer, tool, result, answer".
 #[derive(Default)]
 struct AgentRun {
+    /// The last tool call and how many times in a row it was made identically (cleared by a new message).
+    repeat: Option<(agent::Tool, usize)>,
     /// A goal (and its task list) the user resumed: the next native run starts with it.
     seed_goal: Option<(Value, Vec<Value>)>,
     /// What the router understood the user to want (see `understand`), kept for every round of the run.
@@ -6885,7 +6887,21 @@ impl AppCore {
             });
             reference
         });
-        Box::pin(self.agent_send(id, agent::observation_kept(&call, &outcome.text, kept.as_deref()))).await;
+        let count = {
+            let mut s = self.state.lock().unwrap();
+            let n = match &s.agent.repeat {
+                Some((t, n)) if *t == call.tool => n + 1,
+                _ => 1,
+            };
+            s.agent.repeat = Some((call.tool.clone(), n));
+            n
+        };
+        let mut observed = agent::observation_kept(&call, &outcome.text, kept.as_deref());
+        if let Some(reminder) = agent::repeat_reminder(count, &format!("{:?}", call.tool)) {
+            observed.push_str("\n\n");
+            observed.push_str(&reminder);
+        }
+        Box::pin(self.agent_send(id, observed)).await;
     }
 
     /// Sends a tool result back as the next message of the same conversation (the loop continues
@@ -15270,6 +15286,14 @@ mod tests {
         assert_eq!(n, 1, "no calls and no open tasks: finished");
         assert_eq!(texts(&c).last().unwrap(), "Just an answer.");
         let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn identical_calls_in_a_row_get_a_reminder_at_three_five_and_eight() {
+        let at = |n| agent::repeat_reminder(n, "ReadFile { path: \"a\" }");
+        assert!(at(2).is_none() && at(4).is_none() && at(9).is_none());
+        assert!(at(3).unwrap().contains("exact same tool call"));
+        assert!(at(5).unwrap().contains("5 times in a row") && at(8).unwrap().contains("8 times"));
     }
 
     #[test]
