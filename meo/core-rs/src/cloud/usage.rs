@@ -49,6 +49,8 @@ pub struct ChatTurn<'a> {
     pub reply: &'a str,
     pub started: i64,
     pub finished: i64,
+    /// What the call was for: chat, execution (sub-agents), classification, reasoning, title or tool.
+    pub role: &'a str,
 }
 
 /// The event for one chat turn. Token counts are estimates (`metadata.estimated`): the API does not
@@ -62,7 +64,7 @@ pub fn chat_event(t: &ChatTurn) -> Value {
         "project_name": if t.project_id.is_some() { "Project" } else { "Chat" },
         "provider": if t.provider.is_empty() { "unknown" } else { t.provider },
         "model": if t.model.is_empty() { "unknown" } else { t.model },
-        "model_role": "chat",
+        "model_role": t.role,
         "occurred_at": iso(t.finished),
         "input_tokens": estimate_tokens(t.context),
         // The server refuses an event without every count, so the ones this estimate cannot know are zero.
@@ -105,6 +107,7 @@ mod tests {
             reply: "hi",
             started: 100,
             finished: 102,
+            role: "chat",
         });
         for key in [
             "source",
