@@ -362,6 +362,45 @@
     ],
     "stepsLabel": "Used 1 tool",
     "stepsOpen": false
+   },
+   {
+    "id": "",
+    "role": "assistant",
+    "text": "",
+    "streaming": false,
+    "blocks": [
+     {
+      "type": "question",
+      "kind": "plan",
+      "title": "Approve this plan?",
+      "text": "Approve it to let Meo carry it out, or keep planning with your feedback.",
+      "choices": [],
+      "input": {
+       "placeholder": "What should change? (optional)",
+       "multiline": true
+      },
+      "actions": [
+       {
+        "label": "Approve",
+        "style": "primary",
+        "action": {
+         "type": "review_plan",
+         "approve": true
+        }
+       },
+       {
+        "label": "Keep planning",
+        "style": "secondary",
+        "withInput": true,
+        "action": {
+         "type": "review_plan",
+         "approve": false
+        }
+       }
+      ]
+     }
+    ],
+    "actions": []
    }
   ],
   "inspector": {
@@ -441,36 +480,5 @@
  "strings": {
   "jump": "Jump to the latest message",
   "thinking": "Thinking"
- },
- "dialog": {
-  "kind": "prompt",
-  "title": "Approve this plan?",
-  "text": "The plan is above. Approve it to let Meo carry it out, or keep planning with your feedback.",
-  "input": {
-   "value": "",
-   "placeholder": "What should change? (optional)",
-   "multiline": true,
-   "secret": false
-  },
-  "choices": [],
-  "actions": [
-   {
-    "label": "Approve",
-    "style": "primary",
-    "action": {
-     "type": "review_plan",
-     "approve": true
-    }
-   },
-   {
-    "label": "Keep planning",
-    "style": "secondary",
-    "withInput": true,
-    "action": {
-     "type": "review_plan",
-     "approve": false
-    }
-   }
-  ]
  }
 }

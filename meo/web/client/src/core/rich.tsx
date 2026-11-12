@@ -142,6 +142,47 @@ export function PlanCard({ block, act }: { block: Spec; act?: (action: Spec) => 
   );
 }
 
+/** The model's question or the plan review, inside the chat: options as buttons, a field for a free
+ *  answer, Answer/Skip (or Approve/Keep planning). It stays open until answered; the composer stays free. */
+export function QuestionCard({ block, act }: { block: Spec; act: (action: Spec) => void }) {
+  const [value, setValue] = useState("");
+  const run = (a: Spec) => act(a.withInput ? { ...a.action, text: value } : a.action);
+  const [primary, secondary] = (block.actions ?? []) as Spec[];
+  return (
+    <section className="core-question" aria-live="polite">
+      <header>
+        <Icon name={block.kind === "plan" ? "flag" : "psychology"} size={16} />
+        <span>{block.title}</span>
+        {block.step && String(block.step).split("/")[1] !== "1" && <span className="core-question-step">{block.step}</span>}
+      </header>
+      {block.text && <p className="core-question-text">{block.text}</p>}
+      {(block.choices ?? []).length > 0 && (
+        <div className="core-question-choices" role="group">
+          {(block.choices as Spec[]).map((c, i) => (
+            <button key={i} className={`core-choice${c.selected ? " selected" : ""}`} aria-pressed={!!c.selected} onClick={() => act(c.action)}>
+              <strong>{c.selected ? "✓ " : ""}{c.label}</strong>
+              {c.description && <span className="core-muted">{c.description}</span>}
+            </button>
+          ))}
+        </div>
+      )}
+      {block.input && (block.input.multiline ? (
+        <textarea rows={3} value={value} placeholder={block.input.placeholder} onChange={(e) => setValue(e.target.value)} />
+      ) : (
+        <input
+          type="text" autoComplete="off" value={value} placeholder={block.input.placeholder}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && primary && run(primary)}
+        />
+      ))}
+      <div className="core-question-actions">
+        {secondary && <button className="core-button secondary" onClick={() => run(secondary)}>{secondary.label}</button>}
+        {primary && <button className={`core-button ${primary.style ?? "primary"}`} onClick={() => run(primary)}>{primary.label}</button>}
+      </div>
+    </section>
+  );
+}
+
 /** A ready-to-use draft (email, message): variants as tabs, subject, body, copy. */
 export function DraftCard({ block, copy, copied }: { block: Spec; copy: string; copied: string }) {
   const variants: Spec[] = block.variants ?? [];
@@ -186,6 +227,7 @@ export function Blocks({ blocks, components, copy, copied, streaming, act }: { b
         if (b.type === "callout") return <Callout key={i} block={b} components={components} />;
         if (b.type === "file" && act) return <FileCard key={i} block={b} act={act} />;
         if (b.type === "plan") return <PlanCard key="plan" block={b} act={act} />;
+        if (b.type === "question" && act) return <QuestionCard key={`${b.title}|${b.text}`} block={b} act={act} />;
         if (b.type === "draft") return <DraftCard key={i} block={b} copy={copy} copied={copied} />;
         const last = streaming && i === blocks.length - 1;
         return <Markdown key={i} text={b.text + (last ? " ▍" : "")} components={components} />;

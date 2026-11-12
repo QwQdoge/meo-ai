@@ -276,20 +276,6 @@ private fun CoreDialog(dialog: JSONObject, act: Act) {
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 dialog.str("text").takeIf { it.isNotEmpty() }?.let { Text(it) }
-                // The model's question: its options as buttons above the text field for a free answer.
-                dialog.list("choices").forEach { choice ->
-                    OutlinedButton(
-                        onClick = { choice.obj("action")?.let(act) },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Column(Modifier.fillMaxWidth()) {
-                            Text(choice.str("label"), style = MaterialTheme.typography.labelLarge)
-                            choice.str("description").takeIf { it.isNotEmpty() }?.let {
-                                Text(it, style = MaterialTheme.typography.bodySmall)
-                            }
-                        }
-                    }
-                }
                 if (input != null) {
                     OutlinedTextField(
                         value = value,
@@ -1169,6 +1155,7 @@ private fun MessageBubble(message: JSONObject, strings: JSONObject, act: Act) {
                     else blocks.forEachIndexed { i, block ->
                         val cursor = if (streaming && i == blocks.lastIndex) " ▍" else ""
                         when (block.str("type")) {
+                            "question" -> QuestionBlock(block, act)
                             "callout", "plan" -> CalloutBlock(block, act)
                             "draft" -> DraftBlock(block, strings)
                             "math" -> MathBlock(block)
@@ -1374,6 +1361,44 @@ private fun CalloutBlock(block: JSONObject, act: Act = {}) {
                             ) { Text(a.str("label"), style = MaterialTheme.typography.labelMedium) }
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+/** The model's question or the plan review, inside the chat: it stays open until answered. */
+@Composable
+private fun QuestionBlock(block: JSONObject, act: Act) {
+    var value by remember(block.str("title") + block.str("text")) { mutableStateOf("") }
+    val input = block.obj("input")
+    Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surfaceContainer, modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(block.str("title"), style = MaterialTheme.typography.titleSmall)
+            block.str("text").takeIf { it.isNotEmpty() }?.let { Text(it) }
+            block.list("choices").forEach { choice ->
+                OutlinedButton(onClick = { choice.obj("action")?.let(act) }, modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.fillMaxWidth()) {
+                        Text((if (choice.optBoolean("selected")) "✓ " else "") + choice.str("label"), style = MaterialTheme.typography.labelLarge)
+                        choice.str("description").takeIf { it.isNotEmpty() }?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                    }
+                }
+            }
+            if (input != null) {
+                OutlinedTextField(
+                    value = value,
+                    onValueChange = { value = it },
+                    singleLine = !input.optBoolean("multiline"),
+                    minLines = if (input.optBoolean("multiline")) 3 else 1,
+                    placeholder = { Text(input.str("placeholder")) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
+                block.list("actions").reversed().forEach { a ->
+                    val run = { a.obj("action")?.let { act(if (a.optBoolean("withInput")) it.withField("text", value) else it) }; Unit }
+                    if (a.str("style") == "primary") Button(onClick = run) { Text(a.str("label")) }
+                    else OutlinedButton(onClick = run) { Text(a.str("label")) }
                 }
             }
         }

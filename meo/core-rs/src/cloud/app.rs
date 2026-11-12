@@ -570,10 +570,6 @@ struct Summary {
 /// A modal question the client renders (`prompt` with a text field, or `confirm`).
 #[derive(Clone)]
 struct Dialog {
-    /// Choices shown above the text field, each a button: `{label, description, selected?, action}`.
-    choices: Vec<Value>,
-    /// Placeholder of the text field; empty keeps the default for the kind.
-    placeholder: String,
     kind: &'static str,
     multiline: bool,
     secret: bool,
@@ -1049,20 +1045,7 @@ impl AppCore {
             Action::ExportConversation { id } => self.export_conversation(id).await,
             Action::BeginDelete { id } => self.begin_delete(id),
             Action::DeleteConversation { id } => self.delete_conversation(id).await,
-            Action::CloseDialog => {
-                // Closing the model's question (or the plan review) is a skip (or "keep planning").
-                let asking = self.state.lock().unwrap().agent.asking.is_some();
-                if asking {
-                    let review = self.state.lock().unwrap().agent.asking.as_ref().is_some_and(|a| a.plan.is_some());
-                    if review {
-                        Box::pin(self.review_plan(false, String::new())).await
-                    } else {
-                        Box::pin(self.answer_question(None, String::new(), true, false)).await
-                    }
-                } else {
-                    self.update(|s| s.dialog = None)
-                }
-            }
+            Action::CloseDialog => self.update(|s| s.dialog = None),
             Action::Regenerate => self.regenerate().await,
             Action::Retry => self.retry().await,
             Action::RetryRound => {
@@ -2775,8 +2758,6 @@ impl AppCore {
     fn prompt(&self, title: &str, text: &str, value: &str, multiline: bool, confirm: Value) {
         self.update(|s| {
             s.dialog = Some(Dialog {
-                choices: Vec::new(),
-                placeholder: String::new(),
                 kind: "prompt",
                 multiline,
                 secret: false,
@@ -2794,8 +2775,6 @@ impl AppCore {
     fn prompt_secret(&self, title: &str, text: &str, confirm: Value) {
         self.update(|s| {
             s.dialog = Some(Dialog {
-                choices: Vec::new(),
-                placeholder: String::new(),
                 kind: "prompt",
                 multiline: false,
                 secret: true,
@@ -2813,8 +2792,6 @@ impl AppCore {
     fn confirm(&self, title: &str, text: &str, confirm: Value) {
         self.update(|s| {
             s.dialog = Some(Dialog {
-                choices: Vec::new(),
-                placeholder: String::new(),
                 kind: "confirm",
                 multiline: false,
                 secret: false,
@@ -3607,8 +3584,6 @@ impl AppCore {
             .unwrap_or_default();
         self.update(|s| {
             s.dialog = Some(Dialog {
-                choices: Vec::new(),
-                placeholder: String::new(),
                 kind: "prompt",
                 multiline: false,
                 secret: false,
@@ -3630,8 +3605,6 @@ impl AppCore {
     fn begin_delete(&self, id: String) {
         self.update(|s| {
             s.dialog = Some(Dialog {
-                choices: Vec::new(),
-                placeholder: String::new(),
                 kind: "confirm",
                 multiline: false,
                 secret: false,
@@ -5040,8 +5013,6 @@ impl AppCore {
         let value = message.text.clone();
         self.update(|s| {
             s.dialog = Some(Dialog {
-                choices: Vec::new(),
-                placeholder: String::new(),
                 kind: "prompt",
                 multiline: true,
                 secret: false,
@@ -6636,7 +6607,9 @@ impl AppCore {
             }
         };
         let round = self.state.lock().unwrap().agent.round;
-        self.step(&format!("tool{round}"), "Ask you a question", "Waiting for your answer…", "running", vec![]);
+        // The question sits in the chat as a card, not in a dialog: nothing runs while it waits, so the
+        // step is not "running", and the user may leave it open, do something else, or answer later.
+        self.step(&format!("tool{round}"), "Ask you a question", "Waiting for your answer", "done", vec![]);
         self.update(|s| {
             s.agent.asking = Some(Asking {
                 conversation_id: id.to_owned(),
@@ -6645,51 +6618,6 @@ impl AppCore {
                 answers: Vec::new(),
                 picked: Vec::new(),
                 plan: None,
-            });
-        });
-        self.show_question();
-    }
-
-    /// Shows the question the run is waiting on (the next one, or the same after a tick in a multi-select).
-    fn show_question(&self) {
-        self.update(|s| {
-            let Some(a) = s.agent.asking.as_ref() else { return };
-            let Some(q) = a.questions.get(a.answers.len()) else { return };
-            let total = a.questions.len();
-            let title = if !q.header.is_empty() {
-                q.header.clone()
-            } else if total > 1 {
-                format!("Question {} of {total}", a.answers.len() + 1)
-            } else {
-                "Question".to_owned()
-            };
-            let choices: Vec<Value> = q
-                .options
-                .iter()
-                .enumerate()
-                .map(|(i, (label, description))| {
-                    let ticked = q.multi && a.picked.contains(&i);
-                    json!({
-                        "label": if ticked { format!("✓ {label}") } else { label.clone() },
-                        "description": description,
-                        "selected": ticked,
-                        "action": { "type": "answer_question", "index": i },
-                    })
-                })
-                .collect();
-            s.dialog = Some(Dialog {
-                choices,
-                placeholder: if q.options.is_empty() { "Your answer".into() } else { "Or write your own answer".into() },
-                kind: "prompt",
-                multiline: false,
-                secret: false,
-                title,
-                text: if q.multi { format!("{}\n(Pick any number, then press Answer.)", q.question) } else { q.question.clone() },
-                value: String::new(),
-                actions: vec![
-                    input_button("Answer", "primary", json!({ "type": "answer_question", "submit": true })),
-                    button("Skip", "secondary", json!({ "type": "answer_question", "skip": true })),
-                ],
             });
         });
     }
@@ -6710,8 +6638,6 @@ impl AppCore {
                         None => a.picked.push(i),
                     }
                 }
-                drop(s);
-                self.show_question();
                 return;
             }
             let custom = text.trim().to_owned();
@@ -6740,9 +6666,8 @@ impl AppCore {
             }
         };
         match finished {
-            None => self.show_question(),
+            None => {}
             Some(a) => {
-                self.update(|s| s.dialog = None);
                 let round = self.state.lock().unwrap().agent.round;
                 self.step(&format!("tool{round}"), "Ask you a question", "Answered", "done", vec![]);
                 let result = json!({ "answers": a.answers }).to_string();
@@ -6754,8 +6679,9 @@ impl AppCore {
     /// `exit_plan_mode`: the plan is shown in the chat and the user approves it or asks to keep planning.
     async fn begin_plan_review(&self, id: &str, call: agent::ToolCall, plan: String) {
         let round = self.state.lock().unwrap().agent.round;
-        self.step(&format!("tool{round}"), "Present the plan", "Waiting for your approval…", "running", vec![]);
+        self.step(&format!("tool{round}"), "Present the plan", "Waiting for your approval", "done", vec![]);
         self.push_message(id, "assistant", plan.trim());
+        // The review is a card under the plan in the chat (see `question_card`), open until answered.
         self.update(|s| {
             s.agent.asking = Some(Asking {
                 conversation_id: id.to_owned(),
@@ -6764,20 +6690,6 @@ impl AppCore {
                 answers: Vec::new(),
                 picked: Vec::new(),
                 plan: Some(plan),
-            });
-            s.dialog = Some(Dialog {
-                choices: Vec::new(),
-                placeholder: "What should change? (optional)".into(),
-                kind: "prompt",
-                multiline: true,
-                secret: false,
-                title: "Approve this plan?".into(),
-                text: "The plan is above. Approve it to let Meo carry it out, or keep planning with your feedback.".into(),
-                value: String::new(),
-                actions: vec![
-                    button("Approve", "primary", json!({ "type": "review_plan", "approve": true })),
-                    input_button("Keep planning", "secondary", json!({ "type": "review_plan", "approve": false })),
-                ],
             });
         });
     }
@@ -6788,7 +6700,6 @@ impl AppCore {
             if s.agent.asking.as_ref().is_none_or(|a| a.plan.is_none()) {
                 return;
             }
-            s.dialog = None;
             s.agent.asking.take()
         };
         let Some(a) = asking else { return };
@@ -7797,8 +7708,7 @@ impl AppCore {
                 "kind": d.kind,
                 "title": d.title,
                 "text": d.text,
-                "input": (d.kind == "prompt").then(|| json!({ "value": d.value, "placeholder": if !d.placeholder.is_empty() { d.placeholder.as_str() } else if d.secret { "Token" } else if d.multiline { "Message" } else { "Title" }, "multiline": d.multiline, "secret": d.secret })),
-                "choices": d.choices,
+                "input": (d.kind == "prompt").then(|| json!({ "value": d.value, "placeholder": if d.secret { "Token" } else if d.multiline { "Message" } else { "Title" }, "multiline": d.multiline, "secret": d.secret })),
                 "actions": d.actions,
             })).or_else(|| password_dialog(&s)),
             "notice": s.notice.as_ref().map(|(kind, text)| {
@@ -9832,7 +9742,11 @@ fn conversation_page(s: &State) -> Value {
             messages.push(json!({ "role": "assistant", "text": run.text, "streaming": !run.done }));
         }
     }
-    let messages = merge_rounds(messages);
+    let mut messages = merge_rounds(messages);
+    // The model's open question (or plan review) sits at the end of the chat as a card.
+    if let Some(card) = s.agent.asking.as_ref().filter(|a| Some(&a.conversation_id) == active.as_ref()).map(question_card) {
+        messages.push(json!({ "id": "", "role": "assistant", "text": "", "streaming": false, "blocks": [card], "actions": [] }));
+    }
     let busy = s.streaming.is_some();
     let using = using_label(s);
     // ↑ in an empty composer edits the last message you sent (when there is one to edit).
@@ -10071,6 +9985,57 @@ fn goal_rounds_pref(s: &State) -> usize {
         .get("chat.goal_rounds")
         .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|x| x.parse().ok())))
         .map_or(2, |n| n.clamp(1, 10) as usize)
+}
+
+/// The card of an open question or plan review: `{type: "question", kind, title, text, choices, input,
+/// actions}`. Choices are buttons; the text field is for a free answer; actions are Answer/Skip or
+/// Approve/Keep planning. It stays until the user answers (no timeout) and does not stop the composer.
+fn question_card(a: &Asking) -> Value {
+    if a.plan.is_some() {
+        return json!({
+            "type": "question", "kind": "plan", "title": "Approve this plan?",
+            "text": "Approve it to let Meo carry it out, or keep planning with your feedback.",
+            "choices": [],
+            "input": { "placeholder": "What should change? (optional)", "multiline": true },
+            "actions": [
+                button("Approve", "primary", json!({ "type": "review_plan", "approve": true })),
+                input_button("Keep planning", "secondary", json!({ "type": "review_plan", "approve": false })),
+            ],
+        });
+    }
+    let n = a.answers.len();
+    let Some(q) = a.questions.get(n) else { return Value::Null };
+    let total = a.questions.len();
+    let title = if !q.header.is_empty() {
+        q.header.clone()
+    } else if total > 1 {
+        format!("Question {} of {total}", n + 1)
+    } else {
+        "Question".to_owned()
+    };
+    let choices: Vec<Value> = q
+        .options
+        .iter()
+        .enumerate()
+        .map(|(i, (label, description))| {
+            let ticked = q.multi && a.picked.contains(&i);
+            json!({
+                "label": label, "description": description, "selected": ticked,
+                "action": { "type": "answer_question", "index": i },
+            })
+        })
+        .collect();
+    json!({
+        "type": "question", "kind": if q.multi { "multi" } else { "single" }, "title": title,
+        "text": if q.multi { format!("{}\n(Pick any number, then press Answer.)", q.question) } else { q.question.clone() },
+        "step": format!("{}/{total}", n + 1),
+        "choices": choices,
+        "input": { "placeholder": if q.options.is_empty() { "Your answer" } else { "Or write your own answer" }, "multiline": false },
+        "actions": [
+            input_button("Answer", "primary", json!({ "type": "answer_question", "submit": true })),
+            button("Skip", "secondary", json!({ "type": "answer_question", "skip": true })),
+        ],
+    })
 }
 
 /// What `get_goal` returns: the goal with its revision and rounds, or `{"goal": null}`.
@@ -15607,6 +15572,12 @@ mod tests {
         let _ = std::fs::remove_dir_all(&folder);
     }
 
+    /// The open question or plan-review card at the end of the chat, if any.
+    fn card(c: &AppCore) -> Value {
+        let v = c.view();
+        v["page"]["messages"].as_array().and_then(|m| m.last()).and_then(|m| m["blocks"].as_array().and_then(|b| b.first())).filter(|b| b["type"] == "question").cloned().unwrap_or(Value::Null)
+    }
+
     fn native_chat(api: &FakeApi, folder: &std::path::Path) -> AppCore {
         let c = work_core(api, folder, "smart");
         c.update(|s| {
@@ -15625,19 +15596,20 @@ mod tests {
         let api = fake_api(vec![ask, "Going with core, tests and docs."]);
         let c = native_chat(&api, &folder);
         run(&c, Action::Send { text: "improve the repo".into() });
-        // The run waits on the first question: a dialog with the options as choices.
-        let d = c.view()["dialog"].clone();
+        // The run waits on the first question: a card in the chat (no dialog) with the options as choices.
+        let d = card(&c);
+        assert!(c.view()["dialog"].is_null(), "the question is not a pop-up");
         assert_eq!(d["title"], "Scope");
         assert_eq!(d["choices"][0]["label"], "Core (Recommended)");
         assert_eq!(api.streams.lock().unwrap().iter().filter(|b| b["tools"].is_array()).count(), 1, "the run is suspended");
         run(&c, Action::AnswerQuestion { index: Some(0), text: String::new(), skip: false, submit: false });
         // Second question is a multi-select: ticking changes the dialog, Answer sends the ticks and the text.
-        assert_eq!(c.view()["dialog"]["title"], "Question 2 of 2");
+        assert_eq!(card(&c)["title"], "Question 2 of 2");
         run(&c, Action::AnswerQuestion { index: Some(0), text: String::new(), skip: false, submit: false });
         run(&c, Action::AnswerQuestion { index: Some(1), text: String::new(), skip: false, submit: false });
-        assert_eq!(c.view()["dialog"]["choices"][0]["label"], "✓ Tests");
+        assert_eq!(card(&c)["choices"][0]["selected"], true);
         run(&c, Action::AnswerQuestion { index: None, text: "and CI".into(), skip: false, submit: true });
-        assert!(c.view()["dialog"].is_null(), "the dialog is gone after the last answer");
+        assert!(card(&c).is_null(), "the card is gone after the last answer");
         let streams: Vec<Value> = api.streams.lock().unwrap().iter().filter(|b| b["tools"].is_array()).cloned().collect();
         assert_eq!(streams.len(), 2);
         let out = streams[1]["turns"][0]["results"][0]["output"].as_str().unwrap().to_owned();
@@ -15647,16 +15619,20 @@ mod tests {
     }
 
     #[test]
-    fn closing_the_question_skips_it() {
+    fn a_question_waits_without_a_timeout_and_a_new_message_ends_it() {
         let folder = temp_folder("native-ask-skip");
         let ask = r#"{"text":"","calls":[{"id":"a1","name":"ask_user_question","arguments":"{\"questions\":[{\"id\":\"q\",\"question\":\"Sure?\"}]}"}]}"#;
-        let api = fake_api(vec![ask, "Assuming yes."]);
+        let api = fake_api(vec![ask, "Okay, something else."]);
         let c = native_chat(&api, &folder);
         run(&c, Action::Send { text: "go".into() });
-        run(&c, Action::CloseDialog);
-        let streams: Vec<Value> = api.streams.lock().unwrap().iter().filter(|b| b["tools"].is_array()).cloned().collect();
-        let out = streams[1]["turns"][0]["results"][0]["output"].as_str().unwrap().to_owned();
-        assert!(out.contains(r#""selected":[]"#) && !out.contains("custom"), "{out}");
+        assert_eq!(card(&c)["title"], "Question");
+        // Waiting is not busy: the composer is free, and the card stays while the user does other things.
+        assert!(c.state.lock().unwrap().streaming.is_none());
+        assert_eq!(card(&c)["title"], "Question");
+        // A new message of its own starts the next request: the unanswered question is dropped.
+        run(&c, Action::Send { text: "never mind, something else".into() });
+        assert!(card(&c).is_null());
+        assert!(c.state.lock().unwrap().agent.asking.is_none());
         let _ = std::fs::remove_dir_all(&folder);
     }
 
@@ -15673,9 +15649,10 @@ mod tests {
         let names: Vec<String> = streams()[0]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap().to_owned()).collect();
         assert!(names.contains(&"exit_plan_mode".to_owned()), "{names:?}");
         assert!(streams()[0]["prompt"].as_str().unwrap().contains("## Plan mode"));
-        // The plan is in the chat and the user is asked.
-        assert!(texts(&c).last().unwrap().starts_with("# Plan"), "{:?}", texts(&c));
-        assert_eq!(c.view()["dialog"]["title"], "Approve this plan?");
+        // The plan is in the chat and the review card is under it.
+        assert!(texts(&c).iter().any(|t| t.starts_with("# Plan")), "{:?}", texts(&c));
+        assert_eq!(card(&c)["title"], "Approve this plan?");
+        assert!(c.view()["dialog"].is_null(), "the review is not a pop-up");
         run(&c, Action::ReviewPlan { approve: false, text: "add tests".into() });
         assert_eq!(c.state.lock().unwrap().prefs["chat.plan_mode"], json!(true), "still planning");
         let out = streams()[1]["turns"][0]["results"][0]["output"].as_str().unwrap().to_owned();

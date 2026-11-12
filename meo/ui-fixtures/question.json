@@ -362,6 +362,74 @@
     ],
     "stepsLabel": "Used 1 tool",
     "stepsOpen": false
+   },
+   {
+    "id": "",
+    "role": "assistant",
+    "text": "",
+    "streaming": false,
+    "blocks": [
+     {
+      "type": "question",
+      "kind": "multi",
+      "title": "Scope",
+      "step": "1/2",
+      "text": "Which parts should I improve?\n(Pick any number, then press Answer.)",
+      "choices": [
+       {
+        "label": "Core (Recommended)",
+        "description": "Rust core: loop, tools, prompts.",
+        "selected": true,
+        "action": {
+         "type": "answer_question",
+         "index": 0
+        }
+       },
+       {
+        "label": "UI",
+        "description": "Web, desktop and Android renderers.",
+        "selected": false,
+        "action": {
+         "type": "answer_question",
+         "index": 1
+        }
+       },
+       {
+        "label": "Docs",
+        "description": "",
+        "selected": false,
+        "action": {
+         "type": "answer_question",
+         "index": 2
+        }
+       }
+      ],
+      "input": {
+       "placeholder": "Or write your own answer",
+       "multiline": false
+      },
+      "actions": [
+       {
+        "label": "Answer",
+        "style": "primary",
+        "withInput": true,
+        "action": {
+         "type": "answer_question",
+         "submit": true
+        }
+       },
+       {
+        "label": "Skip",
+        "style": "secondary",
+        "action": {
+         "type": "answer_question",
+         "skip": true
+        }
+       }
+      ]
+     }
+    ],
+    "actions": []
    }
   ],
   "inspector": {
@@ -441,64 +509,5 @@
  "strings": {
   "jump": "Jump to the latest message",
   "thinking": "Thinking"
- },
- "dialog": {
-  "kind": "prompt",
-  "title": "Scope",
-  "text": "Which part should I improve first?\n(Pick any number, then press Answer.)",
-  "input": {
-   "value": "",
-   "placeholder": "Or write your own answer",
-   "multiline": false,
-   "secret": false
-  },
-  "choices": [
-   {
-    "label": "✓ Core (Recommended)",
-    "description": "Rust core: loop, tools, prompts.",
-    "selected": true,
-    "action": {
-     "type": "answer_question",
-     "index": 0
-    }
-   },
-   {
-    "label": "UI",
-    "description": "Web, desktop and Android renderers.",
-    "selected": false,
-    "action": {
-     "type": "answer_question",
-     "index": 1
-    }
-   },
-   {
-    "label": "Docs",
-    "description": "",
-    "selected": false,
-    "action": {
-     "type": "answer_question",
-     "index": 2
-    }
-   }
-  ],
-  "actions": [
-   {
-    "label": "Answer",
-    "style": "primary",
-    "withInput": true,
-    "action": {
-     "type": "answer_question",
-     "submit": true
-    }
-   },
-   {
-    "label": "Skip",
-    "style": "secondary",
-    "action": {
-     "type": "answer_question",
-     "skip": true
-    }
-   }
-  ]
  }
 }

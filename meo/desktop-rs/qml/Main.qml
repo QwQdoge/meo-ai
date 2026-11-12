@@ -210,7 +210,7 @@ ApplicationWindow {
         message: spec && spec.text ? spec.text : ""
         confirmText: spec && spec.actions[0] ? spec.actions[0].label : ""
         cancelText: spec && spec.actions[1] ? spec.actions[1].label : ""
-        supportingContent: spec && spec.input ? (spec.choices && spec.choices.length > 0 ? promptChoices : (spec.input.multiline ? promptArea : promptField)) : null
+        supportingContent: spec && spec.input ? (spec.input.multiline ? promptArea : promptField) : null
         onSpecKeyChanged: {
             if (spec) {
                 inputValue = spec.input ? (spec.input.value || "") : ""
@@ -236,29 +236,6 @@ ApplicationWindow {
             text: appDialog.inputValue
             onTextChanged: appDialog.inputValue = text
             Component.onCompleted: forceActiveFocus()
-        }
-    }
-
-    // The model's question: its options as buttons above the text field for a free answer.
-    Component {
-        id: promptChoices
-        Column {
-            width: 320
-            spacing: 8
-            Repeater {
-                model: appDialog.spec ? (appDialog.spec.choices || []) : []
-                MeoButton {
-                    required property var modelData
-                    width: parent.width
-                    text: modelData.description ? modelData.label + " — " + modelData.description : modelData.label
-                    type: modelData.selected ? "tonal" : "outlined"
-                    onClicked: window.act(modelData.action)
-                }
-            }
-            Loader {
-                width: parent.width
-                sourceComponent: appDialog.spec && appDialog.spec.input && appDialog.spec.input.multiline ? promptArea : promptField
-            }
         }
     }
 
@@ -2225,6 +2202,68 @@ ApplicationWindow {
                             }
                         }
                     }
+                    // The model's question or the plan review, inside the chat: it stays open until answered.
+                    Component {
+                        id: questionBlock
+                        Rectangle {
+                            implicitHeight: questionColumn.implicitHeight + 24
+                            radius: 14
+                            color: MeoTheme.surfaceContainer
+                            border.width: 1
+                            border.color: MeoTheme.outlineVariant
+                            Column {
+                                id: questionColumn
+                                x: 14
+                                y: 12
+                                width: parent.width - 28
+                                spacing: 8
+                                Text {
+                                    text: (block.title || "") + (block.step && String(block.step).split("/")[1] !== "1" ? "  " + block.step : "")
+                                    font.bold: true
+                                    font.pixelSize: 14 * MeoTheme.textScale
+                                    color: MeoTheme.contentOnSurface
+                                }
+                                Text {
+                                    visible: !!block.text
+                                    width: parent.width
+                                    text: block.text || ""
+                                    wrapMode: Text.Wrap
+                                    font.pixelSize: 14 * MeoTheme.textScale
+                                    color: MeoTheme.contentOnSurface
+                                }
+                                Repeater {
+                                    model: block.choices || []
+                                    MeoButton {
+                                        required property var modelData
+                                        width: questionColumn.width
+                                        text: (modelData.selected ? "✓ " : "") + modelData.label + (modelData.description ? " — " + modelData.description : "")
+                                        type: modelData.selected ? "tonal" : "outlined"
+                                        onClicked: window.act(modelData.action)
+                                    }
+                                }
+                                MeoTextField {
+                                    id: questionField
+                                    visible: !!block.input
+                                    width: parent.width
+                                    placeholder: block.input ? block.input.placeholder : ""
+                                }
+                                Flow {
+                                    width: parent.width
+                                    spacing: 8
+                                    layoutDirection: Qt.RightToLeft
+                                    Repeater {
+                                        model: block.actions || []
+                                        MeoButton {
+                                            required property var modelData
+                                            text: modelData.label
+                                            type: modelData.style === "primary" ? "filled" : "outlined"
+                                            onClicked: window.act(modelData.withInput ? window.withFields(modelData.action, { text: questionField.text }) : modelData.action)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                     Component {
                         id: calloutBlock
                         Rectangle {
@@ -2878,7 +2917,7 @@ ApplicationWindow {
                                             width: blocksColumn.width
                                             readonly property var block: blocksColumn.blockList[index] || ({})
                                             readonly property bool streaming: !!messageItem.streaming && index === blocksColumn.blockList.length - 1
-                                            sourceComponent: block.type === "callout" || block.type === "plan" ? calloutBlock : block.type === "draft" ? draftBlock : block.type === "plot" ? plotBlock : block.type === "chart" ? chartBlock : block.type === "math" ? mathBlock : markdownBlock
+                                            sourceComponent: block.type === "question" ? questionBlock : block.type === "callout" || block.type === "plan" ? calloutBlock : block.type === "draft" ? draftBlock : block.type === "plot" ? plotBlock : block.type === "chart" ? chartBlock : block.type === "math" ? mathBlock : markdownBlock
                                         }
                                     }
                                 }
