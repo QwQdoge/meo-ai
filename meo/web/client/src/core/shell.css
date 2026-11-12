@@ -598,3 +598,31 @@
 .core-app .core-bubble.assistant .core-steps > ol > li { margin: 0; padding: 0 12px; }
 .core-app .core-steps li > details > summary > b { font-weight: 500; font-size: 13px; line-height: 1.4; overflow-wrap: anywhere; }
 .core-app .core-steps > summary { font-size: 13px; line-height: 1.4; color: rgb(var(--text-secondary)); }
+
+/* ---------- Steady streaming: nothing jumps while an answer is written ---------- */
+
+/* The message being written keeps its real height; only finished, off-screen ones are skipped. */
+.core-app .core-messages > .core-message:nth-last-child(-n+3) { content-visibility: visible; }
+
+/* The caret follows the last character without being part of the text. */
+.core-tail > :is(p, li, h1, h2, h3, h4):last-child::after,
+.core-tail > :is(ul, ol):last-child > li:last-child::after {
+  content: "▍"; margin-inline-start: 2px; color: rgb(var(--accent-primary)); animation: core-blink 1s infinite steps(2, jump-none);
+}
+.core-tail > :last-child { margin-bottom: 0; }
+
+/* Steps open and close by growing, and each new step fades in instead of popping in. */
+:root { interpolate-size: allow-keywords; }
+.core-steps::details-content { block-size: 0; overflow: clip; transition: block-size .22s var(--ease), content-visibility .22s allow-discrete; }
+.core-steps[open]::details-content { block-size: auto; }
+.core-steps > ol > li { animation: core-step-in .22s var(--ease) both; }
+.core-steps li > details::details-content { block-size: 0; overflow: clip; transition: block-size .18s var(--ease), content-visibility .18s allow-discrete; }
+.core-steps li > details[open]::details-content { block-size: auto; }
+.core-steps { overflow-anchor: none; }
+.core-step-mark { flex: none; }
+.core-live-time { display: inline-block; min-width: 3ch; }
+@keyframes core-step-in { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .core-steps::details-content, .core-steps li > details::details-content { transition: none; }
+  .core-steps > ol > li { animation: none; }
+}

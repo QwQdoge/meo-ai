@@ -9907,7 +9907,11 @@ fn conversation_page(s: &State) -> Value {
         .filter(|(c, _)| Some(c) == active.as_ref() && !steps_empty(&s.activity))
     {
         let running = steps.iter().any(|x| x["status"] == "running");
-        if running && streaming.is_none() {
+        // The turn is everything after the last prompt. Its steps and task list live on the turn's
+        // FIRST reply and stay there, so they never hop between messages as rounds come and go.
+        let turn = |msgs: &[Value]| msgs.iter().rposition(|m| m["role"] == "user").map_or(0, |i| i + 1);
+        let replied = messages[turn(&messages)..].iter().any(|m| m["role"] == "assistant");
+        if running && streaming.is_none() && !replied {
             messages.push(json!({ "role": "assistant", "text": "", "streaming": true }));
         }
         let shown = visible_steps(steps);
@@ -9916,19 +9920,20 @@ fn conversation_page(s: &State) -> Value {
         } else {
             steps_summary(&shown)
         };
-        if let Some(target) = messages.iter_mut().rev().find(|m| m["role"] == "assistant") {
+        let from = turn(&messages);
+        let answering = s
+            .messages
+            .get(active.as_deref().unwrap_or_default())
+            .is_some_and(|l| l.last().is_some_and(|m| m.role == "user"));
+        if let Some(target) = messages[from..].iter_mut().find(|m| m["role"] == "assistant") {
             // After a finished answer only its latest message carries the steps.
-            let latest = target["streaming"] == true
-                || target["failed"] == true
-                || !s
-                    .messages
-                    .get(active.as_deref().unwrap_or_default())
-                    .is_some_and(|l| l.last().is_some_and(|m| m.role == "user"));
+            let latest = target["streaming"] == true || target["failed"] == true || !answering || running;
             // Nothing to list while only the plumbing ran: no steps box, just the live status.
             if latest && !shown.is_empty() {
                 target["steps"] = Value::Array(shown);
                 target["stepsLabel"] = json!(label);
                 target["stepsOpen"] = json!(running);
+                target["stepsLive"] = json!(running);
             }
             // The run's own task list (native `update_tasks`) lives at the top of the answer and
             // changes in place, instead of being written out again as text each round.

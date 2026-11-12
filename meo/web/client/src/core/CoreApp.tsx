@@ -949,19 +949,10 @@ const planKey = (m: Spec) => {
  *  so a streamed token re-renders only the message being streamed, not the whole chat. */
 const sameMessage = (a: Spec, b: Spec) =>
   a.id === b.id && a.role === b.role && a.text === b.text && !!a.streaming === !!b.streaming &&
-  !!a.stepsOpen === !!b.stepsOpen && a.stepsLabel === b.stepsLabel &&
+  !!a.stepsOpen === !!b.stepsOpen && !!a.stepsLive === !!b.stepsLive && a.stepsLabel === b.stepsLabel &&
   (a.blocks?.length ?? 0) === (b.blocks?.length ?? 0) && planKey(a) === planKey(b) && (a.images?.length ?? 0) === (b.images?.length ?? 0) &&
   (a.actions?.length ?? 0) === (b.actions?.length ?? 0) &&
   (a.steps ? JSON.stringify(a.steps) : "") === (b.steps ? JSON.stringify(b.steps) : "");
-
-/** While an answer streams, its last text block ends with a block cursor (as on desktop and Android). */
-function withCaret(blocks: Spec[], streaming: boolean): Spec[] {
-  if (!streaming || !blocks.length) return blocks;
-  const at = blocks.length - 1;
-  const last = blocks[at];
-  if (last.type !== "markdown" || !last.text) return blocks;
-  return [...blocks.slice(0, at), { ...last, text: last.text + " ▍" }];
-}
 
 /** What a step is doing: the core sends `kind`; the icon and sentence for each kind live here. */
 const STEP_KINDS: Record<string, [string, string]> = {
@@ -1008,7 +999,7 @@ const MessageView = React.memo(
                 {m.steps && (
                   <details className="core-steps" open={!!m.stepsOpen}>
                     <summary>
-                      {m.streaming ? <LiveStatus icon={stepKind(currentStep(m.steps)).icon} label={stepKind(currentStep(m.steps)).live} /> : <><Icon name="check_circle" size={14} /> {m.stepsLabel}</>}
+                      {m.streaming || m.stepsLive ? <LiveStatus icon={stepKind(currentStep(m.steps)).icon} label={stepKind(currentStep(m.steps)).live} /> : <><Icon name="check_circle" size={14} /> {m.stepsLabel}</>}
                       <Icon name="expand_more" size={14} className="core-steps-chev" />
                     </summary>
                     <ol>
@@ -1039,7 +1030,7 @@ const MessageView = React.memo(
                 )}
                 {m.streaming && !m.steps && !m.text && !(m.blocks ?? []).length && <LiveStatus icon="hourglass_empty" label={strings.waiting ?? "Waiting for the model"} longLabel="Still waiting for the model, no reply yet" />}
                 <Blocks
-                  blocks={withCaret(m.blocks?.length ? m.blocks : [{ type: "markdown", text: m.text }], !!m.streaming)}
+                  blocks={m.blocks?.length ? m.blocks : [{ type: "markdown", text: m.text }]}
                   streaming={!!m.streaming}
                   act={act as (action: Spec) => void}
                   copy={strings.copy ?? "Copy"}
@@ -1136,6 +1127,15 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
     return () => cancelAnimationFrame(frame);
   }, [messages.length, last]);
   useEffect(() => fadeEdges(list.current), [messages.length, last, page.id]);
+  // Steps opening, a step arriving or an image loading change the height without changing the text:
+  // follow the bottom whenever the content resizes, so nothing jumps while a reply is being written.
+  useEffect(() => {
+    const el = list.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => { if (stick.current) end.current?.scrollIntoView({ block: "end" }); fadeEdges(el); });
+    Array.from(el.children).forEach((c) => ro.observe(c));
+    return () => ro.disconnect();
+  }, [page.id, messages.length]);
   // Another chat opens at its end.
   const firstId = messages[0]?.id;
   useEffect(() => { stick.current = true; }, [firstId]);

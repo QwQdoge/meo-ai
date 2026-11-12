@@ -230,7 +230,8 @@ export function Blocks({ blocks, components, copy, copied, streaming, act }: { b
         if (b.type === "question" && act) return <QuestionCard key={`${b.title}|${b.text}`} block={b} act={act} />;
         if (b.type === "draft") return <DraftCard key={i} block={b} copy={copy} copied={copied} />;
         const last = streaming && i === blocks.length - 1;
-        return <Markdown key={i} text={b.text + (last ? " ▍" : "")} components={components} />;
+        // The caret is drawn by CSS after the last character, so it never changes how the text parses.
+        return last ? <div key={i} className="core-tail"><Markdown text={b.text} components={components} /></div> : <Markdown key={i} text={b.text} components={components} />;
       })}
     </>
   );
