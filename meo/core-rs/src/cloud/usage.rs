@@ -65,7 +65,11 @@ pub fn chat_event(t: &ChatTurn) -> Value {
         "model_role": "chat",
         "occurred_at": iso(t.finished),
         "input_tokens": estimate_tokens(t.context),
+        // The server refuses an event without every count, so the ones this estimate cannot know are zero.
+        "cached_input_tokens": 0,
+        "cache_write_tokens": 0,
         "output_tokens": estimate_tokens(t.reply),
+        "reasoning_tokens": 0,
         "duration_ms": ((t.finished - t.started).max(0) * 1000),
         "metadata": { "estimated": true },
     })
@@ -118,5 +122,9 @@ mod tests {
         assert_eq!(e["provider"], "unknown");
         assert_eq!(e["duration_ms"], 2000);
         assert!(e["output_tokens"].as_u64().unwrap() >= 1);
+        // The server refuses an event that lacks any of these counts.
+        for key in ["input_tokens", "cached_input_tokens", "cache_write_tokens", "output_tokens", "reasoning_tokens"] {
+            assert!(e[key].as_u64().is_some(), "{key}");
+        }
     }
 }
