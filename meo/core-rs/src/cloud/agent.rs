@@ -66,6 +66,10 @@ pub enum Tool {
         tool: String,
         args: Value,
     },
+    /// Asks the user one or more questions in a dialog and returns their answers (`ask_user_question`).
+    AskUser { questions: Value },
+    /// Presents the finished plan for the user's approval; plan mode ends when they approve (`exit_plan_mode`).
+    ExitPlan { plan: String },
     /// A tool of a local MCP server (desktop and the headless runner only).
     Mcp {
         server: String,
@@ -117,12 +121,18 @@ impl Tool {
             Tool::ReadMore { .. } => "read_more",
             Tool::Mcp { .. } => "mcp",
             Tool::App { .. } => "app",
+            Tool::AskUser { .. } => "ask_user_question",
+            Tool::ExitPlan { .. } => "exit_plan_mode",
         }
     }
 
     pub fn risk(&self) -> Risk {
         match self {
-            Tool::ReadFile { .. } | Tool::ListDir { .. } | Tool::Search { .. } => Risk::Read,
+            Tool::ReadFile { .. }
+            | Tool::ListDir { .. }
+            | Tool::Search { .. }
+            | Tool::AskUser { .. }
+            | Tool::ExitPlan { .. } => Risk::Read,
             Tool::SearchReplace { .. } | Tool::ApplyPatch { .. } => Risk::Write,
             Tool::App { tool, .. } => {
                 // Looking things up needs no question; anything else asks like a command.
@@ -154,6 +164,8 @@ impl Tool {
         match self {
             Tool::ReadFile { path, .. } => format!("Read {path}"),
             Tool::ListDir { path } => format!("List {path}"),
+            Tool::AskUser { .. } => "Ask you a question".to_owned(),
+            Tool::ExitPlan { .. } => "Present the plan".to_owned(),
             Tool::Search { pattern, .. } => format!("Search for “{}”", clip(pattern)),
             Tool::SearchReplace { path, .. } => format!("Edit {path}"),
             Tool::ApplyPatch { patch } => {
@@ -221,6 +233,12 @@ fn call_from_json(index: usize, value: &Value) -> Result<ToolCall, String> {
         "web_search" => Tool::WebSearch {
             query: need("query")?,
         },
+        "ask_user_question" => {
+            let questions = args.get("questions").cloned().unwrap_or(Value::Null);
+            parse_questions(&questions)?;
+            Tool::AskUser { questions }
+        }
+        "exit_plan_mode" => Tool::ExitPlan { plan: need("plan")? },
         "read_more" => Tool::ReadMore {
             id: need("id")?,
             from: number(args, "from").unwrap_or(0),
@@ -402,7 +420,9 @@ fn tool_paths(tool: &Tool) -> Vec<String> {
         | Tool::WebSearch { .. }
         | Tool::ReadMore { .. }
         | Tool::Mcp { .. }
-        | Tool::App { .. } => Vec::new(),
+        | Tool::App { .. }
+        | Tool::AskUser { .. }
+        | Tool::ExitPlan { .. } => Vec::new(),
     }
 }
 
@@ -417,6 +437,10 @@ pub fn path_escapes(path: &str) -> bool {
 
 /// The decision for one call. The hard rules run first and cannot be overridden by the approver.
 pub fn gate(permission: Permission, tool: &Tool) -> Gate {
+    // Asking the user and presenting a plan are the user's own conversation, never an action to approve.
+    if matches!(tool, Tool::AskUser { .. } | Tool::ExitPlan { .. }) {
+        return Gate::Allow;
+    }
     // Full access is the user's own choice of the highest level: nothing is held back or refused.
     // (Passwords are still typed by the user, see `host.rs`.)
     if permission == Permission::All {
@@ -850,6 +874,17 @@ pub fn tool_instructions_with_apps(
     web: bool,
     apps: &str,
 ) -> String {
+    tool_instructions_full(workspace, subagents, web, apps, false)
+}
+
+/// As `tool_instructions_with_apps`, with plan mode: `exit_plan_mode` is offered and the plan-mode rules follow.
+pub fn tool_instructions_full(
+    workspace: Option<&str>,
+    subagents: bool,
+    web: bool,
+    apps: &str,
+    plan_mode: bool,
+) -> String {
     let mut tools: Vec<&str> = Vec::new();
     if workspace.is_some() {
         tools.push("read_file {path,start?,end?}");
@@ -868,6 +903,10 @@ pub fn tool_instructions_with_apps(
     }
     if web {
         tools.push("web_search {query} (search the web, results come back as data)");
+    }
+    tools.push("ask_user_question {questions:[{id,question,header?,options?:[{label,description?}],multiSelect?}]} (ask the user a decision or missing information; the answers come back as data)");
+    if plan_mode {
+        tools.push("exit_plan_mode {plan} (present the finished plan, as markdown, for the user's approval)");
     }
     if !apps.is_empty() {
         tools.push("app {app,name,args} (run a tool of a connected app listed below; app is the app name, name the tool, args its arguments)");
@@ -894,6 +933,9 @@ pub fn tool_instructions_with_apps(
         tools.iter().map(|t| format!("- {t}")).collect::<Vec<_>>().join("\n"),
         if workspace.is_some() { HOW_TO_READ } else { "" },
     );
+    if plan_mode {
+        out.push_str(&format!("\n\n{PLAN_MODE_GUIDANCE}"));
+    }
     if workspace.is_some() {
         out.push_str(&format!("\n\n## Project rules\n{PROJECT_RULES}\n\n## Project state\n{PERSISTENT_STATE}"));
     }
@@ -923,6 +965,66 @@ When you know enough, reply with the final report only (no tool block): short, c
 numbers, and what you could not find. You have at most {SUBAGENT_ROUNDS} rounds.\n\nYour task: {task}{notes}"
     )
 }
+
+/// One question the model asks the user with `ask_user_question` (ported from DeepSeek Harness'
+/// `tool-ask-user`): an id echoed in the answer, the question, an optional heading, optional choices
+/// (a recommended one goes first, its label ends in "(Recommended)"), and whether several may be picked.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Question {
+    pub id: String,
+    pub question: String,
+    pub header: String,
+    pub options: Vec<(String, String)>,
+    pub multi: bool,
+}
+
+pub const MAX_QUESTIONS: usize = 4;
+pub const MAX_OPTIONS: usize = 6;
+
+/// Reads the `questions` argument. Ids must be unique in one call (a missing id becomes `q1`, `q2`, ...).
+pub fn parse_questions(value: &Value) -> Result<Vec<Question>, String> {
+    let list = value
+        .as_array()
+        .filter(|a| !a.is_empty())
+        .ok_or("ask_user_question needs a non-empty \"questions\" list")?;
+    if list.len() > MAX_QUESTIONS {
+        return Err(format!("ask at most {MAX_QUESTIONS} questions at once"));
+    }
+    let mut out: Vec<Question> = Vec::new();
+    for (i, q) in list.iter().enumerate() {
+        let question = text(q, "question").ok_or("each question needs a \"question\"")?;
+        let id = text(q, "id").unwrap_or_else(|| format!("q{}", i + 1));
+        if out.iter().any(|x| x.id == id) {
+            return Err(format!("question id \"{id}\" is used twice; ids must be unique in one call"));
+        }
+        let options: Vec<(String, String)> = q
+            .get("options")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|o| Some((text(o, "label")?, text(o, "description").unwrap_or_default())))
+            .take(MAX_OPTIONS)
+            .collect();
+        out.push(Question {
+            id,
+            question,
+            header: text(q, "header").unwrap_or_default(),
+            options,
+            multi: q.get("multiSelect").and_then(Value::as_bool).unwrap_or(false),
+        });
+    }
+    Ok(out)
+}
+
+/// What the model is told about `ask_user_question` (one line for the fenced list, the description for native).
+pub const ASK_USER_DESCRIPTION: &str = "Ask the user a concise question when you need a decision, a confirmation or missing information before going on; do not ask what you can find out yourself with the tools. Send up to 4 questions with unique ids; give options when the answer is a choice, put the one you recommend first and end its label with \"(Recommended)\", and set multiSelect when several may be picked. The answer comes back as {\"answers\":[{\"id\",\"selected\":[labels],\"custom\":text}]}: custom is the user's own words (it replaces a single choice); an empty selected without custom means they skipped it, so go on with your best assumption and say so.";
+
+/// What the model is told about `exit_plan_mode`.
+pub const EXIT_PLAN_DESCRIPTION: &str = "Present your finished plan to the user for approval. Pass the whole plan as markdown starting with a heading. The user approves it (plan mode ends and you carry it out) or sends feedback (revise the plan and call this again). Call it only when the plan is complete; do not start the work before it is approved.";
+
+/// Guidance while plan mode is on (ported from DeepSeek Harness' `plan-mode`, with the changes enforced:
+/// writes and commands are refused until the plan is approved).
+pub const PLAN_MODE_GUIDANCE: &str = "## Plan mode\nYou are in plan mode: explore and design before you act. Read, search and look things up; ask the user with ask_user_question when a decision is theirs. Do not change files, run commands or call tools that change anything: those calls are refused until the plan is approved. When the plan is complete, call exit_plan_mode with the whole plan as markdown starting with a heading (the goal, the steps in order with the files or places each touches, how you will check the result, the risks). Do not carry the plan out in the same turn.";
 
 /// Consecutive identical calls (same tool, same arguments) at which the model is reminded to change
 /// approach (the thresholds of DeepSeek Harness' `repeat-tool-reminder`). Advisory: the call still runs.

@@ -244,7 +244,9 @@ impl Workspace {
             | Tool::WebSearch { .. }
             | Tool::ReadMore { .. }
             | Tool::Mcp { .. }
-            | Tool::App { .. } => fail("this tool is run by the app, not by the folder"),
+            | Tool::App { .. }
+            | Tool::AskUser { .. }
+            | Tool::ExitPlan { .. } => fail("this tool is run by the app, not by the folder"),
         }
     }
 

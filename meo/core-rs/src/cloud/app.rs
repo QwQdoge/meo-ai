@@ -346,6 +346,24 @@ pub enum Action {
     AddMemory {
         text: String,
     },
+    /// An answer to the model's question dialog: a choice (`index`), the typed text, or a skip; in a
+    /// multi-select a choice only ticks it and `submit` sends the ticks with the text.
+    AnswerQuestion {
+        #[serde(default)]
+        index: Option<usize>,
+        #[serde(default)]
+        text: String,
+        #[serde(default)]
+        skip: bool,
+        #[serde(default)]
+        submit: bool,
+    },
+    /// The user's verdict on a plan: approve it, or keep planning with feedback.
+    ReviewPlan {
+        approve: bool,
+        #[serde(default)]
+        text: String,
+    },
     /// The goal card: pause the live run's goal, continue a paused or blocked one, change it.
     GoalPause,
     GoalResume,
@@ -427,6 +445,18 @@ struct PendingTool {
     reason: String,
 }
 
+/// A question dialog (or the plan review) the run is waiting on: the tool call that asked, the questions,
+/// the answers so far, and, in a multi-select, what is ticked.
+struct Asking {
+    conversation_id: String,
+    call: agent::ToolCall,
+    questions: Vec<agent::Question>,
+    answers: Vec<Value>,
+    picked: Vec<usize>,
+    /// Set for `exit_plan_mode`: the plan under review (no questions then).
+    plan: Option<String>,
+}
+
 /// What a native function name stands for.
 #[derive(Clone, Debug)]
 enum NativeTarget {
@@ -440,6 +470,10 @@ enum NativeTarget {
     Goal,
     /// Reads the run's goal back (`get_goal`): its revision, status and rounds.
     GoalRead,
+    /// `ask_user_question`: a dialog, the run waits for the answers.
+    Ask,
+    /// `exit_plan_mode`: the plan goes to the user for approval.
+    ExitPlan,
 }
 
 /// Native tool calling for the run in progress (the model gets real function definitions and
@@ -488,6 +522,8 @@ impl NativeRun {
 /// The tool loop of the current Work message: Codex-style turns of "answer, tool, result, answer".
 #[derive(Default)]
 struct AgentRun {
+    /// The question dialog or plan review the run is waiting on.
+    asking: Option<Asking>,
     /// The last tool call and how many times in a row it was made identically (cleared by a new message).
     repeat: Option<(agent::Tool, usize)>,
     /// A goal (and its task list) the user resumed: the next native run starts with it.
@@ -534,6 +570,10 @@ struct Summary {
 /// A modal question the client renders (`prompt` with a text field, or `confirm`).
 #[derive(Clone)]
 struct Dialog {
+    /// Choices shown above the text field, each a button: `{label, description, selected?, action}`.
+    choices: Vec<Value>,
+    /// Placeholder of the text field; empty keeps the default for the kind.
+    placeholder: String,
     kind: &'static str,
     multiline: bool,
     secret: bool,
@@ -1009,7 +1049,20 @@ impl AppCore {
             Action::ExportConversation { id } => self.export_conversation(id).await,
             Action::BeginDelete { id } => self.begin_delete(id),
             Action::DeleteConversation { id } => self.delete_conversation(id).await,
-            Action::CloseDialog => self.update(|s| s.dialog = None),
+            Action::CloseDialog => {
+                // Closing the model's question (or the plan review) is a skip (or "keep planning").
+                let asking = self.state.lock().unwrap().agent.asking.is_some();
+                if asking {
+                    let review = self.state.lock().unwrap().agent.asking.as_ref().is_some_and(|a| a.plan.is_some());
+                    if review {
+                        Box::pin(self.review_plan(false, String::new())).await
+                    } else {
+                        Box::pin(self.answer_question(None, String::new(), true, false)).await
+                    }
+                } else {
+                    self.update(|s| s.dialog = None)
+                }
+            }
             Action::Regenerate => self.regenerate().await,
             Action::Retry => self.retry().await,
             Action::RetryRound => {
@@ -1206,6 +1259,10 @@ impl AppCore {
                 input_button("Add", "primary", json!({ "type": "add_memory" })),
             ),
             Action::AddMemory { text } => self.add_memory(text).await,
+            Action::AnswerQuestion { index, text, skip, submit } => {
+                Box::pin(self.answer_question(index, text, skip, submit)).await
+            }
+            Action::ReviewPlan { approve, text } => Box::pin(self.review_plan(approve, text)).await,
             Action::GoalPause => self.goal_pause(),
             Action::GoalResume => Box::pin(self.goal_resume()).await,
             Action::BeginEditGoal => self.begin_edit_goal(),
@@ -2718,6 +2775,8 @@ impl AppCore {
     fn prompt(&self, title: &str, text: &str, value: &str, multiline: bool, confirm: Value) {
         self.update(|s| {
             s.dialog = Some(Dialog {
+                choices: Vec::new(),
+                placeholder: String::new(),
                 kind: "prompt",
                 multiline,
                 secret: false,
@@ -2735,6 +2794,8 @@ impl AppCore {
     fn prompt_secret(&self, title: &str, text: &str, confirm: Value) {
         self.update(|s| {
             s.dialog = Some(Dialog {
+                choices: Vec::new(),
+                placeholder: String::new(),
                 kind: "prompt",
                 multiline: false,
                 secret: true,
@@ -2752,6 +2813,8 @@ impl AppCore {
     fn confirm(&self, title: &str, text: &str, confirm: Value) {
         self.update(|s| {
             s.dialog = Some(Dialog {
+                choices: Vec::new(),
+                placeholder: String::new(),
                 kind: "confirm",
                 multiline: false,
                 secret: false,
@@ -3544,6 +3607,8 @@ impl AppCore {
             .unwrap_or_default();
         self.update(|s| {
             s.dialog = Some(Dialog {
+                choices: Vec::new(),
+                placeholder: String::new(),
                 kind: "prompt",
                 multiline: false,
                 secret: false,
@@ -3565,6 +3630,8 @@ impl AppCore {
     fn begin_delete(&self, id: String) {
         self.update(|s| {
             s.dialog = Some(Dialog {
+                choices: Vec::new(),
+                placeholder: String::new(),
                 kind: "confirm",
                 multiline: false,
                 secret: false,
@@ -4166,6 +4233,19 @@ impl AppCore {
         match name.as_str() {
             "new" | "clear" => Box::pin(self.dispatch(Action::NewConversation)).await,
             "retry" => Box::pin(self.dispatch(Action::Retry)).await,
+            "plan" => {
+                if arg.eq_ignore_ascii_case("off") {
+                    self.set_setting("chat.plan_mode".into(), json!(false)).await;
+                    self.notice("info", "Plan mode is off.");
+                } else {
+                    self.set_setting("chat.plan_mode".into(), json!(true)).await;
+                    if arg.is_empty() {
+                        self.notice("info", "Plan mode is on: describe what to plan. Meo reads and designs, then asks you to approve before it changes anything.");
+                    } else {
+                        Box::pin(self.send(arg.to_owned())).await;
+                    }
+                }
+            }
             "help" => {
                 let list = COMMANDS
                     .iter()
@@ -4960,6 +5040,8 @@ impl AppCore {
         let value = message.text.clone();
         self.update(|s| {
             s.dialog = Some(Dialog {
+                choices: Vec::new(),
+                placeholder: String::new(),
                 kind: "prompt",
                 multiline: true,
                 secret: false,
@@ -5818,6 +5900,7 @@ impl AppCore {
                 "parameters": { "type": "object", "properties": { "query": { "type": "string" } }, "required": ["query"] } }));
             targets.insert("web_search".into(), NativeTarget::WebSearch);
         }
+        let plan_mode = pref_bool(&s, "chat.plan_mode", false);
         let mut schema_chars = 0usize;
         if let Some(Ok(rows)) = s.plugins.as_ref() {
             for p in rows.iter().filter(|p| p["enabled"] == true && p["remoteUrl"].is_string()) {
@@ -5868,7 +5951,12 @@ impl AppCore {
                 }
             }
         }
-        if !defs.is_empty() {
+        if plan_mode {
+            defs.push(json!({ "name": "exit_plan_mode", "description": agent::EXIT_PLAN_DESCRIPTION,
+                "parameters": { "type": "object", "properties": { "plan": { "type": "string", "description": "The whole plan as markdown, starting with a heading." } }, "required": ["plan"] } }));
+            targets.insert("exit_plan_mode".into(), NativeTarget::ExitPlan);
+        }
+        if !defs.is_empty() || plan_mode {
             defs.push(json!({ "name": "update_tasks",
                 "description": "Record and update a task list to plan multi-step work and show progress; skip it for trivial single-step tasks, greetings and questions you can answer directly. Add one task per concrete step before you start, send the whole list each time (it replaces the previous one), keep one task doing at a time and mark each done as soon as it is. Do not give the final answer while a task is not done.",
                 "parameters": { "type": "object", "properties": { "tasks": { "type": "array", "items": { "type": "object",
@@ -5884,6 +5972,19 @@ impl AppCore {
                     "status": { "type": "string", "enum": ["active", "paused", "done", "blocked"] }, "note": { "type": "string" } },
                     "required": ["status"] } }));
             targets.insert("set_goal".into(), NativeTarget::Goal);
+            defs.push(json!({ "name": "ask_user_question", "description": agent::ASK_USER_DESCRIPTION,
+                "parameters": { "type": "object", "properties": { "questions": { "type": "array", "items": { "type": "object",
+                    "properties": {
+                        "id": { "type": "string", "description": "Stable id for this question; echoed in the answer." },
+                        "question": { "type": "string", "description": "The specific question to ask." },
+                        "header": { "type": "string", "description": "Optional short heading, such as Confirm or Choose mode." },
+                        "options": { "type": "array", "items": { "type": "object", "properties": {
+                            "label": { "type": "string", "description": "Short option label." },
+                            "description": { "type": "string", "description": "One sentence on the tradeoff or impact." } },
+                            "required": ["label"] } },
+                        "multiSelect": { "type": "boolean", "description": "Whether more than one option may be picked." } },
+                    "required": ["question"] } } }, "required": ["questions"] } }));
+            targets.insert("ask_user_question".into(), NativeTarget::Ask);
             defs.push(json!({ "name": "get_goal",
                 "description": "Read the goal of this run: objective, status, revision, rounds used and allowed. Returns {\"goal\": null} when none is set. Call it before set_goal to get the revision.",
                 "parameters": { "type": "object", "properties": {} } }));
@@ -6132,11 +6233,14 @@ impl AppCore {
                 })
                 .unwrap_or_default()
         };
-        let guidance = if hints.is_empty() {
+        let mut guidance = if hints.is_empty() {
             NATIVE_GUIDANCE.to_owned()
         } else {
             format!("{NATIVE_GUIDANCE}\n\n## Connected apps\n{}", hints.join("\n"))
         };
+        if pref_bool(&self.state.lock().unwrap(), "chat.plan_mode", false) {
+            guidance.push_str(&format!("\n\n{}", agent::PLAN_MODE_GUIDANCE));
+        }
         let current = request["prompt"].as_str().unwrap_or_default().to_owned();
         request["prompt"] = json!(if context.is_empty() {
             format!("{guidance}\n\n{current}")
@@ -6294,6 +6398,14 @@ impl AppCore {
                     tool: agent::Tool::App { app: app.clone(), tool: tool.clone(), args },
                 }),
                 Some(NativeTarget::Tasks | NativeTarget::Goal | NativeTarget::GoalRead) => Err("unexpected task call".to_owned()),
+                Some(NativeTarget::Ask) => Ok(agent::ToolCall {
+                    id: first.id.clone(),
+                    tool: agent::Tool::AskUser { questions: args["questions"].clone() },
+                }),
+                Some(NativeTarget::ExitPlan) => match args["plan"].as_str().filter(|p| !p.trim().is_empty()) {
+                    Some(plan) => Ok(agent::ToolCall { id: first.id.clone(), tool: agent::Tool::ExitPlan { plan: plan.to_owned() } }),
+                    None => Err("exit_plan_mode needs the \"plan\"".to_owned()),
+                },
                 Some(NativeTarget::ReadMore) => match args["id"].as_str().filter(|x| !x.is_empty()) {
                     Some(kept) => Ok(agent::ToolCall {
                         id: first.id.clone(),
@@ -6357,6 +6469,14 @@ impl AppCore {
 
     /// Gates one parsed call, then runs it, asks the user, or refuses (the same for both protocols).
     async fn agent_dispatch(&self, id: &str, call: agent::ToolCall) {
+        // Plan mode: look but do not change anything until the plan is approved.
+        if pref_bool(&self.state.lock().unwrap(), "chat.plan_mode", false)
+            && matches!(call.tool.risk(), agent::Risk::Write | agent::Risk::Command)
+        {
+            return self
+                .agent_refuse(id, call, "plan mode is on: read and search only; present the plan with exit_plan_mode and wait for approval before changing anything")
+                .await;
+        }
         if matches!(call.tool, agent::Tool::Subagent { .. })
             && !pref_bool(&self.state.lock().unwrap(), "chat.subagents", false)
         {
@@ -6506,6 +6626,186 @@ impl AppCore {
             })
     }
 
+    /// The model asks the user: a dialog per question, the run waits; the answers go back as the result.
+    async fn begin_questions(&self, id: &str, call: agent::ToolCall, questions: &Value) {
+        let parsed = match agent::parse_questions(questions) {
+            Ok(q) => q,
+            Err(e) => {
+                let text = agent::observation(&call, &format!("error: {e}"));
+                return Box::pin(self.agent_send(id, text)).await;
+            }
+        };
+        let round = self.state.lock().unwrap().agent.round;
+        self.step(&format!("tool{round}"), "Ask you a question", "Waiting for your answer…", "running", vec![]);
+        self.update(|s| {
+            s.agent.asking = Some(Asking {
+                conversation_id: id.to_owned(),
+                call,
+                questions: parsed,
+                answers: Vec::new(),
+                picked: Vec::new(),
+                plan: None,
+            });
+        });
+        self.show_question();
+    }
+
+    /// Shows the question the run is waiting on (the next one, or the same after a tick in a multi-select).
+    fn show_question(&self) {
+        self.update(|s| {
+            let Some(a) = s.agent.asking.as_ref() else { return };
+            let Some(q) = a.questions.get(a.answers.len()) else { return };
+            let total = a.questions.len();
+            let title = if !q.header.is_empty() {
+                q.header.clone()
+            } else if total > 1 {
+                format!("Question {} of {total}", a.answers.len() + 1)
+            } else {
+                "Question".to_owned()
+            };
+            let choices: Vec<Value> = q
+                .options
+                .iter()
+                .enumerate()
+                .map(|(i, (label, description))| {
+                    let ticked = q.multi && a.picked.contains(&i);
+                    json!({
+                        "label": if ticked { format!("✓ {label}") } else { label.clone() },
+                        "description": description,
+                        "selected": ticked,
+                        "action": { "type": "answer_question", "index": i },
+                    })
+                })
+                .collect();
+            s.dialog = Some(Dialog {
+                choices,
+                placeholder: if q.options.is_empty() { "Your answer".into() } else { "Or write your own answer".into() },
+                kind: "prompt",
+                multiline: false,
+                secret: false,
+                title,
+                text: if q.multi { format!("{}\n(Pick any number, then press Answer.)", q.question) } else { q.question.clone() },
+                value: String::new(),
+                actions: vec![
+                    input_button("Answer", "primary", json!({ "type": "answer_question", "submit": true })),
+                    button("Skip", "secondary", json!({ "type": "answer_question", "skip": true })),
+                ],
+            });
+        });
+    }
+
+    /// One answer to the open question; when the last is in, the answers go back to the model.
+    async fn answer_question(&self, index: Option<usize>, text: String, skip: bool, submit: bool) {
+        let finished = {
+            let mut s = self.state.lock().unwrap();
+            let Some(a) = s.agent.asking.as_mut().filter(|a| a.plan.is_none()) else { return };
+            let Some(q) = a.questions.get(a.answers.len()).cloned() else { return };
+            // A tick in a multi-select only changes the dialog.
+            if let (Some(i), true, false, false) = (index, q.multi, skip, submit) {
+                if i < q.options.len() {
+                    match a.picked.iter().position(|p| *p == i) {
+                        Some(at) => {
+                            a.picked.remove(at);
+                        }
+                        None => a.picked.push(i),
+                    }
+                }
+                drop(s);
+                self.show_question();
+                return;
+            }
+            let custom = text.trim().to_owned();
+            let mut answer = json!({ "id": q.id, "selected": [] });
+            if !skip {
+                let mut picked: Vec<usize> = if q.multi { std::mem::take(&mut a.picked) } else { Vec::new() };
+                if let (Some(i), false) = (index, q.multi) {
+                    picked = vec![i];
+                }
+                picked.sort_unstable();
+                // A typed answer replaces a single choice; in a multi-select it adds to the ticks.
+                if !custom.is_empty() && !q.multi {
+                    picked.clear();
+                }
+                answer["selected"] = json!(picked.iter().filter_map(|i| q.options.get(*i)).map(|o| o.0.clone()).collect::<Vec<_>>());
+                if !custom.is_empty() {
+                    answer["custom"] = json!(custom);
+                }
+            }
+            a.picked.clear();
+            a.answers.push(answer);
+            if a.answers.len() < a.questions.len() {
+                None
+            } else {
+                s.agent.asking.take()
+            }
+        };
+        match finished {
+            None => self.show_question(),
+            Some(a) => {
+                self.update(|s| s.dialog = None);
+                let round = self.state.lock().unwrap().agent.round;
+                self.step(&format!("tool{round}"), "Ask you a question", "Answered", "done", vec![]);
+                let result = json!({ "answers": a.answers }).to_string();
+                Box::pin(self.agent_send(&a.conversation_id, agent::observation(&a.call, &result))).await;
+            }
+        }
+    }
+
+    /// `exit_plan_mode`: the plan is shown in the chat and the user approves it or asks to keep planning.
+    async fn begin_plan_review(&self, id: &str, call: agent::ToolCall, plan: String) {
+        let round = self.state.lock().unwrap().agent.round;
+        self.step(&format!("tool{round}"), "Present the plan", "Waiting for your approval…", "running", vec![]);
+        self.push_message(id, "assistant", plan.trim());
+        self.update(|s| {
+            s.agent.asking = Some(Asking {
+                conversation_id: id.to_owned(),
+                call,
+                questions: Vec::new(),
+                answers: Vec::new(),
+                picked: Vec::new(),
+                plan: Some(plan),
+            });
+            s.dialog = Some(Dialog {
+                choices: Vec::new(),
+                placeholder: "What should change? (optional)".into(),
+                kind: "prompt",
+                multiline: true,
+                secret: false,
+                title: "Approve this plan?".into(),
+                text: "The plan is above. Approve it to let Meo carry it out, or keep planning with your feedback.".into(),
+                value: String::new(),
+                actions: vec![
+                    button("Approve", "primary", json!({ "type": "review_plan", "approve": true })),
+                    input_button("Keep planning", "secondary", json!({ "type": "review_plan", "approve": false })),
+                ],
+            });
+        });
+    }
+
+    async fn review_plan(&self, approve: bool, text: String) {
+        let asking = {
+            let mut s = self.state.lock().unwrap();
+            if s.agent.asking.as_ref().is_none_or(|a| a.plan.is_none()) {
+                return;
+            }
+            s.dialog = None;
+            s.agent.asking.take()
+        };
+        let Some(a) = asking else { return };
+        let feedback = text.trim().to_owned();
+        let result = if approve {
+            self.set_setting("chat.plan_mode".into(), json!(false)).await;
+            "The user approved the plan. Plan mode is off: carry the plan out now, and keep the user informed as you go.".to_owned()
+        } else if feedback.is_empty() {
+            "The user did not approve the plan yet and gave no feedback. Ask what they want changed with ask_user_question, or revise the plan, then call exit_plan_mode again.".to_owned()
+        } else {
+            format!("The user did not approve the plan. Their feedback: {}\nRevise the plan and call exit_plan_mode again.", serde_json::to_string(&feedback).unwrap_or_default())
+        };
+        let round = self.state.lock().unwrap().agent.round;
+        self.step(&format!("tool{round}"), "Present the plan", if approve { "Approved" } else { "Sent back for changes" }, "done", vec![]);
+        Box::pin(self.agent_send(&a.conversation_id, agent::observation(&a.call, &result))).await;
+    }
+
     /// Changes the goal of the live run (a pause, an edit, more rounds) and bumps its revision, so a model
     /// that still holds the old revision reads the new one from the error.
     fn change_live_goal(&self, change: impl FnOnce(&mut Value)) -> bool {
@@ -6597,12 +6897,13 @@ impl AppCore {
 
     /// Puts the tool instructions (folder tools, web search, connected apps) in front of the prompt.
     async fn add_tool_prompt(&self, request: &mut Value) {
-        let (tools_root, web, subagents) = {
+        let (tools_root, web, subagents, plan_mode) = {
             let s = self.state.lock().unwrap();
             (
                 s.agent.host.as_ref().map(|h| h.root().to_owned()),
                 pref_bool(&s, "chat.web_search", false),
                 pref_bool(&s, "chat.subagents", false),
+                pref_bool(&s, "chat.plan_mode", false),
             )
         };
         let apps = Box::pin(self.app_instructions()).await;
@@ -6632,7 +6933,7 @@ impl AppCore {
             };
             request["prompt"] = json!(format!(
                 "{}{mcp}{workspace}{context}\n\n{current}",
-                agent::tool_instructions_with_apps(tools_root.as_deref(), subagents, web, &apps)
+                agent::tool_instructions_full(tools_root.as_deref(), subagents, web, &apps, plan_mode)
             ));
         } else {
             // No tools, but the project's repository still tells the model where its work lives.
@@ -6818,6 +7119,17 @@ impl AppCore {
             let s = self.state.lock().unwrap();
             (s.agent.host.clone(), s.agent.round)
         };
+        match &call.tool {
+            agent::Tool::AskUser { questions } => {
+                let questions = questions.clone();
+                return Box::pin(self.begin_questions(id, call, &questions)).await;
+            }
+            agent::Tool::ExitPlan { plan } => {
+                let plan = plan.clone();
+                return Box::pin(self.begin_plan_review(id, call, plan)).await;
+            }
+            _ => {}
+        }
         let needs_folder = !matches!(
             call.tool,
             agent::Tool::WebSearch { .. } | agent::Tool::App { .. } | agent::Tool::ReadMore { .. }
@@ -7485,7 +7797,8 @@ impl AppCore {
                 "kind": d.kind,
                 "title": d.title,
                 "text": d.text,
-                "input": (d.kind == "prompt").then(|| json!({ "value": d.value, "placeholder": if d.secret { "Token" } else if d.multiline { "Message" } else { "Title" }, "multiline": d.multiline, "secret": d.secret })),
+                "input": (d.kind == "prompt").then(|| json!({ "value": d.value, "placeholder": if !d.placeholder.is_empty() { d.placeholder.as_str() } else if d.secret { "Token" } else if d.multiline { "Message" } else { "Title" }, "multiline": d.multiline, "secret": d.secret })),
+                "choices": d.choices,
                 "actions": d.actions,
             })).or_else(|| password_dialog(&s)),
             "notice": s.notice.as_ref().map(|(kind, text)| {
@@ -8127,6 +8440,7 @@ const COMMANDS: &[(&str, &str, &str)] = &[
     ("/search", "on|off", "Turn web search on or off"),
     ("/profile", "name", "Switch the model profile"),
     ("/retry", "", "Ask the last question again"),
+    ("/plan", "message|off", "Plan first: read and design, then approve before anything changes"),
     ("/rename", "title", "Rename this chat"),
     ("/archive", "", "Archive this chat"),
     ("/remember", "note", "Save a note to memory"),
@@ -8380,6 +8694,11 @@ fn composer_controls(s: &State) -> Vec<Value> {
         THINKING,
         true,
     ));
+    controls.push(json!({
+        "id": "plan_mode", "label": "Plan", "kind": "toggle", "binding": "chat.plan_mode",
+        "icon": "flag", "iconOnly": true,
+        "value": pref_bool(s, "chat.plan_mode", false), "align": "end",
+    }));
     controls.push(json!({
         "id": "subagents", "label": "Sub-agents", "kind": "toggle", "binding": "chat.subagents",
         "icon": "account_tree", "iconOnly": true,
@@ -15170,7 +15489,7 @@ mod tests {
         assert_eq!(streams.len(), 3, "the call, the final answer, then the chat title");
         assert!(streams[2]["prompt"].as_str().unwrap().contains("Write a short title"));
         let names: Vec<&str> = streams[0]["tools"].as_array().unwrap().iter().filter_map(|t| t["name"].as_str()).collect();
-        assert_eq!(names, ["web_search", "update_tasks", "set_goal", "get_goal", "read_more"], "{:?}", streams[0]["tools"]);
+        assert_eq!(names, ["web_search", "update_tasks", "set_goal", "ask_user_question", "get_goal", "read_more"], "{:?}", streams[0]["tools"]);
         let first = streams[0]["prompt"].as_str().unwrap();
         assert!(first.contains("functions you are given") && !first.contains("meo-tool"), "{first}");
         assert!(streams[0]["turns"].is_null());
@@ -15285,6 +15604,86 @@ mod tests {
         let n = api.streams.lock().unwrap().iter().filter(|b| b["tools"].is_array()).count();
         assert_eq!(n, 1, "no calls and no open tasks: finished");
         assert_eq!(texts(&c).last().unwrap(), "Just an answer.");
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    fn native_chat(api: &FakeApi, folder: &std::path::Path) -> AppCore {
+        let c = work_core(api, folder, "smart");
+        c.update(|s| {
+            s.route = "chat".into();
+            s.agent.host = None;
+            s.prefs.remove("work.workspace");
+            s.prefs.insert("chat.web_search".into(), json!(true));
+        });
+        c
+    }
+
+    #[test]
+    fn the_model_can_ask_questions_and_gets_the_answers_back() {
+        let folder = temp_folder("native-ask");
+        let ask = r#"{"text":"","calls":[{"id":"a1","name":"ask_user_question","arguments":"{\"questions\":[{\"id\":\"scope\",\"question\":\"Which part?\",\"header\":\"Scope\",\"options\":[{\"label\":\"Core (Recommended)\"},{\"label\":\"UI\"}]},{\"id\":\"extras\",\"question\":\"Which extras?\",\"multiSelect\":true,\"options\":[{\"label\":\"Tests\"},{\"label\":\"Docs\"},{\"label\":\"Demo\"}]}]}"}]}"#;
+        let api = fake_api(vec![ask, "Going with core, tests and docs."]);
+        let c = native_chat(&api, &folder);
+        run(&c, Action::Send { text: "improve the repo".into() });
+        // The run waits on the first question: a dialog with the options as choices.
+        let d = c.view()["dialog"].clone();
+        assert_eq!(d["title"], "Scope");
+        assert_eq!(d["choices"][0]["label"], "Core (Recommended)");
+        assert_eq!(api.streams.lock().unwrap().iter().filter(|b| b["tools"].is_array()).count(), 1, "the run is suspended");
+        run(&c, Action::AnswerQuestion { index: Some(0), text: String::new(), skip: false, submit: false });
+        // Second question is a multi-select: ticking changes the dialog, Answer sends the ticks and the text.
+        assert_eq!(c.view()["dialog"]["title"], "Question 2 of 2");
+        run(&c, Action::AnswerQuestion { index: Some(0), text: String::new(), skip: false, submit: false });
+        run(&c, Action::AnswerQuestion { index: Some(1), text: String::new(), skip: false, submit: false });
+        assert_eq!(c.view()["dialog"]["choices"][0]["label"], "✓ Tests");
+        run(&c, Action::AnswerQuestion { index: None, text: "and CI".into(), skip: false, submit: true });
+        assert!(c.view()["dialog"].is_null(), "the dialog is gone after the last answer");
+        let streams: Vec<Value> = api.streams.lock().unwrap().iter().filter(|b| b["tools"].is_array()).cloned().collect();
+        assert_eq!(streams.len(), 2);
+        let out = streams[1]["turns"][0]["results"][0]["output"].as_str().unwrap().to_owned();
+        assert!(out.contains(r#""id":"scope","selected":["Core (Recommended)"]"#), "{out}");
+        assert!(out.contains(r#""selected":["Tests","Docs"]"#) && out.contains(r#""custom":"and CI""#), "{out}");
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn closing_the_question_skips_it() {
+        let folder = temp_folder("native-ask-skip");
+        let ask = r#"{"text":"","calls":[{"id":"a1","name":"ask_user_question","arguments":"{\"questions\":[{\"id\":\"q\",\"question\":\"Sure?\"}]}"}]}"#;
+        let api = fake_api(vec![ask, "Assuming yes."]);
+        let c = native_chat(&api, &folder);
+        run(&c, Action::Send { text: "go".into() });
+        run(&c, Action::CloseDialog);
+        let streams: Vec<Value> = api.streams.lock().unwrap().iter().filter(|b| b["tools"].is_array()).cloned().collect();
+        let out = streams[1]["turns"][0]["results"][0]["output"].as_str().unwrap().to_owned();
+        assert!(out.contains(r#""selected":[]"#) && !out.contains("custom"), "{out}");
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn plan_mode_refuses_changes_and_a_reviewed_plan_ends_it() {
+        let folder = temp_folder("native-plan");
+        let plan = r##"{"text":"","calls":[{"id":"p1","name":"exit_plan_mode","arguments":"{\"plan\":\"# Plan\\n1. Read\\n2. Change\"}"}]}"##;
+        let api = fake_api(vec![plan, plan, "Carrying it out."]);
+        let c = native_chat(&api, &folder);
+        run(&c, Action::Send { text: "/plan".into() });
+        assert_eq!(c.state.lock().unwrap().prefs["chat.plan_mode"], json!(true));
+        run(&c, Action::Send { text: "plan the change".into() });
+        let streams = || -> Vec<Value> { api.streams.lock().unwrap().iter().filter(|b| b["tools"].is_array()).cloned().collect() };
+        let names: Vec<String> = streams()[0]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap().to_owned()).collect();
+        assert!(names.contains(&"exit_plan_mode".to_owned()), "{names:?}");
+        assert!(streams()[0]["prompt"].as_str().unwrap().contains("## Plan mode"));
+        // The plan is in the chat and the user is asked.
+        assert!(texts(&c).last().unwrap().starts_with("# Plan"), "{:?}", texts(&c));
+        assert_eq!(c.view()["dialog"]["title"], "Approve this plan?");
+        run(&c, Action::ReviewPlan { approve: false, text: "add tests".into() });
+        assert_eq!(c.state.lock().unwrap().prefs["chat.plan_mode"], json!(true), "still planning");
+        let out = streams()[1]["turns"][0]["results"][0]["output"].as_str().unwrap().to_owned();
+        assert!(out.contains("did not approve") && out.contains("add tests"), "{out}");
+        run(&c, Action::ReviewPlan { approve: true, text: String::new() });
+        assert_eq!(c.state.lock().unwrap().prefs["chat.plan_mode"], json!(false), "approval ends plan mode");
+        let out = streams()[2]["turns"].as_array().unwrap().last().unwrap()["results"][0]["output"].as_str().unwrap().to_owned();
+        assert!(out.contains("approved the plan"), "{out}");
         let _ = std::fs::remove_dir_all(&folder);
     }
 
