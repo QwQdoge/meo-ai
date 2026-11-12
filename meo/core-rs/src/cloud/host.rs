@@ -234,6 +234,13 @@ mod native {
             })
         }
 
+        /// "Browser control": `off`, `isolated`, `profile` or `chrome` (see `mcp_local`).
+        pub fn set_browser(&self, mode: &str) {
+            if let Ok(mut m) = self.mcp.lock() {
+                m.set_browser(mode, &crate::cloud::mcp_local::browser_profile_dir());
+            }
+        }
+
         /// Background jobs that settled since the last call (each once), for the model's next result.
         pub fn settled_jobs(&self) -> Vec<String> {
             self.inner.lock().unwrap().ws.jobs().settled_notices()
@@ -547,6 +554,8 @@ impl Host {
                 .unwrap_or_else(|| "Pick a folder first with the Open folder button.".to_owned())
         })
     }
+
+    pub fn set_browser(&self, _mode: &str) {}
 
     pub fn settled_jobs(&self) -> Vec<String> {
         Vec::new()

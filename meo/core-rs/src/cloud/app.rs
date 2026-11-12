@@ -556,6 +556,8 @@ impl NativeRun {
 /// The tool loop of the current Work message: Codex-style turns of "answer, tool, result, answer".
 #[derive(Default)]
 struct AgentRun {
+    /// Pictures the last tool returned (screenshots): they go to the model with the next round only.
+    shots: Vec<AttachedImage>,
     /// The sub-agents this run started (by name).
     children: Vec<Child>,
     /// The question dialog or plan review the run is waiting on.
@@ -4774,7 +4776,14 @@ impl AppCore {
             "done",
             vec![],
         );
-        let pictures = std::mem::take(&mut self.state.lock().unwrap().images);
+        let pictures = {
+            let mut s = self.state.lock().unwrap();
+            let mut all = std::mem::take(&mut s.images);
+            // What the last tool showed (a screenshot) follows the user's own pictures; the API takes three.
+            all.extend(std::mem::take(&mut s.agent.shots));
+            all.truncate(3);
+            all
+        };
         if !pictures.is_empty() {
             request["images"] = pictures
                 .iter()
@@ -7427,8 +7436,17 @@ impl AppCore {
         if tools_root.is_some() || web || !apps.is_empty() {
             let current = request["prompt"].as_str().unwrap_or_default().to_owned();
             let host = self.state.lock().unwrap().agent.host.clone();
+            // "Browser control" (Settings > Permissions) puts Playwright MCP among the local servers.
+            let browser = {
+                let s = self.state.lock().unwrap();
+                s.prefs.get("work.browser").and_then(Value::as_str).unwrap_or("off").to_owned()
+            };
             let mcp = match host {
-                Some(h) => h.mcp_instructions().await,
+                Some(h) => {
+                    h.set_browser(&browser);
+                    let listed = h.mcp_instructions().await;
+                    if browser == "off" { listed } else { format!("{listed}\n\n{}", agent::BROWSER_GUIDANCE) }
+                }
                 None => String::new(),
             };
             let mcp = if mcp.is_empty() {
@@ -7705,6 +7723,16 @@ impl AppCore {
             (tool, Some(host)) => host.run(tool.clone()).await,
             (_, None) => agent::Outcome::fail("no folder is open on this device"),
         };
+        // Screenshots the tool returned go to the model with the next round, and only that one.
+        if !outcome.images.is_empty() {
+            let shots: Vec<AttachedImage> = outcome
+                .images
+                .iter()
+                .enumerate()
+                .map(|(i, (mime, data))| AttachedImage { name: format!("tool-{}", i + 1), mime: mime.clone(), data: data.clone() })
+                .collect();
+            self.update(|s| s.agent.shots = shots);
+        }
         // A background job that finished since the last result is told to the model once, with this one.
         if let Some(jobs) = jobs_host.as_ref().map(|h| h.settled_jobs()).filter(|j| !j.is_empty()) {
             outcome.text.push_str(&format!("\n\n[Background jobs]\n{}", jobs.join("\n")));
@@ -11949,6 +11977,20 @@ fn permission_items(s: &State) -> Vec<Value> {
             "id": "perm_explain", "kind": "hint",
             "text": "This is the level the composer starts with. Looking things up (list, get, search, read, fetch) runs without asking from Allow low risk up. Anything that changes something asks at Allow low risk, goes to an approver model at Auto choose, and runs freely only at Full access. Commands such as sudo, git push or rm -rf, paths outside the open folder and credentials always ask unless you chose Full access. A task started from another device never runs above Auto choose.",
         }),
+        json!({
+            "id": "browser_control", "label": "Browser control", "kind": "select", "binding": "work.browser",
+            "value": s.prefs.get("work.browser").and_then(Value::as_str).unwrap_or("off"),
+            "options": [
+                { "value": "off", "label": "Off" },
+                { "value": "isolated", "label": "Temporary browser (no logins)" },
+                { "value": "profile", "label": "Meo's own browser profile" },
+                { "value": "chrome", "label": "My Chrome (extension)" },
+            ],
+        }),
+        json!({
+            "id": "browser_explain", "kind": "hint",
+            "text": "Lets Work open and use a real browser (Playwright, started with npx, so Node.js is needed). Temporary: a fresh browser each time, nothing saved, no logins. Meo's own profile: a separate browser profile kept in Meo's data folder, so a site you sign in to there stays signed in for Meo. My Chrome: Meo drives your own Chrome with your sign-ins and cookies through the Playwright MCP Bridge extension, which you install in Chrome and which asks you to approve each tab it may control. Looking at a page needs no approval; clicking, typing and opening addresses follow your approval level. Pages are untrusted: the model is told never to type your passwords or card numbers and to ask before anything irreversible. Page text and screenshots go to your AI provider.",
+        }),
         own_item(
             "perm_plugins".into(),
             "Apps, skills and MCP servers",
@@ -13190,7 +13232,7 @@ mod tests {
             .iter()
             .map(|i| i["id"].as_str().unwrap())
             .collect();
-        assert_eq!(ids, ["permission", "perm_explain", "perm_plugins"]);
+        assert_eq!(ids, ["permission", "perm_explain", "browser_control", "browser_explain", "perm_plugins"]);
         assert!(
             page["sections"]
                 .as_array()

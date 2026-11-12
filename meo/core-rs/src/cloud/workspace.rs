@@ -647,6 +647,7 @@ impl Workspace {
         Outcome {
             ok: code == 0,
             text: format!("exit code {code}\n{text}"),
+            images: Vec::new(),
         }
     }
 }

@@ -21,6 +21,9 @@ use std::time::Duration;
 const PROTOCOL: &str = "2025-06-18";
 const TIMEOUT: Duration = Duration::from_secs(60);
 const MAX_RESULT: usize = 16_000;
+/// Pictures taken from one result, and the longest base64 one (what the Meo API accepts).
+const MAX_IMAGES: usize = 2;
+const MAX_IMAGE_CHARS: usize = 1_400_000;
 
 #[derive(Clone, Debug)]
 pub struct ServerConfig {
@@ -165,21 +168,70 @@ impl Server {
     }
 }
 
+/// The built-in browser server's name: Playwright MCP, which Meo starts for "Browser control".
+pub const BROWSER: &str = "browser";
+
+/// How the browser is driven: a throwaway profile, Meo's own persistent profile, or the user's own
+/// Chrome through the Playwright MCP Bridge extension (the user installs it and approves each tab).
+fn browser_preset(mode: &str, profile_dir: &Path) -> Option<ServerConfig> {
+    let mut args = vec!["-y".to_owned(), "@playwright/mcp@latest".to_owned()];
+    match mode {
+        "isolated" => args.push("--isolated".to_owned()),
+        "profile" => {
+            args.push("--user-data-dir".to_owned());
+            args.push(profile_dir.display().to_string());
+        }
+        "chrome" => args.push("--extension".to_owned()),
+        _ => return None,
+    }
+    Some(ServerConfig { command: "npx".to_owned(), args, env: BTreeMap::new() })
+}
+
+/// Where the persistent browser profile of Meo lives.
+pub fn browser_profile_dir() -> PathBuf {
+    let base = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
+        .unwrap_or_else(|| PathBuf::from("."));
+    base.join("meo-ai/browser-profile")
+}
+
 /// Servers of one work folder, started on first use.
 pub struct Manager {
     root: PathBuf,
+    /// What the user's files configure; the browser preset is laid over it.
+    files: BTreeMap<String, ServerConfig>,
     config: BTreeMap<String, ServerConfig>,
     running: BTreeMap<String, Server>,
     tools: Option<String>,
+    browser: String,
 }
 
 impl Manager {
     pub fn new(root: &Path) -> Self {
+        let files = load_config(root);
         Self {
             root: root.to_owned(),
-            config: load_config(root),
+            config: files.clone(),
+            files,
             running: BTreeMap::new(),
             tools: None,
+            browser: "off".to_owned(),
+        }
+    }
+
+    /// Switches "Browser control" (`off`, `isolated`, `profile`, `chrome`). A change stops the old browser
+    /// server and lists the tools again; the same mode again does nothing.
+    pub fn set_browser(&mut self, mode: &str, profile_dir: &Path) {
+        if self.browser == mode {
+            return;
+        }
+        self.browser = mode.to_owned();
+        self.running.remove(BROWSER);
+        self.tools = None;
+        self.config = self.files.clone();
+        if let Some(preset) = browser_preset(mode, profile_dir) {
+            self.config.insert(BROWSER.to_owned(), preset);
         }
     }
 
@@ -269,11 +321,29 @@ impl Manager {
         if text.chars().count() > MAX_RESULT {
             text = text.chars().take(MAX_RESULT).collect::<String>() + "\n(output cut)";
         }
-        if result["isError"] == true {
-            Outcome::fail(text)
-        } else {
-            Outcome::done(text)
+        // Pictures (a browser screenshot): at most two, and none too large for the API to take.
+        let mut images: Vec<(String, String)> = Vec::new();
+        let mut left_out = 0;
+        for part in result["content"].as_array().into_iter().flatten() {
+            if part["type"] != "image" {
+                continue;
+            }
+            match (part["mimeType"].as_str(), part["data"].as_str()) {
+                (Some(mime), Some(data)) if images.len() < MAX_IMAGES && data.len() <= MAX_IMAGE_CHARS
+                    && matches!(mime, "image/png" | "image/jpeg" | "image/webp" | "image/gif") => {
+                    images.push((mime.to_owned(), data.to_owned()));
+                }
+                _ => left_out += 1,
+            }
         }
+        if !images.is_empty() {
+            text.push_str(&format!("\n({} picture(s) from this call are attached to this message)", images.len()));
+        }
+        if left_out > 0 {
+            text.push_str(&format!("\n({left_out} picture(s) were left out: too large, too many or not an image the model can read)"));
+        }
+        let outcome = if result["isError"] == true { Outcome::fail(text) } else { Outcome::done(text) };
+        outcome.with_images(images)
     }
 }
 
@@ -292,6 +362,8 @@ for line in sys.stdin:
         r = {'protocolVersion': '2025-06-18', 'capabilities': {'tools': {}}, 'serverInfo': {'name': 'fake', 'version': '1'}}
     elif method == 'tools/list':
         r = {'tools': [{'name': 'echo', 'description': 'Echo text', 'inputSchema': {'type': 'object', 'properties': {'text': {'type': 'string'}}}}]}
+    elif method == 'tools/call' and m['params']['name'] == 'shot':
+        r = {'content': [{'type': 'text', 'text': 'page'}, {'type': 'image', 'mimeType': 'image/png', 'data': 'iVBORw0KGgo='}, {'type': 'image', 'mimeType': 'image/svg+xml', 'data': 'PHN2Zz48L3N2Zz4='}, {'type': 'image', 'mimeType': 'image/png', 'data': 'AAAA'}, {'type': 'image', 'mimeType': 'image/png', 'data': 'BBBB'}]}
     elif method == 'tools/call':
         r = {'content': [{'type': 'text', 'text': 'echo: ' + m['params']['arguments']['text']}]}
     else:
@@ -315,6 +387,47 @@ for line in sys.stdin:
         let out = manager.call("fake", "echo", &json!({ "text": "hi" }));
         assert!(out.ok && out.text == "echo: hi", "{out:?}");
         assert!(!manager.call("missing", "x", &json!({})).ok);
+        // A screenshot comes back as a picture for the model: two at most, only readable kinds.
+        let shot = manager.call("fake", "shot", &json!({}));
+        assert!(shot.ok);
+        assert_eq!(shot.images.len(), 2, "{:?}", shot.images);
+        assert_eq!(shot.images[0], ("image/png".to_owned(), "iVBORw0KGgo=".to_owned()));
+        assert!(shot.text.contains("2 picture(s) from this call are attached") && shot.text.contains("left out"), "{}", shot.text);
+        assert!(out.images.is_empty());
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn browser_control_adds_playwright_in_the_chosen_way_and_leaves_the_users_own_servers() {
+        let dir = std::env::temp_dir().join(format!("meo-mcp-browser-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(".mcp.json"), r#"{"mcpServers":{"fetch":{"command":"uvx","args":["mcp-server-fetch"]}}}"#).unwrap();
+        let mut m = Manager::new(&dir);
+        let profile = dir.join("profile");
+        assert!(!m.config.contains_key(BROWSER), "off by default");
+        m.set_browser("isolated", &profile);
+        assert_eq!(m.config[BROWSER].command, "npx");
+        assert_eq!(m.config[BROWSER].args, ["-y", "@playwright/mcp@latest", "--isolated"]);
+        m.set_browser("profile", &profile);
+        assert!(m.config[BROWSER].args.ends_with(&["--user-data-dir".to_owned(), profile.display().to_string()]));
+        m.set_browser("chrome", &profile);
+        assert_eq!(m.config[BROWSER].args.last().unwrap(), "--extension", "the user's own Chrome through the bridge extension");
+        assert!(m.config.contains_key("fetch"), "the user's servers stay");
+        m.set_browser("off", &profile);
+        assert!(!m.config.contains_key(BROWSER) && m.config.contains_key("fetch"));
+        m.set_browser("nonsense", &profile);
+        assert!(!m.config.contains_key(BROWSER), "an unknown mode is off");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn looking_at_a_page_asks_nothing_but_acting_on_it_asks_like_a_command() {
+        use super::super::agent::{gate, Gate, Permission, Tool};
+        let call = |tool: &str| Tool::Mcp { server: "browser".into(), tool: tool.into(), args: json!({}) };
+        assert_eq!(gate(Permission::Low, &call("browser_snapshot")), Gate::Allow);
+        assert_eq!(gate(Permission::Low, &call("browser_take_screenshot")), Gate::Allow);
+        assert!(matches!(gate(Permission::Low, &call("browser_click")), Gate::Ask(_)));
+        assert!(matches!(gate(Permission::Low, &call("browser_navigate")), Gate::Ask(_)));
+        assert!(matches!(gate(Permission::Low, &Tool::Mcp { server: "other".into(), tool: "browser_snapshot".into(), args: json!({}) }), Gate::Ask(_)), "only the built-in browser server");
     }
 }
