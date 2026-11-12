@@ -236,6 +236,38 @@ impl MeoApi {
         })
     }
 
+    /// Messages with the time each was written (for counting earlier chats in the usage statistics).
+    pub async fn list_messages_stamped(
+        &self,
+        token: &str,
+        conversation_id: &str,
+    ) -> Result<Vec<(ChatMessage, String)>, ApiError> {
+        let path = format!("/v1/conversations/{conversation_id}/messages");
+        let body = self.request(token, Method::GET, &path, None).await?;
+        let rows = body["messages"].as_array().cloned().unwrap_or_default();
+        Ok(rows
+            .iter()
+            .filter_map(|row| {
+                let role = row["role"].as_str()?;
+                if role != "user" && role != "assistant" {
+                    return None;
+                }
+                let text = content_text(&row["content"]);
+                (!text.trim().is_empty()).then(|| {
+                    (
+                        ChatMessage {
+                            id: row["id"].as_str().unwrap_or_default().to_owned(),
+                            role: role.to_owned(),
+                            text,
+                            steps: Vec::new(),
+                        },
+                        row["created_at"].as_str().unwrap_or_default().to_owned(),
+                    )
+                })
+            })
+            .collect())
+    }
+
     pub async fn list_messages(
         &self,
         token: &str,

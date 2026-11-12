@@ -644,3 +644,17 @@
 @keyframes core-slide-in { from { opacity: 0; transform: translateX(16px); } }
 @media (prefers-reduced-motion: reduce) { .core-app .core-scrim, .core-app .core-dialog, .core-app .core-inspector, .core-app .core-modal, .core-app .core-modal-card { animation: none; } }
 :root[data-reduce-motion="true"] .core-app .core-scrim, :root[data-reduce-motion="true"] .core-app .core-dialog, :root[data-reduce-motion="true"] .core-app .core-inspector { animation: none; }
+
+/* Progress card and generation: the card rises in, a task's mark pops when its state changes, a new task slides in,
+   the bar shimmers while the run is live, and a retitled chat fades its new title in. */
+.core-app .core-plan { animation: core-rise .3s var(--ease); }
+.core-app .core-plan li { animation: core-step-in .25s var(--ease); }
+.core-app .core-plan .core-task-mark, .core-app .core-plan .core-plan-mark { display: inline-flex; animation: core-mark-pop .32s var(--ease); }
+.core-app .core-plan .core-task-title { transition: color .25s var(--ease), opacity .25s var(--ease); }
+.core-app .core-plan li.task-done .core-task-title { opacity: .72; }
+.core-app .core-plan.live .core-plan-bar i { background-image: linear-gradient(90deg, transparent 0, rgb(255 255 255 / .35) 50%, transparent 100%); background-size: 200% 100%; animation: core-sweep 1.6s linear infinite; }
+.core-app .core-chat-row > button strong { animation: core-fade-in .35s var(--ease); }
+.core-app .core-message-actions { animation: core-fade-in .25s var(--ease); }
+@keyframes core-mark-pop { 0% { opacity: 0; transform: scale(.5); } 60% { transform: scale(1.18); } 100% { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .core-app .core-plan, .core-app .core-plan li, .core-app .core-plan .core-task-mark, .core-app .core-plan .core-plan-mark, .core-app .core-plan.live .core-plan-bar i, .core-app .core-chat-row > button strong { animation: none; } }
+:root[data-reduce-motion="true"] .core-app .core-plan, :root[data-reduce-motion="true"] .core-app .core-plan li, :root[data-reduce-motion="true"] .core-app .core-plan .core-task-mark, :root[data-reduce-motion="true"] .core-app .core-plan .core-plan-mark, :root[data-reduce-motion="true"] .core-app .core-plan.live .core-plan-bar i, :root[data-reduce-motion="true"] .core-app .core-chat-row > button strong { animation: none; }

@@ -101,7 +101,7 @@ export function PlanCard({ block, act }: { block: Spec; act?: (action: Spec) => 
   return (
     <section className={`core-plan ${status}${block.live ? " live" : ""}`} aria-live="polite">
       <header>
-        <span className="core-plan-mark">
+        <span className="core-plan-mark" key={status}>
           <Icon name={status === "done" ? "check_circle" : status === "blocked" ? "block" : status === "paused" ? "pause" : "flag"} size={16} />
         </span>
         <span className="core-plan-goal">{goal?.objective ?? "Tasks"}</span>
@@ -117,12 +117,14 @@ export function PlanCard({ block, act }: { block: Spec; act?: (action: Spec) => 
         <ol>
           {items.map((t, i) => (
             <li key={i} className={`task-${t.state}`}>
-              <Icon
-                name={t.state === "done" ? "check_circle" : t.state === "doing" ? "progress_activity" : "radio_button_unchecked"}
-                size={15}
-                className={t.state === "doing" && block.live ? "core-spin" : undefined}
-              />
-              <span>{t.title}</span>
+              <span className="core-task-mark" key={t.state}>
+                <Icon
+                  name={t.state === "done" ? "check_circle" : t.state === "doing" ? "progress_activity" : "radio_button_unchecked"}
+                  size={15}
+                  className={t.state === "doing" && block.live ? "core-spin" : undefined}
+                />
+              </span>
+              <span className="core-task-title">{t.title}</span>
             </li>
           ))}
         </ol>

@@ -327,6 +327,8 @@ pub enum Action {
     },
     /// Adds the Codex and Claude Code token logs found on this computer to the account's usage statistics.
     ImportLocalUsage,
+    /// Counts the chats written before usage was recorded (token counts are estimates from the text).
+    BackfillUsage,
     /// Opens Meo Account, where GitHub or Google is linked for the apps that use that account.
     ConnectAccount {
         provider: String,
@@ -758,6 +760,9 @@ struct State {
     local_usage: Option<(usize, usize)>,
     /// How many local records the user added to the account in this session.
     local_usage_added: Option<usize>,
+    /// Records added by counting earlier chats (`None` until it ran), and whether it is running.
+    backfilled: Option<usize>,
+    backfilling: bool,
     /// Steps of the current or last answer: (conversation id, steps) — shown collapsed on that answer.
     activity: Option<(String, Vec<Value>)>,
     remote_run: Option<RemoteRun>,
@@ -1350,6 +1355,7 @@ impl AppCore {
             Action::InstallRegistry { id } => Box::pin(self.install_registry(id)).await,
             Action::ConnectPlugin { id } => Box::pin(self.connect_plugin(id)).await,
             Action::ImportLocalUsage => Box::pin(self.import_local_usage()).await,
+            Action::BackfillUsage => Box::pin(self.backfill_usage()).await,
             Action::ConnectAccount { provider, grant } => {
                 let (message, url) = if grant {
                     (
@@ -6125,6 +6131,90 @@ impl AppCore {
     #[cfg(target_arch = "wasm32")]
     async fn import_local_usage(&self) {}
 
+    /// Counts every earlier chat once: one estimated record per answer, stamped with the time it was
+    /// written and keyed by the message, so running it again never counts anything twice.
+    async fn backfill_usage(&self) {
+        if std::mem::replace(&mut self.state.lock().unwrap().backfilling, true) {
+            return;
+        }
+        self.hooks.changed();
+        self.notice("info", "Counting your earlier chats…");
+        let chats: Vec<(String, Option<String>)> = self
+            .state
+            .lock()
+            .unwrap()
+            .conversations
+            .iter()
+            .map(|c| (c.id.clone(), c.project_id.clone()))
+            .collect();
+        let mut sent = 0usize;
+        let mut failed = false;
+        let mut batch: Vec<Value> = Vec::new();
+        for (chat, project) in &chats {
+            let Ok(messages) = self
+                .call(|api, t| {
+                    let chat = chat.clone();
+                    async move { api.list_messages_stamped(&t, &chat).await }
+                })
+                .await
+            else {
+                continue;
+            };
+            let mut context = String::new();
+            for (m, at) in &messages {
+                if m.role == "assistant" && !m.id.is_empty() {
+                    if let Some(when) = iso_secs(at) {
+                        // The model saw the conversation so far (its newest part, as long contexts are cut).
+                        let tail: String = context.chars().rev().take(24_000).collect::<Vec<_>>().into_iter().rev().collect();
+                        batch.push(usage::chat_event(&usage::ChatTurn {
+                            request_id: &format!("backfill:{}", m.id),
+                            conversation_id: chat,
+                            project_id: project.as_deref(),
+                            provider: "unknown",
+                            model: "unknown",
+                            context: &tail,
+                            reply: &m.text,
+                            started: when,
+                            finished: when,
+                            role: "chat",
+                        }));
+                    }
+                }
+                context.push_str(&m.text);
+                context.push('\n');
+            }
+            while batch.len() >= 250 {
+                let chunk: Vec<Value> = batch.drain(..250).collect();
+                match self.call(|api, t| { let chunk = chunk.clone(); async move { api.post_usage_events(&t, &chunk).await } }).await {
+                    Ok(()) => sent += chunk.len(),
+                    Err(_) => failed = true,
+                }
+            }
+        }
+        if !batch.is_empty() {
+            let chunk = std::mem::take(&mut batch);
+            match self.call(|api, t| { let chunk = chunk.clone(); async move { api.post_usage_events(&t, &chunk).await } }).await {
+                Ok(()) => sent += chunk.len(),
+                Err(_) => failed = true,
+            }
+        }
+        if let Ok(usage) = self.call(|api, t| async move { api.usage_dashboard(&t, 365).await }).await {
+            self.update(|s| s.usage = Some(usage));
+        }
+        self.update(|s| {
+            s.backfilling = false;
+            s.backfilled = Some(sent);
+        });
+        self.notice(
+            if failed { "error" } else { "info" },
+            if failed {
+                format!("Counted {sent} earlier answers, then some could not be sent. Try again: nothing is counted twice.")
+            } else {
+                format!("Counted {sent} answers from {} earlier chats.", chats.len())
+            },
+        );
+    }
+
     /// Counts this answer in the account's Usage dashboard. Best effort: a failure never disturbs the chat.
     async fn record_chat_usage(&self, pending: &PendingSend, reply: &str, started: i64) {
         let (event, had_usage) = {
@@ -10353,6 +10443,15 @@ fn duration(ms: f64) -> String {
     }
 }
 
+/// Unix seconds of an ISO time such as `2026-11-12T14:30:29.123Z` (UTC).
+fn iso_secs(text: &str) -> Option<i64> {
+    let day = day_number(text)?;
+    let time = text.get(11..19)?;
+    let mut p = time.split(':');
+    let (h, m, s): (i64, i64, i64) = (p.next()?.parse().ok()?, p.next()?.parse().ok()?, p.next()?.parse().ok()?);
+    Some(day * 86_400 + h * 3_600 + m * 60 + s)
+}
+
 /// Days since 1970-01-01 of a `YYYY-MM-DD` date (proleptic Gregorian).
 fn day_number(date: &str) -> Option<i64> {
     let mut parts = date.get(..10)?.split('-');
@@ -10408,6 +10507,15 @@ fn local_usage_items(s: &State) -> Vec<Value> {
 /// Settings > Usage: headline numbers with context, a continuous 30-day chart, then the breakdowns.
 fn usage_items(s: &State) -> Vec<Value> {
     let mut local = local_usage_items(s);
+    local.insert(0, json!({
+        "id": "usage_backfill", "kind": "item", "label": "Earlier chats",
+        "value": match (s.backfilling, s.backfilled) {
+            (true, _) => "Counting…".to_owned(),
+            (false, Some(n)) => format!("Counted {n} answers. Token counts are estimated from the text; running it again never counts anything twice."),
+            _ => "Chats written before usage was recorded are not in these numbers yet. Token counts are estimated from the text; nothing is counted twice.".to_owned(),
+        },
+        "buttons": if s.backfilling { json!([]) } else { json!([button(if s.backfilled.is_some() { "Count again" } else { "Count earlier chats" }, "primary", json!({ "type": "backfill_usage" }))]) },
+    }));
     let Some(usage) = &s.usage else {
         local.push(
             json!({ "id": "usage_loading", "label": "Loading…", "kind": "info", "value": "" }),
