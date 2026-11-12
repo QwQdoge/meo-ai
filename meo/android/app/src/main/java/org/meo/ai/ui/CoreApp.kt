@@ -276,6 +276,20 @@ private fun CoreDialog(dialog: JSONObject, act: Act) {
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 dialog.str("text").takeIf { it.isNotEmpty() }?.let { Text(it) }
+                // The model's question: its options as buttons above the text field for a free answer.
+                dialog.list("choices").forEach { choice ->
+                    OutlinedButton(
+                        onClick = { choice.obj("action")?.let(act) },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column(Modifier.fillMaxWidth()) {
+                            Text(choice.str("label"), style = MaterialTheme.typography.labelLarge)
+                            choice.str("description").takeIf { it.isNotEmpty() }?.let {
+                                Text(it, style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+                }
                 if (input != null) {
                     OutlinedTextField(
                         value = value,

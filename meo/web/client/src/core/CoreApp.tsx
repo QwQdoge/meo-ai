@@ -55,7 +55,7 @@ export default function CoreApp() {
     <div className={`core-app${drawer ? " drawer-open" : ""}`} data-mode={view.route === "work" ? "work" : "chat"}>
       {view.sidebar && <Sidebar sidebar={view.sidebar} strings={strings} act={act} open={drawer} setOpen={setDrawer} />}
       {view.sidebar && drawer && <div className="core-drawer-scrim" onClick={() => setDrawer(false)} />}
-      {view.dialog && <Dialog dialog={view.dialog} act={act} />}
+      {view.dialog && <Dialog key={`${view.dialog.title}|${view.dialog.text}`} dialog={view.dialog} act={act} />}
       <div className="core-main">
         {view.sidebar && (
           <div className="core-appbar">
@@ -226,7 +226,17 @@ function Dialog({ dialog, act }: { dialog: Spec; act: Act }) {
     <div className="core-scrim" onKeyDown={(e) => e.key === "Escape" && act({ type: "close_dialog" })}>
       <div className="core-dialog" role="dialog" aria-modal="true" aria-label={dialog.title}>
         <h2>{dialog.title}</h2>
-        {dialog.text && <p className="core-muted">{dialog.text}</p>}
+        {dialog.text && <p className="core-muted core-dialog-text">{dialog.text}</p>}
+        {(dialog.choices ?? []).length > 0 && (
+          <div className="core-dialog-choices" role="group">
+            {(dialog.choices as Spec[]).map((c, i) => (
+              <button key={i} className={`core-choice${c.selected ? " selected" : ""}`} onClick={() => act(c.action)}>
+                <strong>{c.label}</strong>
+                {c.description && <span className="core-muted">{c.description}</span>}
+              </button>
+            ))}
+          </div>
+        )}
         {dialog.input && dialog.input.multiline ? (
           <textarea autoFocus rows={5} value={value} placeholder={dialog.input.placeholder} onChange={(e) => setValue(e.target.value)} />
         ) : (

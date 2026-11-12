@@ -210,7 +210,7 @@ ApplicationWindow {
         message: spec && spec.text ? spec.text : ""
         confirmText: spec && spec.actions[0] ? spec.actions[0].label : ""
         cancelText: spec && spec.actions[1] ? spec.actions[1].label : ""
-        supportingContent: spec && spec.input ? (spec.input.multiline ? promptArea : promptField) : null
+        supportingContent: spec && spec.input ? (spec.choices && spec.choices.length > 0 ? promptChoices : (spec.input.multiline ? promptArea : promptField)) : null
         onSpecKeyChanged: {
             if (spec) {
                 inputValue = spec.input ? (spec.input.value || "") : ""
@@ -236,6 +236,29 @@ ApplicationWindow {
             text: appDialog.inputValue
             onTextChanged: appDialog.inputValue = text
             Component.onCompleted: forceActiveFocus()
+        }
+    }
+
+    // The model's question: its options as buttons above the text field for a free answer.
+    Component {
+        id: promptChoices
+        Column {
+            width: 320
+            spacing: 8
+            Repeater {
+                model: appDialog.spec ? (appDialog.spec.choices || []) : []
+                MeoButton {
+                    required property var modelData
+                    width: parent.width
+                    text: modelData.description ? modelData.label + " — " + modelData.description : modelData.label
+                    type: modelData.selected ? "tonal" : "outlined"
+                    onClicked: window.act(modelData.action)
+                }
+            }
+            Loader {
+                width: parent.width
+                sourceComponent: appDialog.spec && appDialog.spec.input && appDialog.spec.input.multiline ? promptArea : promptField
+            }
         }
     }
 
