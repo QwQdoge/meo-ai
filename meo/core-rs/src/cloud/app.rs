@@ -556,6 +556,9 @@ impl NativeRun {
 /// The tool loop of the current Work message: Codex-style turns of "answer, tool, result, answer".
 #[derive(Default)]
 struct AgentRun {
+    /// This run has no folder of the user's: its host is an empty private scratch folder that only exists so the
+    /// browser and computer tools can run on this device. Files and commands are refused.
+    scratch: bool,
     /// Pictures the last tool returned (screenshots): they go to the model with the next round only.
     shots: Vec<AttachedImage>,
     /// The sub-agents this run started (by name).
@@ -4000,7 +4003,7 @@ impl AppCore {
     /// The device chosen in "Run on", when it is still online and Work is open.
     fn remote_target(&self) -> Option<remote::Device> {
         let s = self.state.lock().unwrap();
-        if s.route != "work" || !pref_bool(&s, "remote.enabled", true) {
+        if !matches!(s.route.as_str(), "work" | "chat") || !pref_bool(&s, "remote.enabled", true) {
             return None;
         }
         let id = s.prefs.get("remote.target").and_then(Value::as_str)?;
@@ -4122,9 +4125,14 @@ impl AppCore {
                         .remote_refuse(&from, "That device is busy with another task.")
                         .await;
                 }
-                if self.ensure_host().is_none() {
+                // A folder is not needed when this device lets the model drive its browser or screen.
+                let device_tools = {
+                    let s = self.state.lock().unwrap();
+                    s.prefs.get("work.browser").and_then(Value::as_str).is_some_and(|m| m != "off") || pref_bool(&s, "work.computer_use", false)
+                };
+                if self.ensure_host().is_none() && !device_tools {
                     return self
-                        .remote_refuse(&from, "Open a folder in Work on that device first.")
+                        .remote_refuse(&from, "Open a folder in Work on that device first, or turn on Browser control or Computer control in its Settings > Permissions.")
                         .await;
                 }
                 self.update(|s| {
@@ -6355,7 +6363,21 @@ impl AppCore {
 
     /// Starts the tool loop of a new user message: a fresh checkpoint, and the folder from `/workspace`.
     fn agent_begin(&self, text: &str) {
-        let wanted = effective_workspace(&self.state.lock().unwrap());
+        let mut scratch = false;
+        let wanted = {
+            let s = self.state.lock().unwrap();
+            let folder = effective_workspace(&s);
+            // Chat on a computer has no folder, yet browser and computer control only need the device: they get
+            // a private empty folder, and nothing else of the machine opens up.
+            let wants_device = s.prefs.get("work.browser").and_then(Value::as_str).is_some_and(|m| m != "off")
+                || pref_bool(&s, "work.computer_use", false);
+            if folder.is_none() && wants_device && remote::can_host() && remote::platform() != "android" {
+                scratch = true;
+                Some(scratch_folder())
+            } else {
+                folder
+            }
+        };
         let host = wanted.and_then(|path| {
             let current = self.state.lock().unwrap().agent.host.clone();
             match current {
@@ -6375,6 +6397,7 @@ impl AppCore {
         self.update(|s| {
             s.agent = AgentRun {
                 host,
+                scratch,
                 request: text.to_owned(),
                 ..AgentRun::default()
             };
@@ -7063,6 +7086,20 @@ impl AppCore {
                 .agent_refuse(id, call, "plan mode is on: read and search only; present the plan with exit_plan_mode and wait for approval before changing anything")
                 .await;
         }
+        // A run with no folder of the user's only has the device tools: the browser and the screen.
+        let scratch = self.state.lock().unwrap().agent.scratch;
+        if scratch
+            && matches!(
+                call.tool,
+                agent::Tool::ReadFile { .. } | agent::Tool::ListDir { .. } | agent::Tool::Search { .. } | agent::Tool::SearchReplace { .. }
+                    | agent::Tool::ApplyPatch { .. } | agent::Tool::Run { .. } | agent::Tool::Job(_) | agent::Tool::Subagent { .. }
+                    | agent::Tool::AgentSend { .. } | agent::Tool::AgentList
+            )
+        {
+            return self
+                .agent_refuse(id, call, "no folder is open: in chat only the browser and computer tools run on this device; open a folder in Work for files and commands")
+                .await;
+        }
         if matches!(call.tool, agent::Tool::Computer { .. }) && !pref_bool(&self.state.lock().unwrap(), "work.computer_use", false) {
             return self
                 .agent_refuse(
@@ -7432,17 +7469,19 @@ impl AppCore {
 
     /// Puts the tool instructions (folder tools, web search, connected apps) in front of the prompt.
     async fn add_tool_prompt(&self, request: &mut Value) {
-        let (tools_root, web, subagents, plan_mode) = {
+        let (tools_root, web, subagents, plan_mode, scratch) = {
             let s = self.state.lock().unwrap();
             (
-                s.agent.host.as_ref().map(|h| h.root().to_owned()),
+                // The private scratch folder is not a folder to work in: no file or command tools are described.
+                s.agent.host.as_ref().filter(|_| !s.agent.scratch).map(|h| h.root().to_owned()),
                 pref_bool(&s, "chat.web_search", false),
                 pref_bool(&s, "chat.subagents", false),
                 pref_bool(&s, "chat.plan_mode", false),
+                s.agent.scratch,
             )
         };
         let apps = Box::pin(self.app_instructions()).await;
-        if tools_root.is_some() || web || !apps.is_empty() {
+        if tools_root.is_some() || web || !apps.is_empty() || scratch {
             let current = request["prompt"].as_str().unwrap_or_default().to_owned();
             let host = self.state.lock().unwrap().agent.host.clone();
             // "Browser control" (Settings > Permissions) puts Playwright MCP among the local servers.
@@ -10596,9 +10635,9 @@ fn conversation_page(s: &State) -> Value {
     })
 }
 
-/// "Run on": this device or another of the user's devices that can host Work (Work page only).
+/// "Run on": this device or another of the user's devices that can host Work (Chat and Work pages).
 fn run_on_control(s: &State) -> Option<Value> {
-    if s.route != "work" || !pref_bool(s, "remote.enabled", true) {
+    if !matches!(s.route.as_str(), "work" | "chat") || !pref_bool(s, "remote.enabled", true) {
         return None;
     }
     let options = remote::run_on_options(&s.remote.devices);
@@ -11141,6 +11180,19 @@ fn project_of_view(s: &State) -> Option<String> {
 
 /// The folder Work runs in: the open project's folder when it has one on this device, else the folder
 /// chosen for Work in general.
+/// The private empty folder a chat without a folder runs its browser and computer tools in.
+#[cfg(target_arch = "wasm32")]
+fn scratch_folder() -> String {
+    String::new()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn scratch_folder() -> String {
+    let dir = super::mcp_local::browser_profile_dir().with_file_name("scratch");
+    let _ = std::fs::create_dir_all(&dir);
+    dir.display().to_string()
+}
+
 fn effective_workspace(s: &State) -> Option<String> {
     if let Some(folder) = project_of_view(s)
         .and_then(|id| s.project_env.get(&id).and_then(|e| e.folder.clone()))
@@ -15379,6 +15431,37 @@ mod tests {
         let _ = std::fs::remove_dir_all(&folder);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn a_device_without_a_folder_hosts_a_task_only_when_it_lets_the_model_drive_the_browser_or_screen() {
+        let folder = temp_folder("remote-nofolder");
+        let api = fake_api(vec!["On it.", "Title", "On it.", "Title"]);
+        let c = work_core(&api, &folder, "low");
+        c.update(|s| {
+            s.agent.host = None;
+            s.prefs.remove("work.workspace");
+        });
+        let me = c.client_id.clone();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let task = event("remote.task", "phone", &me, json!({ "text": "open the news site" }));
+        // Nothing allows device tools yet: refused, and the controller is told what to switch on.
+        let job = c.remote_job_for(&task).unwrap();
+        rt.block_on(c.remote_job(job));
+        let sent = api.remotes.lock().unwrap().clone();
+        assert_eq!(sent[0]["state"], "refused");
+        assert!(sent[0]["reason"].as_str().unwrap().contains("Browser control or Computer control"), "{sent:?}");
+        // With computer control on, the same task runs (in the private scratch folder).
+        c.update(|s| {
+            s.prefs.insert("work.computer_use".into(), json!(true));
+        });
+        let job = c.remote_job_for(&task).unwrap();
+        rt.block_on(c.remote_job(job));
+        let sent = api.remotes.lock().unwrap().clone();
+        assert!(sent.iter().any(|m| m["state"] == "started"), "{sent:?}");
+        assert!(c.state.lock().unwrap().agent.scratch);
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
     #[test]
     fn a_host_refuses_when_remote_control_is_off_or_it_is_busy() {
         let folder = temp_folder("remote-refuse");
@@ -16388,6 +16471,29 @@ mod tests {
         let create = agent::Tool::Schedule { action: "schedule_create", args: json!({}) };
         assert_eq!(agent::gate(agent::Permission::Low, &list), agent::Gate::Allow);
         assert!(matches!(agent::gate(agent::Permission::Low, &create), agent::Gate::Ask(_)));
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn chat_without_a_folder_gets_only_the_device_tools_when_computer_control_is_on() {
+        let folder = temp_folder("scratch");
+        let read = "```meo-tool\n{\"tool\":\"read_file\",\"args\":{\"path\":\"/etc/hosts\"}}\n```";
+        let api = fake_api(vec![read, "I cannot read files in chat.", "Title"]);
+        let c = work_core(&api, &folder, "all");
+        c.update(|s| {
+            s.route = "chat".into();
+            s.agent.host = None;
+            s.prefs.remove("work.workspace");
+            s.prefs.insert("work.computer_use".into(), json!(true));
+        });
+        run(&c, Action::Send { text: "look at my screen".into() });
+        let streams = api.streams.lock().unwrap().clone();
+        let first = streams[0]["prompt"].as_str().unwrap();
+        assert!(first.contains("## Computer control"), "{first}");
+        assert!(!first.contains("read_file {path"), "no file tools are described without a folder");
+        assert!(streams[1]["prompt"].as_str().unwrap().contains("no folder is open: in chat only the browser and computer tools"), "{}", streams[1]["prompt"]);
+        assert!(c.state.lock().unwrap().agent.scratch);
         let _ = std::fs::remove_dir_all(&folder);
     }
 
