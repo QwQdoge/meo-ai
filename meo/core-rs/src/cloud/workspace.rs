@@ -247,7 +247,9 @@ impl Workspace {
             | Tool::App { .. }
             | Tool::AskUser { .. }
             | Tool::ExitPlan { .. }
-            | Tool::WebFetch { .. } => fail("this tool is run by the app, not by the folder"),
+            | Tool::WebFetch { .. }
+            | Tool::AgentSend { .. }
+            | Tool::AgentList => fail("this tool is run by the app, not by the folder"),
         }
     }
 

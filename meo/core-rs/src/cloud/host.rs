@@ -613,7 +613,15 @@ impl Host {
             Tool::Run { .. } => Outcome::fail(
                 "commands cannot run in a browser; use the desktop app, or edit files and tell the user what to run",
             ),
-            Tool::Subagent { .. } | Tool::WebSearch { .. } | Tool::ReadMore { .. } | Tool::App { .. } => {
+            Tool::Subagent { .. }
+            | Tool::AgentSend { .. }
+            | Tool::AgentList
+            | Tool::WebSearch { .. }
+            | Tool::WebFetch { .. }
+            | Tool::AskUser { .. }
+            | Tool::ExitPlan { .. }
+            | Tool::ReadMore { .. }
+            | Tool::App { .. } => {
                 Outcome::fail("this tool is run by the app, not by the folder")
             }
             Tool::Mcp { .. } => Outcome::fail(

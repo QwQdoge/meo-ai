@@ -457,6 +457,18 @@ struct Asking {
     plan: Option<String>,
 }
 
+/// A sub-agent of this run, kept so it can be listed and sent a follow-up (`list_agents`, `send_message`).
+struct Child {
+    name: String,
+    task: String,
+    write: bool,
+    fork: bool,
+    status: &'static str,
+    report: String,
+    /// What it did and saw, for a follow-up.
+    notes: String,
+}
+
 /// What a native function name stands for.
 #[derive(Clone, Debug)]
 enum NativeTarget {
@@ -524,6 +536,8 @@ impl NativeRun {
 /// The tool loop of the current Work message: Codex-style turns of "answer, tool, result, answer".
 #[derive(Default)]
 struct AgentRun {
+    /// The sub-agents this run started (by name).
+    children: Vec<Child>,
     /// The question dialog or plan review the run is waiting on.
     asking: Option<Asking>,
     /// The last tool call and how many times in a row it was made identically (cleared by a new message).
@@ -5625,40 +5639,104 @@ impl AppCore {
 
     // ---- sub-agents ---------------------------------------------------------------------------
 
-    /// A read-only helper with a fresh context: its own prompt and notes, its own round cap, the
-    /// same hard rules. Only its final report goes back to the main task.
-    async fn run_subagent(&self, host: &Host, task: &str) -> agent::Outcome {
+    /// The recent conversation, as background for a forked sub-agent (it knows what the main agent knows).
+    fn fork_background(&self) -> String {
+        let s = self.state.lock().unwrap();
+        let list = s.active.as_ref().and_then(|id| s.messages.get(id)).cloned().unwrap_or_default();
+        let mut lines: Vec<String> = list
+            .iter()
+            .filter(|m| !is_tool_result(m) && (m.role == "user" || m.role == "assistant"))
+            .rev()
+            .take(12)
+            .map(|m| {
+                let who = if m.role == "user" { "User" } else { "Assistant" };
+                let text: String = clean_reply(&tool_free_text(&m.text)).chars().take(600).collect();
+                format!("{who}: {}", text.trim())
+            })
+            .collect();
+        lines.reverse();
+        let joined = lines.join("\n\n");
+        let skip = joined.chars().count().saturating_sub(6_000);
+        joined.chars().skip(skip).collect()
+    }
+
+    /// One sub-agent's work: its own prompt and notes, its own round cap, the same hard rules as the main run.
+    /// A researcher only reads. A worker (`write`) may change files when the permission level lets calls run
+    /// without asking (Smart through the approver, Allow all); it can never ask the user, so anything that would
+    /// need an answer is refused and the worker reports that. Plan mode keeps every sub-agent read-only.
+    async fn run_subagent_job(
+        &self,
+        host: &Host,
+        job: &agent::SubJob,
+        mut notes: String,
+        background: &str,
+    ) -> (agent::Outcome, String) {
         let Some(choice) = self.role_model("default") else {
-            return agent::Outcome::fail("no model is set for the sub-agent");
+            return (agent::Outcome::fail("no model is set for the sub-agent"), notes);
         };
-        let mut notes = String::new();
-        for _ in 0..agent::SUBAGENT_ROUNDS {
-            let prompt = agent::subagent_prompt(host.root(), task, &notes);
+        let permission = self.agent_permission();
+        let plan_mode = pref_bool(&self.state.lock().unwrap(), "chat.plan_mode", false);
+        for _ in 0..job.rounds {
+            if self.cancel.load(Ordering::SeqCst) {
+                return (agent::Outcome::fail("stopped by the user"), notes);
+            }
+            let prompt = agent::subagent_prompt(host.root(), &job.task, &notes, job.write, background, job.rounds);
             let Some(reply) = self.ask_model(&choice, &prompt).await else {
-                return agent::Outcome::fail("the sub-agent's model did not answer");
+                return (agent::Outcome::fail("the sub-agent's model did not answer"), notes);
             };
             let Some(first) = agent::parse_tool_calls(&reply).into_iter().next() else {
                 // No tool request: this is the report.
-                return agent::Outcome::done(reply.trim().to_owned());
+                return (agent::Outcome::done(reply.trim().to_owned()), notes);
             };
             let note = match first {
                 Err(problem) => format!("error: {problem}"),
-                Ok(call)
-                    if call.tool.risk() != agent::Risk::Read
-                        || matches!(call.tool, agent::Tool::Subagent { .. }) =>
-                {
-                    "refused: a sub-agent may only read (read_file, list_dir, search)".to_owned()
+                Ok(call) => {
+                    let risk = call.tool.risk();
+                    let local = matches!(
+                        call.tool,
+                        agent::Tool::ReadFile { .. }
+                            | agent::Tool::ListDir { .. }
+                            | agent::Tool::Search { .. }
+                            | agent::Tool::SearchReplace { .. }
+                            | agent::Tool::ApplyPatch { .. }
+                            | agent::Tool::Run { .. }
+                    );
+                    if !local {
+                        "refused: a sub-agent works in the folder only (read_file, list_dir, search, and for a worker search_replace, apply_patch, run); it cannot start sub-agents, ask the user or use the web".to_owned()
+                    } else if risk != agent::Risk::Read && !job.write {
+                        "refused: a sub-agent may only read (read_file, list_dir, search)".to_owned()
+                    } else if risk != agent::Risk::Read && plan_mode {
+                        "refused: plan mode is on, nothing may change until the plan is approved".to_owned()
+                    } else {
+                        // Reads follow the path rules; changes run only where the main run would not ask.
+                        let gate = if risk == agent::Risk::Read {
+                            agent::gate(agent::Permission::Low, &call.tool)
+                        } else if matches!(permission, agent::Permission::All | agent::Permission::Smart) {
+                            agent::gate(permission, &call.tool)
+                        } else {
+                            agent::Gate::Ask("the permission level asks before every change".to_owned())
+                        };
+                        match gate {
+                            agent::Gate::Allow => {
+                                let outcome = host.run(call.tool.clone()).await;
+                                format!("{}:\n{}", call.tool.summary(), outcome.text)
+                            }
+                            agent::Gate::Approver => {
+                                let (verdict, why) = self.agent_approver(&call).await;
+                                match verdict {
+                                    agent::Verdict::Allow => {
+                                        let outcome = host.run(call.tool.clone()).await;
+                                        format!("{}:\n{}", call.tool.summary(), outcome.text)
+                                    }
+                                    _ => format!("refused: {} (a sub-agent cannot ask the user)", if why.is_empty() { "the approver did not allow it" } else { &why }),
+                                }
+                            }
+                            agent::Gate::Ask(why) | agent::Gate::Deny(why) => {
+                                format!("refused: {why} (a sub-agent cannot ask the user)")
+                            }
+                        }
+                    }
                 }
-                Ok(call) => match agent::gate(agent::Permission::All, &call.tool) {
-                    agent::Gate::Allow => {
-                        let outcome = host.run(call.tool.clone()).await;
-                        format!("{}:\n{}", call.tool.summary(), outcome.text)
-                    }
-                    agent::Gate::Ask(why) | agent::Gate::Deny(why) => {
-                        format!("refused: {why} (a sub-agent cannot ask the user)")
-                    }
-                    agent::Gate::Approver => "refused".to_owned(),
-                },
             };
             notes.push_str(&format!("{note}\n\n"));
             // Keep the notes inside a modest window: the newest findings matter most.
@@ -5667,11 +5745,129 @@ impl AppCore {
                 notes = notes.chars().skip(cut).collect();
             }
         }
-        agent::Outcome::fail(format!(
+        let failure = agent::Outcome::fail(format!(
             "the sub-agent used all {} rounds without a report; what it saw:\n{}",
-            agent::SUBAGENT_ROUNDS,
+            job.rounds,
             notes.chars().take(4_000).collect::<String>()
-        ))
+        ));
+        (failure, notes)
+    }
+
+    /// `subagent`: one or several jobs. Researchers run together; if any job writes, they run one after the
+    /// other (two writers at once could trample the same files). Every report comes back in one result; the
+    /// sub-agents stay listed so they can be sent a follow-up.
+    async fn run_subagents(&self, host: &Host, jobs: Vec<agent::SubJob>) -> agent::Outcome {
+        let mut named: Vec<(String, agent::SubJob)> = Vec::new();
+        {
+            let s = self.state.lock().unwrap();
+            let mut counter = 0usize;
+            for job in jobs {
+                let taken = |n: &str, named: &[(String, agent::SubJob)]| {
+                    s.agent.children.iter().any(|c| c.name == n) || named.iter().any(|(m, _)| m == n)
+                };
+                let name = match job.name.clone() {
+                    Some(n) if taken(&n, &named) => {
+                        return agent::Outcome::fail(format!(
+                            "a sub-agent named \"{n}\" already exists in this run: pick another name, or continue it with send_message"
+                        ));
+                    }
+                    Some(n) => n,
+                    None => loop {
+                        counter += 1;
+                        let candidate = format!("agent-{counter}");
+                        if !taken(&candidate, &named) {
+                            break candidate;
+                        }
+                    },
+                };
+                named.push((name, job));
+            }
+        }
+        let background = if named.iter().any(|(_, j)| j.fork) { self.fork_background() } else { String::new() };
+        let any_writer = named.iter().any(|(_, j)| j.write);
+        let results: Vec<(agent::Outcome, String)> = if any_writer {
+            let mut out = Vec::new();
+            for (_, job) in &named {
+                let bg = if job.fork { background.as_str() } else { "" };
+                out.push(self.run_subagent_job(host, job, String::new(), bg).await);
+            }
+            out
+        } else {
+            futures_util::future::join_all(named.iter().map(|(_, job)| {
+                let bg = if job.fork { background.as_str() } else { "" };
+                self.run_subagent_job(host, job, String::new(), bg)
+            }))
+            .await
+        };
+        let mut report = Vec::new();
+        let mut finished = Vec::new();
+        for ((name, job), (outcome, notes)) in named.into_iter().zip(results) {
+            let status = if self.cancel.load(Ordering::SeqCst) { "stopped" } else if outcome.ok { "done" } else { "failed" };
+            report.push(format!("## {name} ({status})\n{}", outcome.text.trim()));
+            finished.push(Child { name, task: job.task.clone(), write: job.write, fork: job.fork, status, report: outcome.text.clone(), notes });
+        }
+        let any_write = finished.iter().any(|c| c.write);
+        self.update(|s| s.agent.children.extend(finished));
+        if any_write {
+            self.refresh_changes().await;
+        }
+        agent::Outcome::done(report.join("\n\n"))
+    }
+
+    /// `send_message`: a follow-up for a sub-agent that already reported. It continues with its own notes and
+    /// the new message, and its next report comes back.
+    async fn send_agent(&self, host: &Host, name: &str, message: &str) -> agent::Outcome {
+        let child = self.state.lock().unwrap().agent.children.iter().find(|c| c.name == name).map(|c| (c.task.clone(), c.write, c.fork, c.notes.clone()));
+        let Some((task, write, fork, notes)) = child else {
+            let known: Vec<String> = self.state.lock().unwrap().agent.children.iter().map(|c| c.name.clone()).collect();
+            let hint = if name.eq_ignore_ascii_case("lead") {
+                "\"lead\" is you, the main agent".to_owned()
+            } else if known.is_empty() {
+                "this run has no sub-agents yet".to_owned()
+            } else {
+                format!("the sub-agents are: {}", known.join(", "))
+            };
+            return agent::Outcome::fail(format!("no sub-agent named \"{name}\"; {hint}"));
+        };
+        let job = agent::SubJob {
+            name: Some(name.to_owned()),
+            task: format!("{task}\n\nFollow-up from the main agent: {message}"),
+            fork,
+            write,
+            rounds: agent::SUBAGENT_ROUNDS,
+        };
+        let background = if fork { self.fork_background() } else { String::new() };
+        let (outcome, notes) = self.run_subagent_job(host, &job, notes, &background).await;
+        let status = if outcome.ok { "done" } else { "failed" };
+        self.update(|s| {
+            if let Some(c) = s.agent.children.iter_mut().find(|c| c.name == name) {
+                c.status = status;
+                c.report = outcome.text.clone();
+                c.notes = notes;
+            }
+        });
+        if write {
+            self.refresh_changes().await;
+        }
+        agent::Outcome::done(format!("## {name} ({status})\n{}", outcome.text.trim()))
+    }
+
+    /// `list_agents`: the sub-agents of this run.
+    fn list_agents(&self) -> agent::Outcome {
+        let s = self.state.lock().unwrap();
+        if s.agent.children.is_empty() {
+            return agent::Outcome::done("no sub-agents in this run");
+        }
+        let rows: Vec<String> = s
+            .agent
+            .children
+            .iter()
+            .map(|c| {
+                let kind = format!("{}{}", if c.fork { "fork" } else { "spawn" }, if c.write { ", can write" } else { ", read-only" });
+                format!("- {} [{}; {kind}]: {}", c.name, c.status, c.task.lines().next().unwrap_or_default().chars().take(120).collect::<String>())
+            })
+            .collect();
+        agent::Outcome::done(format!("lead: the main agent\n{}", rows.join("\n")))
     }
 
     // ---- context budget -----------------------------------------------------------------------
@@ -6485,7 +6681,7 @@ impl AppCore {
                 .agent_refuse(id, call, "plan mode is on: read and search only; present the plan with exit_plan_mode and wait for approval before changing anything")
                 .await;
         }
-        if matches!(call.tool, agent::Tool::Subagent { .. })
+        if matches!(call.tool, agent::Tool::Subagent { .. } | agent::Tool::AgentSend { .. } | agent::Tool::AgentList)
             && !pref_bool(&self.state.lock().unwrap(), "chat.subagents", false)
         {
             return self
@@ -7114,7 +7310,9 @@ impl AppCore {
             (agent::Tool::App { app, tool, args }, _) => {
                 Box::pin(self.run_app(app, tool, args)).await
             }
-            (agent::Tool::Subagent { task }, Some(host)) => self.run_subagent(&host, task).await,
+            (agent::Tool::Subagent { jobs }, Some(host)) => self.run_subagents(&host, jobs.clone()).await,
+            (agent::Tool::AgentSend { agent, message }, Some(host)) => self.send_agent(&host, agent, message).await,
+            (agent::Tool::AgentList, _) => self.list_agents(),
             (tool, Some(host)) => host.run(tool.clone()).await,
             (_, None) => agent::Outcome::fail("no folder is open on this device"),
         };
@@ -15219,6 +15417,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&folder);
     }
 
+    const READ_NOTES: &str = "```meo-tool\n{\"tool\":\"read_file\",\"args\":{\"path\":\"notes.txt\"}}\n```";
     const SUB: &str = "```meo-tool\n{\"tool\":\"subagent\",\"args\":{\"task\":\"count the todos in notes.txt\"}}\n```";
 
     #[test]
@@ -15240,7 +15439,7 @@ mod tests {
         let streams = api.streams.lock().unwrap().clone();
         assert_eq!(streams.len(), 4);
         let first_parent = streams[0]["prompt"].as_str().unwrap();
-        assert!(first_parent.contains("subagent {task}"), "{first_parent}");
+        assert!(first_parent.contains("subagent {task,name?"), "{first_parent}");
         // The sub-agent's prompts hold its task and its notes, not the user's conversation.
         let sub_first = streams[1]["prompt"].as_str().unwrap();
         assert!(
@@ -15264,6 +15463,73 @@ mod tests {
             "the raw file stays in the sub-agent's context"
         );
         assert!(texts(&c).last().unwrap().ends_with(FINISH));
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn sub_agents_fan_out_get_names_and_can_be_followed_up() {
+        let folder = temp_folder("sub-fan");
+        std::fs::write(folder.join("notes.txt"), "todo\n").unwrap();
+        let fan = "```meo-tool\n{\"tool\":\"subagent\",\"args\":{\"tasks\":[{\"task\":\"read the notes\",\"name\":\"reader\"},{\"task\":\"list the folder\",\"mode\":\"fork\"}]}}\n```";
+        let again = "```meo-tool\n{\"tool\":\"subagent\",\"args\":{\"task\":\"again\",\"name\":\"reader\"}}\n```";
+        let list = "```meo-tool\n{\"tool\":\"list_agents\",\"args\":{}}\n```";
+        let send = "```meo-tool\n{\"tool\":\"send_message\",\"args\":{\"agent\":\"reader\",\"message\":\"which line?\"}}\n```";
+        let nobody = "```meo-tool\n{\"tool\":\"send_message\",\"args\":{\"agent\":\"ghost\",\"message\":\"hi\"}}\n```";
+        // parent call, two one-round sub-agents, parent reads the reports, then tries a taken name, lists,
+        // follows up (one round), asks a stranger, and finishes.
+        let api = fake_api(vec![fan, "The notes hold one todo.", "The folder has notes.txt.", again, list, send, "Line 1.", nobody, "All reported."]);
+        let c = work_core(&api, &folder, "all");
+        c.update(|s| {
+            s.prefs.insert("chat.subagents".into(), json!(true));
+        });
+        run(&c, Action::Send { text: "investigate".into() });
+        let streams = api.streams.lock().unwrap().clone();
+        // The parent saw both reports under their names (the second got agent-1).
+        let after_fan = streams[3]["prompt"].as_str().unwrap();
+        assert!(after_fan.contains("## reader (done)") && after_fan.contains("The notes hold one todo."), "{after_fan}");
+        assert!(after_fan.contains("## agent-1 (done)") && after_fan.contains("notes.txt"), "{after_fan}");
+        // The second sub-agent was a fork: it knows the conversation; the first did not.
+        assert!(!streams[1]["prompt"].as_str().unwrap().contains("conversation so far"));
+        assert!(streams[2]["prompt"].as_str().unwrap().contains("conversation so far"), "{}", streams[2]["prompt"]);
+        let taken = streams[4]["prompt"].as_str().unwrap();
+        assert!(taken.contains("already exists in this run"), "{taken}");
+        let listed = streams[5]["prompt"].as_str().unwrap();
+        assert!(listed.contains("- reader [done; spawn, read-only]") && listed.contains("- agent-1 [done; fork, read-only]"), "{listed}");
+        let followed = streams[7]["prompt"].as_str().unwrap();
+        assert!(followed.contains("Line 1.") && followed.contains("## reader (done)"), "{followed}");
+        assert!(streams[6]["prompt"].as_str().unwrap().contains("Follow-up from the main agent: which line?"));
+        let stranger = streams[8]["prompt"].as_str().unwrap();
+        assert!(stranger.contains("no sub-agent named \\\"ghost\\\"") || stranger.contains("no sub-agent named"), "{stranger}");
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn a_worker_sub_agent_may_write_where_the_main_run_may_and_a_researcher_may_not() {
+        let folder = temp_folder("sub-write");
+        std::fs::write(folder.join("notes.txt"), "todo\n").unwrap();
+        let worker = "```meo-tool\n{\"tool\":\"subagent\",\"args\":{\"task\":\"mark it done\",\"write\":true}}\n```";
+        // Allow all: the worker reads, edits, reports.
+        let api = fake_api(vec![worker, READ_NOTES, EDIT, "Edited notes.txt.", FINISH]);
+        let c = work_core(&api, &folder, "all");
+        c.update(|s| {
+            s.prefs.insert("chat.subagents".into(), json!(true));
+        });
+        run(&c, Action::Send { text: "do it".into() });
+        assert_eq!(std::fs::read_to_string(folder.join("notes.txt")).unwrap(), "done\n");
+        let _ = std::fs::remove_dir_all(&folder);
+        // Low permission asks before changes: the worker cannot ask, so the file is untouched and it says why.
+        let folder = temp_folder("sub-write-low");
+        std::fs::write(folder.join("notes.txt"), "todo\n").unwrap();
+        let api = fake_api(vec![worker, READ_NOTES, EDIT, "Could not edit: it needs approval.", FINISH]);
+        let c = work_core(&api, &folder, "low");
+        c.update(|s| {
+            s.prefs.insert("chat.subagents".into(), json!(true));
+        });
+        run(&c, Action::Send { text: "do it".into() });
+        // The delegation itself needs no answer; the edit inside it is refused.
+        let streams = api.streams.lock().unwrap().clone();
+        assert!(streams.iter().any(|b| b["prompt"].as_str().is_some_and(|p| p.contains("a sub-agent cannot ask the user"))), "{streams:?}");
+        assert_eq!(std::fs::read_to_string(folder.join("notes.txt")).unwrap(), "todo\n");
         let _ = std::fs::remove_dir_all(&folder);
     }
 
