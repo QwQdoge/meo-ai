@@ -73,7 +73,7 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         model.core.dispatch(JSONObject().put("type", "set_foreground").put("visible", true))
-        clock.postDelayed(tick, 3000)
+        clock.post(tick)
     }
 
     override fun onStop() {

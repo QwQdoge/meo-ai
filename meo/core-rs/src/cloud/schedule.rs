@@ -426,6 +426,15 @@ pub fn stamp(unix: i64, offset_min: i32) -> String {
     format!("{y:04}-{m:02}-{d:02} {}", clock_text(minute))
 }
 
+/// `Thursday 2026-11-12 15:04 UTC+08:00`: what the model is told the time is (see `clock_note` in the app).
+pub fn now_text(unix: i64, offset_min: i32) -> String {
+    const DAYS: [&str; 7] = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+    let (day, _) = local(unix, offset_min);
+    let sign = if offset_min < 0 { '-' } else { '+' };
+    let o = offset_min.abs();
+    format!("{} {} UTC{sign}{:02}:{:02}", DAYS[(weekday(day) - 1) as usize], stamp(unix, offset_min), o / 60, o % 60)
+}
+
 fn span(secs: u64) -> String {
     match secs {
         s if s % 86_400 == 0 => format!("{} day(s)", s / 86_400),
@@ -547,5 +556,7 @@ mod tests {
         assert_eq!(t.timing_text(), "Mon, Wed at 09:30");
         assert!(t.status_text(DAY).starts_with("next 2026-11-1"));
         assert_eq!(stamp(DAY, 480), "2026-11-12 08:00");
+        assert_eq!(now_text(DAY, 480), "Thursday 2026-11-12 08:00 UTC+08:00");
+        assert_eq!(now_text(DAY, -330), "Wednesday 2026-11-11 18:30 UTC-05:30");
     }
 }

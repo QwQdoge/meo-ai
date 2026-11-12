@@ -166,6 +166,7 @@ ApplicationWindow {
         interval: 15000
         running: true
         repeat: true
+        triggeredOnStart: true
         onTriggered: core.dispatch(JSON.stringify({ type: "tick", utc_offset_min: -new Date().getTimezoneOffset() }))
     }
 

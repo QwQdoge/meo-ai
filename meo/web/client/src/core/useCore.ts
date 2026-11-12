@@ -59,7 +59,9 @@ export function useCore() {
         // Live sync with the user's other devices.
         instance.dispatch(JSON.stringify({ type: "realtime" }));
         // The core has no clock of its own: it delivers scheduled tasks and reports finished jobs on this tick.
-        clock = window.setInterval(() => instance.dispatch(JSON.stringify({ type: "tick", utc_offset_min: -new Date().getTimezoneOffset() })), 15000);
+        const tick = () => instance.dispatch(JSON.stringify({ type: "tick", utc_offset_min: -new Date().getTimezoneOffset() }));
+        tick();
+        clock = window.setInterval(tick, 15000);
         if (location.pathname === CALLBACK_PATH) {
           const url = location.href;
           history.replaceState(null, "", "/");

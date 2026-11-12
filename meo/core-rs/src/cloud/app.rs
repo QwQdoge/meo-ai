@@ -655,6 +655,8 @@ struct State {
     schedule: Vec<schedule::Task>,
     /// Minutes east of UTC on this device, as the last tick reported it.
     utc_offset: i32,
+    /// Whether a tick has reported the offset yet (before that the clock note says UTC).
+    utc_known: bool,
     /// Background jobs the user has already been told about (id → was running when last seen).
     jobs_seen: HashMap<String, bool>,
     remote: RemoteLink,
@@ -6084,6 +6086,7 @@ impl AppCore {
         let due = {
             let mut s = self.state.lock().unwrap();
             s.utc_offset = utc_offset_min;
+            s.utc_known = true;
             // Only when nothing is being written or run, and the account is ready.
             let working = s.streaming.is_some()
                 || s.agent.asking.is_some()
@@ -6731,10 +6734,11 @@ impl AppCore {
             guidance.push_str(&format!("\n\n{}", agent::PLAN_MODE_GUIDANCE));
         }
         let current = request["prompt"].as_str().unwrap_or_default().to_owned();
+        let clock = self.clock_note();
         request["prompt"] = json!(if context.is_empty() {
-            format!("{guidance}\n\n{current}")
+            format!("{guidance}\n\n{clock}\n\n{current}")
         } else {
-            format!("{guidance}\n\n{context}\n\n{current}")
+            format!("{guidance}\n\n{context}\n\n{clock}\n\n{current}")
         });
         true
     }
@@ -7368,18 +7372,29 @@ impl AppCore {
             } else {
                 format!("\n\n{workspace}")
             };
+            let clock = self.clock_note();
             request["prompt"] = json!(format!(
-                "{}{mcp}{workspace}{context}\n\n{current}",
+                "{}{mcp}{workspace}{context}\n\n{clock}\n\n{current}",
                 agent::tool_instructions_full(tools_root.as_deref(), subagents, web, &apps, plan_mode)
             ));
         } else {
             // No tools, but the project's repository still tells the model where its work lives.
             let context = self.project_context(None);
-            if !context.is_empty() {
-                let current = request["prompt"].as_str().unwrap_or_default().to_owned();
-                request["prompt"] = json!(format!("{context}\n\n{current}"));
-            }
+            let current = request["prompt"].as_str().unwrap_or_default().to_owned();
+            let clock = self.clock_note();
+            request["prompt"] = json!(if context.is_empty() { format!("{clock}\n\n{current}") } else { format!("{context}\n\n{clock}\n\n{current}") });
         }
+    }
+
+    /// What the model is told the time is, as DeepSeek Harness' `time-context` does: the current date and
+    /// time in the user's zone, so "tomorrow", "at 9" and "in an hour" mean something.
+    fn clock_note(&self) -> String {
+        let s = self.state.lock().unwrap();
+        let zone = if s.utc_known { "" } else { " (the device zone is not known yet; ask when a zone matters)" };
+        format!(
+            "System clock, not part of the user's message: now is {}{zone}.",
+            schedule::now_text(super::now_secs(), s.utc_offset)
+        )
     }
 
     /// The connected apps for the tool prompt: enabled plugins with a hosted MCP server and the
@@ -16226,6 +16241,27 @@ mod tests {
         let create = agent::Tool::Schedule { action: "schedule_create", args: json!({}) };
         assert_eq!(agent::gate(agent::Permission::Low, &list), agent::Gate::Allow);
         assert!(matches!(agent::gate(agent::Permission::Low, &create), agent::Gate::Ask(_)));
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn every_request_tells_the_model_the_time_in_the_users_zone() {
+        let folder = temp_folder("clock");
+        let api = fake_api(vec!["Hello.", "Title", "Again.", "Title"]);
+        let c = work_core(&api, &folder, "all");
+        c.update(|s| {
+            s.route = "chat".into();
+            s.agent.host = None;
+            s.prefs.remove("work.workspace");
+        });
+        run(&c, Action::Send { text: "hello".into() });
+        let first = api.streams.lock().unwrap()[0]["prompt"].as_str().unwrap().to_owned();
+        assert!(first.contains("System clock, not part of the user's message: now is"), "{first}");
+        assert!(first.contains("the device zone is not known yet"), "before the first tick the zone is unknown");
+        run(&c, Action::Tick { utc_offset_min: 480 });
+        run(&c, Action::Send { text: "and now?".into() });
+        let later = api.streams.lock().unwrap().iter().filter_map(|x| x["prompt"].as_str()).find(|p| p.contains("and now?")).unwrap().to_owned();
+        assert!(later.contains("UTC+08:00") && !later.contains("not known yet"), "{later}");
         let _ = std::fs::remove_dir_all(&folder);
     }
 
