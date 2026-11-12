@@ -8812,10 +8812,15 @@ impl AppCore {
             clip(user, 500),
             clip(reply, 800)
         );
-        // One retry: a provider that stumbles on the first try usually answers the second.
+        // The title model first; when its provider is down, the model that just answered (a model that
+        // answered is known to be up).
+        let mut candidates = vec![(credential.clone(), model.clone())];
+        if !used.0.is_empty() && used != (credential.clone(), model.clone()) {
+            candidates.push(used.clone());
+        }
         let mut text = None;
-        for _ in 0..2 {
-            text = self.ask_model_for("title", &(credential.clone(), model.clone()), &prompt).await;
+        for choice in &candidates {
+            text = self.ask_model_for("title", choice, &prompt).await;
             if text.is_some() {
                 break;
             }
