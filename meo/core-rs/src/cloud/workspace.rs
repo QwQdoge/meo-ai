@@ -183,18 +183,37 @@ impl Workspace {
         &self.root
     }
 
-    /// A path inside the workspace: no `..` out of it, and no symlink that leads out of it.
+    /// The path a tool names. A place outside the folder (an absolute path, `~/...`, or `..`) is the
+    /// permission gate's decision, not this function's: the gate has already asked the user, or Full
+    /// access allowed it, so it resolves as written. Inside the folder a symlink that leads out is still
+    /// refused, because the gate cannot see it: name the real path and the user is asked about it.
     pub fn resolve(&self, relative: &str) -> Result<PathBuf, String> {
-        let wanted = Path::new(relative.trim());
-        if wanted.is_absolute() {
-            return Err(format!("{relative} is outside the workspace"));
+        let text = relative.trim();
+        let home = std::env::var_os("HOME").map(PathBuf::from);
+        let expanded: PathBuf = match (text.strip_prefix("~/").or(if text == "~" { Some("") } else { None }), &home) {
+            (Some(rest), Some(h)) => h.join(rest),
+            _ => PathBuf::from(text),
+        };
+        let wanted = expanded.as_path();
+        if wanted.is_absolute() || wanted.components().any(|c| matches!(c, Component::ParentDir)) {
+            let mut path = if wanted.is_absolute() { PathBuf::new() } else { self.root.clone() };
+            for part in wanted.components() {
+                match part {
+                    Component::Prefix(p) => path.push(p.as_os_str()),
+                    Component::RootDir => path.push(Component::RootDir.as_os_str()),
+                    Component::Normal(p) => path.push(p),
+                    Component::ParentDir => {
+                        path.pop();
+                    }
+                    Component::CurDir => {}
+                }
+            }
+            return Ok(path);
         }
         let mut path = self.root.clone();
         for part in wanted.components() {
-            match part {
-                Component::Normal(p) => path.push(p),
-                Component::CurDir => {}
-                _ => return Err(format!("{relative} is outside the workspace")),
+            if let Component::Normal(p) = part {
+                path.push(p);
             }
         }
         // The nearest existing ancestor, resolved, must still be inside the root (symlinks).
@@ -211,7 +230,7 @@ impl Workspace {
         if real.starts_with(&self.root) {
             Ok(path)
         } else {
-            Err(format!("{relative} leads outside the workspace"))
+            Err(format!("{relative} leads outside the workspace through a link; use the real absolute path, and the user is asked to allow it"))
         }
     }
 
@@ -702,13 +721,18 @@ mod tests {
     }
 
     #[test]
-    fn paths_cannot_leave_the_workspace_by_dots_absolute_paths_or_symlinks() {
+    fn outside_paths_resolve_as_written_for_the_gate_to_decide_but_a_hidden_symlink_is_refused() {
         let t = Tmp::new();
         let ws = t.ws();
         assert!(ws.resolve("src/a.rs").is_ok());
-        assert!(ws.resolve("../x").unwrap_err().contains("outside"));
-        assert!(ws.resolve("/etc/passwd").unwrap_err().contains("outside"));
-        assert!(ws.resolve("a/../../x").unwrap_err().contains("outside"));
+        // The gate asks the user about these (or Full access allows them); resolving does not veto.
+        assert_eq!(ws.resolve("/etc/passwd").unwrap(), PathBuf::from("/etc/passwd"));
+        let above = ws.root().parent().unwrap().join("x");
+        assert_eq!(ws.resolve("../x").unwrap(), above);
+        assert_eq!(ws.resolve("a/../../x").unwrap(), above);
+        if let Some(home) = std::env::var_os("HOME") {
+            assert_eq!(ws.resolve("~/notes.txt").unwrap(), PathBuf::from(home).join("notes.txt"));
+        }
         #[cfg(unix)]
         {
             let outside = Tmp::new();
@@ -910,13 +934,9 @@ mod tests {
         assert!(!bad.ok);
         assert_eq!(fs::read_to_string(t.0.join("a.txt")).unwrap(), "one\n");
         assert!(cp.is_empty());
-        let outside = ws.run(
-            &Tool::ApplyPatch {
-                patch: "*** Begin Patch\n*** Add File: ../evil\n+x\n*** End Patch".into(),
-            },
-            &mut cp,
-        );
-        assert!(!outside.ok && outside.text.contains("outside"));
+        // A patch that reaches outside the folder is not vetoed here: the gate asks the user about it.
+        let outside = Tool::ApplyPatch { patch: "*** Begin Patch\n*** Add File: ../evil\n+x\n*** End Patch".into() };
+        assert!(matches!(crate::cloud::agent::gate(crate::cloud::agent::Permission::Smart, &outside), crate::cloud::agent::Gate::Ask(_)));
     }
 
     #[test]

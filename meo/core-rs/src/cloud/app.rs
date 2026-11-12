@@ -556,8 +556,8 @@ impl NativeRun {
 /// The tool loop of the current Work message: Codex-style turns of "answer, tool, result, answer".
 #[derive(Default)]
 struct AgentRun {
-    /// This run has no folder of the user's: its host is an empty private scratch folder that only exists so the
-    /// browser and computer tools can run on this device. Files and commands are refused.
+    /// This run has no folder bound to it: its host is an empty private scratch folder. Nothing is refused for
+    /// that: the permission level decides, and the user's approval opens any other place on the computer.
     scratch: bool,
     /// Pictures the last tool returned (screenshots): they go to the model with the next round only.
     shots: Vec<AttachedImage>,
@@ -7086,20 +7086,6 @@ impl AppCore {
                 .agent_refuse(id, call, "plan mode is on: read and search only; present the plan with exit_plan_mode and wait for approval before changing anything")
                 .await;
         }
-        // A run with no folder of the user's only has the device tools: the browser and the screen.
-        let scratch = self.state.lock().unwrap().agent.scratch;
-        if scratch
-            && matches!(
-                call.tool,
-                agent::Tool::ReadFile { .. } | agent::Tool::ListDir { .. } | agent::Tool::Search { .. } | agent::Tool::SearchReplace { .. }
-                    | agent::Tool::ApplyPatch { .. } | agent::Tool::Run { .. } | agent::Tool::Job(_) | agent::Tool::Subagent { .. }
-                    | agent::Tool::AgentSend { .. } | agent::Tool::AgentList
-            )
-        {
-            return self
-                .agent_refuse(id, call, "no folder is open: in chat only the browser and computer tools run on this device; open a folder in Work for files and commands")
-                .await;
-        }
         if matches!(call.tool, agent::Tool::Computer { .. }) && !pref_bool(&self.state.lock().unwrap(), "work.computer_use", false) {
             return self
                 .agent_refuse(
@@ -7472,8 +7458,7 @@ impl AppCore {
         let (tools_root, web, subagents, plan_mode, scratch) = {
             let s = self.state.lock().unwrap();
             (
-                // The private scratch folder is not a folder to work in: no file or command tools are described.
-                s.agent.host.as_ref().filter(|_| !s.agent.scratch).map(|h| h.root().to_owned()),
+                s.agent.host.as_ref().map(|h| h.root().to_owned()),
                 pref_bool(&s, "chat.web_search", false),
                 pref_bool(&s, "chat.subagents", false),
                 pref_bool(&s, "chat.plan_mode", false),
@@ -7519,7 +7504,9 @@ impl AppCore {
                 format!("\n\n{context}")
             };
             let workspace = tools_root.as_deref().map(workspace_context).unwrap_or_default();
-            let workspace = if workspace.is_empty() {
+            let workspace = if scratch {
+                "\n\nNo folder is bound to this chat, so you start in a private scratch folder. Any other place on the computer is reachable with absolute paths and commands: the user is asked to allow it, and at Full access it runs without asking. A folder bound to a project is worked in without asking.".to_owned()
+            } else if workspace.is_empty() {
                 workspace
             } else {
                 format!("\n\n{workspace}")
@@ -16476,10 +16463,14 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn chat_without_a_folder_gets_only_the_device_tools_when_computer_control_is_on() {
+    fn chat_without_a_folder_can_use_every_tool_and_the_permission_level_decides() {
         let folder = temp_folder("scratch");
-        let read = "```meo-tool\n{\"tool\":\"read_file\",\"args\":{\"path\":\"/etc/hosts\"}}\n```";
-        let api = fake_api(vec![read, "I cannot read files in chat.", "Title"]);
+        let outside = temp_folder("scratch-outside");
+        std::fs::write(outside.join("note.txt"), "secret plans\n").unwrap();
+        let path = outside.join("note.txt");
+        let read = format!("```meo-tool\n{{\"tool\":\"read_file\",\"args\":{{\"path\":\"{}\"}}}}\n```", path.display());
+        // At Full access it just runs, folder or no folder.
+        let api = fake_api(vec![&read, "Got it.", "Title"]);
         let c = work_core(&api, &folder, "all");
         c.update(|s| {
             s.route = "chat".into();
@@ -16487,14 +16478,29 @@ mod tests {
             s.prefs.remove("work.workspace");
             s.prefs.insert("work.computer_use".into(), json!(true));
         });
-        run(&c, Action::Send { text: "look at my screen".into() });
+        run(&c, Action::Send { text: "read that file".into() });
         let streams = api.streams.lock().unwrap().clone();
         let first = streams[0]["prompt"].as_str().unwrap();
-        assert!(first.contains("## Computer control"), "{first}");
-        assert!(!first.contains("read_file {path"), "no file tools are described without a folder");
-        assert!(streams[1]["prompt"].as_str().unwrap().contains("no folder is open: in chat only the browser and computer tools"), "{}", streams[1]["prompt"]);
+        assert!(first.contains("## Computer control") && first.contains("No folder is bound to this chat"), "{first}");
+        assert!(first.contains("read_file {path"), "the file tools are there without a folder");
+        assert!(streams[1]["prompt"].as_str().unwrap().contains("secret plans"), "{}", streams[1]["prompt"]);
         assert!(c.state.lock().unwrap().agent.scratch);
+        // Below Full access the user is asked once, and a yes opens it.
+        let api = fake_api(vec![&read, "Got it.", "Title"]);
+        let c = work_core(&api, &folder, "low");
+        c.update(|s| {
+            s.route = "chat".into();
+            s.agent.host = None;
+            s.prefs.remove("work.workspace");
+            s.prefs.insert("work.computer_use".into(), json!(true));
+        });
+        run(&c, Action::Send { text: "read that file".into() });
+        assert_eq!(c.view()["page"]["consent"]["title"], "Allow this action?");
+        run(&c, Action::ApproveTool);
+        let streams = api.streams.lock().unwrap().clone();
+        assert!(streams.last().unwrap()["prompt"].as_str().unwrap().contains("secret plans"));
         let _ = std::fs::remove_dir_all(&folder);
+        let _ = std::fs::remove_dir_all(&outside);
     }
 
     #[test]
