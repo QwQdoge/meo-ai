@@ -10506,8 +10506,8 @@ fn local_usage_items(s: &State) -> Vec<Value> {
 
 /// Settings > Usage: headline numbers with context, a continuous 30-day chart, then the breakdowns.
 fn usage_items(s: &State) -> Vec<Value> {
-    let mut local = local_usage_items(s);
-    local.insert(0, json!({
+    let mut items = usage_items_inner(s);
+    items.push(json!({
         "id": "usage_backfill", "kind": "item", "label": "Earlier chats",
         "value": match (s.backfilling, s.backfilled) {
             (true, _) => "Counting…".to_owned(),
@@ -10516,6 +10516,12 @@ fn usage_items(s: &State) -> Vec<Value> {
         },
         "buttons": if s.backfilling { json!([]) } else { json!([button(if s.backfilled.is_some() { "Count again" } else { "Count earlier chats" }, "primary", json!({ "type": "backfill_usage" }))]) },
     }));
+    items
+}
+
+fn usage_items_inner(s: &State) -> Vec<Value> {
+    let mut local = local_usage_items(s);
+
     let Some(usage) = &s.usage else {
         local.push(
             json!({ "id": "usage_loading", "label": "Loading…", "kind": "info", "value": "" }),
