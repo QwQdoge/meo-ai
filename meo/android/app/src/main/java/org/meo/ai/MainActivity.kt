@@ -60,12 +60,24 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    // The core has no clock of its own: it delivers scheduled tasks on this tick while the app is open.
+    private val clock = android.os.Handler(android.os.Looper.getMainLooper())
+    private val tick = object : Runnable {
+        override fun run() {
+            val offset = java.util.TimeZone.getDefault().getOffset(System.currentTimeMillis()) / 60000
+            model.core.dispatch(JSONObject().put("type", "tick").put("utc_offset_min", offset))
+            clock.postDelayed(this, 15000)
+        }
+    }
+
     override fun onStart() {
         super.onStart()
         model.core.dispatch(JSONObject().put("type", "set_foreground").put("visible", true))
+        clock.postDelayed(tick, 3000)
     }
 
     override fun onStop() {
+        clock.removeCallbacks(tick)
         model.core.dispatch(JSONObject().put("type", "set_foreground").put("visible", false))
         super.onStop()
     }

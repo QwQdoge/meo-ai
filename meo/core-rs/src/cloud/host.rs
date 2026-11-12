@@ -234,6 +234,24 @@ mod native {
             })
         }
 
+        /// Background jobs that settled since the last call (each once), for the model's next result.
+        pub fn settled_jobs(&self) -> Vec<String> {
+            self.inner.lock().unwrap().ws.jobs().settled_notices()
+        }
+
+        /// The folder's background jobs as text, and the same as rows (id, label, status, running, seconds).
+        pub fn jobs_text(&self) -> String {
+            self.inner.lock().unwrap().ws.jobs().list()
+        }
+
+        pub fn job_rows(&self) -> Vec<(String, String, String, bool, u64)> {
+            self.inner.lock().unwrap().ws.jobs().rows()
+        }
+
+        pub fn stop_job(&self, id: &str) -> Result<String, String> {
+            self.inner.lock().unwrap().ws.jobs().stop(id)
+        }
+
         pub fn root(&self) -> &str {
             &self.root
         }
@@ -530,6 +548,22 @@ impl Host {
         })
     }
 
+    pub fn settled_jobs(&self) -> Vec<String> {
+        Vec::new()
+    }
+
+    pub fn jobs_text(&self) -> String {
+        "Background jobs need the desktop app.".to_owned()
+    }
+
+    pub fn job_rows(&self) -> Vec<(String, String, String, bool, u64)> {
+        Vec::new()
+    }
+
+    pub fn stop_job(&self, _id: &str) -> Result<String, String> {
+        Err("Background jobs need the desktop app.".to_owned())
+    }
+
     pub fn root(&self) -> &str {
         &self.root
     }
@@ -613,7 +647,9 @@ impl Host {
             Tool::Run { .. } => Outcome::fail(
                 "commands cannot run in a browser; use the desktop app, or edit files and tell the user what to run",
             ),
+            Tool::Job(_) => Outcome::fail("background jobs cannot run in a browser; use the desktop app"),
             Tool::Subagent { .. }
+            | Tool::Schedule { .. }
             | Tool::AgentSend { .. }
             | Tool::AgentList
             | Tool::WebSearch { .. }

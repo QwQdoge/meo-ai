@@ -12,6 +12,8 @@ pub mod auth;
 pub mod compaction;
 pub mod docs;
 pub mod host;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod jobs;
 pub mod locale;
 pub mod manifest;
 pub mod mathtext;
@@ -23,6 +25,7 @@ pub mod project_env;
 pub mod remote;
 pub mod richtext;
 pub mod router;
+pub mod schedule;
 pub mod storage;
 pub mod usage;
 #[cfg(not(target_arch = "wasm32"))]

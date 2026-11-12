@@ -154,6 +154,8 @@ pub struct Workspace {
     /// needs the file to have been read and to be unchanged since (the read-before-edit rule of
     /// DeepSeek Harness' `fs-observation-policy`). Not persisted: a new run reads again.
     observed: Arc<Mutex<HashMap<PathBuf, u64>>>,
+    /// Background jobs of this folder; they outlive a turn and stop when the folder is closed.
+    jobs: Arc<super::jobs::Jobs>,
 }
 
 /// A fingerprint of a file's text, to tell whether it changed since it was read.
@@ -170,7 +172,11 @@ impl Workspace {
         if !root.is_dir() {
             return Err(format!("{path} is not a folder"));
         }
-        Ok(Self { root, observed: Arc::default() })
+        Ok(Self { root, observed: Arc::default(), jobs: Arc::default() })
+    }
+
+    pub fn jobs(&self) -> &super::jobs::Jobs {
+        &self.jobs
     }
 
     pub fn root(&self) -> &Path {
@@ -240,7 +246,9 @@ impl Workspace {
                 command,
                 timeout_secs,
             } => self.command(command, *timeout_secs, env),
+            Tool::Job(op) => self.job(op, env),
             Tool::Subagent { .. }
+            | Tool::Schedule { .. }
             | Tool::WebSearch { .. }
             | Tool::ReadMore { .. }
             | Tool::Mcp { .. }
@@ -547,6 +555,23 @@ impl Workspace {
             }
         }
         done(report.join("\n"))
+    }
+
+    fn job(&self, op: &super::agent::JobOp, env: &[(String, String)]) -> Outcome {
+        use super::agent::JobOp;
+        let result = match op {
+            JobOp::Start { command, label } => self
+                .jobs
+                .start(&self.root, command, label.as_deref(), env)
+                .map(|id| format!("Started {id}. It keeps running in the background; job_output reads what it prints and you are told when it finishes.")),
+            JobOp::List => Ok(self.jobs.list()),
+            JobOp::Output { id, all } => self.jobs.output(id, *all),
+            JobOp::Stop { id } => self.jobs.stop(id),
+        };
+        match result {
+            Ok(text) => done(text),
+            Err(e) => fail(e),
+        }
     }
 
     fn command(

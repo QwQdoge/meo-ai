@@ -161,6 +161,14 @@ ApplicationWindow {
     // Tell the core whether the window is in front, so it only notifies from the background.
     onActiveChanged: core.dispatch(JSON.stringify({ type: "set_foreground", visible: active }))
 
+    // The core has no clock of its own: it delivers scheduled tasks and reports finished jobs on this tick.
+    Timer {
+        interval: 15000
+        running: true
+        repeat: true
+        onTriggered: core.dispatch(JSON.stringify({ type: "tick", utc_offset_min: -new Date().getTimezoneOffset() }))
+    }
+
     function act(action) {
         if (action && action.type === "pick_project_folder") {
             projectFolderDialog.projectId = action.id

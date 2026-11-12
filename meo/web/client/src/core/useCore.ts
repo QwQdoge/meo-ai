@@ -18,6 +18,7 @@ export function useCore() {
 
   useEffect(() => {
     let disposed = false;
+    let clock = 0;
     // The core reports a change for every streamed chunk. Reading the whole view and re-rendering
     // for each one froze long chats, so at most one refresh is done per animation frame (about
     // every 100 ms in a background tab, where frames do not run).
@@ -57,6 +58,8 @@ export function useCore() {
         await instance.start();
         // Live sync with the user's other devices.
         instance.dispatch(JSON.stringify({ type: "realtime" }));
+        // The core has no clock of its own: it delivers scheduled tasks and reports finished jobs on this tick.
+        clock = window.setInterval(() => instance.dispatch(JSON.stringify({ type: "tick", utc_offset_min: -new Date().getTimezoneOffset() })), 15000);
         if (location.pathname === CALLBACK_PATH) {
           const url = location.href;
           history.replaceState(null, "", "/");
@@ -68,6 +71,7 @@ export function useCore() {
     })();
     return () => {
       disposed = true;
+      window.clearInterval(clock);
       core.current?.free();
       core.current = null;
     };
