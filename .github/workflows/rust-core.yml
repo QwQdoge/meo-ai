@@ -8,12 +8,14 @@ on:
       - 'meo/ui-schema/**'
       - 'meo/android/**'
       - '.github/workflows/rust-core.yml'
+      - '.github/workflows/tmp-resolve-rust-deps.yml'
   pull_request:
     paths:
       - 'meo/core-rs/**'
       - 'meo/ui-schema/**'
       - 'meo/android/**'
       - '.github/workflows/rust-core.yml'
+      - '.github/workflows/tmp-resolve-rust-deps.yml'
 
 permissions:
   contents: read
