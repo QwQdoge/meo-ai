@@ -12170,6 +12170,7 @@ fn project_page(s: &State, id: &str) -> Value {
             { "label": "More", "items": more.iter().map(|x| nav_entry(x)).collect::<Vec<_>>() },
         ],
         "selected": selected,
+        "close": { "type": "navigate", "route": "projects" },
     })
 }
 
