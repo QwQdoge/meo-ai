@@ -4,7 +4,7 @@ import {
   Image as ImageIcon, Info, Lightbulb, Loader, Mail, OctagonAlert, Pencil, RefreshCw, Search, Send, Shield,
   SlidersHorizontal, Sparkles, TriangleAlert, Workflow, Briefcase, Folder, MessageSquare, Menu, MoreVertical, Monitor,
   Cable, FilePen, Terminal, Wrench, Zap, ChevronUp, Flag, Circle, Ban, Hourglass,
-  PanelLeftClose, PanelLeftOpen, Paperclip, Plus, Puzzle, Settings, ArrowUp, ArrowDown, Square, X, type LucideIcon,
+  PanelLeftClose, PanelLeftOpen, Paperclip, Plus, Puzzle, Settings, ArrowUp, ArrowDown, Square, X, Pause, Play, Minus, type LucideIcon,
 } from "lucide-react";
 
 // The core names icons with Material Symbols names (desktop and Android draw those). The Web draws
@@ -15,7 +15,7 @@ const MAP: Record<string, LucideIcon> = {
   check_circle: CircleCheck, check: Check, error: CircleX, language: Globe, account_tree: Workflow, shield: Shield,
   search: Search, content_copy: Copy, edit: Pencil, refresh: RefreshCw, mail: Mail, send: Send, auto_awesome: Sparkles,
   expand_more: ChevronDown, chat: MessageSquare, work: Briefcase, skills: Puzzle, projects: Folder, settings: Settings,
-  add: Plus, menu: Menu, more: MoreVertical, attach: Paperclip, arrow_up: ArrowUp, arrow_down: ArrowDown, stop: Square, close: X, device: Monitor,
+  pause: Pause, play_arrow: Play, remove: Minus, add: Plus, menu: Menu, more: MoreVertical, attach: Paperclip, arrow_up: ArrowUp, arrow_down: ArrowDown, stop: Square, close: X, device: Monitor,
   cable: Cable, edit_document: FilePen, terminal: Terminal, build: Wrench, bolt: Zap, expand_less: ChevronUp,
   collapse: PanelLeftClose, expand: PanelLeftOpen, chevron_right: ChevronRight, progress_activity: Loader,
   flag: Flag, radio_button_unchecked: Circle, block: Ban, hourglass_empty: Hourglass,

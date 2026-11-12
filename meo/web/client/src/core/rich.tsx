@@ -102,7 +102,7 @@ export function PlanCard({ block, act }: { block: Spec; act?: (action: Spec) => 
     <section className={`core-plan ${status}${block.live ? " live" : ""}`} aria-live="polite">
       <header>
         <span className="core-plan-mark">
-          <Icon name={status === "done" ? "check_circle" : status === "blocked" ? "block" : "flag"} size={16} />
+          <Icon name={status === "done" ? "check_circle" : status === "blocked" ? "block" : status === "paused" ? "pause" : "flag"} size={16} />
         </span>
         <span className="core-plan-goal">{goal?.objective ?? "Tasks"}</span>
         {items.length > 0 && <span className="core-plan-count">{done}/{items.length}</span>}
