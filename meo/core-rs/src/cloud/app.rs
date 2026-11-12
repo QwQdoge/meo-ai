@@ -3133,6 +3133,7 @@ impl AppCore {
                 Some(id) => format!("/projects/{id}"),
                 None => "/projects".into(),
             },
+            "settings" if s.settings_section.is_empty() => "/settings".into(),
             "settings" => format!("/settings/{}", s.settings_section),
             r @ ("chat" | "work") => match &s.active {
                 Some(id) if s.work_ids.contains(id) == (r == "work") => format!("/{r}/{id}"),
