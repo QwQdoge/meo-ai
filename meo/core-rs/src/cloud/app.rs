@@ -119,6 +119,12 @@ pub enum Action {
     Navigate {
         route: String,
     },
+    /// Closes Settings and returns to the page that was open before it.
+    CloseSettings,
+    /// Opens what an address of the web client names (`/chat/<id>`, `/projects/<id>`, `/settings/<section>`, ...).
+    OpenPath {
+        path: String,
+    },
     NewConversation,
     /// A fresh Work task.
     NewTask,
@@ -763,6 +769,8 @@ struct State {
     sync_live: bool,
     foreground: bool,
     open_project: Option<String>,
+    /// Where closing Settings goes back to: the route and project that were open before it.
+    settings_back: Option<(String, Option<String>)>,
     project_memories: Vec<Value>,
     project_chats: Vec<ConversationSummary>,
     /// The user's own memories (Settings > Personalization).
@@ -1002,15 +1010,7 @@ impl AppCore {
             Action::SignIn => self.sign_in(),
             Action::SignOut => self.sign_out(),
             Action::AuthCallback { url } => self.complete_sign_in(&url).await,
-            Action::Navigate { route } => {
-                if self.manifest.renderer(&route).is_some() {
-                    self.update(|s| {
-                        s.route = route.clone();
-                        s.open_project = None;
-                    });
-                    self.load_route(&route).await;
-                }
-            }
+            Action::Navigate { route } => self.navigate(route).await,
             Action::NewConversation => self.update(|s| {
                 s.files.clear();
                 s.new_chat_project = None;
@@ -1258,15 +1258,9 @@ impl AppCore {
                 s.settings_section = id;
                 s.settings_query.clear();
             }),
-            Action::OpenSettings { section } => {
-                self.update(|s| {
-                    s.route = "settings".into();
-                    s.open_project = None;
-                    s.settings_section = section;
-                    s.settings_query.clear();
-                });
-                self.load_route("settings").await;
-            }
+            Action::CloseSettings => self.close_settings().await,
+            Action::OpenPath { path } => self.open_path(&path).await,
+            Action::OpenSettings { section } => self.open_settings(section).await,
             Action::SearchSettings { text } => self.update(|s| s.settings_query = text),
             Action::NewProfile => self.new_profile().await,
             Action::BeginGenerateProfile => self.prompt(
@@ -3085,8 +3079,83 @@ impl AppCore {
         self.update(|s| s.projects = Some(r.map_err(|e| e.to_string())));
     }
 
+    async fn navigate(&self, route: String) {
+        if self.manifest.renderer(&route).is_some() {
+            self.update(|s| {
+                if route == "settings" {
+                    Self::remember_back(s);
+                }
+                s.route = route.clone();
+                s.open_project = None;
+            });
+            self.load_route(&route).await;
+        }
+    }
+
+    async fn open_settings(&self, section: String) {
+        self.update(|s| {
+            Self::remember_back(s);
+            s.route = "settings".into();
+            s.open_project = None;
+            s.settings_section = section;
+            s.settings_query.clear();
+        });
+        self.load_route("settings").await;
+    }
+
+    /// Notes the page Settings opened over, unless Settings itself is already showing.
+    fn remember_back(s: &mut State) {
+        if s.route != "settings" {
+            s.settings_back = Some((s.route.clone(), s.open_project.clone()));
+        }
+    }
+
+    async fn close_settings(&self) {
+        let (route, project) = self
+            .state
+            .lock()
+            .unwrap()
+            .settings_back
+            .take()
+            .unwrap_or_else(|| ("chat".into(), None));
+        let route = if route == "settings" { "chat".to_owned() } else { route };
+        self.update(|s| {
+            s.route = route.clone();
+            s.open_project = project.clone();
+        });
+        self.load_route(&route).await;
+    }
+
+    /// The address that shows what is on screen, for clients that have one (the web client).
+    fn path_of(s: &State) -> String {
+        match s.route.as_str() {
+            "projects" => match &s.open_project {
+                Some(id) => format!("/projects/{id}"),
+                None => "/projects".into(),
+            },
+            "settings" => format!("/settings/{}", s.settings_section),
+            r @ ("chat" | "work") => match &s.active {
+                Some(id) if s.work_ids.contains(id) == (r == "work") => format!("/{r}/{id}"),
+                _ => format!("/{r}"),
+            },
+            r => format!("/{r}"),
+        }
+    }
+
+    async fn open_path(&self, path: &str) {
+        let parts: Vec<&str> = path.trim_matches('/').split('/').filter(|p| !p.is_empty()).collect();
+        match parts.as_slice() {
+            ["chat" | "work", id] => self.select_conversation((*id).to_owned()).await,
+            ["projects", id] => self.open_project((*id).to_owned()).await,
+            ["settings", section] => self.open_settings((*section).to_owned()).await,
+            [route] => self.navigate((*route).to_owned()).await,
+            _ => {}
+        }
+    }
+
     async fn open_project(&self, id: String) {
         self.update(|s| {
+            s.route = "projects".into();
             s.open_project = Some(id.clone());
             s.project_memories.clear();
             s.project_chats.clear();
@@ -8850,6 +8919,7 @@ impl AppCore {
             "online": s.online,
             "sync": { "live": s.sync_live, "devices": s.sync_devices },
             "route": s.route,
+            "path": if signed_in { Self::path_of(&s) } else { "/".into() },
             "navigation": if signed_in { self.manifest.nav_json(&s.route) } else { json!([]) },
             "sidebar": if signed_in { self.sidebar(&s) } else { Value::Null },
             "page": page,
@@ -9085,7 +9155,7 @@ impl AppCore {
             "kind": "settings", "standalone": true, "title": "Settings", "sections": sections, "nav": nav, "selected": selected,
             "search": { "placeholder": "Search settings", "value": s.settings_query,
                         "action": { "type": "search_settings" }, "field": "text" },
-            "close": { "type": "navigate", "route": "chat" },
+            "close": { "type": "close_settings" },
         })
     }
 }
@@ -14701,6 +14771,28 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn opening_a_project_from_any_page_stays_on_projects_and_addresses_follow_the_page() {
+        let c = signed_in_core();
+        c.update(|s| {
+            s.route = "skills".into();
+            s.projects = Some(Ok(vec![json!({ "id": "p1", "name": "Trip", "description": "", "instructions": "" })]));
+        });
+        futures_executor::block_on(c.dispatch(Action::OpenProject { id: "p1".into() }));
+        let v = c.view();
+        assert_eq!((v["route"].as_str(), v["path"].as_str()), (Some("projects"), Some("/projects/p1")));
+        // Settings open over it and closing returns to the same project, not to Chat.
+        futures_executor::block_on(c.dispatch(Action::OpenSettings { section: "general".into() }));
+        assert_eq!(c.view()["path"], "/settings/general");
+        futures_executor::block_on(c.dispatch(Action::CloseSettings));
+        assert_eq!(c.view()["path"], "/projects/p1");
+        // An address opens the page it names.
+        futures_executor::block_on(c.dispatch(Action::OpenPath { path: "/schedule".into() }));
+        assert_eq!(c.view()["path"], "/schedule");
+        futures_executor::block_on(c.dispatch(Action::OpenPath { path: "/projects".into() }));
+        assert_eq!(c.view()["path"], "/projects");
     }
 
     fn project_core(folder: Option<&std::path::Path>) -> AppCore {

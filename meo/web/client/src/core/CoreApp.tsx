@@ -222,9 +222,18 @@ function Dialog({ dialog, act }: { dialog: Spec; act: Act }) {
   const [value, setValue] = useState<string>(dialog.input?.value ?? "");
   const run = (a: Spec) => act(a.withInput ? { ...a.action, text: value } : a.action);
   const [confirm, cancel] = dialog.actions ?? [];
+  // Closing is the cancel button's action when there is one, so a pressed outside area or Escape
+  // does what Cancel does (a password prompt, for instance, must tell the core it was refused).
+  const close = () => (cancel ? act(cancel.action) : act({ type: "close_dialog" }));
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
   return (
-    <div className="core-scrim" onKeyDown={(e) => e.key === "Escape" && act({ type: "close_dialog" })}>
+    <div className="core-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) close(); }}>
       <div className="core-dialog" role="dialog" aria-modal="true" aria-label={dialog.title}>
+        <button className="core-modal-close" aria-label="Close" title="Close (Esc)" onClick={close}><Icon name="close" size={18} /></button>
         <h2>{dialog.title}</h2>
         {dialog.text && <p className="core-muted">{dialog.text}</p>}
         {dialog.input && dialog.input.multiline ? (

@@ -635,3 +635,12 @@
 .core-app .core-page .core-list .core-row { background: var(--tonal); border-color: transparent; }
 .core-app .core-page .core-list .core-row span { font-size: inherit; }
 .core-badge { box-shadow: inset 0 0 0 1px rgb(var(--border-light)); }
+
+/* Dialogs from the core: fade in the scrim, pop in the card, close button in the corner. */
+.core-app .core-scrim { animation: core-fade-in .2s var(--ease); }
+.core-app .core-dialog { position: relative; animation: core-pop-in .2s var(--ease); }
+.core-app .core-dialog h2 { padding-inline-end: 36px; }
+.core-app .core-inspector { animation: core-slide-in .22s var(--ease); }
+@keyframes core-slide-in { from { opacity: 0; transform: translateX(16px); } }
+@media (prefers-reduced-motion: reduce) { .core-app .core-scrim, .core-app .core-dialog, .core-app .core-inspector, .core-app .core-modal, .core-app .core-modal-card { animation: none; } }
+:root[data-reduce-motion="true"] .core-app .core-scrim, :root[data-reduce-motion="true"] .core-app .core-dialog, :root[data-reduce-motion="true"] .core-app .core-inspector { animation: none; }

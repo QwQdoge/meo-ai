@@ -5,6 +5,8 @@ export type Action = Record<string, unknown> & { type: string };
 export type View = Record<string, any>;
 
 const CALLBACK_PATH = "/oauth/openid/callback";
+/** The address the tab was opened at, kept across the sign-in redirect. */
+const WANTED = "meo.wanted_path";
 
 /**
  * Runs the shared Rust core in the page. The page holds no product logic: it
@@ -15,6 +17,9 @@ export function useCore() {
   const [view, setView] = useState<View>({});
   const [error, setError] = useState<string | null>(null);
   const core = useRef<WebCore | null>(null);
+  // The address bar follows the page the core shows (`view.path`) and opening an address opens that page.
+  // It is not written until the address the tab was opened at has been applied.
+  const synced = useRef(false);
 
   useEffect(() => {
     let disposed = false;
@@ -37,6 +42,8 @@ export function useCore() {
       try {
         await init();
         if (disposed) return;
+        const wanted = location.pathname !== CALLBACK_PATH && location.pathname !== "/" ? location.pathname : null;
+        if (wanted) sessionStorage.setItem(WANTED, wanted);
         const instance = new WebCore(
           "",
           `${location.origin}${CALLBACK_PATH}`,
@@ -67,6 +74,25 @@ export function useCore() {
           history.replaceState(null, "", "/");
           instance.dispatch(JSON.stringify({ type: "auth_callback", url }));
         }
+        const open = (path: string) => instance.dispatch(JSON.stringify({ type: "open_path", path }));
+        // Back and forward buttons.
+        window.addEventListener("popstate", () => { if (!disposed && core.current === instance) open(location.pathname); });
+        // The address the tab was opened at is applied once the user is signed in (after the sign-in
+        // redirect, when there was one); until then the address bar is left alone.
+        const first = sessionStorage.getItem(WANTED);
+        if (!first) synced.current = true;
+        else {
+          for (let i = 0; i < 75 && !disposed; i++) {
+            if (JSON.parse(instance.view()).auth?.state === "signed_in") {
+              sessionStorage.removeItem(WANTED);
+              open(first);
+              synced.current = true;
+              break;
+            }
+            await new Promise((done) => window.setTimeout(done, 200));
+          }
+        }
+        setView(JSON.parse(instance.view()));
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : String(cause));
       }
@@ -78,6 +104,15 @@ export function useCore() {
       core.current = null;
     };
   }, []);
+
+  // Follow the page in the address bar: a new entry for every page the user moves to.
+  useEffect(() => {
+    if (!synced.current || view.auth?.state !== "signed_in" || typeof view.path !== "string") return;
+    if (location.pathname === view.path) return;
+    // The bare address becomes the page it shows without an extra entry to go back through.
+    if (location.pathname === "/") history.replaceState(null, "", view.path);
+    else history.pushState(null, "", view.path);
+  }, [view]);
 
   const act = (action: Action | null | undefined) => {
     if (action) core.current?.dispatch(JSON.stringify(action));
