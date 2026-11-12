@@ -52,6 +52,9 @@ pub struct Task {
     pub created: i64,
     pub last: Option<i64>,
     pub deliveries: u32,
+    /// The chat of the latest delivery, to open it from the Scheduled page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_chat: Option<String>,
 }
 
 // ---- civil time ----------------------------------------------------------------------------------
@@ -359,6 +362,7 @@ impl Task {
             created: now,
             last: None,
             deliveries: 0,
+            last_chat: None,
         })
     }
 

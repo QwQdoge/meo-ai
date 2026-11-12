@@ -11,6 +11,7 @@
 //!   remote.decision {to, allow}                     the controller's answer
 //!   remote.stop     {to}                            stop the running answer
 //!   remote.progress {to, plan, steps, text, waiting}  what the running task is doing, for the controller to show live
+//!   remote.control  {to, op, text?}                 pause, resume or steer the task running on the target
 //!   remote.jobs_query {to}                          ask a host for its background jobs
 //!   remote.jobs     {to, rows}                      the host's jobs: id, label, status, running, seconds
 //!   remote.job_stop {to, id}                        stop one of the host's background jobs

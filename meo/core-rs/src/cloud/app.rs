@@ -96,6 +96,15 @@ pub enum Action {
     StopJob {
         id: String,
     },
+    /// Pause or resume the task running on another device (`pause` / `resume`).
+    RemoteControl {
+        op: String,
+    },
+    /// The prompt for what to tell the task running on another device while it works.
+    BeginRemoteSteer,
+    RemoteSteer {
+        text: String,
+    },
     /// The Stop button of a background job running on another of the user's devices.
     RemoteStopJob {
         device: String,
@@ -585,6 +594,10 @@ impl NativeRun {
 /// The tool loop of the current Work message: Codex-style turns of "answer, tool, result, answer".
 #[derive(Default)]
 struct AgentRun {
+    /// The controlling device paused the run: it waits before its next round.
+    paused: bool,
+    /// What the controlling device said while the run works: told to the model with the next result.
+    steer: Vec<String>,
     /// The task list of a run on the fenced protocol (a native run keeps it in `NativeRun`).
     tasks: Vec<Value>,
     /// Sub-agents working right now (name, task): they show in the run's progress card until they report.
@@ -709,6 +722,8 @@ struct State {
     jobs_seen: HashMap<String, bool>,
     /// Projects whose bindings changed here and are not yet told to the other devices.
     projects_to_share: Vec<String>,
+    /// The scheduled task being delivered right now (its id), for the Scheduled page.
+    schedule_running: Option<String>,
     remote: RemoteLink,
     auth: AuthState,
     session: Option<Session>,
@@ -1290,6 +1305,18 @@ impl AppCore {
                 }
             }
             Action::RemoteStopJob { device, id } => self.remote_stop_job(&device, &id).await,
+            Action::RemoteControl { op } => self.remote_control(&op, None).await,
+            Action::BeginRemoteSteer => self.prompt(
+                "Change course",
+                "Tell the running task what changed. It reads this before its next step and carries on with it in mind.",
+                "",
+                true,
+                input_button("Send", "primary", json!({ "type": "remote_steer" })),
+            ),
+            Action::RemoteSteer { text } => {
+                self.update(|s| s.dialog = None);
+                self.remote_control("steer", Some(text.trim().to_owned())).await;
+            }
             Action::StopJob { id } => {
                 let host = self.state.lock().unwrap().agent.host.clone();
                 match host.map(|h| h.stop_job(&id)) {
@@ -4200,7 +4227,7 @@ impl AppCore {
                     t.chars().skip(skip).collect()
                 })
                 .unwrap_or_default();
-            let payload = json!({ "plan": progress_of(&s, true), "steps": steps, "text": text, "waiting": s.agent.pending.is_some() });
+            let payload = json!({ "plan": progress_of(&s, true), "steps": steps, "text": text, "waiting": s.agent.pending.is_some(), "paused": s.agent.paused });
             (to, payload)
         };
         self.remote_send(remote::message("progress", &sent.0, sent.1)).await;
@@ -4231,6 +4258,16 @@ impl AppCore {
             }
             self.remote_send(shot).await;
         }
+    }
+
+    /// Controller: pause, resume or steer the task running on the host.
+    async fn remote_control(&self, op: &str, text: Option<String>) {
+        let host = self.state.lock().unwrap().remote.task_host.clone();
+        let Some(host) = host else { return };
+        if op == "steer" && text.as_deref().is_none_or(str::is_empty) {
+            return;
+        }
+        self.remote_send(remote::message("control", &host, json!({ "op": op, "text": text }))).await;
     }
 
     /// Controller: asks every online device that can host for its background jobs.
@@ -4488,6 +4525,25 @@ impl AppCore {
                     .collect();
                 self.remote_send(remote::message("jobs", &from, json!({ "rows": rows }))).await;
             }
+            // The controlling device pauses, resumes or steers the task running here.
+            "remote.control" => {
+                let mine = self.state.lock().unwrap().remote.controller.as_deref() == Some(from.as_str());
+                if !mine {
+                    return;
+                }
+                match data["op"].as_str().unwrap_or_default() {
+                    "pause" => self.update(|s| s.agent.paused = true),
+                    "resume" => self.update(|s| s.agent.paused = false),
+                    "steer" => {
+                        let text: String = data["text"].as_str().unwrap_or_default().trim().chars().take(2000).collect();
+                        if !text.is_empty() {
+                            self.update(|s| s.agent.steer.push(text));
+                        }
+                    }
+                    _ => return,
+                }
+                self.remote_progress(true).await;
+            }
             "remote.progress" => {
                 let mine = self.state.lock().unwrap().remote.task_host.as_deref() == Some(from.as_str());
                 if !mine {
@@ -4495,13 +4551,22 @@ impl AppCore {
                 }
                 let steps: Vec<Value> = data["steps"].as_array().cloned().unwrap_or_default().into_iter().take(12).collect();
                 let text: String = data["text"].as_str().unwrap_or_default().chars().take(1500).collect();
+                let paused = data["paused"] == true;
+                // The host's own buttons would act on the host's goal from here; the card gets this device's
+                // controls for the task instead: pause or resume, and change course.
+                let controls = json!([
+                    if paused { json!({ "label": "Resume", "icon": "play_arrow", "action": { "type": "remote_control", "op": "resume" } }) }
+                    else { json!({ "label": "Pause", "icon": "pause", "action": { "type": "remote_control", "op": "pause" } }) },
+                    { "label": "Change course", "icon": "edit", "action": { "type": "begin_remote_steer" } },
+                ]);
                 let mut plan = data["plan"].clone();
-                // The host's own buttons (pause, edit) act on the host's goal, not on anything here.
                 if plan.is_object() {
-                    plan["actions"] = json!([]);
+                    plan["actions"] = controls;
+                } else {
+                    plan = json!({ "type": "plan", "tasks": true, "live": true, "kind": "tip", "title": "Task on the other device", "text": "", "items": [], "done": 0, "total": 0, "goal": null, "actions": controls });
                 }
                 self.update(|s| {
-                    s.remote.progress = Some(json!({ "plan": plan, "steps": steps, "text": text, "waiting": data["waiting"] == true }));
+                    s.remote.progress = Some(json!({ "plan": plan, "steps": steps, "text": text, "waiting": data["waiting"] == true, "paused": paused }));
                 });
             }
             "remote.projects" => {
@@ -6536,7 +6601,17 @@ impl AppCore {
         }
         self.hooks.notify("Scheduled task", &task.title);
         let text = format!("⏰ Scheduled task “{}”\n\n{}", task.title, task.prompt);
+        self.update(|s| s.schedule_running = Some(task.id.clone()));
         Box::pin(self.send(text)).await;
+        // Over: the Scheduled page keeps a way back to what it did.
+        let chat = self.state.lock().unwrap().active.clone();
+        self.update(|s| {
+            s.schedule_running = None;
+            if let Some(t) = s.schedule.iter_mut().find(|t| t.id == task.id) {
+                t.last_chat = chat;
+            }
+        });
+        self.save_schedule();
         if task.target == "session" && task.conversation.is_none() {
             let chat = self.state.lock().unwrap().active.clone();
             self.update(|s| {
@@ -8200,6 +8275,15 @@ impl AppCore {
             self.step("answer", "Answer", "", "done", vec![]);
             return;
         }
+        // Paused from the controlling device: wait here, between rounds, until it resumes or stops the run.
+        #[cfg(not(target_arch = "wasm32"))]
+        while self.state.lock().unwrap().agent.paused && !self.cancel.load(Ordering::SeqCst) {
+            self.remote_progress(false).await;
+            futures_timer::Delay::new(std::time::Duration::from_millis(400)).await;
+        }
+        // What the controlling device said meanwhile goes to the model with this result.
+        let steer = std::mem::take(&mut self.state.lock().unwrap().agent.steer);
+        let text = steered(text, &steer);
         self.maybe_compact(id).await;
         // A native round ends here: the result of the call goes back as a tool message (with the
         // round's prose and calls), and the same task continues, not a new user message.
@@ -9364,6 +9448,15 @@ fn progress_of(s: &State, live: bool) -> Option<Value> {
         }
     }
     richtext::plan_block(goal.as_ref(), &tasks, live)
+}
+
+/// The next result with what the controlling device said while the run worked.
+fn steered(text: String, steer: &[String]) -> String {
+    if steer.is_empty() {
+        text
+    } else {
+        format!("{text}\n\n<user_update>\nThe user changed course while you work. Take this into account from now on:\n{}\n</user_update>", steer.join("\n"))
+    }
 }
 
 fn stored_plan(steps: &[Value]) -> Option<Value> {
@@ -10627,11 +10720,29 @@ fn schedule_page(s: &State) -> Value {
             actions.push(btn("Delete", "danger", json!({ "type": "schedule_op", "id": t.id, "op": "delete" })));
             let sent = if t.deliveries == 0 { String::new() } else { format!(" · sent {}×", t.deliveries) };
             let prompt: String = t.prompt.chars().take(160).collect();
+            // A task being delivered now shows what it is doing, from the same progress as in its chat.
+            let running = s.schedule_running.as_deref() == Some(t.id.as_str());
+            let mut live = String::new();
+            if running {
+                let card = progress_of(s, true);
+                if let Some(c) = &card {
+                    live.push_str(&format!("\nProgress: {}/{} tasks", c["done"].as_u64().unwrap_or(0), c["total"].as_u64().unwrap_or(0)));
+                }
+                let step = s.activity.as_ref().and_then(|(_, steps)| visible_steps(steps).into_iter().rev().find(|x| x["status"] == "running").or_else(|| visible_steps(steps).pop()));
+                if let Some(x) = step {
+                    live.push_str(&format!("\nNow: {}", x["title"].as_str().unwrap_or_default()));
+                }
+                if let Some(chat) = s.active.clone() {
+                    actions.insert(0, btn("Open chat", "primary", json!({ "type": "select_conversation", "id": chat })));
+                }
+            } else if let Some(chat) = &t.last_chat {
+                actions.insert(0, btn("Last run", "secondary", json!({ "type": "select_conversation", "id": chat })));
+            }
             json!({
                 "id": t.id, "title": t.title,
-                "subtitle": format!("{}{}\n{}", t.timing_text(), sent, prompt),
-                "badge": t.status_text(now),
-                "tone": if t.ended || !t.active { "muted" } else if t.due(now) { "warn" } else { "ok" },
+                "subtitle": format!("{}{}\n{}{}", t.timing_text(), sent, prompt, live),
+                "badge": if running { "running".to_owned() } else { t.status_text(now) },
+                "tone": if running { "ok" } else if t.ended || !t.active { "muted" } else if t.due(now) { "warn" } else { "ok" },
                 "actions": actions,
             })
         })
@@ -10941,7 +11052,7 @@ fn conversation_page(s: &State) -> Value {
         messages.push(json!({
             "role": "assistant", "text": text, "streaming": true, "blocks": blocks,
             "steps": p["steps"], "stepsOpen": true, "stepsLive": true,
-            "stepsLabel": if waiting { format!("Waiting for your OK · {name}") } else { format!("Working on {name}…") },
+            "stepsLabel": if p["paused"] == true { format!("Paused · {name}") } else if waiting { format!("Waiting for your OK · {name}") } else { format!("Working on {name}…") },
             "remote": name,
         }));
     }
@@ -14460,7 +14571,8 @@ mod tests {
         assert_eq!(live["streaming"], true);
         assert_eq!(live["stepsLabel"], "Working on Studio PC…");
         assert_eq!(live["blocks"][0]["type"], "plan");
-        assert_eq!(live["blocks"][0]["actions"], json!([]), "the host's goal buttons do nothing here");
+        let kinds: Vec<&str> = live["blocks"][0]["actions"].as_array().unwrap().iter().filter_map(|a| a["action"]["type"].as_str()).collect();
+        assert_eq!(kinds, ["remote_control", "begin_remote_steer"], "this device's controls, never the host's goal buttons");
         assert!(live["steps"].as_array().is_some_and(|s| !s.is_empty()));
         // Only the device the task went to may report on it.
         let stranger = json!({ "origin": "other", "to": controller.client_id, "plan": null, "steps": [], "text": "fake" });
@@ -14496,6 +14608,81 @@ mod tests {
         assert!(!c.run_fenced_tasks(&json!([{ "title": "a", "state": "doing" }, { "title": "b", "state": "doing" }])).ok);
         assert!(!c.run_fenced_tasks(&json!([{ "title": "a", "state": "todo" }, { "title": "a", "state": "todo" }])).ok);
         assert!(!c.run_fenced_tasks(&json!([])).ok);
+    }
+
+    #[test]
+    fn the_controller_can_pause_resume_and_steer_the_task_running_on_the_other_device() {
+        let folder = temp_folder("control");
+        let api = fake_api(vec!["ok"]);
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        // Controller side: the card carries this device's controls, and they send messages to the host.
+        let controller = work_core(&api, &folder, "all");
+        controller.update(|s| {
+            s.remote.devices.insert("desk".into(), remote::Device { id: "desk".into(), name: "Studio PC".into(), platform: "linux", hosts: true });
+            s.remote.task_host = Some("desk".into());
+        });
+        let progress = |paused: bool| json!({ "origin": "desk", "to": controller.client_id, "plan": null, "steps": [], "text": "", "paused": paused });
+        rt.block_on(controller.on_remote_message("remote.progress", &progress(false), false));
+        let view = controller.view();
+        let card = &view["page"]["messages"].as_array().unwrap().last().unwrap()["blocks"][0];
+        assert_eq!(card["actions"][0]["label"], "Pause");
+        assert_eq!(card["actions"][1]["action"]["type"], "begin_remote_steer");
+        rt.block_on(controller.on_remote_message("remote.progress", &progress(true), false));
+        let last = controller.view()["page"]["messages"].as_array().unwrap().last().unwrap().clone();
+        assert_eq!(last["blocks"][0]["actions"][0]["label"], "Resume");
+        assert_eq!(last["stepsLabel"], "Paused · Studio PC");
+        rt.block_on(controller.dispatch(Action::RemoteControl { op: "pause".into() }));
+        rt.block_on(controller.dispatch(Action::RemoteSteer { text: "  use the staging server  ".into() }));
+        rt.block_on(controller.dispatch(Action::RemoteSteer { text: "   ".into() }));
+        let sent: Vec<Value> = api.remotes.lock().unwrap().iter().filter(|m| m["type"] == "remote.control").cloned().collect();
+        assert_eq!(sent.len(), 2, "an empty steer is not sent: {sent:?}");
+        assert_eq!((sent[0]["op"].as_str(), sent[0]["to"].as_str()), (Some("pause"), Some("desk")));
+        assert_eq!(sent[1]["text"], "use the staging server");
+        // Host side: only the controlling device may do it.
+        let host_api = fake_api(vec!["ok"]);
+        let host = work_core(&host_api, &folder, "all");
+        host.update(|s| s.remote.controller = Some("phone".into()));
+        let from = |who: &str, op: &str, text: Value| json!({ "origin": who, "to": host.client_id, "op": op, "text": text });
+        rt.block_on(host.on_remote_message("remote.control", &from("stranger", "pause", json!(null)), false));
+        assert!(!host.state.lock().unwrap().agent.paused);
+        rt.block_on(host.on_remote_message("remote.control", &from("phone", "pause", json!(null)), false));
+        assert!(host.state.lock().unwrap().agent.paused);
+        rt.block_on(host.on_remote_message("remote.control", &from("phone", "steer", json!("use staging")), false));
+        assert_eq!(host.state.lock().unwrap().agent.steer, ["use staging"]);
+        rt.block_on(host.on_remote_message("remote.control", &from("phone", "resume", json!(null)), false));
+        assert!(!host.state.lock().unwrap().agent.paused);
+        // The model reads it with the next result.
+        let next = steered("Tool result".into(), &["use staging".to_owned()]);
+        assert!(next.starts_with("Tool result") && next.contains("<user_update>") && next.contains("use staging"), "{next}");
+        assert_eq!(steered("Tool result".into(), &[]), "Tool result");
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn the_scheduled_page_shows_a_running_task_with_its_progress_and_a_way_to_its_chat() {
+        let c = signed_in_core();
+        c.run_schedule("schedule_create", &json!({ "title": "Standup", "prompt": "Summarise", "timing": { "kind": "daily", "time": "09:00" } }));
+        c.update(|s| {
+            s.route = "schedule".into();
+            s.active = Some("chat-7".into());
+            s.schedule_running = Some("s1".into());
+            s.agent.tasks = vec![json!({ "title": "Read", "state": "done" }), json!({ "title": "Write", "state": "doing" })];
+            s.activity = Some(("chat-7".into(), vec![json!({ "id": "tool1", "title": "Read notes.txt", "status": "running", "kind": "read" })]));
+        });
+        let task = c.view()["page"]["sections"][0]["items"][0].clone();
+        assert_eq!(task["badge"], "running");
+        let subtitle = task["subtitle"].as_str().unwrap();
+        assert!(subtitle.contains("Progress: 1/2 tasks") && subtitle.contains("Now: Read notes.txt"), "{subtitle}");
+        assert_eq!(task["actions"][0]["label"], "Open chat");
+        assert_eq!(task["actions"][0]["action"], json!({ "type": "select_conversation", "id": "chat-7" }));
+        // Afterwards the task keeps a way back to its last run.
+        c.update(|s| {
+            s.schedule_running = None;
+            s.schedule[0].last_chat = Some("chat-7".into());
+        });
+        let task = c.view()["page"]["sections"][0]["items"][0].clone();
+        assert_ne!(task["badge"], "running");
+        assert_eq!(task["actions"][0]["label"], "Last run");
     }
 
     #[test]
