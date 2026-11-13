@@ -12897,6 +12897,12 @@ fn about_items() -> Vec<Value> {
         json!({ "id": "about_h_legal", "kind": "heading", "label": "Legal" }),
         json!({ "id": "about_license", "kind": "hint", "text": "Meo AI is free software under the GNU General Public License v3.0 or later. It is a fork of Newelle by qwersyk, and its interface is built with MeoUI." }),
         link(
+            "terms",
+            "Terms of service",
+            "meoarch.org/docs/guide/terms",
+            "https://meoarch.org/docs/guide/terms.html",
+        ),
+        link(
             "privacy",
             "Privacy policy",
             "meoarch.org/docs/guide/privacy",
