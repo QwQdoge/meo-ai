@@ -26,6 +26,7 @@ jobs:
       - name: Resolve lopdf in both Rust lockfiles
         run: |
           cargo update --manifest-path meo/core-rs/Cargo.toml -p lopdf --precise 0.47.0
+          cargo update --manifest-path meo/core-rs/Cargo.toml -p zip --precise 9.4.2
           cargo update --manifest-path meo/desktop-rs/Cargo.toml -p lopdf --precise 0.47.0
       - name: Validate core against the generated lockfile
         run: |

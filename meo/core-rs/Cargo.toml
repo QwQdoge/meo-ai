@@ -22,7 +22,7 @@ required-features = ["service"]
 default = ["client", "cloud"]
 client = ["dep:reqwest", "dep:futures-util", "dep:tokio", "dep:url"]
 # Cloud-first application core rendered by every client.
-cloud = ["dep:lopdf", "dep:reqwest", "dep:futures-util", "dep:futures-timer", "dep:url", "dep:bytes", "dep:sha2", "dep:base64", "dep:getrandom", "dep:image"]
+cloud = ["dep:zip", "dep:lopdf", "dep:reqwest", "dep:futures-util", "dep:futures-timer", "dep:url", "dep:bytes", "dep:sha2", "dep:base64", "dep:getrandom", "dep:image"]
 # Browser build of the cloud core (wasm32-unknown-unknown, no tokio/rustls):
 # `cargo build --target wasm32-unknown-unknown --no-default-features --features wasm`.
 wasm = ["cloud", "dep:wasm-bindgen", "dep:wasm-bindgen-futures", "dep:js-sys", "dep:web-sys"]
@@ -60,6 +60,7 @@ tower-http = { version = "0.6", features = ["trace"], optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"], optional = true }
 url = { version = "2", optional = true }
 lopdf = { version = "0.47", default-features = false, optional = true }
+zip = { version = "9.4.2", default-features = false, features = ["deflate"], optional = true }
 uuid = { version = "1", features = ["v4", "serde"], optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
