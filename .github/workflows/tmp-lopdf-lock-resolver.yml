@@ -1,0 +1,54 @@
+name: Temporary lopdf lock resolver
+
+on:
+  push:
+    branches:
+      - maintenance/lopdf-0.47.0-security-20261113
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lopdf-lock-resolver-maintenance/lopdf-0.47.0-security-20261113
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Resolve lopdf in both Rust lockfiles
+        run: |
+          cargo update --manifest-path meo/core-rs/Cargo.toml -p lopdf --precise 0.47.0
+          cargo update --manifest-path meo/desktop-rs/Cargo.toml -p lopdf --precise 0.47.0
+      - name: Validate core against the generated lockfile
+        run: |
+          cargo check --locked --all-features --manifest-path meo/core-rs/Cargo.toml
+          cargo clippy --locked --all-features --all-targets --manifest-path meo/core-rs/Cargo.toml -- -D warnings
+          cargo test --locked --all-features --manifest-path meo/core-rs/Cargo.toml
+          cargo fmt --check --manifest-path meo/core-rs/Cargo.toml
+      - name: Validate desktop against the generated lockfile
+        run: cargo check --locked --manifest-path meo/desktop-rs/Cargo.toml
+      - name: Ensure only the two Cargo lockfiles changed
+        run: |
+          set -euo pipefail
+          changed="$(git status --porcelain=v1 --untracked-files=all | sed 's/^...//')"
+          expected=$(printf '%s\n' 'meo/core-rs/Cargo.lock' 'meo/desktop-rs/Cargo.lock')
+          if [ "$(printf '%s\n' "$changed" | sort)" != "$(printf '%s\n' "$expected" | sort)" ]; then
+            echo "Unexpected working tree changes:"
+            printf '%s\n' "$changed"
+            exit 1
+          fi
+      - name: Commit lockfiles to this maintenance branch only
+        run: |
+          git add meo/core-rs/Cargo.lock meo/desktop-rs/Cargo.lock
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore(deps): resolve lopdf 0.47.0 lockfiles"
+          git push origin "HEAD:${{ github.ref_name }}"
