@@ -1022,6 +1022,17 @@ function LiveStatus({ icon, label, longLabel }: { icon: string; label: string; l
   );
 }
 
+/** Keeps something mounted for `ms` after it is hidden, so it can animate out. */
+function usePresence(open: boolean, ms: number) {
+  const [mounted, setMounted] = useState(open);
+  useEffect(() => {
+    if (open) { setMounted(true); return; }
+    const t = window.setTimeout(() => setMounted(false), ms);
+    return () => window.clearTimeout(t);
+  }, [open, ms]);
+  return { mounted: open || mounted, closing: !open && mounted };
+}
+
 const MessageView = React.memo(
   function MessageView({ m, strings, act }: { m: Spec; strings: Spec; act: Act }) {
     return (
@@ -1040,13 +1051,14 @@ const MessageView = React.memo(
                       {m.steps.map((st: Spec) => st.kind === "note" ? (
                         <li key={st.id} className="step-note"><p>{st.title}</p></li>
                       ) : (
-                        <li key={st.id} className={`step-${st.status}`}>
+                        <li key={st.id} className={`step-${st.status} step-${st.group ?? "stage"}`}>
                           <details>
                             <summary>
                               <span className="core-step-mark" aria-hidden>
                                 {st.status === "done" ? <Icon name="check" size={14} /> : st.status === "stopped" ? <Icon name="block" size={14} /> : st.status === "error" ? <Icon name="close" size={14} /> : <Icon name={stepKind(st).icon} size={14} className="core-pulse" />}
                               </span>
                               <b>{st.title}</b>
+                              {st.group === "tool" && <span className="core-step-tag">tool</span>}
                             </summary>
                             {st.detail ? <p className="core-muted">{st.detail}</p> : null}
                             {(st.items ?? []).length > 0 && (
@@ -1102,6 +1114,11 @@ function fadeEdges(el: HTMLElement | null) {
 
 function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: Spec; strings: Spec; act: Act; work?: boolean }) {
   const inspector: Spec = page.inspector ?? {};
+  // The Details panel eases in and out; while it leaves it keeps showing what it last had.
+  const panel = usePresence(!!inspector.visible, 200);
+  const lastInspector = useRef<Spec>(inspector);
+  if (inspector.visible) lastInspector.current = inspector;
+  const shown: Spec = inspector.visible ? inspector : lastInspector.current;
   const area = useRef<HTMLTextAreaElement>(null);
   const messages: Spec[] = page.messages ?? [];
   const composer: Spec = page.composer ?? {};
@@ -1338,10 +1355,10 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
           </div>
         </div>
       </section>
-      {inspector.visible && (
-        <aside className="core-inspector" aria-label={inspector.title}>
-          <header><strong>{inspector.title}</strong><button aria-label="Hide" onClick={() => act(inspector.hide)}>✕</button></header>
-          {(inspector.sections ?? []).map((sec: Spec) => <InspectorSection key={sec.id} sec={sec} act={act} />)}
+      {panel.mounted && (
+        <aside className={`core-inspector${panel.closing ? " closing" : ""}`} aria-label={shown.title}>
+          <header><strong>{shown.title}</strong><button aria-label="Hide" onClick={() => act(shown.hide)}>✕</button></header>
+          {(shown.sections ?? []).map((sec: Spec) => <InspectorSection key={sec.id} sec={sec} act={act} />)}
         </aside>
       )}
     </div>

@@ -640,8 +640,10 @@
 .core-app .core-scrim { animation: core-fade-in .2s var(--ease); }
 .core-app .core-dialog { position: relative; animation: core-pop-in .2s var(--ease); }
 .core-app .core-dialog h2 { padding-inline-end: 36px; }
-.core-app .core-inspector { animation: core-slide-in .22s var(--ease); }
-@keyframes core-slide-in { from { opacity: 0; transform: translateX(16px); } }
+.core-app .core-inspector { animation: core-slide-in .32s cubic-bezier(.34, 1.32, .64, 1); }
+.core-app .core-inspector.closing { animation: core-slide-out .2s cubic-bezier(.4, 0, 1, 1) forwards; }
+@keyframes core-slide-out { to { opacity: 0; transform: translateX(20px); } }
+@keyframes core-slide-in { from { opacity: 0; transform: translateX(24px) scale(.985); } }
 @media (prefers-reduced-motion: reduce) { .core-app .core-scrim, .core-app .core-dialog, .core-app .core-inspector, .core-app .core-modal, .core-app .core-modal-card { animation: none; } }
 :root[data-reduce-motion="true"] .core-app .core-scrim, :root[data-reduce-motion="true"] .core-app .core-dialog, :root[data-reduce-motion="true"] .core-app .core-inspector { animation: none; }
 
@@ -658,3 +660,6 @@
 @keyframes core-mark-pop { 0% { opacity: 0; transform: scale(.5); } 60% { transform: scale(1.18); } 100% { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .core-app .core-plan, .core-app .core-plan li, .core-app .core-plan .core-task-mark, .core-app .core-plan .core-plan-mark, .core-app .core-plan.live .core-plan-bar i, .core-app .core-chat-row > button strong { animation: none; } }
 :root[data-reduce-motion="true"] .core-app .core-plan, :root[data-reduce-motion="true"] .core-app .core-plan li, :root[data-reduce-motion="true"] .core-app .core-plan .core-task-mark, :root[data-reduce-motion="true"] .core-app .core-plan .core-plan-mark, :root[data-reduce-motion="true"] .core-app .core-plan.live .core-plan-bar i, :root[data-reduce-motion="true"] .core-app .core-chat-row > button strong { animation: none; }
+
+.core-app .core-step-tag { margin-inline-start: 6px; padding: 0 6px; border-radius: 6px; font-size: 10.5px; letter-spacing: .02em; text-transform: uppercase; color: rgb(var(--text-secondary)); background: var(--tonal); }
+.core-app .core-steps li.step-stage > details > summary > b { font-weight: 400; color: rgb(var(--text-secondary)); }

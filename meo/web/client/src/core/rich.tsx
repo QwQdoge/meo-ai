@@ -1,4 +1,4 @@
-import React, { useEffect, useState, type ReactNode } from "react";
+import React, { useEffect, useRef, useState, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { prepareMath } from "./mathText.mjs";
@@ -222,6 +222,34 @@ export function DraftCard({ block, copy, copied }: { block: Spec; copy: string; 
   );
 }
 
+/** Text that arrives in bursts is shown flowing: each frame reveals part of what has not been shown yet (more when
+ *  far behind, a character at a time when close), so streamed answers read smoothly instead of jumping by chunk. */
+function SmoothMarkdown({ text, components }: { text: string; components?: Record<string, any> }) {
+  const [shown, setShown] = useState(0);
+  const target = useRef(text);
+  target.current = text;
+  useEffect(() => {
+    if (document.documentElement.dataset.reduceMotion === "true") return;
+    let frame = 0;
+    const tick = () => {
+      setShown((n) => {
+        const goal = target.current.length;
+        if (n >= goal) return goal;
+        const step = Math.max(1, Math.ceil((goal - n) * 0.12));
+        return Math.min(goal, n + step);
+      });
+      frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, []);
+  const reduce = typeof document !== "undefined" && document.documentElement.dataset.reduceMotion === "true";
+  const n = reduce ? text.length : Math.min(shown, text.length);
+  // Never cut inside a surrogate pair.
+  const cut = n > 0 && n < text.length && /[\uD800-\uDBFF]/.test(text[n - 1]) ? n + 1 : n;
+  return <Markdown text={text.slice(0, cut)} components={components} />;
+}
+
 export function Blocks({ blocks, components, copy, copied, streaming, act }: { blocks: Spec[]; components?: Record<string, any>; copy: string; copied: string; streaming?: boolean; act?: (action: Spec) => void }): ReactNode {
   return (
     <>
@@ -233,7 +261,7 @@ export function Blocks({ blocks, components, copy, copied, streaming, act }: { b
         if (b.type === "draft") return <DraftCard key={i} block={b} copy={copy} copied={copied} />;
         const last = streaming && i === blocks.length - 1;
         // The caret is drawn by CSS after the last character, so it never changes how the text parses.
-        return last ? <div key={i} className="core-tail"><Markdown text={b.text} components={components} /></div> : <Markdown key={i} text={b.text} components={components} />;
+        return last ? <div key={i} className="core-tail"><SmoothMarkdown text={b.text} components={components} /></div> : <Markdown key={i} text={b.text} components={components} />;
       })}
     </>
   );

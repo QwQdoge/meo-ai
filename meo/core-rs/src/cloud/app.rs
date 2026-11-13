@@ -763,6 +763,9 @@ struct State {
     /// Records added by counting earlier chats (`None` until it ran), and whether it is running.
     backfilled: Option<usize>,
     backfilling: bool,
+    /// A message just sent, before the model has started to answer: (chat, text, stored yet). The page shows the
+    /// message and a thinking indicator at once instead of waiting for the network.
+    waiting: Option<(Option<String>, String, bool)>,
     /// Steps of the current or last answer: (conversation id, steps) — shown collapsed on that answer.
     activity: Option<(String, Vec<Value>)>,
     remote_run: Option<RemoteRun>,
@@ -2735,6 +2738,9 @@ impl AppCore {
                             s.conversations.insert(0, conversation);
                             s.active = Some(id.clone());
                             s.new_chat_project = None;
+                            if let Some(w) = s.waiting.as_mut() {
+                                w.0 = Some(id.clone());
+                            }
                         });
                         if task {
                             self.mark_work(&id, true);
@@ -4768,8 +4774,13 @@ impl AppCore {
         if let Some(device) = self.remote_target() {
             return self.remote_dispatch(device, text).await;
         }
+        let shown = text.trim().to_owned();
+        if !shown.is_empty() && self.state.lock().unwrap().streaming.is_none() {
+            self.update(|s| s.waiting = Some((s.active.clone(), shown, false)));
+        }
         self.agent_begin(&text);
         self.turn(text, true, true).await;
+        self.update(|s| s.waiting = None);
     }
 
     /// Runs `/command args` typed in the composer. Returns false for ordinary text
@@ -5128,6 +5139,11 @@ impl AppCore {
         let continuing_round = self.state.lock().unwrap().agent.round > 0;
         if push_local {
             self.push_message(&conversation_id, "user", &text);
+            self.update(|s| {
+                if let Some(w) = s.waiting.as_mut() {
+                    *w = (Some(conversation_id.clone()), w.1.clone(), true);
+                }
+            });
         }
         if image {
             return self
@@ -9642,8 +9658,16 @@ fn visible_steps(steps: &[Value]) -> Vec<Value> {
             let mut x = x.clone();
             if is_note_step(&x) {
                 x["kind"] = json!("note");
+                x["group"] = json!("note");
             } else {
                 x["kind"] = json!(step_action(&x));
+                // A tool is something the model called (search, read, run, an app's tool); a stage is the
+                // plumbing around the answer (router, plan, check, answer). Clients draw them differently.
+                let id = x["id"].as_str().unwrap_or_default();
+                let tool = id.starts_with("tool")
+                    || matches!(id, "search" | "image" | "fetch")
+                    || x["title"].as_str().is_some_and(|t| t.contains(" / "));
+                x["group"] = json!(if tool && !is_plan_step(&x) { "tool" } else { "stage" });
             }
             x
         })
@@ -10101,7 +10125,7 @@ fn inspector(s: &State, messages: &[Value], active: Option<&String>) -> Value {
         || messages
             .iter()
             .any(|m| m["role"] == "assistant" && m["text"] != "");
-    let visible = pref_bool(s, "ui.inspector", true);
+    let visible = pref_bool(s, "ui.inspector", false);
     let toggle =
         |value: bool| json!({ "type": "set_setting", "binding": "ui.inspector", "value": value });
     if !started {
@@ -11332,6 +11356,18 @@ fn conversation_page(s: &State) -> Value {
             .filter(|r| Some(&r.conversation_id) == active.as_ref())
         {
             messages.push(json!({ "role": "assistant", "text": run.text, "streaming": !run.done }));
+        }
+    }
+    // A message just sent: it and the thinking indicator show at once, before anything came back from the network.
+    if let Some((chat, text, stored)) = s.waiting.as_ref().filter(|_| s.streaming.is_none() && remote_progress.is_none()) {
+        if chat == &active || (!*stored && chat.is_none() && active.is_none()) {
+            let last_user = messages.last().is_some_and(|m| m["role"] == "user");
+            if !*stored {
+                messages.push(json!({ "id": "", "role": "user", "text": text, "streaming": false, "actions": [], "blocks": [], "images": [] }));
+                messages.push(json!({ "role": "assistant", "text": "", "streaming": true }));
+            } else if last_user {
+                messages.push(json!({ "role": "assistant", "text": "", "streaming": true }));
+            }
         }
     }
     let mut messages = merge_rounds(messages);
@@ -14970,6 +15006,20 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn a_sent_message_and_the_thinking_indicator_show_before_the_network_answers() {
+        let c = signed_in_core();
+        c.update(|s| {
+            s.route = "chat".into();
+            s.waiting = Some((Some("c1".into()), "hello there".into(), false));
+        });
+        let v = c.view();
+        let msgs = v["page"]["messages"].as_array().cloned().unwrap_or_default();
+        assert_eq!(msgs.len(), 2, "{msgs:?}");
+        assert_eq!((msgs[0]["role"].as_str(), msgs[0]["text"].as_str()), (Some("user"), Some("hello there")));
+        assert_eq!((msgs[1]["role"].as_str(), msgs[1]["streaming"].as_bool()), (Some("assistant"), Some(true)));
     }
 
     #[test]
