@@ -115,27 +115,51 @@ fn attr<'a>(attrs: &'a str, name: &str) -> Option<&'a str> {
     attrs[at..].split('"').next()
 }
 
-fn zip_text(archive: &mut zip::ZipArchive<Cursor<&[u8]>>, name: &str) -> Option<String> {
-    let mut file = archive.by_name(name).ok()?;
+fn zip_text(archive: &mut zip::ZipArchive<Cursor<&[u8]>>, name: &str) -> Result<String, String> {
+    let mut file = archive.by_name(name).map_err(|error| error.to_string())?;
     let mut text = String::new();
-    file.read_to_string(&mut text).ok()?;
-    Some(text)
+    file.read_to_string(&mut text)
+        .map_err(|error| error.to_string())?;
+    Ok(text)
 }
 
-fn numbered(archive: &zip::ZipArchive<Cursor<&[u8]>>, prefix: &str) -> Vec<String> {
-    let mut names: Vec<(u32, String)> = archive
+fn optional_zip_text(
+    archive: &mut zip::ZipArchive<Cursor<&[u8]>>,
+    name: &str,
+) -> Result<Option<String>, String> {
+    match archive.by_name(name) {
+        Ok(mut file) => {
+            let mut text = String::new();
+            file.read_to_string(&mut text)
+                .map_err(|error| error.to_string())?;
+            Ok(Some(text))
+        }
+        Err(zip::result::ZipError::FileNotFound) => Ok(None),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+fn numbered(
+    archive: &zip::ZipArchive<Cursor<&[u8]>>,
+    prefix: &str,
+) -> Result<Vec<String>, String> {
+    let entries: Vec<String> = archive
         .file_names()
-        .filter(|n| n.starts_with(prefix) && n.ends_with(".xml"))
-        .filter_map(|n| {
-            let digits: String = n[prefix.len()..]
+        .map(|name| name.map(|name| name.into_owned()).map_err(|error| error.to_string()))
+        .collect::<Result<_, _>>()?;
+    let mut names: Vec<(u32, String)> = entries
+        .into_iter()
+        .filter(|name| name.starts_with(prefix) && name.ends_with(".xml"))
+        .filter_map(|name| {
+            let digits: String = name[prefix.len()..]
                 .chars()
                 .take_while(char::is_ascii_digit)
                 .collect();
-            digits.parse().ok().map(|i| (i, n.to_owned()))
+            digits.parse().ok().map(|index| (index, name))
         })
         .collect();
     names.sort();
-    names.into_iter().map(|(_, n)| n).collect()
+    Ok(names.into_iter().map(|(_, name)| name).collect())
 }
 
 fn csv_cell(v: &str) -> String {
@@ -146,8 +170,8 @@ fn csv_cell(v: &str) -> String {
     }
 }
 
-fn xlsx_text(archive: &mut zip::ZipArchive<Cursor<&[u8]>>) -> String {
-    let shared: Vec<String> = zip_text(archive, "xl/sharedStrings.xml")
+fn xlsx_text(archive: &mut zip::ZipArchive<Cursor<&[u8]>>) -> Result<String, String> {
+    let shared: Vec<String> = optional_zip_text(archive, "xl/sharedStrings.xml")?
         .map(|x| {
             elements(&x, "si")
                 .into_iter()
@@ -162,22 +186,17 @@ fn xlsx_text(archive: &mut zip::ZipArchive<Cursor<&[u8]>>) -> String {
                 .collect()
         })
         .unwrap_or_default();
-    let names: Vec<String> = zip_text(archive, "xl/workbook.xml")
-        .map(|x| {
-            elements(&x, "sheet")
-                .iter()
-                .filter_map(|(a, _)| attr(a, "name").map(decode))
-                .collect()
-        })
-        .unwrap_or_default();
+    let workbook = zip_text(archive, "xl/workbook.xml")?;
+    let names: Vec<String> = elements(&workbook, "sheet")
+        .iter()
+        .filter_map(|(a, _)| attr(a, "name").map(decode))
+        .collect();
     let mut out = Vec::new();
-    for (i, sheet) in numbered(archive, "xl/worksheets/sheet")
+    for (i, sheet) in numbered(archive, "xl/worksheets/sheet")?
         .into_iter()
         .enumerate()
     {
-        let Some(xml) = zip_text(archive, &sheet) else {
-            continue;
-        };
+        let xml = zip_text(archive, &sheet)?;
         let rows: Vec<String> = elements(&xml, "row")
             .into_iter()
             .map(|(_, row)| {
@@ -214,7 +233,7 @@ fn xlsx_text(archive: &mut zip::ZipArchive<Cursor<&[u8]>>) -> String {
             rows.join("\n")
         ));
     }
-    out.join("\n\n")
+    Ok(out.join("\n\n"))
 }
 
 fn rtf_text(bytes: &[u8]) -> String {
@@ -262,37 +281,43 @@ pub fn extract_text(name: &str, bytes: &[u8]) -> Result<String, String> {
     let ext = extension(name);
     let text = match ext.as_str() {
         "pdf" => {
-            let doc =
-                lopdf::Document::load_mem(bytes).map_err(|_| format!("Could not read {name}."))?;
+            let doc = lopdf::Document::load_mem(bytes)
+                .map_err(|error| format!("Could not read {name}: {error}"))?;
             let mut pages = Vec::new();
             for (n, _) in doc.get_pages() {
-                pages.push(format!(
-                    "--- page {n} ---\n{}",
-                    doc.extract_text(&[n]).unwrap_or_default()
-                ));
+                let page_text = doc
+                    .extract_text(&[n])
+                    .map_err(|error| format!("Could not read {name} page {n}: {error}"))?;
+                pages.push(format!("--- page {n} ---\n{page_text}"));
             }
             pages.join("\n\n")
         }
         "docx" | "xlsx" | "pptx" => {
             let mut archive = zip::ZipArchive::new(Cursor::new(bytes))
-                .map_err(|_| format!("Could not read {name}."))?;
+                .map_err(|error| format!("Could not read {name}: {error}"))?;
             match ext.as_str() {
                 "docx" => {
-                    xml_text(&zip_text(&mut archive, "word/document.xml").unwrap_or_default())
+                    let xml = zip_text(&mut archive, "word/document.xml")
+                        .map_err(|error| format!("Could not read {name}: {error}"))?;
+                    xml_text(&xml)
                 }
-                "pptx" => numbered(&archive, "ppt/slides/slide")
-                    .into_iter()
-                    .enumerate()
-                    .map(|(i, n)| {
-                        format!(
+                "pptx" => {
+                    let slides = numbered(&archive, "ppt/slides/slide")
+                        .map_err(|error| format!("Could not read {name}: {error}"))?;
+                    let mut pages = Vec::new();
+                    for (i, slide) in slides.into_iter().enumerate() {
+                        let xml = zip_text(&mut archive, &slide)
+                            .map_err(|error| format!("Could not read {name}: {error}"))?;
+                        pages.push(format!(
                             "--- slide {} ---\n{}",
                             i + 1,
-                            xml_text(&zip_text(&mut archive, &n).unwrap_or_default()).trim()
-                        )
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n\n"),
-                _ => xlsx_text(&mut archive),
+                            xml_text(&xml).trim()
+                        ));
+                    }
+                    pages.join("\n\n")
+                }
+                _ => xlsx_text(&mut archive)
+                    .map_err(|error| format!("Could not read {name}: {error}"))?,
             }
         }
         "rtf" => rtf_text(bytes),
