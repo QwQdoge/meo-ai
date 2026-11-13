@@ -100,3 +100,12 @@ This phase does not move `meo-ai-router`, KIO/PulseAudioQt/KWin/Plasma
 executors, Polkit helpers, Repair, OmniStore or SystemTransaction authority into
 `meo-ai`. `meo-ai` contains only the unprivileged typed client/agent boundary;
 execution remains in the existing Router and owning components.
+
+## Live installer capabilities
+
+On the MeoArch Live ISO (`/run/archiso`), AgentService enables the System Tool
+without `MEO_AI_ENABLE_SYSTEM_TOOL`, and the Router (meo-kde) registers
+`org.meo.installer.proposal.submit`, `org.meo.installer.log.read` and
+`org.meo.installer.disks.list`. They appear as `system_org_meo_installer_*`
+tools. They are propose-only or read-only; usernames, passwords and erase mode
+are never proposable. See meo-kde `docs/ai-router-contract.md`.

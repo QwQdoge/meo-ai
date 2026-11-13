@@ -3,7 +3,7 @@ name: live-install-recovery
 description: Help someone on MeoArch Live media plan an installation (suggest choices the Installer shows for approval) or understand a failed install or repair, without claiming execution tools that do not exist.
 ---
 
-Use this in the MeoArch Live environment (started with `meo-ai --live-recovery`).
+Use this in the MeoArch Live environment (started with `meo-ai --live-recovery`, or any Meo AI on the Live ISO).
 Follow `meo/prompts/live-recovery.md`. This skill is bundled with MeoArch; it
 needs no installation.
 
@@ -11,22 +11,27 @@ needs no installation.
 They exist only when the system AI router is connected; check your tool list
 and never claim one you cannot see.
 
-- `meo_installer__proposal__submit` — suggest installer choices. Accepted keys:
+- `system_org_meo_installer_proposal_submit` — suggest installer choices. Its one
+  argument, `proposal`, is a JSON object written as a string. Accepted keys:
   `systemLocale` (e.g. `zh_CN.UTF-8`), `timezone` (IANA, e.g. `Asia/Shanghai`),
   `keyboardLayout`, `profile` (`recommended`|`minimal`), `channel`
   (`stable`|`beta`), `applications` (comma-separated catalog ids), `filesystem`
   (`btrfs`|`ext4`), `targetDisk` (a stable disk id taken from observed disk facts, never a guess), `swap` (`zram`|`file`|`none`), `separateHome`, `firewall`,
   and a short `rationale`. **It applies nothing.** The Installer shows the
   suggestion on its Summary page and the person decides.
-- `meo_installer__log__read` — the last lines of the installer log (`lines`, 1–200).
+- `system_org_meo_installer_log_read` — the last lines of the installer log
+  (`lines`, 1–200); the result `message` is a JSON array of lines.
+- `system_org_meo_installer_disks_list` — detected storage devices as a JSON array
+  in `message` (`id`, `model`, `sizeBytes`, `removable`, `readOnly`, `transport`).
+  Listed does not mean eligible; the Installer decides that.
 
 ## Workflow
 1. Ask whether the goal is a new installation or a repair, if unknown.
 2. Installation: ask what the person wants (language, region, keyboard, apps,
    filesystem, swap). Propose only those choices with one
-   `meo_installer__proposal__submit` call, then tell them to open the Summary
+   `system_org_meo_installer_proposal_submit` call, then tell them to open the Summary
    page and press "Apply suggestion". Say plainly that nothing has changed yet.
-3. Disk: do ask. Read the disks the Installer detected (model, size, stable id),
+3. Disk: do ask. Call `system_org_meo_installer_disks_list` and read the disks (model, size, stable id),
    ask which one to use and whether it may be erased, and say exactly which disk
    will change. A suggested `targetDisk` is only preselected; the person still
    confirms the erase on the Installer's final screen. Never guess a /dev name.

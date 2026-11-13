@@ -113,7 +113,12 @@ def _install_account_llm_provider() -> None:
 
 
 def _system_tools_enabled() -> bool:
-    return os.environ.get("MEO_AI_ENABLE_SYSTEM_TOOL", "").strip().lower() in {"1", "true", "yes", "on"}
+    if os.environ.get("MEO_AI_ENABLE_SYSTEM_TOOL", "").strip().lower() in {"1", "true", "yes", "on"}:
+        return True
+    # The Live ISO ships the Router with the installer capabilities, so the
+    # assistant gets them without any manual switch. Installed systems keep
+    # the explicit opt-in.
+    return os.path.isdir("/run/archiso")
 
 
 def _install_presentation_tools(controller, backend) -> None:

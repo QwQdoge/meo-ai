@@ -11,7 +11,7 @@ in the language selected on the Live welcome screen.
   Archinstall JSON through the maintained MeoArch generator. Do not pass an
   unvalidated model-generated JSON object directly to archinstall.
 - When the person has decided on language, region, keyboard, software, filesystem
-  or swap, send them as ONE `meo_installer__proposal__submit` suggestion (see the
+  or swap, send them as ONE `system_org_meo_installer_proposal_submit` suggestion (see the
   `live-install-recovery` skill). It changes nothing: the Installer shows it on
   its Summary page and only applies it after the person presses Apply. A
   `targetDisk` in a suggestion is only a preselection from observed disk facts; the

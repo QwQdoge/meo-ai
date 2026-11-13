@@ -14,9 +14,13 @@ def prompt_layers():
 
 
 def live_recovery_requested():
-    """True only when the app was started with --live-recovery."""
+    """True with --live-recovery, or inside the MeoArch Live environment.
+
+    The packaged Meo AI desktop app and AgentService are not started through
+    the GTK launcher, so the Live ISO itself (/run/archiso) also counts.
+    """
     import os
-    return os.environ.get("MEO_AI_LIVE_RECOVERY") == "1"
+    return os.environ.get("MEO_AI_LIVE_RECOVERY") == "1" or os.path.isdir("/run/archiso")
 
 
 def live_recovery_layer():

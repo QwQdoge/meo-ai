@@ -48,7 +48,7 @@ class ProtocolTests(unittest.TestCase):
         manager = SkillManager([directory], Settings())
         manager.discover()
         skill = manager.skills["live-install-recovery"]
-        self.assertIn("meo_installer__proposal__submit", skill.body)
+        self.assertIn("system_org_meo_installer_proposal_submit", skill.body)
         # Accounts stay with the person; disks are discussed but confirmed by them.
         self.assertIn("never set or ask for a username", skill.body)
         self.assertIn("Disk: do ask", skill.body)
@@ -63,7 +63,7 @@ class ProtocolTests(unittest.TestCase):
         finally:
             os.environ.pop("MEO_AI_LIVE_RECOVERY", None)
         self.assertEqual(len(layer), 1)
-        self.assertIn("meo_installer__proposal__submit", layer[0])
+        self.assertIn("system_org_meo_installer_proposal_submit", layer[0])
 
     def test_pause_preserves_queue_and_typed_choices(self):
         protocol = protocol_class()()
