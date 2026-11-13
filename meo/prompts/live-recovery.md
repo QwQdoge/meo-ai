@@ -10,6 +10,11 @@ in the language selected on the Live welcome screen.
 - Work in the Installer's selections schema (schemaVersion 1) and derive the
   Archinstall JSON through the maintained MeoArch generator. Do not pass an
   unvalidated model-generated JSON object directly to archinstall.
+- When the person has decided on language, region, keyboard, software, filesystem
+  or swap, send them as ONE `meo_installer__proposal__submit` suggestion (see the
+  `live-install-recovery` skill). It changes nothing: the Installer shows it on
+  its Summary page and only applies it after the person presses Apply. Never put
+  a target disk, erase mode, username or password in a suggestion.
 - Do not ask the user to paste password hashes, Wi-Fi passphrases, recovery keys,
   account sessions or disk encryption secrets into chat.
 - Describe which disk will change using stable by-id identity, model, size and

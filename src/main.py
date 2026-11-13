@@ -39,6 +39,7 @@ class MyApp(Adw.Application):
         self.main_windows = []
         self.add_main_option("run-action", 0, GLib.OptionFlags.NONE, GLib.OptionArg.STRING, "Run an action", "ACTION")
         self.add_main_option("mini", 0, GLib.OptionFlags.NONE, GLib.OptionArg.NONE, "Start in mini window mode", None)
+        self.add_main_option("live-recovery", 0, GLib.OptionFlags.NONE, GLib.OptionArg.NONE, "Start in MeoArch Live install/repair assistance mode", None)
         self.add_main_option("voice", 0, GLib.OptionFlags.NONE, GLib.OptionArg.NONE, "Start one-shot Voice Mode", None)
         css = '''
         .code{
@@ -578,6 +579,9 @@ class MyApp(Adw.Application):
     def do_command_line(self, command_line):
         options = command_line.get_options_dict()
         launch_mode = requested_launch_mode(options)
+        if options.contains("live-recovery"):
+            # Read by meo_profile; adds the Live recovery guidance to prompts.
+            os.environ["MEO_AI_LIVE_RECOVERY"] = "1"
         if launch_mode == "voice":
             self.start_in_voice = True
             self.start_in_mini = False

@@ -1,20 +1,40 @@
 ---
 name: live-install-recovery
-description: Guide an ArchISO Live user through a MeoArch installation plan or typed Quick Repair handoff without claiming unimplemented execution tools.
+description: Help someone on MeoArch Live media plan an installation (suggest choices the Installer shows for approval) or understand a failed install or repair, without claiming execution tools that do not exist.
 ---
 
-You are running from MeoArch Live media only when the native app was launched
-using its verified Live recovery entry. Follow `meo/prompts/live-recovery.md`.
+Use this in the MeoArch Live environment (started with `meo-ai --live-recovery`).
+Follow `meo/prompts/live-recovery.md`. This skill is bundled with MeoArch; it
+needs no installation.
 
-1. Ask whether the goal is installation or repair, if not already known.
-2. Start with observed read-only facts and the correct target.
-3. Produce a structured plan, with impact, prerequisites, blockers and verification.
-4. Installation: the native Installer owns disk identity checks, selections.json
-   validation, generated Archinstall JSON, manual summary confirmation and execution.
-5. Repair: the existing Quick Repair controller owns checks, approved actions and
-   verification. It does not treat arbitrary LLM output as an executable program.
-6. If no registered typed installer/repair action exists in the agent's tool list,
-   say so plainly and direct the user to the visible Installer/Quick Repair button.
-7. Never report completion without returned owner evidence.
+## Tools you may have
+They exist only when the system AI router is connected; check your tool list
+and never claim one you cannot see.
 
-Avoid providing generic privileged shell commands as a workaround for absent APIs.
+- `meo_installer__proposal__submit` — suggest installer choices. Accepted keys:
+  `systemLocale` (e.g. `zh_CN.UTF-8`), `timezone` (IANA, e.g. `Asia/Shanghai`),
+  `keyboardLayout`, `profile` (`recommended`|`minimal`), `channel`
+  (`stable`|`beta`), `applications` (comma-separated catalog ids), `filesystem`
+  (`btrfs`|`ext4`), `swap` (`zram`|`file`|`none`), `separateHome`, `firewall`,
+  and a short `rationale`. **It applies nothing.** The Installer shows the
+  suggestion on its Summary page and the person decides.
+- `meo_installer__log__read` — the last lines of the installer log (`lines`, 1–200).
+
+## Workflow
+1. Ask whether the goal is a new installation or a repair, if unknown.
+2. Installation: ask what the person wants (language, region, keyboard, apps,
+   filesystem, swap). Propose only those choices with one
+   `meo_installer__proposal__submit` call, then tell them to open the Summary
+   page and press "Apply suggestion". Say plainly that nothing has changed yet.
+3. Never set or ask for the target disk, erase mode, username or any password.
+   The person chooses those in the Installer. Do not ask them to paste secrets.
+4. Failed install: read the log, separate observed lines from hypotheses, explain
+   the likely cause, and point to the Installer's restart guidance. Do not
+   suggest retrying on a disk that may be partly written.
+5. Repair: describe findings and a minimal plan (scope, impact, rollback,
+   verification) and send the person to Quick Repair, which owns approval and
+   execution. Do not hand them a root shell script built from your prose.
+6. Never report completion without evidence returned by the owning Installer.
+
+If a tool is missing or returns `installer_unavailable`, say so and direct the
+person to the visible Installer or Quick Repair buttons.

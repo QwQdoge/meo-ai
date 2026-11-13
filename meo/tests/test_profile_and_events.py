@@ -36,6 +36,34 @@ class ProtocolTests(unittest.TestCase):
         self.assertIn("never grant authority", layers[1])
         self.assertIn("not a containment sandbox", layers[2])
 
+    def test_bundled_live_recovery_skill_is_discoverable(self):
+        from src.skills import SkillManager
+
+        class Settings:
+            def get_string(self, _key):
+                return "{}"
+
+        directory = profile.bundled_skills_dir()
+        self.assertIsNotNone(directory)
+        manager = SkillManager([directory], Settings())
+        manager.discover()
+        skill = manager.skills["live-install-recovery"]
+        self.assertIn("meo_installer__proposal__submit", skill.body)
+        # The skill must never invite the model to choose disks or accounts.
+        self.assertIn("Never set or ask for the target disk", skill.body)
+
+    def test_live_recovery_layer_only_when_requested(self):
+        import os
+        os.environ.pop("MEO_AI_LIVE_RECOVERY", None)
+        self.assertEqual(profile.live_recovery_layer(), [])
+        os.environ["MEO_AI_LIVE_RECOVERY"] = "1"
+        try:
+            layer = profile.live_recovery_layer()
+        finally:
+            os.environ.pop("MEO_AI_LIVE_RECOVERY", None)
+        self.assertEqual(len(layer), 1)
+        self.assertIn("meo_installer__proposal__submit", layer[0])
+
     def test_pause_preserves_queue_and_typed_choices(self):
         protocol = protocol_class()()
         protocol._pending_streams = {}

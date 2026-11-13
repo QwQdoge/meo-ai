@@ -488,6 +488,9 @@ class NewelleController(WorkspaceController):
             self.skills_path,
             os.path.join(os.path.expanduser("~"), ".agents", "skills"),
         ]
+        from .meo_profile import bundled_skills_dir
+        if bundled_skills_dir():
+            request_skill_manager.skills_dirs.append(bundled_skills_dir())
         request_skill_manager.activated_skills = set()
         request_skill_manager.discover()
         request_skill_manager.set_mode_overrides(
@@ -614,6 +617,12 @@ class NewelleController(WorkspaceController):
 
         user_home = os.path.expanduser("~")
         dirs.append(os.path.join(user_home, ".agents", "skills"))  # ~/.agents/skills (cross-client)
+
+        # Skills bundled with MeoArch (e.g. live-install-recovery); user skills win.
+        from .meo_profile import bundled_skills_dir
+        bundled = bundled_skills_dir()
+        if bundled:
+            dirs.append(bundled)
 
         return dirs
 
@@ -2340,6 +2349,8 @@ class NewelleController(WorkspaceController):
         prompts = [formatter.format(prompt) for prompt in self._request_settings().get_bot_prompts(mode_name)]
         prompts += self._get_user_message_tool_prompts(self.get_chat_by_id(chat_id))
         prompts += self.get_memory_prompt(chat_id=chat_id)
+        from .meo_profile import live_recovery_layer
+        prompts += live_recovery_layer()
         return prompts
 
     def prepare_generation(self, chat_id=None, audio_turn=None):
@@ -2376,6 +2387,8 @@ class NewelleController(WorkspaceController):
 
         # Append memory
         prompts += self.get_memory_prompt(chat=chat, chat_id=effective_chat_id)
+        from .meo_profile import live_recovery_layer
+        prompts += live_recovery_layer()
 
         # Set the history for the model
         history = self.get_history(chat=chat)

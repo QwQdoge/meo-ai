@@ -303,4 +303,7 @@ install_data(utility_sources, install_dir: moduledir / 'utility')
 install_data(integrations_sources, install_dir: moduledir / 'integrations')
 install_data(image_generator_sources, install_dir: moduledir / 'handlers' / 'image_generator')
 
-install_data('../meo/prompts/base.md', '../meo/prompts/system-control.md', '../meo/prompts/terminal.md', '../meo/prompts/repair.md', install_dir: join_paths(moduledir, 'meo-prompts'))
+install_data('../meo/prompts/base.md', '../meo/prompts/system-control.md', '../meo/prompts/terminal.md', '../meo/prompts/repair.md', '../meo/prompts/live-recovery.md', install_dir: join_paths(moduledir, 'meo-prompts'))
+
+# Bundled MeoArch skills are available out of the box; nothing to install.
+install_subdir('../meo/skills', install_dir: join_paths(moduledir, 'meo-skills'), strip_directory: true)
