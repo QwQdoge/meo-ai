@@ -663,3 +663,6 @@
 
 .core-app .core-step-tag { margin-inline-start: 6px; padding: 0 6px; border-radius: 6px; font-size: 10.5px; letter-spacing: .02em; text-transform: uppercase; color: rgb(var(--text-secondary)); background: var(--tonal); }
 .core-app .core-steps li.step-stage > details > summary > b { font-weight: 400; color: rgb(var(--text-secondary)); }
+
+.core-app .core-voice.listening { color: rgb(var(--accent-primary)); animation: core-halo 1.2s var(--ease) infinite; }
+@media (prefers-reduced-motion: reduce) { .core-app .core-voice.listening { animation: none; } }

@@ -995,7 +995,7 @@ const STEP_KINDS: Record<string, [string, string]> = {
   think: ["psychology", "Thinking"], tool: ["build", "Using tools"],
 };
 function stepKind(step?: Spec): { icon: string; live: string } {
-  if (!step) return { icon: "hourglass_empty", live: "Waiting for the model" };
+  if (!step) return { icon: "psychology", live: "Thinking" };
   const k = STEP_KINDS[step.kind];
   if (!k) return { icon: "bolt", live: step.title || "Working" };
   return { icon: k[0], live: step.kind === "connect" && step.title ? `Connecting · ${step.title}` : k[1] };
@@ -1074,7 +1074,7 @@ const MessageView = React.memo(
                     </ol>
                   </details>
                 )}
-                {m.streaming && !m.steps && !m.text && !(m.blocks ?? []).length && <LiveStatus icon="hourglass_empty" label={strings.waiting ?? "Waiting for the model"} longLabel="Still waiting for the model, no reply yet" />}
+                {m.streaming && !m.steps && !m.text && !(m.blocks ?? []).length && <LiveStatus icon="psychology" label={strings.thinking ?? "Thinking"} longLabel="Still waiting for the model, no reply yet" />}
                 <Blocks
                   blocks={m.blocks?.length ? m.blocks : [{ type: "markdown", text: m.text }]}
                   streaming={!!m.streaming}
@@ -1143,6 +1143,29 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
     }
     area.current?.focus();
   }, [page.id]);
+  // Voice input: the browser's speech recognition fills the box as you speak (not offered where it is missing).
+  const Speech = typeof window !== "undefined" ? ((window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition) : undefined;
+  const [listening, setListening] = useState(false);
+  const recognition = useRef<any>(null);
+  useEffect(() => () => recognition.current?.abort?.(), []);
+  const toggleVoice = () => {
+    if (recognition.current) { recognition.current.stop(); return; }
+    const base = inputNow.current;
+    const r = new Speech();
+    r.lang = navigator.language;
+    r.interimResults = true;
+    r.continuous = true;
+    r.onresult = (e: any) => {
+      let heard = "";
+      for (let k = 0; k < e.results.length; k++) heard += e.results[k][0].transcript;
+      setInput(base + (base && !/\s$/.test(base) ? " " : "") + heard);
+    };
+    r.onerror = () => { recognition.current = null; setListening(false); };
+    r.onend = () => { recognition.current = null; setListening(false); };
+    recognition.current = r;
+    setListening(true);
+    r.start();
+  };
   const [dragging, setDragging] = useState(false);
   const [attachNote, setAttachNote] = useState("");
   const note = (text: string) => { setAttachNote(text); window.setTimeout(() => setAttachNote(""), 4000); };
@@ -1195,6 +1218,9 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
     const text = input.trim();
     if (!text || composer.busy || !composer.sendAction) return;
     stick.current = true;
+    recognition.current?.abort?.();
+    recognition.current = null;
+    setListening(false);
     act({ ...composer.sendAction, text });
     setInput("");
   };
@@ -1324,6 +1350,9 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
               }}
             />
             <div className="core-input-bar">
+            {Speech && (
+              <button className={`core-icon-btn core-voice${listening ? " listening" : ""}`} aria-label="Voice input" aria-pressed={listening} title={listening ? "Stop listening" : "Voice input"} onClick={toggleVoice}><Icon name="mic" size={20} /></button>
+            )}
             {composer.attach && (
               <>
                 <button className="core-icon-btn core-attach" aria-label={composer.attach.label} title={composer.attach.label} onClick={() => fileInput.current?.click()}><Icon name="attach" size={20} /></button>

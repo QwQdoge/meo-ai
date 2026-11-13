@@ -4842,6 +4842,46 @@ impl AppCore {
                     self.notice(if out.ok { "info" } else { "error" }, out.text);
                 }
             }
+            "review" => {
+                let focus = if arg.is_empty() { "the current uncommitted changes".to_owned() } else { arg.to_owned() };
+                let prompt = format!(
+                    "Review {focus} like a careful senior reviewer. If a folder is open, run `git status` and `git diff` (and read the changed files) first; otherwise review what is in this conversation. \
+                     Look for bugs, security problems, missing error handling, missing tests and unclear code. Report findings most serious first, each as `path:line`, what is wrong, why it matters and the smallest fix; \
+                     say what looks fine, and what you could not check. Do not change any file."
+                );
+                Box::pin(self.send(prompt)).await;
+            }
+            "loop" => {
+                // `/loop 10m message`: the first word is the gap (30s, 10m, 2h, 1d).
+                let (gap, message) = arg.split_once(char::is_whitespace).map_or((arg, ""), |(g, m)| (g, m.trim()));
+                let secs = gap
+                    .char_indices()
+                    .find(|(_, c)| !c.is_ascii_digit())
+                    .and_then(|(i, c)| {
+                        let n: u64 = gap[..i].parse().ok()?;
+                        let unit = match (c, &gap[i + c.len_utf8()..]) {
+                            ('s', "") => 1,
+                            ('m', "") => 60,
+                            ('h', "") => 3_600,
+                            ('d', "") => 86_400,
+                            _ => return None,
+                        };
+                        Some(n * unit)
+                    });
+                match secs {
+                    Some(secs) if !message.is_empty() => {
+                        let args = json!({
+                            "title": clip(message, 40),
+                            "prompt": message,
+                            "timing": { "kind": "every", "every_seconds": secs },
+                            "target": "session",
+                        });
+                        let out = self.run_schedule("schedule_create", &args);
+                        self.notice(if out.ok { "info" } else { "error" }, out.text);
+                    }
+                    _ => self.notice("info", "Use /loop <gap> <message>, for example /loop 30m check the build. The gap is a number and s, m, h or d. /schedule shows and stops loops."),
+                }
+            }
             "help" => {
                 let list = COMMANDS
                     .iter()
@@ -9808,6 +9848,8 @@ const COMMANDS: &[(&str, &str, &str)] = &[
     ("/rename", "title", "Rename this chat"),
     ("/jobs", "stop id", "Show background jobs, or stop one (Work)"),
     ("/schedule", "pause|resume|delete|run id", "Show scheduled tasks, or change one"),
+    ("/review", "focus", "Review the current changes (or what is in this chat) like a careful reviewer"),
+    ("/loop", "10m message", "Send a message again every so often (like /loop 30m check the build); /schedule lists and stops them"),
     ("/archive", "", "Archive this chat"),
     ("/remember", "note", "Save a note to memory"),
     (
