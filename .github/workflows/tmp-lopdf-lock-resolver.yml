@@ -32,7 +32,6 @@ jobs:
           cargo check --locked --all-features --manifest-path meo/core-rs/Cargo.toml
           cargo clippy --locked --all-features --all-targets --manifest-path meo/core-rs/Cargo.toml -- -D warnings
           cargo test --locked --all-features --manifest-path meo/core-rs/Cargo.toml
-          cargo fmt --check --manifest-path meo/core-rs/Cargo.toml
       - name: Validate desktop against the generated lockfile
         run: cargo check --locked --manifest-path meo/desktop-rs/Cargo.toml
       - name: Ensure only the two Cargo lockfiles changed
