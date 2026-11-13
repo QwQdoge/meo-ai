@@ -49,8 +49,9 @@ class ProtocolTests(unittest.TestCase):
         manager.discover()
         skill = manager.skills["live-install-recovery"]
         self.assertIn("meo_installer__proposal__submit", skill.body)
-        # The skill must never invite the model to choose disks or accounts.
-        self.assertIn("Never set or ask for the target disk", skill.body)
+        # Accounts stay with the person; disks are discussed but confirmed by them.
+        self.assertIn("never set or ask for a username", skill.body)
+        self.assertIn("Disk: do ask", skill.body)
 
     def test_live_recovery_layer_only_when_requested(self):
         import os
