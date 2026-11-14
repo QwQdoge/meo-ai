@@ -27,7 +27,7 @@ jobs:
         run: |
           cargo update -p lopdf --precise 0.47.0
           cargo update -p reqwest --precise 0.13.5
-          cargo update -p zip --precise 9.4.2
+          cargo update -p zip --precise 9.5.1
       - name: Check core
         working-directory: meo/core-rs
         run: |
@@ -40,7 +40,7 @@ jobs:
         run: |
           cargo update -p reqwest --precise 0.13.5
           cargo update -p lopdf --precise 0.47.0
-          cargo update -p zip@2.6.1 --precise 9.4.2
+          cargo update -p zip@9.5.1 --precise 9.5.1
       - uses: actions/upload-artifact@v4
         if: always()
         with:
