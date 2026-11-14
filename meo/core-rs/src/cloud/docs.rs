@@ -115,27 +115,49 @@ fn attr<'a>(attrs: &'a str, name: &str) -> Option<&'a str> {
     attrs[at..].split('"').next()
 }
 
-fn zip_text(archive: &mut zip::ZipArchive<Cursor<&[u8]>>, name: &str) -> Option<String> {
-    let mut file = archive.by_name(name).ok()?;
+fn zip_text(
+    archive: &mut zip::ZipArchive<Cursor<&[u8]>>,
+    name: &str,
+) -> Result<Option<String>, String> {
+    let mut file = match archive.by_name(name) {
+        Ok(file) => file,
+        Err(zip::result::ZipError::FileNotFound) => return Ok(None),
+        Err(error) => {
+            tracing::warn!(entry = %name, error = %error, "Failed to open document archive entry");
+            return Err(format!("Could not read document archive entry {name}."));
+        }
+    };
     let mut text = String::new();
-    file.read_to_string(&mut text).ok()?;
-    Some(text)
+    if let Err(error) = file.read_to_string(&mut text) {
+        tracing::warn!(entry = %name, error = %error, "Failed to read document archive entry");
+        return Err(format!("Could not read document archive entry {name}."));
+    }
+    Ok(Some(text))
 }
 
-fn numbered(archive: &zip::ZipArchive<Cursor<&[u8]>>, prefix: &str) -> Vec<String> {
-    let mut names: Vec<(u32, String)> = archive
-        .file_names()
-        .filter(|n| n.starts_with(prefix) && n.ends_with(".xml"))
-        .filter_map(|n| {
-            let digits: String = n[prefix.len()..]
+fn numbered(
+    archive: &zip::ZipArchive<Cursor<&[u8]>>,
+    prefix: &str,
+) -> Result<Vec<String>, String> {
+    let mut names: Vec<(u32, String)> = Vec::new();
+    for entry in archive.file_names() {
+        let name = entry.map_err(|error| {
+            tracing::warn!(prefix = %prefix, error = %error, "Failed to read document archive entry name");
+            format!("Could not inspect document archive entries for {prefix}.")
+        })?;
+        let name = name.into_owned();
+        if name.starts_with(prefix) && name.ends_with(".xml") {
+            let digits: String = name[prefix.len()..]
                 .chars()
                 .take_while(char::is_ascii_digit)
                 .collect();
-            digits.parse().ok().map(|i| (i, n.to_owned()))
-        })
-        .collect();
-    names.sort();
-    names.into_iter().map(|(_, n)| n).collect()
+            if let Ok(index) = digits.parse() {
+                names.push((index, name));
+            }
+        }
+    }
+    names.sort_by_key(|(index, _)| *index);
+    Ok(names.into_iter().map(|(_, name)| name).collect())
 }
 
 fn csv_cell(v: &str) -> String {
@@ -146,8 +168,8 @@ fn csv_cell(v: &str) -> String {
     }
 }
 
-fn xlsx_text(archive: &mut zip::ZipArchive<Cursor<&[u8]>>) -> String {
-    let shared: Vec<String> = zip_text(archive, "xl/sharedStrings.xml")
+fn xlsx_text(archive: &mut zip::ZipArchive<Cursor<&[u8]>>) -> Result<String, String> {
+    let shared: Vec<String> = zip_text(archive, "xl/sharedStrings.xml")?
         .map(|x| {
             elements(&x, "si")
                 .into_iter()
@@ -162,22 +184,19 @@ fn xlsx_text(archive: &mut zip::ZipArchive<Cursor<&[u8]>>) -> String {
                 .collect()
         })
         .unwrap_or_default();
-    let names: Vec<String> = zip_text(archive, "xl/workbook.xml")
-        .map(|x| {
-            elements(&x, "sheet")
-                .iter()
-                .filter_map(|(a, _)| attr(a, "name").map(decode))
-                .collect()
-        })
-        .unwrap_or_default();
+    let workbook = zip_text(archive, "xl/workbook.xml")?
+        .ok_or_else(|| "Workbook metadata is missing from the XLSX archive.".to_string())?;
+    let names: Vec<String> = elements(&workbook, "sheet")
+        .iter()
+        .filter_map(|(a, _)| attr(a, "name").map(decode))
+        .collect();
     let mut out = Vec::new();
-    for (i, sheet) in numbered(archive, "xl/worksheets/sheet")
+    for (i, sheet) in numbered(archive, "xl/worksheets/sheet")?
         .into_iter()
         .enumerate()
     {
-        let Some(xml) = zip_text(archive, &sheet) else {
-            continue;
-        };
+        let xml = zip_text(archive, &sheet)?
+            .ok_or_else(|| format!("Worksheet part {sheet} is missing from the XLSX archive."))?;
         let rows: Vec<String> = elements(&xml, "row")
             .into_iter()
             .map(|(_, row)| {
@@ -214,7 +233,7 @@ fn xlsx_text(archive: &mut zip::ZipArchive<Cursor<&[u8]>>) -> String {
             rows.join("\n")
         ));
     }
-    out.join("\n\n")
+    Ok(out.join("\n\n"))
 }
 
 fn rtf_text(bytes: &[u8]) -> String {
@@ -262,37 +281,45 @@ pub fn extract_text(name: &str, bytes: &[u8]) -> Result<String, String> {
     let ext = extension(name);
     let text = match ext.as_str() {
         "pdf" => {
-            let doc =
-                lopdf::Document::load_mem(bytes).map_err(|_| format!("Could not read {name}."))?;
+            let doc = lopdf::Document::load_mem(bytes).map_err(|error| {
+                tracing::warn!(file = %name, error = %error, "Failed to parse PDF");
+                format!("Could not read {name}.")
+            })?;
             let mut pages = Vec::new();
             for (n, _) in doc.get_pages() {
-                pages.push(format!(
-                    "--- page {n} ---\n{}",
-                    doc.extract_text(&[n]).unwrap_or_default()
-                ));
+                let page_text = doc.extract_text(&[n]).map_err(|error| {
+                    tracing::warn!(file = %name, page = n, error = %error, "Failed to extract PDF page text");
+                    format!("Could not read page {n} of {name}.")
+                })?;
+                pages.push(format!("--- page {n} ---\n{page_text}"));
             }
             pages.join("\n\n")
         }
         "docx" | "xlsx" | "pptx" => {
-            let mut archive = zip::ZipArchive::new(Cursor::new(bytes))
-                .map_err(|_| format!("Could not read {name}."))?;
+            let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).map_err(|error| {
+                tracing::warn!(file = %name, error = %error, "Failed to open document archive");
+                format!("Could not read {name}.")
+            })?;
             match ext.as_str() {
                 "docx" => {
-                    xml_text(&zip_text(&mut archive, "word/document.xml").unwrap_or_default())
+                    let xml = zip_text(&mut archive, "word/document.xml")?
+                        .ok_or_else(|| format!("Required document.xml is missing from {name}."))?;
+                    xml_text(&xml)
                 }
-                "pptx" => numbered(&archive, "ppt/slides/slide")
-                    .into_iter()
-                    .enumerate()
-                    .map(|(i, n)| {
-                        format!(
+                "pptx" => {
+                    let mut slides = Vec::new();
+                    for (i, slide) in numbered(&archive, "ppt/slides/slide")?.into_iter().enumerate() {
+                        let xml = zip_text(&mut archive, &slide)?
+                            .ok_or_else(|| format!("Slide part {slide} is missing from {name}."))?;
+                        slides.push(format!(
                             "--- slide {} ---\n{}",
                             i + 1,
-                            xml_text(&zip_text(&mut archive, &n).unwrap_or_default()).trim()
-                        )
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n\n"),
-                _ => xlsx_text(&mut archive),
+                            xml_text(&xml).trim()
+                        ));
+                    }
+                    slides.join("\n\n")
+                }
+                _ => xlsx_text(&mut archive)?,
             }
         }
         "rtf" => rtf_text(bytes),
