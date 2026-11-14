@@ -33,7 +33,10 @@ jobs:
         run: |
           cargo check --locked --all-features
           cargo clippy --locked --all-features --all-targets -- -D warnings
-          cargo test --locked --all-features
+      - name: Test core independently
+        if: always()
+        working-directory: meo/core-rs
+        run: cargo test --locked --all-features
       - name: Resolve desktop lockfile
         if: always()
         working-directory: meo/desktop-rs
