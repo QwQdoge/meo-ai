@@ -3,6 +3,7 @@ on:
   pull_request:
     paths:
       - 'meo/core-rs/Cargo.toml'
+      - 'meo/core-rs/src/cloud/docs.rs'
       - '.github/workflows/tmp-cargo-lock.yml'
 permissions:
   contents: read
@@ -34,6 +35,7 @@ jobs:
           cargo clippy --locked --all-features --all-targets -- -D warnings
           cargo test --locked --all-features
       - name: Resolve desktop lockfile
+        if: always()
         working-directory: meo/desktop-rs
         run: |
           cargo update -p reqwest --precise 0.13.5
