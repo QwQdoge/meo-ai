@@ -1,0 +1,50 @@
+name: Temporary Cargo lock resolver
+on:
+  pull_request:
+    paths:
+      - 'meo/core-rs/Cargo.toml'
+      - '.github/workflows/tmp-cargo-lock.yml'
+permissions:
+  contents: read
+concurrency:
+  group: tmp-cargo-lock-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  resolve:
+    if: github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.event.pull_request.head.ref, 'maintenance/rust-core-deps-')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          components: clippy
+      - name: Resolve core lockfile
+        working-directory: meo/core-rs
+        run: |
+          cargo update -p lopdf --precise 0.47.0
+          cargo update -p reqwest --precise 0.13.5
+          cargo update -p zip --precise 9.4.2
+      - name: Check core
+        working-directory: meo/core-rs
+        run: |
+          cargo check --locked --all-features
+          cargo clippy --locked --all-features --all-targets -- -D warnings
+          cargo test --locked --all-features
+      - name: Resolve desktop lockfile
+        working-directory: meo/desktop-rs
+        run: |
+          cargo update -p reqwest --precise 0.13.5
+          cargo update -p lopdf --precise 0.47.0
+          cargo update -p zip@2.6.1 --precise 9.4.2
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cargo-lockfiles
+          path: |
+            meo/core-rs/Cargo.lock
+            meo/desktop-rs/Cargo.lock
+          if-no-files-found: error
+          retention-days: 1
