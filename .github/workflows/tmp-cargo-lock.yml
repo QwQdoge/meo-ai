@@ -6,7 +6,7 @@ on:
       - 'meo/core-rs/src/cloud/docs.rs'
       - '.github/workflows/tmp-cargo-lock.yml'
 permissions:
-  contents: read
+  contents: write
 concurrency:
   group: tmp-cargo-lock-${{ github.event.pull_request.number }}
   cancel-in-progress: true
@@ -18,7 +18,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-          persist-credentials: false
+          persist-credentials: true
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
         with:
           components: clippy
@@ -41,6 +41,32 @@ jobs:
           cargo update -p reqwest --precise 0.13.5
           cargo update -p lopdf --precise 0.47.0
           cargo update -p zip@9.5.1 --precise 9.5.1
+      - name: Commit resolved Cargo lockfiles to this PR branch
+        if: always()
+        env:
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          case "$PR_HEAD_REF" in
+            maintenance/rust-core-deps-*) ;;
+            *) echo "Unexpected PR head branch"; exit 1 ;;
+          esac
+          test -f meo/core-rs/Cargo.lock
+          test -f meo/desktop-rs/Cargo.lock
+          grep -A1 '^name = "lopdf"$' meo/core-rs/Cargo.lock | grep -q '^version = "0.47.0"$'
+          grep -A1 '^name = "reqwest"$' meo/core-rs/Cargo.lock | grep -q '^version = "0.13.5"$'
+          grep -A1 '^name = "zip"$' meo/core-rs/Cargo.lock | grep -q '^version = "9.5.1"$'
+          grep -A1 '^name = "lopdf"$' meo/desktop-rs/Cargo.lock | grep -q '^version = "0.47.0"$'
+          grep -A1 '^name = "reqwest"$' meo/desktop-rs/Cargo.lock | grep -q '^version = "0.13.5"$'
+          grep -A1 '^name = "zip"$' meo/desktop-rs/Cargo.lock | grep -q '^version = "9.5.1"$'
+          git config --local user.name "github-actions[bot]"
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add meo/core-rs/Cargo.lock meo/desktop-rs/Cargo.lock
+          if git diff --cached --quiet; then
+            echo "No Cargo lockfile changes to commit."
+            exit 0
+          fi
+          git commit -m "chore: update Rust dependency lockfiles"
+          git push origin "HEAD:$PR_HEAD_REF"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
