@@ -1,0 +1,42 @@
+name: Temporary Meo Web lockfile resolver
+
+on:
+  pull_request:
+    paths:
+      - 'meo/web/client/package.json'
+      - '.github/workflows/tmp-web-lock.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source without persisted credentials
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: meo/web/client/package-lock.json
+      - name: Resolve lockfile
+        working-directory: meo/web/client
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+      - name: Install and check the resolved tree
+        working-directory: meo/web/client
+        run: |
+          npm ci
+          npm run typecheck
+          npm test
+      - name: Upload resolved lockfile
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: meo-web-package-lock
+          path: meo/web/client/package-lock.json
+          if-no-files-found: error
+          retention-days: 1
