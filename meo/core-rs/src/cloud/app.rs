@@ -2452,7 +2452,7 @@ impl AppCore {
                     Err(e) if !e.is_offline() => break 'retry res,
                     _ => {}
                 }
-                tokio::time::sleep(std::time::Duration::from_millis(1000u64 << (attempt - 1)))
+                futures_timer::Delay::new(std::time::Duration::from_millis(1000u64 << (attempt - 1)))
                     .await;
                 res = self
                     .call_chat(|api, t| {
