@@ -440,6 +440,20 @@ pub enum Action {
     DeleteMemory {
         id: String,
     },
+    /// Opens the "add remote host" inline form in Settings > Devices.
+    BeginAddRemoteHost,
+    /// Opens the "edit remote host" inline form for the given host.
+    BeginEditRemoteHost { id: String },
+    /// Cancels the add/edit form without saving.
+    CancelRemoteHost,
+    /// Commits the current form: creates a new host or updates an existing one.
+    SaveRemoteHost,
+    /// Deletes a configured remote host (also clears active if it was active).
+    DeleteRemoteHost { id: String },
+    /// Sets the active remote host (empty string = use Meo Cloud).
+    ActivateRemoteHost { id: String },
+    /// Pings the remote host URL in the form to test connectivity.
+    TestRemoteHost,
     /// Long-running: keeps this device in sync with the user's other devices.
     /// Hosts dispatch it once after `Start` as its own task; extra calls return at once.
     Realtime,
@@ -702,6 +716,29 @@ struct RemoteLink {
     jobs: BTreeMap<String, Vec<Value>>,
 }
 
+/// A self-hosted Meo API server the user configured as a personal cloud backend.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+struct RemoteHost {
+    id: String,
+    name: String,
+    url: String,
+    token: String,
+    added_at: String,
+}
+
+/// Inline form state when adding or editing a remote host.
+#[derive(Clone, Debug, Default)]
+struct RemoteHostForm {
+    /// The id of the host being edited, or empty when adding a new one.
+    editing_id: String,
+    name: String,
+    url: String,
+    token: String,
+    /// Non-empty = the last test result (ok or error message).
+    test_result: String,
+    testing: bool,
+}
+
 /// Work the realtime loop runs beside the event stream, so approvals and stop keep arriving.
 enum RemoteJob {
     Task { from: String, text: String, project: Option<String>, permission: Option<String> },
@@ -832,6 +869,9 @@ struct State {
     store: StoreUi,
     prefs: Map<String, Value>,
     cloud_settings: Option<Value>,
+    remote_hosts: Vec<RemoteHost>,
+    active_remote_host_id: String,
+    rh_form: Option<RemoteHostForm>,
 }
 
 #[derive(Clone)]
@@ -871,6 +911,8 @@ const KEY_CREDENTIALS: &str = "credentials";
 const KEY_MODELS: &str = "models";
 /// Survives the app process being killed while the browser sign-in is open.
 const KEY_PENDING_AUTH: &str = "pending_auth";
+const KEY_REMOTE_HOSTS: &str = "remote-hosts";
+const KEY_ACTIVE_REMOTE_HOST: &str = "active-remote-host";
 
 impl AppCore {
     /// Developer preview: a signed-in state with sample conversations and answers, no network and
@@ -1272,6 +1314,24 @@ impl AppCore {
             Action::OpenPath { path } => self.open_path(&path).await,
             Action::OpenSettings { section } => self.open_settings(section).await,
             Action::SearchSettings { text } => self.update(|s| s.settings_query = text),
+            Action::BeginAddRemoteHost => self.update(|s| { s.rh_form = Some(RemoteHostForm::default()); }),
+            Action::BeginEditRemoteHost { id } => self.update(|s| {
+                if let Some(h) = s.remote_hosts.iter().find(|h| h.id == id) {
+                    s.rh_form = Some(RemoteHostForm {
+                        editing_id: id.clone(),
+                        name: h.name.clone(),
+                        url: h.url.clone(),
+                        token: h.token.clone(),
+                        test_result: String::new(),
+                        testing: false,
+                    });
+                }
+            }),
+            Action::CancelRemoteHost => self.update(|s| { s.rh_form = None; }),
+            Action::SaveRemoteHost => self.save_remote_host().await,
+            Action::DeleteRemoteHost { id } => self.delete_remote_host(id).await,
+            Action::ActivateRemoteHost { id } => self.activate_remote_host(id).await,
+            Action::TestRemoteHost => self.test_remote_host().await,
             Action::NewProfile => self.new_profile().await,
             Action::BeginGenerateProfile => self.prompt(
                 "Generate a profile",
@@ -1478,6 +1538,9 @@ impl AppCore {
         let tasks: Vec<schedule::Task> = self.load_json(KEY_SCHEDULE).unwrap_or_default();
         let credentials: Vec<Credential> = self.load_json(KEY_CREDENTIALS).unwrap_or_default();
         let catalogue: HashMap<String, Vec<Model>> = self.load_json(KEY_MODELS).unwrap_or_default();
+        let remote_hosts: Vec<RemoteHost> = self.load_json(KEY_REMOTE_HOSTS).unwrap_or_default();
+        let active_remote_host_id: String =
+            self.load_json(KEY_ACTIVE_REMOTE_HOST).unwrap_or_default();
         let selected = prefs
             .get("model.selected")
             .and_then(Value::as_str)
@@ -1501,6 +1564,8 @@ impl AppCore {
             s.credentials = credentials;
             s.catalogue = catalogue;
             s.selected = selected;
+            s.remote_hosts = remote_hosts;
+            s.active_remote_host_id = active_remote_host_id;
         });
         if signed_in {
             self.load_all().await;
@@ -1618,6 +1683,140 @@ impl AppCore {
                 None
             }
         }
+    }
+
+    /// Returns the active remote host, if any.
+    fn active_remote_host(&self) -> Option<RemoteHost> {
+        let s = self.state.lock().unwrap();
+        let id = s.active_remote_host_id.clone();
+        if id.is_empty() {
+            return None;
+        }
+        s.remote_hosts.iter().find(|h| h.id == id).cloned()
+    }
+
+    /// Runs a chat/conversation API call through the active remote host (if set) or the cloud.
+    /// When a remote host is active, uses its bearer token directly (no OAuth refresh).
+    async fn call_chat<T, F, Fut>(&self, f: F) -> Result<T, ApiError>
+    where
+        F: Fn(MeoApi, String) -> Fut,
+        Fut: std::future::Future<Output = Result<T, ApiError>>,
+    {
+        if let Some(host) = self.active_remote_host() {
+            let api = MeoApi::new(self.http.clone(), host.url).with_client(self.client_id.clone());
+            let result = f(api, host.token).await;
+            let offline = matches!(&result, Err(e) if e.is_offline());
+            self.update(|s| s.online = !offline);
+            result
+        } else {
+            self.call(f).await
+        }
+    }
+
+    async fn save_remote_host(&self) {
+        let (editing_id, name, url, token) = {
+            let s = self.state.lock().unwrap();
+            let Some(form) = &s.rh_form else { return };
+            (
+                form.editing_id.clone(),
+                form.name.trim().to_owned(),
+                form.url.trim().to_owned(),
+                form.token.trim().to_owned(),
+            )
+        };
+        if name.is_empty() || url.is_empty() {
+            return;
+        }
+        let url = url.trim_end_matches('/').to_owned();
+        let hosts = {
+            let mut s = self.state.lock().unwrap();
+            if editing_id.is_empty() {
+                let added_at = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs().to_string())
+                    .unwrap_or_default();
+                let host = RemoteHost {
+                    id: auth::random_token(16),
+                    name,
+                    url,
+                    token,
+                    added_at,
+                };
+                s.remote_hosts.push(host);
+            } else if let Some(h) = s.remote_hosts.iter_mut().find(|h| h.id == editing_id) {
+                h.name = name;
+                h.url = url;
+                h.token = token;
+            }
+            s.rh_form = None;
+            s.remote_hosts.clone()
+        };
+        self.save_json(KEY_REMOTE_HOSTS, &hosts);
+        self.hooks.changed();
+    }
+
+    async fn delete_remote_host(&self, id: String) {
+        let (hosts, new_active) = {
+            let mut s = self.state.lock().unwrap();
+            s.remote_hosts.retain(|h| h.id != id);
+            if s.active_remote_host_id == id {
+                s.active_remote_host_id.clear();
+            }
+            (s.remote_hosts.clone(), s.active_remote_host_id.clone())
+        };
+        self.save_json(KEY_REMOTE_HOSTS, &hosts);
+        self.save_json(KEY_ACTIVE_REMOTE_HOST, &new_active);
+        self.hooks.changed();
+    }
+
+    async fn activate_remote_host(&self, id: String) {
+        self.update(|s| s.active_remote_host_id = id.clone());
+        self.save_json(KEY_ACTIVE_REMOTE_HOST, &id);
+    }
+
+    async fn test_remote_host(&self) {
+        self.update(|s| {
+            if let Some(f) = &mut s.rh_form {
+                f.testing = true;
+                f.test_result.clear();
+            }
+        });
+        let (url, token) = {
+            let s = self.state.lock().unwrap();
+            let Some(form) = &s.rh_form else { return };
+            (
+                form.url.trim().trim_end_matches('/').to_owned(),
+                form.token.trim().to_owned(),
+            )
+        };
+        if url.is_empty() {
+            self.update(|s| {
+                if let Some(f) = &mut s.rh_form {
+                    f.testing = false;
+                    f.test_result = "Enter a URL first.".into();
+                }
+            });
+            return;
+        }
+        let health_url = format!("{url}/v1/health");
+        let result = self
+            .http
+            .get(&health_url)
+            .bearer_auth(&token)
+            .timeout(std::time::Duration::from_secs(8))
+            .send()
+            .await;
+        let msg = match result {
+            Ok(r) if r.status().is_success() => "Connected".to_owned(),
+            Ok(r) => format!("HTTP {}", r.status().as_u16()),
+            Err(e) => format!("Error: {e}"),
+        };
+        self.update(|s| {
+            if let Some(f) = &mut s.rh_form {
+                f.testing = false;
+                f.test_result = msg;
+            }
+        });
     }
 
     /// Runs an authenticated API call, retrying once after a token refresh.
@@ -2239,12 +2438,31 @@ impl AppCore {
         std::pin::Pin<Box<impl futures_util::Stream<Item = Result<ChatEvent, ApiError>>>>,
         ApiError,
     > {
-        let first = self
-            .call(|api, t| {
-                let body = body.clone();
-                async move { api.chat_stream(&t, &body).await.map(Box::pin) }
-            })
-            .await;
+        // Retry on transient network errors (up to 3 retries: 1s, 2s, 4s backoff).
+        let first = 'retry: {
+            let mut res = self
+                .call_chat(|api, t| {
+                    let body = body.clone();
+                    async move { api.chat_stream(&t, &body).await.map(Box::pin) }
+                })
+                .await;
+            for attempt in 1u32..=3 {
+                match &res {
+                    Ok(_) => break 'retry res,
+                    Err(e) if !e.is_offline() => break 'retry res,
+                    _ => {}
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(1000u64 << (attempt - 1)))
+                    .await;
+                res = self
+                    .call_chat(|api, t| {
+                        let body = body.clone();
+                        async move { api.chat_stream(&t, &body).await.map(Box::pin) }
+                    })
+                    .await;
+            }
+            res
+        };
         // Busy (rate limited), or not offered by this provider at all (a 404 for the model name):
         // either way the same question goes once to another model, with fresh consent.
         let missing = matches!(&first, Err(ApiError::Status { code, .. }) if code == "ai_model_or_endpoint_not_found");
@@ -2267,7 +2485,7 @@ impl AppCore {
         } else {
             self.notice("info", "That model is busy. Trying another one.");
         }
-        self.call(|api, t| {
+        self.call_chat(|api, t| {
             let retry = retry.clone();
             async move { api.chat_stream(&t, &retry).await.map(Box::pin) }
         })
@@ -2288,7 +2506,7 @@ impl AppCore {
         retry["credentialId"] = json!(credential);
         retry["model"] = json!(model);
         let consent = self
-            .call(|api, t| {
+            .call_chat(|api, t| {
                 let retry = retry.clone();
                 async move { api.chat_prepare(&t, &retry).await }
             })
@@ -2313,7 +2531,7 @@ impl AppCore {
         let started = super::now_secs();
         let request = json!({ "credentialId": credential, "model": model, "prompt": prompt });
         let consent = self
-            .call(|api, t| {
+            .call_chat(|api, t| {
                 let request = request.clone();
                 async move { api.chat_prepare(&t, &request).await }
             })
@@ -2326,7 +2544,7 @@ impl AppCore {
             "confirmationVersion": 1,
         });
         let mut events = self
-            .call(|api, t| {
+            .call_chat(|api, t| {
                 let body = body.clone();
                 async move { api.chat_stream(&t, &body).await.map(Box::pin) }
             })
@@ -5407,7 +5625,7 @@ impl AppCore {
             save_prompt = false;
         }
         let consent = match self
-            .call(|api, t| {
+            .call_chat(|api, t| {
                 let request = request.clone();
                 async move { api.chat_prepare(&t, &request).await }
             })
@@ -8902,6 +9120,30 @@ impl AppCore {
     // ---- settings ------------------------------------------------------
 
     async fn set_setting(&self, binding: String, value: Value) {
+        if binding == "rh.form.name" {
+            self.update(|s| {
+                if let Some(f) = &mut s.rh_form {
+                    f.name = value.as_str().unwrap_or_default().to_owned();
+                }
+            });
+            return;
+        }
+        if binding == "rh.form.url" {
+            self.update(|s| {
+                if let Some(f) = &mut s.rh_form {
+                    f.url = value.as_str().unwrap_or_default().to_owned();
+                }
+            });
+            return;
+        }
+        if binding == "rh.form.token" {
+            self.update(|s| {
+                if let Some(f) = &mut s.rh_form {
+                    f.token = value.as_str().unwrap_or_default().to_owned();
+                }
+            });
+            return;
+        }
         if binding.starts_with("project:") {
             return self.edit_project_field(&binding, value).await;
         }
@@ -9264,7 +9506,10 @@ impl AppCore {
                     "shortcuts" => items.extend(shortcut_items(s)),
                     "about" => items.extend(about_items()),
                     "permissions" => items.extend(permission_items(s)),
-                    "devices" => items.extend(self.device_items(s)),
+                    "devices" => {
+                        items.extend(self.device_items(s));
+                        items.extend(remote_host_items(s));
+                    }
                     "account" => {
                         items.push(json!({
                             "id": "sync", "label": "Live sync", "kind": "info",
@@ -12865,6 +13110,53 @@ fn shortcut_items(s: &State) -> Vec<Value> {
 }
 
 /// Settings > About: version, what Meo AI is made of, where the source and licenses are.
+fn remote_host_items(s: &State) -> Vec<Value> {
+    let mut items: Vec<Value> = Vec::new();
+
+                        if let Some(form) = &s.rh_form {
+                            let is_new = form.editing_id.is_empty();
+                            items.push(json!({ "id": "rh_back", "kind": "button", "label": "All remote hosts", "style": "secondary", "action": { "type": "cancel_remote_host" } }));
+                            items.push(json!({ "id": "rh_name", "kind": "text", "single_line": true, "label": "Name", "binding": "rh.form.name", "value": form.name }));
+                            items.push(json!({ "id": "rh_url", "kind": "text", "single_line": true, "label": "URL (e.g. http://192.168.1.100:8000)", "binding": "rh.form.url", "value": form.url }));
+                            items.push(json!({ "id": "rh_token", "kind": "text", "single_line": true, "label": "Token", "binding": "rh.form.token", "value": form.token, "secret": true }));
+                            items.push(json!({
+                                "id": "rh_test", "kind": "button", "style": "secondary",
+                                "label": if form.testing { "Testing…" } else { "Test connection" },
+                                "action": { "type": "test_remote_host" },
+                            }));
+                            if !form.test_result.is_empty() {
+                                let ok = form.test_result == "Connected";
+                                items.push(json!({ "id": "rh_test_result", "kind": "info", "label": "Result", "value": form.test_result, "style": if ok { "ok" } else { "error" } }));
+                            }
+                            items.push(json!({ "id": "rh_save", "kind": "button", "style": "primary", "label": if is_new { "Add" } else { "Save" }, "action": { "type": "save_remote_host" } }));
+                            items.push(json!({ "id": "rh_cancel", "kind": "button", "style": "secondary", "label": "Cancel", "action": { "type": "cancel_remote_host" } }));
+                        } else {
+                            let active = s.active_remote_host_id.clone();
+                            if s.remote_hosts.is_empty() {
+                                items.push(json!({ "id": "rh_empty", "kind": "info", "label": "No remote hosts", "value": "Add your own always-on machine to use as a personal cloud backend." }));
+                            }
+                            for h in &s.remote_hosts {
+                                let is_active = h.id == active;
+                                items.push(item(
+                                    format!("rh_{}", h.id),
+                                    &h.name,
+                                    &h.url,
+                                    vec![
+                                        button(
+                                            if is_active { "Active" } else { "Use" },
+                                            if is_active { "primary" } else { "secondary" },
+                                            json!({ "type": "activate_remote_host", "id": if is_active { "" } else { h.id.as_str() } }),
+                                        ),
+                                        button("Edit", "secondary", json!({ "type": "begin_edit_remote_host", "id": h.id })),
+                                        button("Delete", "danger", json!({ "type": "delete_remote_host", "id": h.id })),
+                                    ],
+                                ));
+                            }
+                            items.push(json!({ "id": "rh_add", "kind": "button", "style": "secondary", "label": "+ Add remote host", "action": { "type": "begin_add_remote_host" } }));
+                        }
+                        items
+}
+
 fn about_items() -> Vec<Value> {
     let link = |id: &str, label: &str, value: &str, url: &str| {
         own_item(

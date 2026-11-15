@@ -882,6 +882,7 @@ private fun TextControl(item: JSONObject, act: Act, modifier: Modifier) {
             act(setting(item, text))
         }
     }
+    val secret = item.optBoolean("secret")
     OutlinedTextField(
         value = text,
         onValueChange = { text = it },
@@ -890,7 +891,11 @@ private fun TextControl(item: JSONObject, act: Act, modifier: Modifier) {
         placeholder = if (hint.isNotEmpty()) { { Text(hint) } } else null,
         singleLine = singleLine,
         minLines = if (singleLine) 1 else 3,
-        keyboardOptions = KeyboardOptions(imeAction = if (singleLine) ImeAction.Done else ImeAction.Default),
+        visualTransformation = if (secret) PasswordVisualTransformation() else VisualTransformation.None,
+        keyboardOptions = KeyboardOptions(
+            imeAction = if (singleLine) ImeAction.Done else ImeAction.Default,
+            keyboardType = if (secret) KeyboardType.Password else KeyboardType.Text,
+        ),
         keyboardActions = KeyboardActions(onDone = { commit() }),
     )
 }
