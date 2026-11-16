@@ -7,6 +7,7 @@ on:
   pull_request:
     paths:
       - 'meo/core-rs/Cargo.toml'
+      - 'meo/core-rs/Cargo.lock'
       - 'meo/desktop-rs/Cargo.toml'
       - 'meo/desktop-rs/Cargo.lock'
       - '.github/workflows/tmp-desktop-cargo-lock.yml'
@@ -35,17 +36,24 @@ jobs:
         with:
           components: rustfmt, clippy
 
-      - name: Resolve only the stale core dependency entries in the desktop lockfile
-        run: cargo update --manifest-path meo/desktop-rs/Cargo.toml -p lopdf -p zip@2.6.1
-
-      - name: Verify all resolved ZIP versions and the PDF parser
+      - name: Resolve only the stale ZIP and PDF dependency entries
         run: |
+          cargo update --manifest-path meo/core-rs/Cargo.toml -p zip@9.5.1
+          cargo update --manifest-path meo/desktop-rs/Cargo.toml -p lopdf -p zip@2.6.1
+
+      - name: Verify both lockfiles and preserve the stable Velopack ZIP dependency
+        run: |
+          cargo tree --manifest-path meo/core-rs/Cargo.toml -i zip
           cargo tree --manifest-path meo/desktop-rs/Cargo.toml -i lopdf
-          cargo tree --manifest-path meo/desktop-rs/Cargo.toml -i zip
+          cargo tree --manifest-path meo/desktop-rs/Cargo.toml -i zip@9.6.0
+          cargo tree --manifest-path meo/desktop-rs/Cargo.toml -i zip@8.6.0
+          grep -A2 -E '^name = "(lopdf|zip)"$' meo/core-rs/Cargo.lock
           grep -A2 -E '^name = "(lopdf|zip)"$' meo/desktop-rs/Cargo.lock
 
       - uses: actions/upload-artifact@v7
         with:
-          name: desktop-cargo-lock
-          path: meo/desktop-rs/Cargo.lock
+          name: rust-cargo-lockfiles
+          path: |
+            meo/core-rs/Cargo.lock
+            meo/desktop-rs/Cargo.lock
           if-no-files-found: error
