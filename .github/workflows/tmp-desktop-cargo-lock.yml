@@ -1,6 +1,9 @@
 name: Temporary desktop Cargo lock resolver
 
 on:
+  push:
+    branches:
+      - maintenance/desktop-cargo-lock-20261116
   pull_request:
     paths:
       - 'meo/core-rs/Cargo.toml'
@@ -12,7 +15,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: tmp-desktop-cargo-lock-${{ github.event.pull_request.number }}
+  group: tmp-desktop-cargo-lock-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
