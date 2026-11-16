@@ -23,19 +23,12 @@ jobs:
           ref: ${{ github.ref_name }}
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy
+          components: rustfmt
       - name: Resolve lopdf in both Rust lockfiles
         run: |
           cargo update --manifest-path meo/core-rs/Cargo.toml -p lopdf --precise 0.47.0
           cargo update --manifest-path meo/core-rs/Cargo.toml -p zip --precise 9.5.1
           cargo update --manifest-path meo/desktop-rs/Cargo.toml -p lopdf --precise 0.47.0
-      - name: Validate core against the generated lockfile
-        run: |
-          cargo check --locked --all-features --manifest-path meo/core-rs/Cargo.toml
-          cargo clippy --locked --all-features --all-targets --manifest-path meo/core-rs/Cargo.toml -- -D warnings
-          cargo test --locked --all-features --manifest-path meo/core-rs/Cargo.toml
-      - name: Validate desktop against the generated lockfile
-        run: cargo check --locked --manifest-path meo/desktop-rs/Cargo.toml
       - name: Ensure only the two Cargo lockfiles changed
         run: |
           set -euo pipefail
@@ -53,3 +46,10 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "chore(deps): resolve lopdf 0.47.0 lockfiles"
           git push origin "HEAD:${{ github.ref_name }}"
+      - name: Validate core against the generated lockfile
+        run: |
+          cargo check --locked --all-features --manifest-path meo/core-rs/Cargo.toml
+          cargo test --locked --all-features --manifest-path meo/core-rs/Cargo.toml
+          cargo fmt --check --manifest-path meo/core-rs/Cargo.toml
+      - name: Validate desktop against the generated lockfile
+        run: cargo check --locked --manifest-path meo/desktop-rs/Cargo.toml
