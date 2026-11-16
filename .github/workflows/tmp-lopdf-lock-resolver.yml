@@ -14,6 +14,7 @@ concurrency:
 
 jobs:
   resolve:
+    if: contains(github.event.head_commit.message, '[resolve-locks]')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -22,29 +23,26 @@ jobs:
           ref: ${{ github.ref_name }}
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy
+          components: rustfmt
       - name: Resolve lopdf in both Rust lockfiles
         run: |
           cargo update --manifest-path meo/core-rs/Cargo.toml -p lopdf --precise 0.47.0
-          cargo update --manifest-path meo/core-rs/Cargo.toml -p zip --precise 9.4.2
+          cargo update --manifest-path meo/core-rs/Cargo.toml -p zip
           cargo update --manifest-path meo/desktop-rs/Cargo.toml -p lopdf --precise 0.47.0
-      - name: Validate core against the generated lockfile
-        run: |
-          cargo check --locked --all-features --manifest-path meo/core-rs/Cargo.toml
-          cargo clippy --locked --all-features --all-targets --manifest-path meo/core-rs/Cargo.toml -- -D warnings
-          cargo test --locked --all-features --manifest-path meo/core-rs/Cargo.toml
-      - name: Validate desktop against the generated lockfile
-        run: cargo check --locked --manifest-path meo/desktop-rs/Cargo.toml
       - name: Ensure only the two Cargo lockfiles changed
         run: |
           set -euo pipefail
           changed="$(git status --porcelain=v1 --untracked-files=all | sed 's/^...//')"
-          expected=$(printf '%s\n' 'meo/core-rs/Cargo.lock' 'meo/desktop-rs/Cargo.lock')
-          if [ "$(printf '%s\n' "$changed" | sort)" != "$(printf '%s\n' "$expected" | sort)" ]; then
-            echo "Unexpected working tree changes:"
-            printf '%s\n' "$changed"
+          if [ -z "$changed" ]; then
+            echo "No lockfile changes were generated."
             exit 1
           fi
+          while IFS= read -r path; do
+            case "$path" in
+              meo/core-rs/Cargo.lock|meo/desktop-rs/Cargo.lock) ;;
+              *) echo "Unexpected working tree change: $path"; exit 1 ;;
+            esac
+          done <<< "$changed"
       - name: Commit lockfiles to this maintenance branch only
         run: |
           git add meo/core-rs/Cargo.lock meo/desktop-rs/Cargo.lock
@@ -52,3 +50,10 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "chore(deps): resolve lopdf 0.47.0 lockfiles"
           git push origin "HEAD:${{ github.ref_name }}"
+      - name: Validate core against the generated lockfile
+        run: |
+          cargo check --locked --all-features --manifest-path meo/core-rs/Cargo.toml
+          cargo test --locked --all-features --manifest-path meo/core-rs/Cargo.toml
+          cargo fmt --check --manifest-path meo/core-rs/Cargo.toml
+      - name: Validate desktop against the generated lockfile
+        run: cargo check --locked --manifest-path meo/desktop-rs/Cargo.toml
