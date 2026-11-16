@@ -1,0 +1,48 @@
+name: Temporary desktop Cargo lock resolver
+
+on:
+  pull_request:
+    paths:
+      - 'meo/core-rs/Cargo.toml'
+      - 'meo/desktop-rs/Cargo.toml'
+      - 'meo/desktop-rs/Cargo.lock'
+      - '.github/workflows/tmp-desktop-cargo-lock.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tmp-desktop-cargo-lock-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    timeout-minutes: 30
+    steps:
+      - name: Install Git and CA certificates
+        run: pacman -Syu --noconfirm --needed ca-certificates git
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249
+        with:
+          components: rustfmt, clippy
+
+      - name: Resolve only the stale core dependency entries in the desktop lockfile
+        run: cargo update --manifest-path meo/desktop-rs/Cargo.toml -p lopdf -p zip@2.6.1
+
+      - name: Verify all resolved ZIP versions and the PDF parser
+        run: |
+          cargo tree --manifest-path meo/desktop-rs/Cargo.toml -i lopdf
+          cargo tree --manifest-path meo/desktop-rs/Cargo.toml -i zip
+          grep -A2 -E '^name = "(lopdf|zip)"$' meo/desktop-rs/Cargo.lock
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: desktop-cargo-lock
+          path: meo/desktop-rs/Cargo.lock
+          if-no-files-found: error
