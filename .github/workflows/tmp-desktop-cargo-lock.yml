@@ -50,6 +50,15 @@ jobs:
           grep -A2 -E '^name = "(lopdf|zip)"$' meo/core-rs/Cargo.lock
           grep -A2 -E '^name = "(lopdf|zip)"$' meo/desktop-rs/Cargo.lock
 
+      - name: Emit the generated lockfiles for the maintainer
+        run: |
+          echo 'BEGIN_CORE_LOCK'
+          cat meo/core-rs/Cargo.lock
+          echo 'END_CORE_LOCK'
+          echo 'BEGIN_DESKTOP_LOCK'
+          cat meo/desktop-rs/Cargo.lock
+          echo 'END_DESKTOP_LOCK'
+
       - uses: actions/upload-artifact@v7
         with:
           name: rust-cargo-lockfiles
