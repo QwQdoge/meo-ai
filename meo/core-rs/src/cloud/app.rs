@@ -608,6 +608,7 @@ impl NativeRun {
     }
 
     /// The live plan card (goal and task list) of this run, when the model set either.
+    #[cfg(test)]
     fn plan(&self, live: bool) -> Option<Value> {
         richtext::plan_block(self.goal.as_ref(), &self.tasks, live)
     }
@@ -18024,7 +18025,7 @@ mod tests {
         assert!(ok.ok, "{}", ok.text);
         assert!(c.run_schedule("schedule_list", &json!({})).text.contains("every day at 09:00"));
         assert!(c.run_schedule("schedule_edit", &json!({ "id": "s1", "op": "pause" })).text.contains("Paused"));
-        assert!(c.state.lock().unwrap().schedule[0].due(i64::MAX) == false, "a paused task never fires");
+        assert!(!c.state.lock().unwrap().schedule[0].due(i64::MAX), "a paused task never fires");
         assert!(c.run_schedule("schedule_run", &json!({ "id": "s1" })).text.contains("resume it first"));
         assert!(c.run_schedule("schedule_edit", &json!({ "id": "s1", "op": "resume" })).ok);
         assert!(c.run_schedule("schedule_edit", &json!({ "id": "s9", "op": "delete" })).text.contains("no scheduled task"));
