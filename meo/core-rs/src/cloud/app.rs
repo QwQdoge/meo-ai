@@ -5482,8 +5482,7 @@ impl AppCore {
                 .unwrap_or(false)
                 || (mode == "auto"
                     && router::wants_search(&text)
-                    && !self.mentions_connected_app(&text)
-                    && !about_users_own_work(&text)));
+                    && !self.mentions_connected_app(&text)));
         // Above "low" the answer may take several model calls (router, steps, a check). Each call is
         // a separate request, so it only runs when sending without asking each time is allowed.
         let auto_consent = pref_bool(&self.state.lock().unwrap(), "chat.auto_consent", true);
@@ -7435,10 +7434,14 @@ impl AppCore {
                 && s.agent.round > 0
                 && s.agent.nudges < 2
         };
+        // A task the router judged to need investigating (it wrote a brief), with functions to call, that
+        // gets a first reply without a single call: whatever the wording, nothing was looked at yet, so
+        // it is not the answer.
+        let nothing_looked_at = s.agent.native.is_some() && s.agent.brief.is_some() && s.agent.round == 0;
         budget
             && s.agent.round < MAX_TOOL_ROUNDS
             && agent::parse_tool_calls(reply).is_empty()
-            && (announces_next_step(reply) || has_unfinished_tasks(reply))
+            && (nothing_looked_at || announces_next_step(reply) || has_unfinished_tasks(reply))
     }
 
     fn agent_permission(&self) -> agent::Permission {
@@ -7918,20 +7921,8 @@ impl AppCore {
         if !turns.is_empty() {
             request["turns"] = Value::Array(turns);
         }
-        let hints: Vec<String> = {
-            let s = self.state.lock().unwrap();
-            s.plugins
-                .as_ref()
-                .and_then(|r| r.as_ref().ok())
-                .map(|rows| {
-                    rows.iter()
-                        .filter(|p| p["enabled"] == true)
-                        .filter_map(|p| Some(format!("- {}: {}", p["name"].as_str()?, app_hint(p["remoteUrl"].as_str()?)?)))
-                        .collect()
-                })
-                .unwrap_or_default()
-        };
-        let hints = hints.join("\n");
+        // Connected apps describe themselves through their tools; no app gets rules of its own here.
+        let hints = String::new();
         let (root, web, subagents, plan_mode) = {
             let s = self.state.lock().unwrap();
             (
@@ -9025,9 +9016,6 @@ impl AppCore {
             match listed {
                 Ok(tools) if !tools.is_empty() => {
                     out.push_str(&format!("- {name}:\n"));
-                    if let Some(hint) = p["remoteUrl"].as_str().and_then(app_hint) {
-                        out.push_str(&format!("  Hint: {hint}\n"));
-                    }
                     // Best first for this request; the rest are named, so none is out of reach.
                     let request = self.state.lock().unwrap().agent.request.clone();
                     let order = agent::rank_tools(&tools, &request);
@@ -12655,27 +12643,6 @@ fn workspace_context(root: &str) -> String {
 #[cfg(target_arch = "wasm32")]
 fn workspace_context(_root: &str) -> String {
     String::new()
-}
-
-/// What a model must know to use a connected app well, from the server's address. GitHub's repository
-/// search leaves forks out unless asked (the user's own Meo AI repository is one), and ranks other
-/// people's projects first, so a plain search never finds it.
-fn app_hint(remote_url: &str) -> Option<&'static str> {
-    if remote_url.contains("api.githubcopilot.com") {
-        Some("search_repositories leaves forks out by default and ranks other people's projects first. To find a repository of the user's: call get_me for the login, then search with `user:<login> <the name they gave> fork:true`. Search only for what they named; never list or scan all of their repositories. To read code: get_file_contents with owner, repo and path (`/` lists the root); read README.md and AGENTS.md first.")
-    } else {
-        None
-    }
-}
-
-/// The request is about the user's own work (their repository, code, issues), which no web search can
-/// answer: the connected app or the files are the source. A search with the whole sentence of such a
-/// request as its query returns noise.
-fn about_users_own_work(text: &str) -> bool {
-    let t = text.to_lowercase();
-    ["仓库", "代码库", "我的项目", "我的代码", "repo", "repository", "github", "gitlab", "issue", "pull request", "commit", "分支"]
-        .iter()
-        .any(|w| t.contains(w))
 }
 
 /// Default continuation rounds for a goal (`chat.goal_rounds`, 1 to 10; the setting may hold text).
@@ -19221,10 +19188,8 @@ mod tests {
         let prompt = streams[0]["prompt"].as_str().unwrap();
         assert!(prompt.contains("Understand first") && prompt.contains("rest on something you read") && prompt.contains("no menus"),
             "the general rules against guessing, unverified points and menus: {prompt}");
-        assert!(prompt.contains("## Connected apps") && prompt.contains("fork:true") && prompt.contains("get_me"),
-            "the GitHub hint that finds a fork: {prompt}");
-        assert!(prompt.contains("never list or scan all of their repositories") && !prompt.contains("list them all"),
-            "the hint scopes the search to what was named: {prompt}");
+        assert!(!prompt.contains("fork:true") && !prompt.contains("## Connected apps"),
+            "no app gets rules of its own in the prompt: {prompt}");
         assert!(prompt.contains("stay on what the user named"));
         let _ = std::fs::remove_dir_all(&folder);
     }
@@ -19460,6 +19425,25 @@ mod tests {
         let tasks = sections.as_array().unwrap().iter().find(|x| x["id"] == "tasks").expect("the list is shown");
         assert_eq!(tasks["title"], "Tasks · 2/2");
         let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn a_task_whose_first_reply_calls_nothing_is_not_taken_as_the_answer() {
+        let c = signed_in_core();
+        let reply = "我来核对 QwQdoge/meo-ai 今天的提交记录。";
+        c.update(|s| {
+            s.agent.native = Some(NativeRun::default());
+            s.agent.brief = Some("## What the user wants\nGoal: see today's work".into());
+            s.agent.round = 0;
+        });
+        assert!(c.agent_stalled(reply), "a task with nothing looked at yet goes on, whatever the wording");
+        c.update(|s| s.agent.round = 2);
+        assert!(!c.agent_stalled(reply), "after tools ran, a reply without a call may be the answer");
+        c.update(|s| {
+            s.agent.round = 0;
+            s.agent.brief = None;
+        });
+        assert!(!c.agent_stalled("Hello! How can I help?"), "a plain question (no brief) is answered directly");
     }
 
     #[test]
@@ -19972,7 +19956,7 @@ mod tests {
     }
 
     #[test]
-    fn the_fenced_app_list_carries_the_github_hint_too() {
+    fn the_fenced_app_list_gives_no_app_rules_of_its_own() {
         let c = signed_in_core();
         c.update(|s| {
             s.plugins = Some(Ok(vec![json!({ "id": "p1", "name": "GitHub", "kind": "mcp", "enabled": true,
@@ -19980,8 +19964,7 @@ mod tests {
             s.app_tools.insert("p1".into(), Ok(vec![json!({ "name": "get_me", "description": "Who am I", "inputSchema": { "type": "object" } })]));
         });
         let text = futures_executor::block_on(c.app_instructions());
-        assert!(text.contains("Hint:") && text.contains("fork:true"), "{text}");
-        assert_eq!(app_hint("https://mcp.linear.app/mcp"), None);
+        assert!(text.contains("get_me") && !text.contains("Hint:"), "no app gets rules of its own: {text}");
     }
 
     #[test]
@@ -20034,13 +20017,6 @@ mod tests {
         assert!(!streams.iter().any(|b| b["prompt"].as_str().is_some_and(|p| p.contains("<review>"))));
         assert!(texts(&c).last().unwrap().starts_with("Findings."));
         let _ = std::fs::remove_dir_all(&folder);
-    }
-
-    #[test]
-    fn a_request_about_the_users_own_work_is_not_a_web_search_query() {
-        assert!(about_users_own_work("找到我的meo ai仓库告诉我下一步可以是什么，还有什么要改进的"));
-        assert!(about_users_own_work("review my repo"));
-        assert!(!about_users_own_work("when did rust 1.99 come out"));
     }
 
     #[test]

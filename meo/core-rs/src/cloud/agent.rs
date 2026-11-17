@@ -143,64 +143,17 @@ pub fn is_lookup_tool(name: &str) -> bool {
     READ.iter().any(|p| name.starts_with(p))
 }
 
-/// Words of a request mapped to the words app tools are named with, so a request in Chinese (or in
-/// other words) still finds `list_commits` for "今天的提交". Lower-case; checked as substrings.
-const TOOL_WORDS: &[(&str, &[&str])] = &[
-    ("提交", &["commit"]),
-    ("commit", &["commit"]),
-    ("拉取请求", &["pull_request", "pull"]),
-    ("合并请求", &["pull_request", "pull", "merge"]),
-    ("pr", &["pull_request", "pull"]),
-    ("pull", &["pull_request", "pull"]),
-    ("议题", &["issue"]),
-    ("issue", &["issue"]),
-    ("问题", &["issue"]),
-    ("分支", &["branch"]),
-    ("仓库", &["repo"]),
-    ("项目", &["repo", "project"]),
-    ("repo", &["repo"]),
-    ("发布", &["release", "tag"]),
-    ("release", &["release"]),
-    ("标签", &["tag", "label"]),
-    ("文件", &["file", "content"]),
-    ("代码", &["code", "file", "content"]),
-    ("工作流", &["workflow", "action", "run"]),
-    ("ci", &["workflow", "action", "run", "check"]),
-    ("通知", &["notification"]),
-    ("评论", &["comment"]),
-    ("审查", &["review"]),
-    ("review", &["review"]),
-    ("今天", &["list_", "commit", "event", "activity"]),
-    ("最近", &["list_", "commit", "event", "activity"]),
-    ("干了什么", &["commit", "event", "activity", "list_"]),
-    ("today", &["list_", "commit", "event", "activity"]),
-    ("recent", &["list_", "commit", "event", "activity"]),
-    ("我", &["get_me", "user"]),
-    ("日历", &["event", "calendar"]),
-    ("邮件", &["message", "mail", "thread"]),
-    ("文档", &["doc", "page", "file"]),
-];
-
-/// The order to offer an app's tools in when not all of them fit: the ones the request names first
-/// (by the tool's name, then its description), then looking-up tools before ones that change things,
-/// otherwise as the app lists them. Returns indexes into `tools`.
+/// The order to offer an app's tools in when not all of them fit: the ones whose name or description
+/// shares a word with the request first, then looking-up tools before ones that change things, otherwise
+/// as the app lists them. No list of words for any one app or task: what does not fit is still named in
+/// `app_call`. Returns indexes into `tools`.
 pub fn rank_tools(tools: &[Value], request: &str) -> Vec<usize> {
     let lower = request.to_lowercase();
-    let mut terms: Vec<String> = lower
+    let terms: Vec<String> = lower
         .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
         .filter(|w| w.len() >= 3)
         .map(str::to_owned)
         .collect();
-    for (word, maps) in TOOL_WORDS {
-        let hit = if word.is_ascii() {
-            lower.split(|c: char| !c.is_ascii_alphanumeric()).any(|w| w == *word || w.strip_suffix('s') == Some(*word) || (word.len() > 3 && w.starts_with(word)))
-        } else {
-            lower.contains(word)
-        };
-        if hit {
-            terms.extend(maps.iter().map(|m| (*m).to_owned()));
-        }
-    }
     let score = |t: &Value| -> usize {
         let name = t["name"].as_str().unwrap_or_default().to_lowercase();
         let desc: String = t["description"].as_str().unwrap_or_default().chars().take(200).collect::<String>().to_lowercase();
@@ -1819,11 +1772,10 @@ mod tests {
             .map(|n| json!({ "name": n, "description": "" }))
             .collect();
         let names = |order: Vec<usize>| order.into_iter().map(|i| github[i]["name"].as_str().unwrap().to_owned()).collect::<Vec<_>>();
-        let today = names(rank_tools(&github, "你看看GitHub里面的meo ai，告诉我今天都干了什么"));
-        assert!(today[..3].contains(&"list_commits".to_owned()), "{today:?}");
-        let prs = names(rank_tools(&github, "which PRs are open?"));
+        let commits = names(rank_tools(&github, "show me the latest commits"));
+        assert_eq!(commits[0], "list_commits", "{commits:?}");
+        let prs = names(rank_tools(&github, "list the open pull requests"));
         assert_eq!(prs[0], "list_pull_requests", "{prs:?}");
-        assert!(prs.iter().position(|n| n == "merge_pull_request") > prs.iter().position(|n| n == "list_pull_requests"));
         let plain = names(rank_tools(&github, "hello"));
         assert_eq!(plain.last().map(String::as_str), Some("merge_pull_request"), "lookups before changes: {plain:?}");
         let together = delegation_context("tests", &["docs".into()], Beside::Together, false);
