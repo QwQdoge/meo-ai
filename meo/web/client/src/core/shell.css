@@ -134,6 +134,21 @@
 .core-app .core-sheet-label b { margin-inline-start: auto; color: rgb(var(--accent-primary)); font-weight: 600; }
 .core-app .core-sheet-row select { padding: 6px 10px; border: 0; border-radius: var(--r-s); background: var(--tonal); color: inherit; font-size: 14px; }
 .core-app .core-pop { position: relative; }
+/* The "+" menu: files or photos, plugins. */
+.core-app .core-plus-menu { position: absolute; inset-inline-start: 0; bottom: calc(100% + 10px); z-index: 20; min-width: 220px; padding: 6px; border-radius: 14px; background: rgb(var(--surface-primary));
+  box-shadow: 0 0 0 var(--hair, 1px) rgb(var(--border-light, 128 128 128) / .35), 0 10px 30px rgb(0 0 0 / .18); animation: core-pop var(--t3, 200ms) cubic-bezier(.2, .8, .2, 1); display: flex; flex-direction: column; }
+.core-app .core-plus-menu button { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border: 0; border-radius: 10px; background: none; color: inherit; font: inherit; font-size: 14px; text-align: start; cursor: pointer; }
+.core-app .core-plus-menu button:hover, .core-app .core-plus-menu button:focus-visible { background: var(--tonal-2); outline: 0; }
+/* Controls that do not fit on one line keep only their icons (the name stays as the tooltip). */
+.core-app .core-input-bar { flex-wrap: nowrap; min-width: 0; }
+.core-app .core-input-bar > * { flex-shrink: 0; }
+.core-app .core-input-bar.compact .core-chip-toggle > span, .core-app .core-input-bar.compact .core-tune > span, .core-app .core-input-bar.compact .core-device.reserved > span { display: none; }
+.core-app .core-input-bar.compact .core-chip-toggle, .core-app .core-input-bar.compact .core-tune { padding: 0 8px; }
+.core-app .core-input-bar.compact .core-device select { max-width: 90px; }
+/* Files sent with a message, on its bubble. */
+.core-app .core-sent-files { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 6px; }
+.core-app .core-sent-file { display: inline-flex; align-items: center; gap: 5px; max-width: 240px; padding: 3px 9px; border-radius: 8px; background: rgb(var(--surface-primary)); font-size: 13px; color: rgb(var(--text-secondary)); }
+.core-app .core-sent-file span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .core-app .core-commands { border-radius: var(--r-m); background: rgb(var(--surface-primary)); box-shadow: var(--elev-3); border: 0; }
 
 .core-app .core-composer.dragging .core-input-box { outline: 2px dashed rgb(var(--accent-primary)); outline-offset: -2px; background: var(--tonal-2); }

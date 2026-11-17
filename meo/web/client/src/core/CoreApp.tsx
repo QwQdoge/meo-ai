@@ -1,5 +1,5 @@
 import { Switch } from "./Switch";
-import React, { useEffect, useRef, useState, type ReactNode } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Blocks } from "./rich";
 import { Icon, hasIcon } from "./icons";
 import browserHost from "./browserHost";
@@ -885,6 +885,35 @@ function FolderChip({ sendAction, act }: { sendAction?: Spec; act: Act }) {
   );
 }
 
+/** The composer's "+": adding files or photos, and the plugins (image generation, research and other
+ *  tools come as plugins). One click opens it, the second picks. */
+function PlusMenu({ attachLabel, onAttach, onPlugins }: { attachLabel: string; onAttach: () => void; onPlugins: () => void }) {
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: PointerEvent) => { if (!root.current?.contains(e.target as Node)) setOpen(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("pointerdown", away);
+    document.addEventListener("keydown", esc);
+    return () => { document.removeEventListener("pointerdown", away); document.removeEventListener("keydown", esc); };
+  }, [open]);
+  const pick = (run: () => void) => () => { setOpen(false); run(); };
+  return (
+    <span className="core-pop core-plus" ref={root}>
+      <button className="core-icon-btn" aria-label="Add" title="Add" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+        <Icon name="add" size={20} />
+      </button>
+      {open && (
+        <div className="core-plus-menu" role="menu">
+          <button role="menuitem" onClick={pick(onAttach)}><Icon name="attach" size={16} /><span>{attachLabel}</span></button>
+          <button role="menuitem" onClick={pick(onPlugins)}><Icon name="skills" size={16} /><span>Plugins</span></button>
+        </div>
+      )}
+    </span>
+  );
+}
+
 function ComposerControls({ toolbar, act, work, sendAction }: { toolbar: Spec[]; act: Act; work?: boolean; sendAction?: Spec }) {
   // Work runs on a chosen online device. The core only offers the choice once a device is enrolled and
   // online; until then say so instead of hiding it, so the missing piece is visible.
@@ -985,7 +1014,7 @@ const sameMessage = (a: Spec, b: Spec) =>
   a.id === b.id && a.role === b.role && a.text === b.text && !!a.streaming === !!b.streaming &&
   !!a.stepsOpen === !!b.stepsOpen && !!a.stepsLive === !!b.stepsLive && a.remote === b.remote && a.stepsLabel === b.stepsLabel &&
   (a.blocks?.length ?? 0) === (b.blocks?.length ?? 0) && planKey(a) === planKey(b) && (a.images?.length ?? 0) === (b.images?.length ?? 0) &&
-  (a.actions?.length ?? 0) === (b.actions?.length ?? 0) &&
+  (a.actions?.length ?? 0) === (b.actions?.length ?? 0) && (a.files?.length ?? 0) === (b.files?.length ?? 0) &&
   (a.steps ? JSON.stringify(a.steps) : "") === (b.steps ? JSON.stringify(b.steps) : "");
 
 /** What a step is doing: the core sends `kind`; the icon and sentence for each kind live here. */
@@ -1038,7 +1067,16 @@ const MessageView = React.memo(
     return (
           <div className={`core-message ${m.role === "user" ? "user" : "assistant"}`}>
             {m.role === "user" ? (
-              <div className="core-bubble user">{m.text}</div>
+              <div className="core-bubble user">
+                {(m.files ?? []).length > 0 && (
+                  <div className="core-sent-files">
+                    {m.files.map((f: Spec, k: number) => (
+                      <span key={k} className="core-sent-file" title={f.name}><Icon name="description" size={14} /><span>{f.name}</span></span>
+                    ))}
+                  </div>
+                )}
+                {m.text}
+              </div>
             ) : (
               <div className="core-bubble assistant">
                 {m.steps && (
@@ -1167,6 +1205,27 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
     r.start();
   };
   const [dragging, setDragging] = useState(false);
+  // When the controls do not fit on one line they lose their words (icons only, the name stays as a
+  // tooltip) instead of wrapping to a second line; the width they need with words is remembered.
+  const bar = useRef<HTMLDivElement>(null);
+  const [compactBar, setCompactBar] = useState(false);
+  const fullWidth = useRef(0);
+  useLayoutEffect(() => {
+    const el = bar.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const check = () => {
+      if (!el.classList.contains("compact")) {
+        fullWidth.current = el.scrollWidth;
+        if (el.scrollWidth > el.clientWidth + 1) setCompactBar(true);
+      } else if (fullWidth.current && el.clientWidth >= fullWidth.current) {
+        setCompactBar(false);
+      }
+    };
+    const watch = new ResizeObserver(check);
+    watch.observe(el);
+    check();
+    return () => watch.disconnect();
+  });
   const [attachNote, setAttachNote] = useState("");
   const note = (text: string) => { setAttachNote(text); window.setTimeout(() => setAttachNote(""), 4000); };
   // One path for the picker, paste and drag-and-drop: pictures are shrunk, text files go in as text.
@@ -1179,15 +1238,15 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
         const data = await shrinkImage(file);
         if (data) act({ type: "attach_image", name: file.name || "image.jpg", mime: "image/jpeg", data });
         else note(`Could not read ${file.name || "the picture"}`);
-      } else if (documentExtensions.includes(ext) || file.type === "application/pdf") {
+      } else if (composer.attach.any || documentExtensions.includes(ext) || file.type === "application/pdf") {
+        // Any other file goes to the core, which reads documents, takes any text as text, and says
+        // why when a file has nothing it can read: no list of extensions decides here.
         if (file.size > 25 * 1024 * 1024) { note(`${file.name} is larger than 25 MB`); continue; }
-        act({ type: "attach_document", name: file.name, data: toBase64(new Uint8Array(await file.arrayBuffer())) });
-      } else if (file.size > 2 * 1024 * 1024) {
-        note(`${file.name} is larger than 2 MB`);
+        act({ type: "attach_document", name: file.name || "pasted.txt", data: toBase64(new Uint8Array(await file.arrayBuffer())) });
       } else if (textTypes.includes(ext) || file.type.startsWith("text/") || (!ext && file.type === "")) {
         act({ type: composer.attach.action, name: file.name || "pasted.txt", text: await file.text() });
       } else {
-        note(`${file.name}: this file type is not supported yet (PDF, Word, Excel, PowerPoint, text, code and pictures work)`);
+        note(`${file.name}: this file type is not supported yet`);
       }
     }
   };
@@ -1349,19 +1408,23 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
                 }
               }}
             />
-            <div className="core-input-bar">
+            <div className={`core-input-bar${compactBar ? " compact" : ""}`} ref={bar}>
             {Speech && (
               <button className={`core-icon-btn core-voice${listening ? " listening" : ""}`} aria-label="Voice input" aria-pressed={listening} title={listening ? "Stop listening" : "Voice input"} onClick={toggleVoice}><Icon name="mic" size={20} /></button>
             )}
             {composer.attach && (
               <>
-                <button className="core-icon-btn core-attach" aria-label={composer.attach.label} title={composer.attach.label} onClick={() => fileInput.current?.click()}><Icon name="attach" size={20} /></button>
+                <PlusMenu
+                  attachLabel={composer.attach.label ?? "Add files or photos"}
+                  onAttach={() => fileInput.current?.click()}
+                  onPlugins={() => act({ type: "navigate", route: "skills" })}
+                />
                 <input
                   ref={fileInput}
                   type="file"
                   hidden
                   multiple
-                  accept={[...(composer.attach.extensions ?? []), ...documentExtensions].map((e: string) => "." + e).join(",")}
+                  accept={composer.attach.any ? undefined : [...(composer.attach.extensions ?? []), ...documentExtensions].map((e: string) => "." + e).join(",")}
                   onChange={(e) => {
                     const files = Array.from(e.target.files ?? []);
                     e.target.value = "";
