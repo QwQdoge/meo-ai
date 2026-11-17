@@ -8381,7 +8381,15 @@ impl AppCore {
             }
             roots
         };
-        match agent::gate_in(self.agent_permission(), &call.tool, &bound) {
+        // A connected app's tool outside Meo's checked list (the API lists it with `allowed: false`) may
+        // run, but only after the user says yes, whatever the permission level.
+        let gate = match &call.tool {
+            agent::Tool::App { app, tool, .. } if !self.app_tool_allowed(app, tool) => {
+                agent::Gate::Ask(format!("{tool} of {app} is not on Meo's list of checked tools"))
+            }
+            _ => agent::gate_in(self.agent_permission(), &call.tool, &bound),
+        };
+        match gate {
             agent::Gate::Allow => Box::pin(self.agent_execute(id, call)).await,
             agent::Gate::Deny(reason) => Box::pin(self.agent_refuse(id, call, &reason)).await,
             agent::Gate::Ask(reason) => {
@@ -8411,6 +8419,20 @@ impl AppCore {
                     }
                 }
             }
+        }
+    }
+
+    /// Whether an app's tool is on the operator's checked list (`allowed` in the API's listing; a server
+    /// from before the field lists only those, so a missing field counts as allowed).
+    fn app_tool_allowed(&self, app: &str, tool: &str) -> bool {
+        let s = self.state.lock().unwrap();
+        let Some(Ok(rows)) = s.plugins.as_ref() else { return true };
+        let Some(id) = rows.iter().find(|p| p["id"] == app || p["name"].as_str().is_some_and(|n| n.eq_ignore_ascii_case(app))).and_then(|p| p["id"].as_str()) else {
+            return true;
+        };
+        match s.app_tools.get(id) {
+            Some(Ok(tools)) => tools.iter().find(|t| t["name"] == tool).is_none_or(|t| t["allowed"] != false),
+            _ => true,
         }
     }
 
@@ -19523,6 +19545,31 @@ mod tests {
         let sections = c.view()["page"]["inspector"]["sections"].clone();
         let tasks = sections.as_array().unwrap().iter().find(|x| x["id"] == "tasks").expect("the list is shown");
         assert_eq!(tasks["title"], "Tasks · 2/2");
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn an_app_tool_outside_the_checked_list_runs_only_after_the_user_says_yes() {
+        let folder = temp_folder("app-unlisted");
+        let api = fake_api(vec![]);
+        let c = work_core(&api, &folder, "all");
+        c.update(|s| {
+            s.active = Some("c1".into());
+            s.plugins = Some(Ok(vec![json!({ "id": "gh", "name": "GitHub", "kind": "mcp", "enabled": true, "remoteUrl": "https://api.githubcopilot.com/mcp/" })]));
+            s.app_tools.insert("gh".into(), Ok(vec![
+                json!({ "name": "list_commits", "allowed": true }),
+                json!({ "name": "delete_file", "allowed": false }),
+                json!({ "name": "old_server_tool" }),
+            ]));
+        });
+        assert!(c.app_tool_allowed("GitHub", "list_commits"));
+        assert!(c.app_tool_allowed("GitHub", "old_server_tool"), "a server without the field lists only checked tools");
+        assert!(!c.app_tool_allowed("GitHub", "delete_file"));
+        // Even at full access it waits for a yes.
+        let call = agent::ToolCall { id: "x1".into(), tool: agent::Tool::App { app: "GitHub".into(), tool: "delete_file".into(), args: json!({}) } };
+        futures_executor::block_on(c.agent_dispatch("c1", call));
+        let pending = c.state.lock().unwrap().agent.pending.as_ref().map(|p| p.reason.clone());
+        assert!(pending.is_some_and(|r| r.contains("not on Meo's list of checked tools")), "it asks first");
         let _ = std::fs::remove_dir_all(&folder);
     }
 
