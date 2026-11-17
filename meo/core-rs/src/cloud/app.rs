@@ -1863,12 +1863,26 @@ impl AppCore {
         F: Fn(MeoApi, String) -> Fut,
         Fut: std::future::Future<Output = Result<T, ApiError>>,
     {
+        let result = self.call_quiet(f).await;
+        // Only the Meo API's own requests say whether the app can reach its server.
+        let offline = matches!(&result, Err(e) if e.is_offline());
+        self.update(|s| s.online = !offline);
+        result
+    }
+
+    /// Like `call`, but a failure does not change the online state. A plugin tool call is a request
+    /// to an outside service through the Meo API: its failure belongs to that tool's row, not to the app.
+    async fn call_quiet<T, F, Fut>(&self, f: F) -> Result<T, ApiError>
+    where
+        F: Fn(MeoApi, String) -> Fut,
+        Fut: std::future::Future<Output = Result<T, ApiError>>,
+    {
         let unauthorized = || ApiError::Status {
             status: 401,
             code: "unauthenticated".into(),
         };
         let token = self.token(false).await.ok_or_else(unauthorized)?;
-        let result = match f(self.api.clone(), token).await {
+        match f(self.api.clone(), token).await {
             Err(e) if e.is_unauthorized() => {
                 let token = self.token(true).await.ok_or_else(unauthorized)?;
                 let second = f(self.api.clone(), token).await;
@@ -1882,10 +1896,7 @@ impl AppCore {
                 second
             }
             other => other,
-        };
-        let offline = matches!(&result, Err(e) if e.is_offline());
-        self.update(|s| s.online = !offline);
-        result
+        }
     }
 
     // ---- data ----------------------------------------------------------
@@ -9217,7 +9228,7 @@ impl AppCore {
         };
         let id = plugin["id"].as_str().unwrap_or_default().to_owned();
         let result = self
-            .call(|api, t| {
+            .call_quiet(|api, t| {
                 let (id, tool, args) = (id.clone(), tool.to_owned(), args.clone());
                 async move { api.plugin_call(&t, &id, &tool, &args).await }
             })
