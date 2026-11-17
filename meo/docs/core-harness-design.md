@@ -140,10 +140,15 @@ Changes in this slice:
    sends it for Chat Completions, Responses and Gemini. The current message keeps the per-request parts
    (memory, files, web results, Skill, the core's tool sections). No client change: history is built on
    the server from the stored conversation.
-2. **Runtime context as a message after history, logged only when changed** (dsh `request/context`).
-   Today L3 is rebuilt into the current user message every round. Once history is real, L3 becomes its own
-   user-role snapshot that is re-sent only when it changed, so a long run stops paying for the folder map
-   and project rules on every step.
+2. ~~**Runtime context sent only when it changed.**~~ **Done 2026-11-17.** The core splits L2+L3 into a
+   *harness snapshot* (standing sections, folder map, local servers, project, loaded rules, `.agent/`
+   state) and the *volatile* part (permission level and its change, clock), which stays in the prompt.
+   The snapshot goes as `harness: {text, anchor?}`. New or changed: no anchor, it leads the current
+   message, and the saved message it came with becomes its anchor (SHA-256 of its trimmed text). Unchanged:
+   the anchor is sent and `meo-api` puts the snapshot in the history at that message
+   (`historyWithHarness` in `src/chat-history.mjs`), so it stays in the cached prefix instead of after it.
+   If the anchored message left the window, it falls back to the current message. An older API that
+   refuses the field gets the snapshot inside the prompt (`harness_unsupported`).
 3. **Hooks at the seams** (dsh waterfalls `agent/pre-step`, `tools/pre-execute`, `tools/post-execute`,
    `agent/turn-stopping`). The round driver, stall nudge, verify, grounding check and repeat reminder are
    hard-wired branches in `AppCore::turn`. One ordered list of `TurnStopping` checks (each: `fn(&Run) ->

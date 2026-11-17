@@ -867,6 +867,11 @@ struct State {
     native_unsupported: std::collections::HashSet<String>,
     /// Per conversation, the permission level the model was last told, so a change is said once.
     told_permission: HashMap<String, agent::Permission>,
+    /// Per conversation: the hash of the harness snapshot in its history, and the hash of the saved
+    /// message it was first sent with (the anchor the server places it at).
+    harness_anchor: HashMap<String, (String, String)>,
+    /// The server refused the `harness` field (an older Meo API): the snapshot goes inside the prompt.
+    harness_unsupported: bool,
     /// Signed in and still reading the providers' models and the model settings (a slow provider
     /// can take many seconds): "no model yet" would be wrong to say until that is done.
     loading_models: bool,
@@ -5569,6 +5574,7 @@ impl AppCore {
         if !native {
             Box::pin(self.add_tool_prompt(&mut request)).await;
         }
+        self.anchor_harness(&mut request, &conversation_id, &text, save_prompt);
         let route_label =
             router::slot(&route).map_or_else(|| "Custom".to_owned(), |x| x.label.to_owned());
         self.step(
@@ -5645,6 +5651,16 @@ impl AppCore {
             .await
         {
             Ok(consent) => consent,
+            // A Meo API from before the harness field rejects it as an unknown key: send the snapshot
+            // inside the prompt from now on and ask again.
+            Err(ApiError::Status { code, .. })
+                if code == "invalid_request"
+                    && request["harness"].is_object()
+                    && !self.state.lock().unwrap().harness_unsupported =>
+            {
+                self.update(|s| s.harness_unsupported = true);
+                return Box::pin(self.turn(text, false, save_prompt)).await;
+            }
             // This provider has no native tools (or refused the definitions): run on the fenced
             // protocol instead, once.
             Err(ApiError::Status { code, .. })
@@ -7819,9 +7835,9 @@ impl AppCore {
             plan_mode,
             apps: &hints,
         });
-        self.run_context(&mut prompt, root.as_deref(), &local_servers);
-        let current = request["prompt"].as_str().unwrap_or_default().to_owned();
-        request["prompt"] = json!(format!("{}\n\n{current}", prompt.render()));
+        let mut volatile = prompt::Prompt::new();
+        self.run_context(&mut prompt, &mut volatile, root.as_deref(), &local_servers);
+        self.put_harness(request, &prompt, &volatile);
         true
     }
 
@@ -8455,7 +8471,6 @@ impl AppCore {
             )
         };
         let apps = Box::pin(self.app_instructions()).await;
-        let current = request["prompt"].as_str().unwrap_or_default().to_owned();
         let mut prompt = if tools_root.is_some() || web || !apps.is_empty() || scratch {
             prompt::standing(&prompt::Surface {
                 native: false,
@@ -8474,8 +8489,9 @@ impl AppCore {
             Some(h) => self.local_server_text(h).await,
             None => String::new(),
         };
-        self.run_context(&mut prompt, tools_root.as_deref(), &local_servers);
-        request["prompt"] = json!(format!("{}\n\n{current}", prompt.render()));
+        let mut volatile = prompt::Prompt::new();
+        self.run_context(&mut prompt, &mut volatile, tools_root.as_deref(), &local_servers);
+        self.put_harness(request, &prompt, &volatile);
     }
 
     /// The folder host's local MCP servers, with the browser and computer guidance when those are on.
@@ -8502,7 +8518,9 @@ impl AppCore {
     /// The per-request context of a run with tools, after the standing sections (as Harness keeps its
     /// runtime context apart from the cached prompt): the folder, the local servers, the permission
     /// level (and a change of it since the model last saw it), the project, the clock.
-    fn run_context(&self, prompt: &mut prompt::Prompt, root: Option<&str>, local_servers: &str) {
+    /// Stable parts go into `snapshot` (sent once as the harness snapshot and kept in the history while it
+    /// does not change); the permission level and the clock go into `volatile`, sent on every request.
+    fn run_context(&self, prompt: &mut prompt::Prompt, volatile: &mut prompt::Prompt, root: Option<&str>, local_servers: &str) {
         use prompt::context_order as at;
         let scratch = self.state.lock().unwrap().agent.scratch;
         let place = if scratch {
@@ -8524,10 +8542,51 @@ impl AppCore {
             if let Some(before) = changed {
                 text = format!("{}\n{text}", prompt::permission_change(before, level));
             }
-            prompt.context("approval_policy", at::APPROVAL_POLICY, text);
+            volatile.context("approval_policy", at::APPROVAL_POLICY, text);
         }
         prompt.context("project", at::PROJECT, self.project_context(root));
-        prompt.context("clock", at::CLOCK, self.clock_note());
+        volatile.context("clock", at::CLOCK, self.clock_note());
+    }
+
+    /// The request's harness snapshot (standing sections and stable context) and its prompt (the volatile
+    /// context, then the message). [`Self::anchor_harness`] decides how the snapshot is sent.
+    fn put_harness(&self, request: &mut Value, snapshot: &prompt::Prompt, volatile: &prompt::Prompt) {
+        let current = request["prompt"].as_str().unwrap_or_default().to_owned();
+        let lead = volatile.render();
+        request["prompt"] = json!(if lead.is_empty() { current } else { format!("{lead}\n\n{current}") });
+        let text = snapshot.render();
+        if !text.is_empty() {
+            request["harness"] = json!({ "text": text });
+        }
+    }
+
+    /// How the snapshot travels (DeepSeek Harness logs runtime context only when it changed): the same
+    /// snapshot as before goes with the anchor of the saved message it was first sent with, and the
+    /// server puts it there in the history, so it stays in the cached prefix instead of being sent anew
+    /// with every message. A new or changed snapshot goes without an anchor (it leads the current
+    /// message) and, when this message is saved, this message becomes its anchor. A server from before
+    /// the field gets it inside the prompt.
+    fn anchor_harness(&self, request: &mut Value, conversation: &str, text: &str, saved: bool) {
+        let Some(snapshot) = request["harness"]["text"].as_str().map(str::to_owned) else {
+            return;
+        };
+        let mut s = self.state.lock().unwrap();
+        if s.harness_unsupported {
+            let current = request["prompt"].as_str().unwrap_or_default().to_owned();
+            request["prompt"] = json!(format!("{snapshot}\n\n{current}"));
+            if let Some(o) = request.as_object_mut() {
+                o.remove("harness");
+            }
+            return;
+        }
+        let hash = sha256_hex(&snapshot);
+        match s.harness_anchor.get(conversation) {
+            Some((same, anchor)) if *same == hash => request["harness"]["anchor"] = json!(anchor),
+            _ if saved && !text.trim().is_empty() => {
+                s.harness_anchor.insert(conversation.to_owned(), (hash, sha256_hex(text.trim())));
+            }
+            _ => {}
+        }
     }
 
     /// What the model is told the time is, as DeepSeek Harness' `time-context` does: the current date and
@@ -10333,6 +10392,12 @@ const MAX_TOOL_ROUNDS: usize = 20;
 const MAX_CALLS_PER_ROUND: usize = 8;
 /// Times one message's native run is sent back for saying what it would do without calling it.
 const MAX_STALLS: usize = 4;
+
+/// Lower-case hex SHA-256 (the harness snapshot and its anchor; the server hashes the same way).
+fn sha256_hex(text: &str) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(text.as_bytes()).iter().map(|b| format!("{b:02x}")).collect()
+}
 
 /// The permission level in effect (the composer shows the same value).
 fn permission_value(s: &State) -> String {
@@ -16725,7 +16790,9 @@ mod tests {
         let legacy = replies.contains(&"@legacy") || replies.iter().any(|r| r.contains("```meo-tool"));
         // "@reject-native": the provider refuses a stream request that carries native tools.
         let reject = replies.contains(&"@reject-native");
-        let replies: Vec<String> = replies.into_iter().filter(|r| *r != "@legacy" && *r != "@reject-native").map(str::to_owned).collect();
+        // "@no-harness": a Meo API from before the harness field (it refuses unknown keys).
+        let no_harness = replies.contains(&"@no-harness");
+        let replies: Vec<String> = replies.into_iter().filter(|r| *r != "@legacy" && *r != "@reject-native" && *r != "@no-harness").map(str::to_owned).collect();
         let streams = Arc::new(Mutex::new(Vec::<Value>::new()));
         let store = Arc::new(Mutex::new(seed));
         let compacts = Arc::new(Mutex::new(Vec::<Value>::new()));
@@ -16814,7 +16881,9 @@ mod tests {
                         (lines, prompt).hash(&mut h);
                         format!("{:x}", h.finish())
                     };
-                    let (status, content_type, payload) = if path == "/v1/chat/prepare"
+                    let (status, content_type, payload) = if path.starts_with("/v1/chat/") && no_harness && body.get("harness").is_some() {
+                        (400, "application/json", json!({ "error": "invalid_request" }).to_string())
+                    } else if path == "/v1/chat/prepare"
                         && legacy
                         && body["tools"].is_array()
                     {
@@ -16845,6 +16914,13 @@ mod tests {
                         (502, "application/json", json!({ "error": "ai_provider_rejected_request" }).to_string())
                     } else if path == "/v1/chat/stream" {
                         let mut seen = seen.lock().unwrap();
+                        // Like a server that has not placed the snapshot in the history: it leads the
+                        // prompt, so the tests read one text (the raw field stays on the body).
+                        let mut body = body;
+                        if let Some(h) = body["harness"]["text"].as_str().map(str::to_owned) {
+                            let p = body["prompt"].as_str().unwrap_or_default().to_owned();
+                            body["prompt"] = json!(format!("{h}\n\n{p}"));
+                        }
                         let reply = replies
                             .get(seen.len())
                             .cloned()
@@ -18379,6 +18455,51 @@ mod tests {
         assert!(prompt.contains("never list or scan all of their repositories") && !prompt.contains("list them all"),
             "the hint scopes the search to what was named: {prompt}");
         assert!(prompt.contains("stay on what the user named"));
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn the_harness_snapshot_is_sent_once_and_then_by_its_anchor() {
+        let folder = temp_folder("harness-anchor");
+        std::fs::write(folder.join("AGENTS.md"), "RULE: tabs.\n").unwrap();
+        let api = fake_api(vec!["One.", "Two.", "Three."]);
+        let c = work_core(&api, &folder, "smart");
+        run(&c, Action::Send { text: "first question".into() });
+        run(&c, Action::Send { text: "second question".into() });
+        std::fs::write(folder.join("AGENTS.md"), "RULE: spaces.\n").unwrap();
+        run(&c, Action::Send { text: "third question".into() });
+        let all = api.streams.lock().unwrap().clone();
+        let asked = |q: &str| all.iter().find(|x| x["prompt"].as_str().is_some_and(|p| p.ends_with(q))).cloned().unwrap_or_else(|| panic!("no request for {q}: {all:?}"));
+        let streams = [asked("first question"), asked("second question"), asked("third question")];
+        let (a, b) = (&streams[0], &streams[1]);
+        let snapshot = a["harness"]["text"].as_str().expect("a snapshot");
+        assert!(snapshot.contains("## How to work") && snapshot.contains("RULE: tabs."), "rules and loaded AGENTS.md: {snapshot}");
+        assert!(!snapshot.contains("System clock") && !snapshot.contains("Permission:"), "nothing that changes per request");
+        assert!(a["harness"]["anchor"].is_null(), "new: it leads the current message");
+        assert_eq!(b["harness"]["text"], a["harness"]["text"], "unchanged");
+        assert_eq!(b["harness"]["anchor"], json!(sha256_hex("first question")), "the message it was first sent with");
+        assert!(b["prompt"].as_str().unwrap().contains("Permission: Smart.") && b["prompt"].as_str().unwrap().contains("System clock"),
+            "the volatile context still goes with every request");
+        // A changed snapshot goes without an anchor, and the message it came with becomes its anchor.
+        let third = &streams[2];
+        assert!(third["harness"]["text"].as_str().unwrap().contains("RULE: spaces."));
+        assert!(third["harness"]["anchor"].is_null());
+        assert_eq!(c.state.lock().unwrap().harness_anchor["c1"].1, sha256_hex("third question"));
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn an_older_api_without_the_harness_field_gets_the_snapshot_in_the_prompt() {
+        let folder = temp_folder("harness-old");
+        let api = fake_api(vec!["@no-harness", "Done."]);
+        let c = work_core(&api, &folder, "smart");
+        run(&c, Action::Send { text: "hello".into() });
+        let streams = api.streams.lock().unwrap().clone();
+        let last = streams.iter().rev().find(|x| x["prompt"].as_str().is_some_and(|p| p.ends_with("hello") && p.contains("## How to work"))).expect("the answer request");
+        assert!(last.get("harness").is_none(), "{last}");
+        let prompt = last["prompt"].as_str().unwrap();
+        assert!(prompt.contains("## How to work") && prompt.contains("Permission: Smart."), "{prompt}");
+        assert!(c.state.lock().unwrap().harness_unsupported);
         let _ = std::fs::remove_dir_all(&folder);
     }
 
