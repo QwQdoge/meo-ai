@@ -669,8 +669,11 @@ impl MeoApi {
                             return Some((Err(ApiError::Http(e)), state));
                         }
                         None => {
+                            // The connection ended without the API's `done` (a dropped stream, a timeout on
+                            // the way): what came is not the whole answer, so it is reported as cut off and
+                            // the run continues it instead of keeping half a sentence as the answer.
                             state.finished = true;
-                            return Some((Ok(ChatEvent::Done), state));
+                            return Some((Ok(ChatEvent::Truncated), state));
                         }
                     }
                 }

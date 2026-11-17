@@ -264,6 +264,9 @@ fn native_tools(s: &Surface) -> Vec<&'static str> {
             lines.push("subagent: start independent helpers together in one call and keep working while they run; give each a task that stands on its own, and when only waiting for them remains, end your reply instead of polling. Helpers cannot start helpers, ask the user or use the web: keep those parts of the work for yourself.");
         }
     }
+    if !s.apps.is_empty() {
+        lines.push("Connected apps (listed below; their functions start with the app's name): what lives in an app (the user's own repositories, issues, messages, files, events) is read with that app's functions, not found with web search. A tool that is not offered as a function is found with find_app_tool and run with app_call.");
+    }
     if s.web {
         lines.push("web_search / web_fetch: search with your own short query, then fetch the pages worth reading; cite what you used.");
     }

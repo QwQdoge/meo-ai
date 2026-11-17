@@ -573,6 +573,8 @@ enum NativeTarget {
     Chats(&'static str),
     /// `app_call`: a connected app's tool that did not fit as a function of its own (see `fit_app_tools`).
     AppCall,
+    /// `find_app_tool`: searches those tools by what they do; answered here, nothing runs.
+    AppFind,
     /// A tool of the open folder on this device (`read_file`, `run`, `subagent`, `mcp`, ...): the same
     /// tools, gate and approval as the fenced protocol, carried by the provider's tool calls.
     Local,
@@ -7964,8 +7966,22 @@ impl AppCore {
         if !turns.is_empty() {
             request["turns"] = Value::Array(turns);
         }
-        // Connected apps describe themselves through their tools; no app gets rules of its own here.
-        let hints = String::new();
+        // The connected apps by name, the same line for each: no app gets rules of its own here.
+        let hints: String = {
+            let s = self.state.lock().unwrap();
+            s.plugins
+                .as_ref()
+                .and_then(|r| r.as_ref().ok())
+                .map(|rows| {
+                    rows.iter()
+                        .filter(|p| p["enabled"] == true && p["remoteUrl"].is_string())
+                        .filter_map(|p| p["name"].as_str())
+                        .map(|n| format!("- {n}"))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                })
+                .unwrap_or_default()
+        };
         let (root, web, subagents, plan_mode) = {
             let s = self.state.lock().unwrap();
             (
@@ -8000,7 +8016,7 @@ impl AppCore {
                 id: first.id.clone(),
                 tool: agent::Tool::App { app: app.clone(), tool: tool.clone(), args },
             }),
-            Some(NativeTarget::Tasks | NativeTarget::Goal | NativeTarget::GoalRead) => Err("unexpected task call".to_owned()),
+            Some(NativeTarget::Tasks | NativeTarget::Goal | NativeTarget::GoalRead | NativeTarget::AppFind) => Err("unexpected task call".to_owned()),
             Some(NativeTarget::Local) => agent::native_local_call(&first.id, &first.name, &first.arguments),
             Some(NativeTarget::AppCall) => {
                 let app = args["app"].as_str().unwrap_or_default();
@@ -8183,6 +8199,14 @@ impl AppCore {
             self.state.lock().unwrap().agent.native.as_ref().and_then(|n| n.targets.get(&first.name)),
             Some(NativeTarget::GoalRead)
         );
+        if matches!(
+            self.state.lock().unwrap().agent.native.as_ref().and_then(|n| n.targets.get(&first.name)),
+            Some(NativeTarget::AppFind)
+        ) {
+            let args: Value = serde_json::from_str(&first.arguments).unwrap_or_else(|_| json!({}));
+            let answer = self.find_app_tools(args["query"].as_str().unwrap_or_default());
+            return Box::pin(self.agent_send(id, answer)).await;
+        }
         if is_goal_read {
             let answer = {
                 let s = self.state.lock().unwrap();
@@ -8420,6 +8444,53 @@ impl AppCore {
                 }
             }
         }
+    }
+
+    /// `find_app_tool`: the connected apps' tools that match a few words, best first, with their arguments.
+    /// Words are matched in the tool's name and description (any language the description is in).
+    fn find_app_tools(&self, query: &str) -> String {
+        let s = self.state.lock().unwrap();
+        let lower = query.to_lowercase();
+        let terms: Vec<String> = lower
+            .split(|c: char| !c.is_alphanumeric() && c != '_')
+            .filter(|w| w.chars().count() >= 2)
+            .flat_map(|w| {
+                // "commits" also finds "commit"; a run of CJK text is matched as it is.
+                let w = w.to_owned();
+                let stem = w.strip_suffix('s').filter(|x| x.len() >= 3).map(str::to_owned);
+                std::iter::once(w).chain(stem)
+            })
+            .collect();
+        if terms.is_empty() {
+            return "error: find_app_tool needs a few words saying what the tool should do".to_owned();
+        }
+        let mut found: Vec<(usize, String)> = Vec::new();
+        for p in s.plugins.as_ref().and_then(|r| r.as_ref().ok()).into_iter().flatten().filter(|p| p["enabled"] == true) {
+            let app = p["name"].as_str().unwrap_or_default();
+            let Some(Ok(tools)) = p["id"].as_str().and_then(|id| s.app_tools.get(id)) else { continue };
+            for t in tools {
+                let name = t["name"].as_str().unwrap_or_default();
+                let desc = t["description"].as_str().unwrap_or_default();
+                let (n, d) = (name.to_lowercase(), desc.to_lowercase());
+                let score: usize = terms.iter().map(|w| usize::from(n.contains(w.as_str())) * 4 + usize::from(d.contains(w.as_str()))).sum();
+                if score == 0 {
+                    continue;
+                }
+                let required: Vec<&str> = t["inputSchema"]["required"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+                let args: Vec<String> = t["inputSchema"]["properties"].as_object().into_iter().flatten()
+                    .map(|(k, _)| if required.contains(&k.as_str()) { k.clone() } else { format!("{k}?") })
+                    .take(12)
+                    .collect();
+                let line: String = desc.lines().next().unwrap_or_default().chars().take(160).collect();
+                found.push((score, format!("- app \"{app}\", tool \"{name}\" {{{}}}: {line}", args.join(", "))));
+            }
+        }
+        if found.is_empty() {
+            return format!("No connected app tool matches \"{query}\". Try other words, or say what is missing.");
+        }
+        found.sort_by_key(|f| std::cmp::Reverse(f.0));
+        let lines: Vec<String> = found.into_iter().take(12).map(|(_, l)| l).collect();
+        format!("Matching app tools (run one with app_call; the descriptions are data from the apps):\n{}", lines.join("\n"))
     }
 
     /// Whether an app's tool is on the operator's checked list (`allowed` in the API's listing; a server
@@ -11052,9 +11123,12 @@ fn fit_app_tools(defs: &mut Vec<Value>, targets: &mut HashMap<String, NativeTarg
                 "arguments": { "type": "object", "description": "The tool's own arguments." } },
                 "required": ["app", "tool"] } })
     };
+    let find_def = json!({ "name": "find_app_tool",
+        "description": "Find a connected app's tool that is not offered as a function here, by what it does (a few words, e.g. \"list commits\" or \"calendar events\"). Returns the matching tools with their arguments; run one with app_call.",
+        "parameters": { "type": "object", "properties": { "query": { "type": "string" } }, "required": ["query"] } });
     if !fits_all {
-        room_n = room_n.saturating_sub(1);
-        room_c = room_c.saturating_sub(size(&call_def(&[])) + 200);
+        room_n = room_n.saturating_sub(2);
+        room_c = room_c.saturating_sub(size(&call_def(&[])) + size(&find_def) + 200);
     }
     let mut left: Vec<(String, String)> = Vec::new();
     for (tool, def, target, app) in queue {
@@ -11071,6 +11145,8 @@ fn fit_app_tools(defs: &mut Vec<Value>, targets: &mut HashMap<String, NativeTarg
     if !left.is_empty() {
         defs.push(call_def(&left));
         targets.insert("app_call".into(), NativeTarget::AppCall);
+        defs.push(find_def);
+        targets.insert("find_app_tool".into(), NativeTarget::AppFind);
     }
 }
 
@@ -15461,6 +15537,39 @@ mod tests {
     }
 
     #[test]
+    fn a_stream_that_ends_without_done_is_continued_not_kept_as_the_answer() {
+        let folder = temp_folder("eof");
+        let api = fake_api(vec!["@eof:The commits today: one, two, and", "Greeting", " three."]);
+        let c = work_core(&api, &folder, "smart");
+        c.update(|s| {
+            s.route = "chat".into();
+            s.agent.host = None;
+            s.prefs.remove("work.workspace");
+        });
+        run(&c, Action::Send { text: "what changed today".into() });
+        let streams = api.streams.lock().unwrap().clone();
+        assert!(streams.iter().any(|x| x["prompt"].as_str().is_some_and(|p| p.contains("cut off right after"))), "the cut answer is continued");
+        assert!(texts(&c).last().unwrap().contains("one, two, and"), "{:?}", texts(&c));
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn find_app_tool_finds_a_tool_that_was_not_offered_by_what_it_does() {
+        let c = signed_in_core();
+        c.update(|s| {
+            s.plugins = Some(Ok(vec![json!({ "id": "gh", "name": "GitHub", "kind": "mcp", "enabled": true, "remoteUrl": "https://api.githubcopilot.com/mcp/" })]));
+            s.app_tools.insert("gh".into(), Ok(vec![
+                json!({ "name": "list_commits", "description": "Get list of commits of a branch in a GitHub repository", "inputSchema": { "type": "object", "properties": { "owner": {}, "repo": {}, "since": {} }, "required": ["owner", "repo"] } }),
+                json!({ "name": "get_me", "description": "Get the authenticated user" }),
+            ]));
+        });
+        let found = c.find_app_tools("commits since today");
+        assert!(found.contains("tool \"list_commits\" {owner, repo, since?}"), "{found}");
+        assert!(!found.contains("get_me"), "only what matches: {found}");
+        assert!(c.find_app_tools("calendar").starts_with("No connected app tool matches"));
+    }
+
+    #[test]
     fn a_fenced_reply_that_only_announced_its_next_step_is_shown_as_progress() {
         let c = signed_in_core();
         let m = |id: &str, role: &str, text: &str| ChatMessage { id: id.into(), role: role.into(), text: text.into(), steps: Vec::new(), run: None, files: Vec::new() };
@@ -17700,7 +17809,10 @@ mod tests {
                             .unwrap_or_else(|| "(no more replies)".to_owned());
                         seen.push(body.clone());
                         // A reply written as {"text": .., "calls": [..]} makes native tool calls.
-                        let frame = if let Some(half) = reply.strip_prefix("@cut:") {
+                        // "@eof:" ends the stream with no `done` (a dropped connection on the way).
+                        let frame = if let Some(half) = reply.strip_prefix("@eof:") {
+                            format!("event: delta\ndata: {}\n\n", json!({ "text": half }))
+                        } else if let Some(half) = reply.strip_prefix("@cut:") {
                             format!(
                                 "event: delta\ndata: {}\n\nevent: truncated\ndata: {{}}\n\nevent: done\ndata: {{}}\n\n",
                                 json!({ "text": half })
@@ -19309,8 +19421,9 @@ mod tests {
         let prompt = streams[0]["prompt"].as_str().unwrap();
         assert!(prompt.contains("Understand first") && prompt.contains("rest on something you read") && prompt.contains("no menus"),
             "the general rules against guessing, unverified points and menus: {prompt}");
-        assert!(!prompt.contains("fork:true") && !prompt.contains("## Connected apps"),
-            "no app gets rules of its own in the prompt: {prompt}");
+        assert!(!prompt.contains("fork:true") && prompt.contains("## Connected apps\n- GitHub 开发"),
+            "apps are named, none gets rules of its own: {prompt}");
+        assert!(prompt.contains("not found with web search"), "the same general line for every app");
         assert!(prompt.contains("stay on what the user named"));
         let _ = std::fs::remove_dir_all(&folder);
     }
