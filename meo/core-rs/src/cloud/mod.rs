@@ -24,6 +24,7 @@ pub mod mcp_local;
 pub mod orchestration;
 pub mod plotdata;
 pub mod project_env;
+pub mod prompt;
 pub mod remote;
 pub mod richtext;
 pub mod router;

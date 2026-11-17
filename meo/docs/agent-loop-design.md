@@ -151,7 +151,6 @@ The thinking level the user already sets decides how much extra work the core do
 
 ## What is not native yet
 
-- An open folder (desktop Work) still uses the fenced protocol (its tools are local). Porting `read_file`,
-  `search`, `apply_patch`, `run` as native functions is the next step; the fenced path keeps the sections above.
-- Only the first call of a round runs; the others are answered "not run".
 - Gemini has no native path here.
+- Since 2026-11-17 an open folder runs on native tool calls too, and every call of a reply runs (up to 8);
+  see `core-harness-design.md` for the prompt layers and the roadmap.
