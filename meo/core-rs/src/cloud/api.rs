@@ -55,6 +55,10 @@ pub struct ChatMessage {
     /// Steps of an answer (router, planned steps, check) as stored with it on the server.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub steps: Vec<Value>,
+    /// The log of a run that stopped before it was finished (its round trips, task list and goal),
+    /// stored with the answer so any device can continue it. See [`run_log_block`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -266,6 +270,7 @@ impl MeoApi {
                             role: role.to_owned(),
                             text,
                             steps: Vec::new(),
+                            run: None,
                         },
                         row["created_at"].as_str().unwrap_or_default().to_owned(),
                     )
@@ -295,6 +300,7 @@ impl MeoApi {
                     role: role.to_owned(),
                     text,
                     steps: steps_from_blocks(&row["content"]),
+                    run: run_from_blocks(&row["content"]),
                 })
             })
             .collect())
@@ -318,20 +324,27 @@ impl MeoApi {
         .map(|_| ())
     }
 
-    /// Stores an answer with its steps, so a reload or another device shows the same steps.
+    /// Stores an answer with its steps, so a reload or another device shows the same steps; with the
+    /// run's log when it stopped unfinished, so it can be continued anywhere.
     pub async fn append_answer(
         &self,
         token: &str,
         conversation_id: &str,
         text: &str,
         steps: &[Value],
+        log: Option<&Value>,
     ) -> Result<(), ApiError> {
         let path = format!("/v1/conversations/{conversation_id}/messages");
+        let mut content = answer_blocks(text, steps);
+        if let (Some(log), Some(blocks)) = (log, content.as_array_mut()) {
+            blocks.truncate(MAX_BLOCKS - 1);
+            blocks.push(run_log_block(log));
+        }
         self.request(
             token,
             Method::POST,
             &path,
-            Some(json!({ "role": "assistant", "content": answer_blocks(text, steps) })),
+            Some(json!({ "role": "assistant", "content": content })),
         )
         .await
         .map(|_| ())
@@ -1104,6 +1117,25 @@ pub fn answer_blocks(text: &str, steps: &[Value]) -> Value {
 /// Content blocks the Meo API accepts in one message.
 pub const MAX_BLOCKS: usize = 128;
 
+/// The widget kind that carries a run's log. Clients draw no widget for it (it is the core's own
+/// data), and the Meo API sends only text blocks to the model, so the log never becomes history.
+pub const RUN_LOG_KIND: &str = "meo_run_log";
+
+/// A run's log as a content block (a `widget`, whose `data` the API keeps as JSON up to 256 KB).
+pub fn run_log_block(log: &Value) -> Value {
+    json!({ "type": "widget", "block_id": "run:log", "widget_id": "run_log", "kind": RUN_LOG_KIND, "title": "Run log", "data": log })
+}
+
+/// The run log stored with an answer by [`run_log_block`], if any.
+pub fn run_from_blocks(content: &Value) -> Option<Value> {
+    content
+        .as_array()?
+        .iter()
+        .find(|b| b["type"] == "widget" && b["kind"] == RUN_LOG_KIND)
+        .map(|b| b["data"].clone())
+        .filter(|d| d.is_object())
+}
+
 /// The steps stored with an answer by [`answer_blocks`], in the core's step shape.
 pub fn steps_from_blocks(content: &Value) -> Vec<Value> {
     let blocks = content.as_array().map(Vec::as_slice).unwrap_or_default();
@@ -1343,6 +1375,12 @@ mod tests {
         let ids: Vec<&str> = blocks.iter().filter_map(|b| b["activity_id"].as_str()).collect();
         assert_eq!(ids.iter().filter(|i| i.starts_with("tool")).count(), 90, "every tool step is kept");
         assert!(!ids.contains(&"req1") && ids.contains(&"req60"), "the oldest headers go first");
+        let log = json!({ "v": 1, "turns": [{ "text": "", "calls": [], "results": [] }] });
+        let mut with_log = answer_blocks("Stopped.", &[]);
+        with_log.as_array_mut().unwrap().push(run_log_block(&log));
+        assert_eq!(run_from_blocks(&with_log), Some(log), "the log comes back");
+        assert_eq!(content_text(&with_log), "Stopped.", "and never as text");
+        assert_eq!(run_from_blocks(&answer_blocks("Hi.", &[])), None);
         let small = answer_blocks("Hi.", &steps[..3]);
         assert_eq!(small.as_array().unwrap().len(), 4, "nothing is dropped below the limit");
     }
