@@ -176,8 +176,15 @@ Changes in this slice:
    batch). Each call keeps its own round, step, kept result and spill file, and results go back in call
    order. Folder reads share the workspace lock, so they still take turns with each other; what they
    gain is overlapping with web fetches, and the batch is one step burst instead of one per call.
-6. **Delegation depth and fan-out as context** (dsh `SUBAGENT_DELEGATION`): tell a sub-agent its depth
-   and that it cannot delegate further, instead of only refusing.
+6. ~~**Delegation depth and fan-out as context**~~ **Done 2026-11-17** (`agent.rs` `delegation_context`,
+   after dsh `SUBAGENT_DELEGATION`). Every sub-agent prompt now has a "Your place in the run" part before
+   the task: its name, depth 1 of `SUBAGENT_MAX_DEPTH` (1), that the lead reads its report, that it
+   cannot start sub-agents, ask the user or use the web and should leave those parts to the lead in its
+   report, and the sub-agents beside it (`Beside::Together` for researchers running at once,
+   `OneByOne` when a worker is in the call, `FollowUp` for `send_message`); a worker is told nobody else
+   changes files meanwhile. The lead's `subagent` guidance (fenced, native sentence and the function
+   description) says the same limits, so it keeps the web and user questions for itself. The refusal
+   stays as the backstop and now says what to do instead.
 7. **Per-model context window and `maxOutputTokens`** from the model catalogue, so compaction triggers on
    tokens, not on message count.
 8. **Session-level events for replay** (dsh session log): store each step's request header (model,

@@ -223,7 +223,7 @@ fn fenced_tools(s: &Surface) -> Vec<String> {
         tools.push("run {command,timeout?} (shell in the folder; sudo and git work, the user types any password)");
         if s.subagents {
             tools.push(
-                "subagent {task,name?,mode?,write?,max_rounds?} or {tasks:[{task,name?,mode?,write?}]} (helpers with their own context window that work on a task and return a short report; use them for broad searches so they do not fill your context, or to do separate pieces of work. mode \"fork\" gives the helper the conversation so far, default \"spawn\" a fresh start; write:true lets it change files under your permission level; up to 4 in one call run together when none writes; the reply has every report)",
+                "subagent {task,name?,mode?,write?,max_rounds?} or {tasks:[{task,name?,mode?,write?}]} (helpers with their own context window that work on a task and return a short report; use them for broad searches so they do not fill your context, or to do separate pieces of work. mode \"fork\" gives the helper the conversation so far, default \"spawn\" a fresh start; write:true lets it change files under your permission level; up to 4 in one call run together when none writes; a helper cannot start its own helpers, ask the user or use the web, so keep those parts for yourself; the reply has every report)",
             );
             tools.push("list_agents {} (the sub-agents of this run: name, status, task)");
             tools.push("send_message {agent,message} (a follow-up for a sub-agent that already reported; you get its next report)");
@@ -261,7 +261,7 @@ fn native_tools(s: &Surface) -> Vec<&'static str> {
         lines.push("run: check the exit code of every result and investigate a failure before moving on; a server, a watcher or a long build goes to start_job, not run.");
         lines.push("start_job / job_output / stop_job: you are told when a job ends; do not poll it in a loop.");
         if s.subagents {
-            lines.push("subagent: start independent helpers together in one call and keep working while they run; give each a task that stands on its own, and when only waiting for them remains, end your reply instead of polling.");
+            lines.push("subagent: start independent helpers together in one call and keep working while they run; give each a task that stands on its own, and when only waiting for them remains, end your reply instead of polling. Helpers cannot start helpers, ask the user or use the web: keep those parts of the work for yourself.");
         }
     }
     if s.web {

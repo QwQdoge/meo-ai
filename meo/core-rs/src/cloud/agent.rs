@@ -1073,7 +1073,7 @@ pub fn local_tool_defs(subagents: bool, jobs: bool, mcp: bool, computer: bool) -
             "name": { "type": "string", "description": "A short name (letters, digits, - and _)." },
             "mode": { "type": "string", "enum": ["spawn", "fork"], "description": "spawn: a fresh start (default); fork: the helper gets the conversation so far." },
             "write": { "type": "boolean", "description": "Let it change files under your permission level." } }, "required": ["task"] });
-        defs.push(json!({ "name": "subagent", "description": "Hand a task to helpers with their own context window; each works on it and returns a short report. Use them for broad searches so they do not fill your context, or for separate pieces of work. Give task (one helper) or tasks (up to 4, run together when none writes).",
+        defs.push(json!({ "name": "subagent", "description": "Hand a task to helpers with their own context window; each works on it and returns a short report. Use them for broad searches so they do not fill your context, or for separate pieces of work. Give task (one helper) or tasks (up to 4, run together when none writes). Helpers work only in the folder: they cannot start helpers, ask the user or use the web.",
             "parameters": { "type": "object", "properties": {
                 "task": job["properties"]["task"].clone(), "name": job["properties"]["name"].clone(), "mode": job["properties"]["mode"].clone(),
                 "write": job["properties"]["write"].clone(), "max_rounds": { "type": "integer", "description": "Rounds it may use (1 to 12)." },
@@ -1178,10 +1178,46 @@ fn parse_sub_jobs(args: &Value) -> Result<Vec<SubJob>, String> {
     Ok(jobs)
 }
 
+/// How deep delegation goes: the main agent starts sub-agents, a sub-agent starts none.
+pub const SUBAGENT_MAX_DEPTH: usize = 1;
+
+/// How a sub-agent's job runs next to the others of the same call.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Beside {
+    /// Researchers of one call, all at the same time.
+    Together,
+    /// A call with a worker: one job after another.
+    OneByOne,
+    /// `send_message` to a sub-agent that already reported.
+    FollowUp,
+}
+
+/// A sub-agent's place in the run (DeepSeek Harness' `SUBAGENT_DELEGATION`), told up front instead of
+/// learnt from a refusal: its name and depth, who gets its report, what it cannot do and who to leave that
+/// to, and the other sub-agents beside it, so it keeps to its own part.
+pub fn delegation_context(name: &str, others: &[String], beside: Beside, write: bool) -> String {
+    let mut text = format!(
+        "## Your place in the run\nYou are \"{name}\", a sub-agent at depth {SUBAGENT_MAX_DEPTH} of {SUBAGENT_MAX_DEPTH}: the main agent (\"lead\") started you and reads your report; the user does not see it directly. \
+You cannot start sub-agents of your own, ask the user or use the web. When part of the task needs one of those, do the rest and say in the report what is left and why: the lead will do it."
+    );
+    let list = others.iter().map(|n| format!("\"{n}\"")).collect::<Vec<_>>().join(", ");
+    match beside {
+        _ if others.is_empty() => {}
+        Beside::Together => text.push_str(&format!(" Working at the same time on their own tasks: {list}. Keep to yours and do not redo theirs.")),
+        Beside::OneByOne => text.push_str(&format!(" The other sub-agents of this call ({list}) run one at a time, before or after you.")),
+        Beside::FollowUp => text.push_str(&format!(" Other sub-agents of this run: {list}.")),
+    }
+    if write {
+        text.push_str(" No other sub-agent changes files while you work.");
+    }
+    text
+}
+
 /// The prompt of one sub-agent round: its own task and its own notes, a fresh context window (or, for a
 /// fork, the recent conversation as background). `notes` are earlier tool results, already marked as data.
 /// A worker (`write`) may also change files; a researcher cannot.
-pub fn subagent_prompt(workspace: &str, task: &str, notes: &str, write: bool, background: &str, rounds: usize) -> String {
+pub fn subagent_prompt(workspace: &str, task: &str, notes: &str, write: bool, background: &str, rounds: usize, place: &str) -> String {
+    let place = if place.trim().is_empty() { String::new() } else { format!("\n\n{}", place.trim()) };
     let notes = if notes.trim().is_empty() {
         String::new()
     } else {
@@ -1208,7 +1244,7 @@ pub fn subagent_prompt(workspace: &str, task: &str, notes: &str, write: bool, ba
 To use a tool, end your reply with exactly one fenced block:\n```{TOOL_FENCE}\n{{\"tool\":\"read_file\",\"args\":{{\"path\":\"src/main.rs\"}}}}\n```\n\
 Paths are relative to the folder. \
 When you are done, reply with the final report only (no tool block): short, concrete, with file names and line \
-numbers, what you did or found, and what you could not do. You have at most {rounds} rounds.{background}\n\nYour task: {task}{notes}"
+numbers, what you did or found, and what you could not do. You have at most {rounds} rounds.{place}{background}\n\nYour task: {task}{notes}"
     )
 }
 
@@ -1680,14 +1716,14 @@ mod tests {
         assert_eq!(tool.summary(), "Sub-agent: find where tokens are counted");
         assert_eq!(gate(Permission::Smart, &tool), Gate::Allow);
         assert!(matches!(gate(Permission::Ask, &tool), Gate::Ask(_)));
-        let p = subagent_prompt("/w", "find where tokens are counted", "", false, "", SUBAGENT_ROUNDS);
+        let p = subagent_prompt("/w", "find where tokens are counted", "", false, "", SUBAGENT_ROUNDS, "");
         assert!(
             p.contains("read-only")
                 && p.contains("find where tokens are counted")
                 && !p.contains("search_replace")
         );
         assert!(!p.contains("What you have found"));
-        assert!(subagent_prompt("/w", "t", "- a.rs:3: x", false, "", SUBAGENT_ROUNDS).contains("What you have found so far"));
+        assert!(subagent_prompt("/w", "t", "- a.rs:3: x", false, "", SUBAGENT_ROUNDS, "").contains("What you have found so far"));
         let many = call("{\"tool\":\"subagent\",\"args\":{\"tasks\":[{\"task\":\"a\",\"name\":\"one\"},{\"task\":\"b\",\"mode\":\"fork\",\"write\":true,\"max_rounds\":99}]}}");
         match many {
             Tool::Subagent { jobs } => {
@@ -1707,8 +1743,16 @@ mod tests {
             let parsed = parse_tool_calls(&format!("```meo-tool\n{bad}\n```"));
             assert!(parsed[0].is_err(), "{bad}");
         }
-        assert!(subagent_prompt("/w", "t", "", true, "", 6).contains("worker sub-agent"));
-        assert!(subagent_prompt("/w", "t", "", false, "User: hi", 6).contains("conversation so far"));
+        assert!(subagent_prompt("/w", "t", "", true, "", 6, "").contains("worker sub-agent"));
+        let together = delegation_context("tests", &["docs".into()], Beside::Together, false);
+        assert!(together.contains("\"tests\", a sub-agent at depth 1 of 1") && together.contains("cannot start sub-agents"), "{together}");
+        assert!(together.contains("same time on their own tasks: \"docs\"") && !together.contains("changes files"), "{together}");
+        let worker = delegation_context("fix", &["look".into()], Beside::OneByOne, true);
+        assert!(worker.contains("one at a time") && worker.contains("No other sub-agent changes files"), "{worker}");
+        assert!(!delegation_context("solo", &[], Beside::Together, false).contains("same time"));
+        let p = subagent_prompt("/w", "the task", "", false, "", 6, &together);
+        assert!(p.find("## Your place in the run").unwrap() < p.find("Your task: the task").unwrap(), "{p}");
+        assert!(subagent_prompt("/w", "t", "", false, "User: hi", 6, "").contains("conversation so far"));
         let missing = parse_tool_calls("```meo-tool\n{\"tool\":\"subagent\",\"args\":{}}\n```");
         assert!(missing[0].as_ref().unwrap_err().contains("needs \"task\""));
     }

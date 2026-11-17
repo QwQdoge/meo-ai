@@ -6626,6 +6626,7 @@ impl AppCore {
         job: &agent::SubJob,
         mut notes: String,
         background: &str,
+        place: &str,
     ) -> (agent::Outcome, String) {
         let Some(choice) = self.role_model("default") else {
             return (agent::Outcome::fail("no model is set for the sub-agent"), notes);
@@ -6636,7 +6637,7 @@ impl AppCore {
             if self.cancel.load(Ordering::SeqCst) {
                 return (agent::Outcome::fail("stopped by the user"), notes);
             }
-            let prompt = agent::subagent_prompt(host.root(), &job.task, &notes, job.write, background, job.rounds);
+            let prompt = agent::subagent_prompt(host.root(), &job.task, &notes, job.write, background, job.rounds, place);
             let Some(reply) = self.ask_model_for("execution", &choice, &prompt).await else {
                 return (agent::Outcome::fail("the sub-agent's model did not answer"), notes);
             };
@@ -6658,7 +6659,7 @@ impl AppCore {
                             | agent::Tool::Run { .. }
                     );
                     if !local {
-                        "refused: a sub-agent works in the folder only (read_file, list_dir, search, and for a worker search_replace, apply_patch, run); it cannot start sub-agents, ask the user or use the web".to_owned()
+                        "refused: a sub-agent works in the folder only (read_file, list_dir, search, and for a worker search_replace, apply_patch, run); it cannot start sub-agents, ask the user or use the web: say in your report what is left, and the lead will do it".to_owned()
                     } else if risk != agent::Risk::Read && !job.write {
                         "refused: a sub-agent may only read (read_file, list_dir, search)".to_owned()
                     } else if risk != agent::Risk::Read && plan_mode {
@@ -6743,17 +6744,25 @@ impl AppCore {
         self.update(|s| s.agent.working = named.iter().map(|(n, j)| (n.clone(), j.task.clone())).collect());
         let background = if named.iter().any(|(_, j)| j.fork) { self.fork_background() } else { String::new() };
         let any_writer = named.iter().any(|(_, j)| j.write);
+        let beside = if any_writer { agent::Beside::OneByOne } else { agent::Beside::Together };
+        let places: Vec<String> = named
+            .iter()
+            .map(|(name, job)| {
+                let others: Vec<String> = named.iter().map(|(n, _)| n.clone()).filter(|n| n != name).collect();
+                agent::delegation_context(name, &others, beside, job.write)
+            })
+            .collect();
         let results: Vec<(agent::Outcome, String)> = if any_writer {
             let mut out = Vec::new();
-            for (_, job) in &named {
+            for ((_, job), place) in named.iter().zip(&places) {
                 let bg = if job.fork { background.as_str() } else { "" };
-                out.push(self.run_subagent_job(host, job, String::new(), bg).await);
+                out.push(self.run_subagent_job(host, job, String::new(), bg, place).await);
             }
             out
         } else {
-            futures_util::future::join_all(named.iter().map(|(_, job)| {
+            futures_util::future::join_all(named.iter().zip(&places).map(|((_, job), place)| {
                 let bg = if job.fork { background.as_str() } else { "" };
-                self.run_subagent_job(host, job, String::new(), bg)
+                self.run_subagent_job(host, job, String::new(), bg, place)
             }))
             .await
         };
@@ -6796,7 +6805,9 @@ impl AppCore {
             rounds: agent::SUBAGENT_ROUNDS,
         };
         let background = if fork { self.fork_background() } else { String::new() };
-        let (outcome, notes) = self.run_subagent_job(host, &job, notes, &background).await;
+        let others: Vec<String> = self.state.lock().unwrap().agent.children.iter().map(|c| c.name.clone()).filter(|n| n != name).collect();
+        let place = agent::delegation_context(name, &others, agent::Beside::FollowUp, write);
+        let (outcome, notes) = self.run_subagent_job(host, &job, notes, &background, &place).await;
         let status = if outcome.ok { "done" } else { "failed" };
         self.update(|s| {
             if let Some(c) = s.agent.children.iter_mut().find(|c| c.name == name) {
@@ -18052,6 +18063,14 @@ mod tests {
         // The second sub-agent was a fork: it knows the conversation; the first did not.
         let forks = [1, 2].iter().filter(|i| streams[**i]["prompt"].as_str().unwrap().contains("conversation so far")).count();
         assert_eq!(forks, 1, "exactly one of the two helpers was given the conversation");
+        // Each knows its place: its own name, its depth, and the other one working beside it.
+        let helpers: Vec<&str> = [1, 2].iter().map(|i| streams[*i]["prompt"].as_str().unwrap()).collect();
+        let reader = helpers.iter().find(|p| p.contains("You are \"reader\"")).expect("the reader's prompt");
+        let other = helpers.iter().find(|p| p.contains("You are \"agent-1\"")).expect("agent-1's prompt");
+        assert!(reader.contains("depth 1 of 1") && reader.contains("same time on their own tasks: \"agent-1\""), "{reader}");
+        assert!(other.contains("same time on their own tasks: \"reader\""), "{other}");
+        let follow = streams[6]["prompt"].as_str().unwrap();
+        assert!(follow.contains("You are \"reader\"") && follow.contains("Other sub-agents of this run: \"agent-1\""), "{follow}");
         let taken = streams[4]["prompt"].as_str().unwrap();
         assert!(taken.contains("already exists in this run"), "{taken}");
         let listed = streams[5]["prompt"].as_str().unwrap();
