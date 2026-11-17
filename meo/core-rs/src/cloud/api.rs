@@ -80,6 +80,12 @@ pub struct Model {
     pub input: Vec<String>,
     #[serde(default)]
     pub output: Vec<String>,
+    /// Tokens it takes in at once, when the provider's catalogue lists it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<u64>,
+    /// Tokens it writes at most in one answer, when listed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_output: Option<u64>,
 }
 
 fn chat_task() -> String {
@@ -466,6 +472,8 @@ impl MeoApi {
                     tasks,
                     input,
                     output: list(&row["outputModalities"]),
+                    context_window: row["contextWindow"].as_u64().filter(|n| *n > 0),
+                    max_output: row["maxOutputTokens"].as_u64().filter(|n| *n > 0),
                 })
             })
             .collect())

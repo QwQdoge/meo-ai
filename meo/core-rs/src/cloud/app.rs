@@ -840,6 +840,9 @@ struct State {
     agent: AgentRun,
     /// Conversations whose older messages were summarised (this session).
     summaries: HashMap<String, Summary>,
+    /// The token limits of the model each conversation was last answered with (see `limits.rs`): the
+    /// history budget the API sends, and when to summarise.
+    limits: HashMap<String, super::limits::Limits>,
     credentials: Vec<Credential>,
     /// Models of every connected provider, by connection id.
     catalogue: HashMap<String, Vec<Model>>,
@@ -872,6 +875,8 @@ struct State {
     harness_anchor: HashMap<String, (String, String)>,
     /// The server refused the `harness` field (an older Meo API): the snapshot goes inside the prompt.
     harness_unsupported: bool,
+    /// The server refused the `limits` field (an older Meo API): requests go without it.
+    limits_unsupported: bool,
     /// Signed in and still reading the providers' models and the model settings (a slow provider
     /// can take many seconds): "no model yet" would be wrong to say until that is done.
     loading_models: bool,
@@ -5508,6 +5513,17 @@ impl AppCore {
         }
         let mut request = json!({ "credentialId": credential, "model": model, "prompt": text, "conversationId": conversation_id });
         request["environment"] = self.environment(&route, &level, search, work);
+        // The model's window and output limit: the API sizes the history and the answer to them.
+        let model_limits = {
+            let mut s = self.state.lock().unwrap();
+            let listed = s.catalogue.get(&credential).and_then(|list| list.iter().find(|m| m.id == model)).cloned();
+            let limits = super::limits::of(listed.as_ref(), &model);
+            s.limits.insert(conversation_id.clone(), limits);
+            limits
+        };
+        if !self.state.lock().unwrap().limits_unsupported && model_limits.request().as_object().is_some_and(|o| !o.is_empty()) {
+            request["limits"] = model_limits.request();
+        }
         if !notes.is_empty() {
             let work = notes
                 .iter()
@@ -5651,6 +5667,15 @@ impl AppCore {
             .await
         {
             Ok(consent) => consent,
+            // A Meo API from before the limits field rejects it as an unknown key: ask again without it.
+            Err(ApiError::Status { code, .. })
+                if code == "invalid_request"
+                    && request["limits"].is_object()
+                    && !self.state.lock().unwrap().limits_unsupported =>
+            {
+                self.update(|s| s.limits_unsupported = true);
+                return Box::pin(self.turn(text, false, save_prompt)).await;
+            }
             // A Meo API from before the harness field rejects it as an unknown key: send the snapshot
             // inside the prompt from now on and ask again.
             Err(ApiError::Status { code, .. })
@@ -7150,16 +7175,19 @@ impl AppCore {
 
     // ---- context budget -----------------------------------------------------------------------
 
-    /// Long conversations are summarised before the next request: cheap check here, the Meo API
-    /// says whether the stored size calls for it.
+    /// Long conversations are summarised before the next request. The cheap check here is on what is
+    /// held locally: more than [`COMPACT_AFTER_MESSAGES`] messages, or more text than the model's history
+    /// budget nearly holds (`limits.rs`, from its context window). The stored context then decides: the
+    /// messages after the last summary fill 80% of the budget, or the API recommends it by count.
     async fn maybe_compact(&self, id: &str) {
-        let long = self
-            .state
-            .lock()
-            .unwrap()
-            .messages
-            .get(id)
-            .is_some_and(|m| m.len() > COMPACT_AFTER_MESSAGES);
+        let long = {
+            let s = self.state.lock().unwrap();
+            let limits = s.limits.get(id).copied().unwrap_or_default();
+            s.messages.get(id).is_some_and(|m| {
+                m.len() > COMPACT_AFTER_MESSAGES
+                    || (m.len() > compaction::KEEP_RECENT + 1 && limits.wants_compaction(m.iter().map(|x| x.text.chars().count()).sum()))
+            })
+        };
         if long {
             self.compact_conversation(id, false).await;
         }
@@ -7184,7 +7212,17 @@ impl AppCore {
             }
         };
         if !manual && context["metrics"]["compaction_recommended"] != true {
-            return;
+            // The messages after the last summary, measured against this model's history budget.
+            let recent: usize = context["messages"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|m| super::api::content_text(&m["content"]).chars().count())
+                .sum();
+            let limits = self.state.lock().unwrap().limits.get(id).copied().unwrap_or_default();
+            if !limits.wants_compaction(recent) {
+                return;
+            }
         }
         let rows: Vec<compaction::Row> = context["messages"]
             .as_array()
@@ -16661,6 +16699,8 @@ mod tests {
                 vec!["text".into()]
             },
             output: vec![],
+            context_window: None,
+            max_output: None,
         };
         c.update(|s| {
             s.credentials = vec![
@@ -17031,7 +17071,9 @@ mod tests {
         let reject = replies.contains(&"@reject-native");
         // "@no-harness": a Meo API from before the harness field (it refuses unknown keys).
         let no_harness = replies.contains(&"@no-harness");
-        let replies: Vec<String> = replies.into_iter().filter(|r| *r != "@legacy" && *r != "@reject-native" && *r != "@no-harness").map(str::to_owned).collect();
+        // "@no-limits": a Meo API from before the limits field.
+        let no_limits = replies.contains(&"@no-limits");
+        let replies: Vec<String> = replies.into_iter().filter(|r| *r != "@legacy" && *r != "@reject-native" && *r != "@no-harness" && *r != "@no-limits").map(str::to_owned).collect();
         let streams = Arc::new(Mutex::new(Vec::<Value>::new()));
         let store = Arc::new(Mutex::new(seed));
         let compacts = Arc::new(Mutex::new(Vec::<Value>::new()));
@@ -17120,7 +17162,7 @@ mod tests {
                         (lines, prompt).hash(&mut h);
                         format!("{:x}", h.finish())
                     };
-                    let (status, content_type, payload) = if path.starts_with("/v1/chat/") && no_harness && body.get("harness").is_some() {
+                    let (status, content_type, payload) = if path.starts_with("/v1/chat/") && ((no_harness && body.get("harness").is_some()) || (no_limits && body.get("limits").is_some())) {
                         (400, "application/json", json!({ "error": "invalid_request" }).to_string())
                     } else if path == "/v1/chat/prepare"
                         && legacy
@@ -17946,6 +17988,73 @@ mod tests {
             second.contains("Summary so far") && second.contains("First summary."),
             "{second}"
         );
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn a_small_window_is_compacted_by_size_before_the_message_count_would() {
+        let folder = temp_folder("compact-window");
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        // Ten long messages: far below the count rule, but more than an 8k-token model's history holds.
+        let long = |n: usize| -> Vec<Value> {
+            (1..=n).map(|i| json!({ "id": format!("m{i}"), "role": if i % 2 == 1 { "user" } else { "assistant" }, "content": format!("{i} {}", "word ".repeat(400)) })).collect()
+        };
+        let fill = |c: &AppCore, window: Option<u64>| {
+            let list: Vec<ChatMessage> = long(10)
+                .iter()
+                .map(|m| ChatMessage { id: m["id"].as_str().unwrap().into(), role: m["role"].as_str().unwrap().into(), text: m["content"].as_str().unwrap().into(), steps: Vec::new() })
+                .collect();
+            let listed = Model { id: "small".into(), name: "small".into(), task: "chat".into(), tasks: vec!["chat".into()], input: vec!["text".into()], output: vec!["text".into()], context_window: window, max_output: Some(1_024) };
+            c.update(|s| {
+                s.messages.insert("c1".into(), list);
+                s.limits.insert("c1".into(), super::super::limits::of(Some(&listed), "small"));
+            });
+        };
+        let api = fake_api_seeded(vec!["Summary of the long part."], long(10));
+        let c = work_core(&api, &folder, "all");
+        fill(&c, Some(8_192));
+        rt.block_on(c.maybe_compact("c1"));
+        assert_eq!(api.compacts.lock().unwrap().len(), 1, "20,000 characters fill an 8k model's 16,000-character history");
+        // The same chat on a model with a large window is left as it is.
+        let api = fake_api_seeded(vec!["S."], long(10));
+        let c = work_core(&api, &folder, "all");
+        fill(&c, Some(1_000_000));
+        rt.block_on(c.maybe_compact("c1"));
+        assert!(api.compacts.lock().unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn a_request_carries_the_model_limits_from_the_catalogue() {
+        let folder = temp_folder("limits");
+        let api = fake_api(vec!["Hi.", "Hello."]);
+        let c = work_core(&api, &folder, "all");
+        // An unknown model: nothing to send, the API keeps its defaults.
+        run(&c, Action::Send { text: "first".into() });
+        let first = api.streams.lock().unwrap().iter().find(|x| x["prompt"].as_str().is_some_and(|p| p.ends_with("first"))).cloned().expect("the first request");
+        assert!(first.get("limits").is_none(), "{first}");
+        c.update(|s| {
+            let listed = Model { id: "model".into(), name: "model".into(), task: "chat".into(), tasks: vec!["chat".into()], input: vec!["text".into()], output: vec!["text".into()], context_window: Some(64_000), max_output: Some(4_096) };
+            s.catalogue.insert("cred".into(), vec![listed]);
+        });
+        run(&c, Action::Send { text: "hello".into() });
+        let streams = api.streams.lock().unwrap().clone();
+        let answer = streams.iter().find(|x| x["prompt"].as_str().is_some_and(|p| p.ends_with("hello"))).expect("the answer request");
+        assert_eq!(answer["limits"], json!({ "contextWindow": 64_000, "maxOutputTokens": 4_096 }));
+        let kept = c.state.lock().unwrap().limits.get("c1").copied().unwrap();
+        assert_eq!(kept.history_chars(), 48_000);
+        let _ = std::fs::remove_dir_all(&folder);
+        // An older Meo API refuses the field: the request goes again without it, and later ones too.
+        let folder = temp_folder("limits-old");
+        let api = fake_api(vec!["@no-limits", "Hi."]);
+        let c = work_core(&api, &folder, "all");
+        c.update(|s| {
+            let listed = Model { id: "model".into(), name: "model".into(), task: "chat".into(), tasks: vec!["chat".into()], input: vec!["text".into()], output: vec!["text".into()], context_window: Some(64_000), max_output: None };
+            s.catalogue.insert("cred".into(), vec![listed]);
+        });
+        run(&c, Action::Send { text: "hello".into() });
+        assert!(c.state.lock().unwrap().limits_unsupported);
+        assert_eq!(texts(&c).last().unwrap(), "Hi.");
         let _ = std::fs::remove_dir_all(&folder);
     }
 

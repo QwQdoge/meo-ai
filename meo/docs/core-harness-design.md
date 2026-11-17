@@ -185,8 +185,18 @@ Changes in this slice:
    changes files meanwhile. The lead's `subagent` guidance (fenced, native sentence and the function
    description) says the same limits, so it keeps the web and user questions for itself. The refusal
    stays as the backstop and now says what to do instead.
-7. **Per-model context window and `maxOutputTokens`** from the model catalogue, so compaction triggers on
-   tokens, not on message count.
+7. ~~**Per-model context window and `maxOutputTokens`**~~ **Done 2026-11-17** (`limits.rs`; meo-api
+   `ai-providers.ts` `modelLimitsOf`, `chat-history.mjs` `historyBudget`, `chat.ts` `modelLimits`). The
+   catalogue carries `contextWindow` / `maxOutputTokens` where the provider lists them (Gemini, OpenRouter,
+   vLLM); otherwise a short table of known families (GPT, o-series, Claude, Gemini, DeepSeek, Qwen, ...)
+   fills in, and an unknown model sends nothing, so the API keeps its old defaults. Each request carries
+   `limits`. The API then sends a quarter of the window as history (at 3 characters per token,
+   16,000-70,000 characters; 48,000 when unknown) and asks for at most the model's own output limit.
+   Compaction uses the same budget: the messages after the last summary are summarised at 80% of it, so
+   older messages become the summary before the window would drop them; the old count rule (more than 24,
+   the API recommends) still applies too. The window is turned into the API's character budget rather
+   than counting tokens on the device, because the server trims by characters. An older API that refuses
+   `limits` gets the request again without it (`limits_unsupported`), like `harness`.
 8. **Session-level events for replay** (dsh session log): store each step's request header (model,
    thinking, permission, tool names) with the answer's steps, so Details shows exactly what the model saw
    and a run can be resumed on another device from the log.

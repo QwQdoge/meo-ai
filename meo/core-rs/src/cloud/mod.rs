@@ -25,6 +25,7 @@ pub mod orchestration;
 pub mod plotdata;
 pub mod project_env;
 pub mod prompt;
+pub mod limits;
 pub mod remote;
 pub mod richtext;
 pub mod router;

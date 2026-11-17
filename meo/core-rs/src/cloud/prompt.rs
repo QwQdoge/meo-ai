@@ -159,7 +159,7 @@ const RULES_COMMON: [&str; 5] = [
 ];
 
 const RULES_NATIVE: [&str; 3] = [
-    "Call the functions you are given when the task needs information or an action you lack; never say you will call one without calling it. Independent calls (several reads or searches) can go in one reply: they run in order and every result comes back.",
+    "Call the functions you are given when the task needs information or an action you lack; never say you will call one without calling it. Independent calls (several reads or searches) can go in one reply: reads and searches run together, and every result comes back in call order.",
     "Choose what helps the task, the user sees both live: for a request with a clear end state that takes several steps, set_goal first (objective, done_when) and mark it done or blocked at the end; for work with several parts keep the list with update_tasks (the whole list each time, one task doing at a time). Do not give the final answer while the goal is active or a task is not done. Mark a task done only once its result is checked; never draw your own progress bars, percentages or checklists in a reply, the list is the progress the user sees. A short question needs neither.",
     "What you write between calls is shown only as progress, never as the answer. When done, reply with the final answer and no call, complete on its own.",
 ];
