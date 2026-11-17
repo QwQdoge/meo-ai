@@ -132,11 +132,14 @@ Changes in this slice:
 
 ## 5. Roadmap (in order; each is one change with its own test)
 
-1. **Real message history instead of a flattened transcript.** `meo-api` `conversationPrompt` joins the
-   history as `User: … / Assistant: …` lines in one user message. dsh derives proper message history from
-   the log. Sending `messages[]` (with the run's `turns` as `tool` messages, which already works) gives
-   better instruction following, real prompt-cache prefixes and no re-parsing. Contract change in
-   `meo-api` + core; fallback to the flat prompt for old clients.
+1. ~~**Real message history instead of a flattened transcript.**~~ **Done 2026-11-17** (`meo-api`
+   `src/chat-history.mjs`). The stored conversation goes to the provider as its own user/assistant
+   messages (summary first, old tool rows and notes as user-role data, roles merged, the saved copy of the
+   current message dropped; 48,000 characters / 80 messages, old tool results shrink first, then the
+   oldest messages go). The broker accepts `history` (validated, in the consent hash when non-empty) and
+   sends it for Chat Completions, Responses and Gemini. The current message keeps the per-request parts
+   (memory, files, web results, Skill, the core's tool sections). No client change: history is built on
+   the server from the stored conversation.
 2. **Runtime context as a message after history, logged only when changed** (dsh `request/context`).
    Today L3 is rebuilt into the current user message every round. Once history is real, L3 becomes its own
    user-role snapshot that is re-sent only when it changed, so a long run stops paying for the folder map
