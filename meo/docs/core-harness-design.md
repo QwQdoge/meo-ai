@@ -168,8 +168,14 @@ Changes in this slice:
    is; and a long run could pass the server's 300,000-character limit for a run's rounds, which was
    answered `invalid_tool_turns` and silently switched the run to the fenced protocol. Older round
    results now shrink first (`bound_turns`, 240,000), the newest round stays whole.
-5. **Parallel read-only calls.** Calls of one reply run in order now; reads, searches and web fetches that
-   need no approval could run together (`futures::join_all`) with results kept in call order.
+5. ~~**Parallel read-only calls.**~~ **Done 2026-11-17** (`app.rs` `parallel_reads`, `agent_run_together`).
+   From the next call of a native reply on, the run of `read_file` / `list_dir` / `search` (with a folder)
+   and `web_search` / `web_fetch` calls that `gate_in` allows without a question runs at once
+   (`join_all`). The batch stops at the first other call, so a write or command never runs before or
+   beside a read the model put ahead of it; the calls after it go on one by one (and may start a new
+   batch). Each call keeps its own round, step, kept result and spill file, and results go back in call
+   order. Folder reads share the workspace lock, so they still take turns with each other; what they
+   gain is overlapping with web fetches, and the batch is one step burst instead of one per call.
 6. **Delegation depth and fan-out as context** (dsh `SUBAGENT_DELEGATION`): tell a sub-agent its depth
    and that it cannot delegate further, instead of only refusing.
 7. **Per-model context window and `maxOutputTokens`** from the model catalogue, so compaction triggers on

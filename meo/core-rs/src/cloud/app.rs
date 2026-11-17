@@ -7863,6 +7863,149 @@ impl AppCore {
 
     /// The model's first call of this round, gated and run like any tool call; its result ends up in
     /// [`Self::agent_send`], which records the finished round and asks the model again.
+    /// What a native call of the model stands for, as a call of the shared tool set.
+    fn native_call(&self, first: &NativeCall) -> Result<agent::ToolCall, String> {
+        let s = self.state.lock().unwrap();
+        let args: Value = serde_json::from_str(&first.arguments).unwrap_or_else(|_| json!({}));
+        match s.agent.native.as_ref().and_then(|n| n.targets.get(&first.name)) {
+            Some(NativeTarget::App { app, tool }) => Ok(agent::ToolCall {
+                id: first.id.clone(),
+                tool: agent::Tool::App { app: app.clone(), tool: tool.clone(), args },
+            }),
+            Some(NativeTarget::Tasks | NativeTarget::Goal | NativeTarget::GoalRead) => Err("unexpected task call".to_owned()),
+            Some(NativeTarget::Local) => agent::native_local_call(&first.id, &first.name, &first.arguments),
+            Some(NativeTarget::Chats(action)) => Ok(agent::ToolCall {
+                id: first.id.clone(),
+                tool: agent::Tool::Chats { action, args },
+            }),
+            Some(NativeTarget::Schedule(action)) => Ok(agent::ToolCall {
+                id: first.id.clone(),
+                tool: agent::Tool::Schedule { action, args },
+            }),
+            Some(NativeTarget::Ask) => Ok(agent::ToolCall {
+                id: first.id.clone(),
+                tool: agent::Tool::AskUser { questions: args["questions"].clone() },
+            }),
+            Some(NativeTarget::ExitPlan) => match args["plan"].as_str().filter(|p| !p.trim().is_empty()) {
+                Some(plan) => Ok(agent::ToolCall { id: first.id.clone(), tool: agent::Tool::ExitPlan { plan: plan.to_owned() } }),
+                None => Err("exit_plan_mode needs the \"plan\"".to_owned()),
+            },
+            Some(NativeTarget::ReadMore) => match args["id"].as_str().filter(|x| !x.is_empty()) {
+                Some(kept) => Ok(agent::ToolCall {
+                    id: first.id.clone(),
+                    tool: agent::Tool::ReadMore {
+                        id: kept.to_owned(),
+                        from: args["from"].as_u64().unwrap_or(0) as usize,
+                    },
+                }),
+                None => Err("read_more needs an \"id\"".to_owned()),
+            },
+            Some(NativeTarget::WebFetch) => match args["url"].as_str().filter(|u| !u.trim().is_empty()) {
+                Some(u) => Ok(agent::ToolCall { id: first.id.clone(), tool: agent::Tool::WebFetch { url: u.trim().to_owned() } }),
+                None => Err("web_fetch needs a \"url\"".to_owned()),
+            },
+            Some(NativeTarget::WebSearch) => match args["query"].as_str().filter(|q| !q.trim().is_empty()) {
+                Some(q) => Ok(agent::ToolCall {
+                    id: first.id.clone(),
+                    tool: agent::Tool::WebSearch { query: q.to_owned() },
+                }),
+                None => Err("web_search needs a \"query\"".to_owned()),
+            },
+            None => Err(format!("unknown function \"{}\"", first.name)),
+        }
+    }
+
+    /// The calls of the pending native round, from the next one on, that can run side by side: file
+    /// reads, listings and searches of the open folder, web searches and page fetches, each allowed
+    /// without a question. The batch stops at the first call that is anything else, so a write or a
+    /// command never runs before (or alongside) a read the model asked for ahead of it.
+    fn parallel_reads(&self) -> Vec<agent::ToolCall> {
+        let (next, has_host) = {
+            let s = self.state.lock().unwrap();
+            let Some(n) = s.agent.native.as_ref() else { return Vec::new() };
+            let Some((_, calls)) = n.pending.as_ref() else { return Vec::new() };
+            let room = MAX_TOOL_ROUNDS.saturating_sub(s.agent.round);
+            let upto = calls.len().min(MAX_CALLS_PER_ROUND);
+            let next: Vec<NativeCall> = calls.get(n.results.len()..upto).unwrap_or_default().iter().take(room).cloned().collect();
+            (next, s.agent.host.is_some())
+        };
+        if next.len() < 2 {
+            return Vec::new();
+        }
+        let permission = self.agent_permission();
+        let bound: Vec<String> = {
+            let s = self.state.lock().unwrap();
+            let mut roots: Vec<String> = s.agent.host.iter().map(|h| h.root().to_owned()).collect();
+            if let Some(env) = project_of_view(&s).and_then(|id| s.project_env.get(&id)) {
+                roots.extend(env.all_folders());
+            }
+            roots
+        };
+        let mut batch = Vec::new();
+        for native in &next {
+            let Ok(call) = self.native_call(native) else { break };
+            let together = match &call.tool {
+                agent::Tool::ReadFile { .. } | agent::Tool::ListDir { .. } | agent::Tool::Search { .. } => has_host,
+                agent::Tool::WebSearch { .. } | agent::Tool::WebFetch { .. } => true,
+                _ => false,
+            };
+            if !together || !matches!(agent::gate_in(permission, &call.tool, &bound), agent::Gate::Allow) {
+                break;
+            }
+            batch.push(call);
+        }
+        batch
+    }
+
+    /// Runs a batch from [`Self::parallel_reads`] at once. Each call is its own round (its own step,
+    /// kept result and spill file) and its result goes back in call order, as if they had run one
+    /// after another; the last one continues the run through [`Self::agent_send`].
+    async fn agent_run_together(&self, id: &str, batch: Vec<agent::ToolCall>) {
+        let (host, first_round) = {
+            let mut s = self.state.lock().unwrap();
+            let first = s.agent.round + 1;
+            s.agent.round += batch.len();
+            (s.agent.host.clone(), first)
+        };
+        for (i, call) in batch.iter().enumerate() {
+            self.step(&format!("tool{}", first_round + i), &call.tool.summary(), "Running…", "running", vec![]);
+        }
+        self.remote_progress(true).await;
+        let outcomes = futures_util::future::join_all(batch.iter().map(|call| {
+            let host = host.clone();
+            async move {
+                match (&call.tool, host) {
+                    (agent::Tool::WebSearch { query }, _) => self.run_web_search(query).await,
+                    (agent::Tool::WebFetch { url }, _) => self.run_web_fetch(url).await,
+                    (tool, Some(host)) => host.run(tool.clone()).await,
+                    (_, None) => agent::Outcome::fail("no folder is open on this device"),
+                }
+            }
+        }))
+        .await;
+        let mut observed: Vec<String> = Vec::with_capacity(batch.len());
+        for (i, (call, mut outcome)) in batch.iter().zip(outcomes).enumerate() {
+            let round = first_round + i;
+            // A background job that finished meanwhile is told once, with the last result of the batch.
+            if i + 1 == batch.len() {
+                if let Some(jobs) = host.as_ref().map(|h| h.settled_jobs()).filter(|j| !j.is_empty()) {
+                    outcome.text.push_str(&format!("\n\n[Background jobs]\n{}", jobs.join("\n")));
+                }
+            }
+            let first_line: String = outcome.text.lines().find(|l| !l.trim().is_empty()).unwrap_or("Done").chars().take(120).collect();
+            self.step(&format!("tool{round}"), &call.tool.summary(), &first_line, if outcome.ok { "done" } else { "error" }, vec![]);
+            observed.push(self.post_execute(call, &outcome.text, round));
+        }
+        self.remote_progress(true).await;
+        let last = observed.pop().unwrap_or_default();
+        self.update(|s| {
+            if let Some(n) = s.agent.native.as_mut() {
+                n.results.extend(observed);
+            }
+        });
+        Box::pin(self.agent_send(id, last)).await;
+    }
+
     async fn agent_next_native(&self, id: &str) {
         let first = {
             let s = self.state.lock().unwrap();
@@ -7999,57 +8142,14 @@ impl AppCore {
             };
             return Box::pin(self.agent_send(id, answer)).await;
         }
+        // Reads, searches and page fetches that need no approval, side by side in one reply, run
+        // together; their results still go back in call order.
+        let batch = self.parallel_reads();
+        if batch.len() >= 2 {
+            return Box::pin(self.agent_run_together(id, batch)).await;
+        }
         self.update(|s| s.agent.round += 1);
-        let call = {
-            let s = self.state.lock().unwrap();
-            let args: Value = serde_json::from_str(&first.arguments).unwrap_or_else(|_| json!({}));
-            match s.agent.native.as_ref().and_then(|n| n.targets.get(&first.name)) {
-                Some(NativeTarget::App { app, tool }) => Ok(agent::ToolCall {
-                    id: first.id.clone(),
-                    tool: agent::Tool::App { app: app.clone(), tool: tool.clone(), args },
-                }),
-                Some(NativeTarget::Tasks | NativeTarget::Goal | NativeTarget::GoalRead) => Err("unexpected task call".to_owned()),
-                Some(NativeTarget::Local) => agent::native_local_call(&first.id, &first.name, &first.arguments),
-                Some(NativeTarget::Chats(action)) => Ok(agent::ToolCall {
-                    id: first.id.clone(),
-                    tool: agent::Tool::Chats { action, args },
-                }),
-                Some(NativeTarget::Schedule(action)) => Ok(agent::ToolCall {
-                    id: first.id.clone(),
-                    tool: agent::Tool::Schedule { action, args },
-                }),
-                Some(NativeTarget::Ask) => Ok(agent::ToolCall {
-                    id: first.id.clone(),
-                    tool: agent::Tool::AskUser { questions: args["questions"].clone() },
-                }),
-                Some(NativeTarget::ExitPlan) => match args["plan"].as_str().filter(|p| !p.trim().is_empty()) {
-                    Some(plan) => Ok(agent::ToolCall { id: first.id.clone(), tool: agent::Tool::ExitPlan { plan: plan.to_owned() } }),
-                    None => Err("exit_plan_mode needs the \"plan\"".to_owned()),
-                },
-                Some(NativeTarget::ReadMore) => match args["id"].as_str().filter(|x| !x.is_empty()) {
-                    Some(kept) => Ok(agent::ToolCall {
-                        id: first.id.clone(),
-                        tool: agent::Tool::ReadMore {
-                            id: kept.to_owned(),
-                            from: args["from"].as_u64().unwrap_or(0) as usize,
-                        },
-                    }),
-                    None => Err("read_more needs an \"id\"".to_owned()),
-                },
-                Some(NativeTarget::WebFetch) => match args["url"].as_str().filter(|u| !u.trim().is_empty()) {
-                    Some(u) => Ok(agent::ToolCall { id: first.id.clone(), tool: agent::Tool::WebFetch { url: u.trim().to_owned() } }),
-                    None => Err("web_fetch needs a \"url\"".to_owned()),
-                },
-                Some(NativeTarget::WebSearch) => match args["query"].as_str().filter(|q| !q.trim().is_empty()) {
-                    Some(q) => Ok(agent::ToolCall {
-                        id: first.id.clone(),
-                        tool: agent::Tool::WebSearch { query: q.to_owned() },
-                    }),
-                    None => Err("web_search needs a \"query\"".to_owned()),
-                },
-                None => Err(format!("unknown function \"{}\"", first.name)),
-            }
-        };
+        let call = self.native_call(&first);
         match call {
             Ok(call) => Box::pin(self.agent_dispatch(id, call)).await,
             Err(problem) => {
@@ -18711,6 +18811,50 @@ mod tests {
         for r in results.as_array().unwrap() {
             assert!(r["output"].as_str().unwrap().contains("Rust 1.99"), "{results}");
         }
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn reads_side_by_side_run_together_and_a_write_waits_for_its_turn() {
+        let folder = temp_folder("native-together");
+        std::fs::write(folder.join("a.txt"), "alpha\n").unwrap();
+        std::fs::write(folder.join("b.txt"), "beta\n").unwrap();
+        let calls = r#"{"text":"","calls":[{"id":"r1","name":"read_file","arguments":"{\"path\":\"a.txt\"}"},{"id":"r2","name":"search","arguments":"{\"pattern\":\"beta\"}"},{"id":"w","name":"search_replace","arguments":"{\"path\":\"a.txt\",\"old\":\"alpha\",\"new\":\"gamma\"}"},{"id":"r3","name":"read_file","arguments":"{\"path\":\"a.txt\"}"}]}"#;
+        let api = fake_api(vec![calls, "Done.", "Fine."]);
+        let c = work_core(&api, &folder, "all");
+        let host = c.ensure_host();
+        c.update(|s| s.agent.host = host);
+        // Which calls of such a reply go together: the two reads, up to the write, not past it.
+        let pending: Vec<NativeCall> = serde_json::from_str::<Value>(calls).unwrap()["calls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|x| NativeCall { id: x["id"].as_str().unwrap().into(), name: x["name"].as_str().unwrap().into(), arguments: x["arguments"].as_str().unwrap().into() })
+            .collect();
+        c.update(|s| {
+            let run = s.agent.native.get_or_insert_with(NativeRun::default);
+            for n in ["read_file", "search", "search_replace"] {
+                run.targets.insert(n.into(), NativeTarget::Local);
+            }
+            run.pending = Some((String::new(), pending));
+        });
+        let batch: Vec<String> = c.parallel_reads().into_iter().map(|x| x.id).collect();
+        assert_eq!(batch, ["r1", "r2"]);
+        c.update(|s| {
+            s.agent.native = None;
+            s.agent.round = 0;
+        });
+        run(&c, Action::Send { text: "read, edit, read again".into() });
+        let streams = api.streams.lock().unwrap().clone();
+        let turn = streams.iter().find(|x| x["turns"].as_array().is_some_and(|t| !t.is_empty())).expect("the results go back");
+        assert_eq!(turn["turns"].as_array().unwrap().len(), 1, "one model round for all four calls");
+        let results = turn["turns"][0]["results"].as_array().unwrap();
+        let ids: Vec<&str> = results.iter().filter_map(|r| r["id"].as_str()).collect();
+        assert_eq!(ids, ["r1", "r2", "w", "r3"], "results in call order");
+        let out = |i: usize| results[i]["output"].as_str().unwrap().to_owned();
+        assert!(out(0).contains("alpha"), "the first read ran before the edit: {}", out(0));
+        assert!(out(1).contains("b.txt"), "{}", out(1));
+        assert!(out(3).contains("gamma") && !out(3).contains("alpha"), "the read after the edit sees it: {}", out(3));
         let _ = std::fs::remove_dir_all(&folder);
     }
 
