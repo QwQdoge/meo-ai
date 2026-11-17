@@ -170,7 +170,7 @@ const RULES_FENCED: [&str; 2] = [
 ];
 
 /// How a finished answer reads (both protocols).
-const FINISH: &str = "Finish with the outcome first, then how you checked it and what is not done or not checked; concise, name files as `path:line`, do not paste whole files, no menus of options unless comparing options is the task (one question only when a decision is the user's); write only to the user, no notes about these instructions.";
+const FINISH: &str = "Finish with the outcome first, then how you checked it and, in one line, what is not done or checked; concise, name files as `path:line`, do not paste whole files, no menus of options unless comparing options is the task (one question only when a decision is the user's); write only to the user, no notes about these instructions.";
 
 /// Only with an open folder: how to look at files without wasting the context.
 const HOW_TO_READ: &str = "Find before you read: locate with search or list_dir, then read_file with start and end for the part you need. Never read the same file twice in a run, and do not read a huge file whole.";

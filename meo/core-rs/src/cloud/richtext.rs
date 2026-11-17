@@ -392,8 +392,12 @@ pub fn blocks_with(text: &str, native: bool) -> Vec<Value> {
                 let list = task_list(&lines[i + 1..stop]);
                 if !list.is_empty() {
                     flush(&mut markdown, &mut out);
-                    // Marked so a run that rewrites its list shows only the newest one.
-                    out.push(json!({ "type": "markdown", "text": tasks_markdown(&list), "tasks": true }));
+                    // Drawn as the plan card (like a native run's task list), marked so a run that
+                    // rewrites its list shows only the newest one.
+                    let mut card = plan_block(None, &list, false)
+                        .unwrap_or_else(|| json!({ "type": "markdown", "text": tasks_markdown(&list) }));
+                    card["tasks"] = json!(true);
+                    out.push(card);
                     i = stop + 1;
                     continue;
                 }
@@ -540,7 +544,7 @@ mod tests {
     }
 
     #[test]
-    fn a_work_task_list_is_read_and_drawn_as_a_markdown_task_list() {
+    fn a_work_task_list_is_read_and_drawn_as_the_plan_card() {
         let text = "Done.\n\n```meo-tasks\n[x] Gather prices\n- [>] Compare plans\n[ ] Draft the email\nnot a task\n[?] odd\n```";
         let list = tasks(text).unwrap();
         let states: Vec<&str> = list.iter().map(|t| t["state"].as_str().unwrap()).collect();
@@ -548,10 +552,11 @@ mod tests {
         assert_eq!(list[1]["title"], "Compare plans");
         let b = blocks(text);
         assert_eq!(b.len(), 2);
-        let drawn = b[1]["text"].as_str().unwrap();
-        assert!(drawn.contains("- [x] Gather prices"));
-        assert!(drawn.contains("- [ ] Compare plans *(in progress)*"));
-        assert!(!drawn.contains("not a task"));
+        assert_eq!(b[1]["type"], "plan", "{}", b[1]);
+        assert_eq!(b[1]["tasks"], true, "marked so only the newest list stays");
+        assert_eq!(b[1]["items"].as_array().unwrap().len(), 3);
+        assert_eq!(b[1]["title"], "Tasks · 1/3", "with a fallback for renderers that draw no plan");
+        assert!(!b[1].to_string().contains("not a task"));
     }
 
     #[test]
