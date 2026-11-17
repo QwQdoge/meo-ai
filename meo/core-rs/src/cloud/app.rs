@@ -853,6 +853,9 @@ struct State {
     credentials: Vec<Credential>,
     /// Models of every connected provider, by connection id.
     catalogue: HashMap<String, Vec<Model>>,
+    /// Files attached since the last message was sent (`{id, name, mime, subtitle}`): shown in the
+    /// composer, then sent with the next message and shown on it.
+    pending_files: Vec<Value>,
     router: Router,
     /// The first-run automatic setup was already tried this session.
     router_bootstrapped: bool,
@@ -952,6 +955,7 @@ impl AppCore {
             text: text.into(),
             steps: Vec::new(),
             run: None,
+            files: Vec::new(),
         };
         self.update(|s| {
             s.auth = AuthState::SignedIn;
@@ -1093,12 +1097,14 @@ impl AppCore {
             Action::Navigate { route } => self.navigate(route).await,
             Action::NewConversation => self.update(|s| {
                 s.files.clear();
+                s.pending_files.clear();
                 s.new_chat_project = None;
                 s.active = None;
                 s.route = "chat".into();
             }),
             Action::NewTask => self.update(|s| {
                 s.files.clear();
+                s.pending_files.clear();
                 s.new_chat_project = None;
                 s.active = None;
                 s.route = "work".into();
@@ -1262,6 +1268,7 @@ impl AppCore {
             Action::CloneProjectRepo { id } => self.clone_project_repo(&id).await,
             Action::StartProjectWork { id } => self.update(|s| {
                 s.files.clear();
+                s.pending_files.clear();
                 s.active = None;
                 s.route = "work".into();
                 s.new_chat_project = Some(id);
@@ -2775,7 +2782,7 @@ impl AppCore {
                     .call(|api, t| async move { api.list_plugins(&t).await })
                     .await;
                 self.update(|s| {
-                    s.plugins = Some(r.map_err(|e| e.to_string()));
+                    s.plugins = Some(r.map(with_store_names).map_err(|e| e.to_string()));
                     s.app_tools.clear();
                     s.app_auth_issues.clear();
                 });
@@ -3003,6 +3010,7 @@ impl AppCore {
             }
         };
         let mime = mime_for(&name);
+        let before: std::collections::HashSet<String> = self.state.lock().unwrap().files.iter().filter_map(|f| f["id"].as_str().map(str::to_owned)).collect();
         match self
             .call(|api, t| {
                 let (id, name, text) = (conversation_id.clone(), name.clone(), text.clone());
@@ -3010,7 +3018,19 @@ impl AppCore {
             })
             .await
         {
-            Ok(()) => self.refresh_files().await,
+            Ok(()) => {
+                self.refresh_files().await;
+                // The new file goes with the next message.
+                self.update(|s| {
+                    let new: Vec<Value> = s
+                        .files
+                        .iter()
+                        .filter(|f| f["id"].as_str().is_some_and(|id| !before.contains(id)))
+                        .map(|f| json!({ "id": f["id"], "name": f["name"], "mime": mime, "subtitle": format!("{} KB", f["extracted_text_bytes"].as_u64().unwrap_or(0).div_ceil(1024).max(1)) }))
+                        .collect();
+                    s.pending_files.extend(new);
+                });
+            }
             Err(ApiError::Status { status: 413, .. }) => self.notice(
                 "error",
                 "That file is too large to attach (the account limit is 10 MB of text).",
@@ -3039,20 +3059,14 @@ impl AppCore {
             };
         }
         match std::fs::metadata(&local) {
-            Ok(m) if m.len() > 2 * 1024 * 1024 => {
-                return self.notice(
-                    "error",
-                    "That file is larger than 2 MB; attach a smaller text file.",
-                );
+            Ok(m) if m.len() > 25 * 1024 * 1024 => {
+                return self.notice("error", format!("{name} is larger than 25 MB."));
             }
             Err(e) => return self.notice("error", format!("Could not read the file: {e}")),
             Ok(_) => {}
         }
         match std::fs::read(&local) {
-            Ok(bytes) => match String::from_utf8(bytes) {
-                Ok(text) => self.attach_text(name, text).await,
-                Err(_) => self.notice("error", "Only text files can be attached."),
-            },
+            Ok(bytes) => self.attach_bytes(name, bytes).await,
             Err(e) => self.notice("error", format!("Could not read the file: {e}")),
         }
     }
@@ -3289,7 +3303,10 @@ impl AppCore {
             })
             .await
         {
-            Ok(()) => self.refresh_files().await,
+            Ok(()) => {
+                self.update(|s| s.pending_files.retain(|f| f["id"] != id.as_str()));
+                self.refresh_files().await;
+            }
             Err(e) => self.notice("error", e.to_string()),
         }
     }
@@ -3530,9 +3547,21 @@ impl AppCore {
         if bytes.len() > 25 * 1024 * 1024 {
             return self.notice("error", format!("{name} is larger than 25 MB."));
         }
+        self.attach_bytes(name, bytes).await;
+    }
+
+    /// Any file: a document the core can read (PDF, Word, Excel, PowerPoint, RTF) goes in as its text;
+    /// anything else that is text (code, logs, data, a file without a known extension) as it is. Only a
+    /// file with no readable text is refused, and the notice says why.
+    async fn attach_bytes(&self, name: String, bytes: Vec<u8>) {
         match docs::extract_text(&name, &bytes) {
-            Ok(text) => self.attach_text(format!("{name}.txt"), text).await,
-            Err(e) => self.notice("error", e),
+            Ok(text) => return self.attach_text(name, text).await,
+            Err(e) if docs::is_document(&name) => return self.notice("error", e),
+            Err(_) => {}
+        }
+        match readable_text(&bytes) {
+            Some(text) => self.attach_text(name, text).await,
+            None => self.notice("error", format!("{name} has no text Meo can read (pictures go in as pictures; other binary files cannot be sent yet).")),
         }
     }
 
@@ -4038,7 +4067,7 @@ impl AppCore {
             .call(|api, t| async move { api.list_plugins(&t).await })
             .await;
         self.update(|s| {
-            s.plugins = Some(r.map_err(|e| e.to_string()));
+            s.plugins = Some(r.map(with_store_names).map_err(|e| e.to_string()));
             s.app_tools.clear();
             s.app_auth_issues.clear();
         });
@@ -4796,6 +4825,8 @@ impl AppCore {
                     s.remote.controller = Some(from.clone());
                     s.remote.requested = permission.clone();
                     s.files.clear();
+                    s.pending_files.clear();
+                s.pending_files.clear();
                     s.new_chat_project = project.clone();
                     s.active = None;
                     s.route = "work".into();
@@ -5681,13 +5712,7 @@ impl AppCore {
         // is prepared, or prepare and stream would see different transcripts and the hash would not match.
         let mut save_prompt = save_prompt;
         if save_prompt && request["prompt"].as_str() != Some(text.as_str()) {
-            let (id, user) = (conversation_id.clone(), text.clone());
-            let saved = self
-                .call(|api, t| {
-                    let (id, user) = (id.clone(), user.clone());
-                    async move { api.append_message(&t, &id, "user", &user).await }
-                })
-                .await;
+            let saved = self.save_user_message(&conversation_id, &text).await;
             if let Err(e) = saved {
                 return self.notice("error", e.to_string());
             }
@@ -6030,6 +6055,29 @@ impl AppCore {
         }
     }
 
+    /// Saves the user's message with the files attached since the last one, which then show on that
+    /// message (here and on other devices) instead of in the composer.
+    async fn save_user_message(&self, conversation_id: &str, text: &str) -> Result<(), ApiError> {
+        let files = std::mem::take(&mut self.state.lock().unwrap().pending_files);
+        let sent: Vec<Value> = files.iter().map(|f| json!({ "id": f["id"], "name": f["name"], "mime": f["mime"] })).collect();
+        let saved = self
+            .call(|api, t| {
+                let (id, text, sent) = (conversation_id.to_owned(), text.to_owned(), sent.clone());
+                async move { api.append_user_message(&t, &id, &text, &sent).await }
+            })
+            .await;
+        match &saved {
+            Ok(()) => self.update(|s| {
+                if let Some(m) = s.messages.get_mut(conversation_id).and_then(|l| l.iter_mut().rev().find(|m| m.role == "user")) {
+                    m.files = sent;
+                }
+            }),
+            // Not sent: they stay in the composer for the next try.
+            Err(_) => self.update(|s| s.pending_files = files),
+        }
+        saved
+    }
+
     fn push_message(&self, conversation_id: &str, role: &str, text: &str) {
         let key = format!("messages-{conversation_id}");
         let snapshot = {
@@ -6057,12 +6105,7 @@ impl AppCore {
         // Save the prompt first so the user's other devices see it while the answer streams.
         let user = pending.prompt.clone();
         if pending.save_prompt {
-            let saved = self
-                .call(|api, t| {
-                    let (id, user) = (id.clone(), user.clone());
-                    async move { api.append_message(&t, &id, "user", &user).await }
-                })
-                .await;
+            let saved = self.save_user_message(&id, &user).await;
             if let Err(e) = saved {
                 return self.notice("error", e.to_string());
             }
@@ -10204,6 +10247,19 @@ fn shrink_image(_path: &std::path::Path) -> Result<(Option<&'static str>, String
     Err("Attach a picture with the file picker.".into())
 }
 
+/// Bytes as text when they are text: UTF-8 (or UTF-8 with a few bad bytes, replaced), without NUL bytes
+/// and mostly printable. A binary file gives `None`.
+fn readable_text(bytes: &[u8]) -> Option<String> {
+    let sample = &bytes[..bytes.len().min(64 * 1024)];
+    if sample.contains(&0) {
+        return None;
+    }
+    let text = String::from_utf8_lossy(bytes).into_owned();
+    let checked: Vec<char> = text.chars().take(64 * 1024).collect();
+    let bad = checked.iter().filter(|c| **c == '\u{FFFD}' || (c.is_control() && !matches!(c, '\n' | '\r' | '\t' | '\u{c}'))).count();
+    (!text.trim().is_empty() && bad * 100 <= checked.len().max(1)).then_some(text)
+}
+
 fn mime_for(name: &str) -> &'static str {
     match name
         .rsplit('.')
@@ -10214,6 +10270,10 @@ fn mime_for(name: &str) -> &'static str {
         Some("md" | "markdown") => "text/markdown",
         Some("csv") => "text/csv",
         Some("json") => "application/json",
+        Some("pdf") => "application/pdf",
+        Some("docx") => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        Some("pptx") => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        Some("xlsx") => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         _ => "text/plain",
     }
 }
@@ -12254,6 +12314,10 @@ fn conversation_page(s: &State) -> Value {
                         "toolRound": m.role == "assistant" && (m.text.contains("```meo-tool") || announced.contains(m.id.as_str())),
                         "images": images.into_iter().map(|u| json!({ "url": u })).collect::<Vec<_>>(),
                     });
+                    // The files sent with this message.
+                    if !m.files.is_empty() {
+                        message["files"] = json!(m.files.iter().map(|f| json!({ "name": f["name"], "mime": f["mime"] })).collect::<Vec<_>>());
+                    }
                     if let Some(mut plan) = stored_plan(&m.steps) {
                         // The newest answer's goal can be continued when the run stopped before it was done.
                         if i == last && s.streaming.is_none() && matches!(plan["goal"]["status"].as_str(), Some("paused" | "blocked" | "active")) {
@@ -12458,10 +12522,11 @@ fn conversation_page(s: &State) -> Value {
             "suggestions": (if s.route == "work" { WORK_STARTERS } else { STARTERS })
                 .iter().map(|(label, prompt)| json!({ "label": label, "action": { "type": "send", "text": prompt } })).collect::<Vec<_>>(),
         })),
-        "files": s.files.iter().map(|f| json!({
+        // What goes with the next message; files sent earlier show on their messages (and in Details).
+        "files": s.pending_files.iter().map(|f| json!({
             "id": f["id"],
             "name": f["name"],
-            "subtitle": format!("{} KB", f["extracted_text_bytes"].as_u64().unwrap_or(0).div_ceil(1024).max(1)),
+            "subtitle": f["subtitle"],
             "remove": button("Remove", "secondary", json!({ "type": "remove_file", "id": f["id"] })),
         })).chain(s.images.iter().enumerate().map(|(i, image)| json!({
             "id": format!("image-{i}"),
@@ -12470,7 +12535,9 @@ fn conversation_page(s: &State) -> Value {
             "remove": button("Remove", "secondary", json!({ "type": "remove_image", "index": i })),
         }))).collect::<Vec<_>>(),
         "composer": {
-            "attach": { "label": "Attach file", "action": "attach_text", "extensions": ["txt", "md", "markdown", "csv", "json", "py", "rs", "js", "ts", "tsx", "jsx", "java", "kt", "c", "h", "cpp", "go", "sh", "toml", "yaml", "yml", "html", "css", "sql", "log", "png", "jpg", "jpeg", "webp", "gif"] },
+            // `extensions` are the types read as text for sure; any other file is tried too (documents are
+            // extracted, other text is read as text), so the list is a hint, not a gate.
+            "attach": { "label": "Add files or photos", "action": "attach_text", "any": true, "extensions": ["txt", "md", "markdown", "csv", "json", "py", "rs", "js", "ts", "tsx", "jsx", "java", "kt", "c", "h", "cpp", "go", "sh", "toml", "yaml", "yml", "html", "css", "sql", "log", "png", "jpg", "jpeg", "webp", "gif"] },
             "placeholder": "Message Meo",
             "commands": COMMANDS.iter().map(|(name, hint, about)| json!({ "name": name, "hint": hint, "label": about })).collect::<Vec<_>>(),
             "busy": busy,
@@ -13434,6 +13501,22 @@ fn project_page(s: &State, id: &str) -> Value {
         "selected": selected,
         "close": { "type": "navigate", "route": "projects" },
     })
+}
+
+/// Installed plugins as the catalogue names them now: one installed from the built-in catalogue (same
+/// server address) shows the catalogue's current name, so a renamed entry ("GitHub 开发" became
+/// "GitHub") is not stuck with the name it was installed under. Everything else keeps its own name.
+fn with_store_names(rows: Vec<Value>) -> Vec<Value> {
+    let store = plugin_store();
+    rows.into_iter()
+        .map(|mut p| {
+            let named = p["remoteUrl"].as_str().and_then(|url| store.iter().find(|x| x["remoteUrl"] == url)).and_then(|x| x["name"].as_str());
+            if let Some(name) = named {
+                p["name"] = json!(name);
+            }
+            p
+        })
+        .collect()
 }
 
 /// Built-in plugin bundles (generated from the web catalog); installed through the account API.
@@ -15358,7 +15441,7 @@ mod tests {
     #[test]
     fn a_fenced_reply_that_only_announced_its_next_step_is_shown_as_progress() {
         let c = signed_in_core();
-        let m = |id: &str, role: &str, text: &str| ChatMessage { id: id.into(), role: role.into(), text: text.into(), steps: Vec::new(), run: None };
+        let m = |id: &str, role: &str, text: &str| ChatMessage { id: id.into(), role: role.into(), text: text.into(), steps: Vec::new(), run: None, files: Vec::new() };
         c.update(|s| {
             s.active = Some("c1".into());
             s.messages.insert("c1".into(), vec![
@@ -16536,6 +16619,7 @@ mod tests {
                         text: body.clone(),
                         steps: vec![],
                         run: None,
+                        files: Vec::new(),
                     })
                     .collect(),
             );
@@ -16568,8 +16652,8 @@ mod tests {
             s.messages.insert(
                 "c1".into(),
                 vec![
-                    ChatMessage { id: "m1".into(), role: "user".into(), text: long.clone(), steps: vec![], run: None },
-                    ChatMessage { id: "m2".into(), role: "assistant".into(), text: "ok".into(), steps: vec![], run: None },
+                    ChatMessage { id: "m1".into(), role: "user".into(), text: long.clone(), steps: vec![], run: None, files: Vec::new() },
+                    ChatMessage { id: "m2".into(), role: "assistant".into(), text: "ok".into(), steps: vec![], run: None, files: Vec::new() },
                 ],
             );
             s.cloud_settings = Some(json!({ "personalInstructions": "Be brief and kind. ".repeat(20) }));
@@ -16621,6 +16705,7 @@ mod tests {
                         text: "hi".into(),
                         steps: vec![],
                         run: None,
+                        files: Vec::new(),
                     },
                     ChatMessage {
                         id: "m2".into(),
@@ -16628,6 +16713,7 @@ mod tests {
                         text: "hello".into(),
                         steps: vec![],
                         run: None,
+                        files: Vec::new(),
                     },
                 ],
             );
@@ -16987,8 +17073,9 @@ mod tests {
         assert_eq!(mime_for("main.rs"), "text/plain");
         assert_eq!(mime_for("Makefile"), "text/plain");
         let c = signed_in_core();
+        // The composer lists what waits to be sent with the next message.
         c.update(|s| {
-            s.files = vec![json!({ "id": "f1", "name": "notes.txt", "extracted_text_bytes": 2048 })]
+            s.pending_files = vec![json!({ "id": "f1", "name": "notes.txt", "mime": "text/plain", "subtitle": "2 KB" })]
         });
         let page = c.view()["page"].clone();
         assert_eq!(page["files"][0]["name"], "notes.txt");
@@ -17459,6 +17546,7 @@ mod tests {
         let store = Arc::new(Mutex::new(seed));
         let compacts = Arc::new(Mutex::new(Vec::<Value>::new()));
         let remotes = Arc::new(Mutex::new(Vec::<Value>::new()));
+        let uploads = Arc::new(Mutex::new(Vec::<Value>::new()));
         let (seen, kept, saved, relayed) = (
             streams.clone(),
             store.clone(),
@@ -17468,6 +17556,7 @@ mod tests {
         std::thread::spawn(move || {
             for conn in listener.incoming() {
                 let Ok(mut conn) = conn else { continue };
+                let uploads = uploads.clone();
                 let (replies, seen, kept, saved, relayed) = (
                     replies.clone(),
                     seen.clone(),
@@ -17667,6 +17756,15 @@ mod tests {
                             "application/json",
                             json!({ "compact": {} }).to_string(),
                         )
+                    } else if path == "/v1/files" && method == "POST" {
+                        // Files: kept like the API keeps their text, listed newest first.
+                        let mut up = uploads.lock().unwrap();
+                        let id = format!("file{}", up.len() + 1);
+                        let text = body["text"].as_str().unwrap_or_default().len();
+                        up.insert(0, json!({ "id": id, "name": body["name"], "mime_type": body["mime_type"], "extracted_text_bytes": text }));
+                        (200, "application/json", json!({ "file": up[0] }).to_string())
+                    } else if path.starts_with("/v1/files") && method == "GET" {
+                        (200, "application/json", json!({ "files": *uploads.lock().unwrap() }).to_string())
                     } else if path.ends_with("/messages") && method == "POST" {
                         let mut kept = kept.lock().unwrap();
                         let id = format!("m{}", kept.len() + 1);
@@ -18271,6 +18369,7 @@ mod tests {
                 text: format!("message {i}"),
                 steps: Vec::new(),
                 run: None,
+                files: Vec::new(),
             })
             .collect();
         c.update(|s| {
@@ -18384,7 +18483,7 @@ mod tests {
         let fill = |c: &AppCore, window: Option<u64>| {
             let list: Vec<ChatMessage> = long(10)
                 .iter()
-                .map(|m| ChatMessage { id: m["id"].as_str().unwrap().into(), role: m["role"].as_str().unwrap().into(), text: m["content"].as_str().unwrap().into(), steps: Vec::new(), run: None })
+                .map(|m| ChatMessage { id: m["id"].as_str().unwrap().into(), role: m["role"].as_str().unwrap().into(), text: m["content"].as_str().unwrap().into(), steps: Vec::new(), run: None, files: Vec::new() })
                 .collect();
             let listed = Model { id: "small".into(), name: "small".into(), task: "chat".into(), tasks: vec!["chat".into()], input: vec!["text".into()], output: vec!["text".into()], context_window: window, max_output: Some(1_024) };
             c.update(|s| {
@@ -19425,6 +19524,40 @@ mod tests {
         let tasks = sections.as_array().unwrap().iter().find(|x| x["id"] == "tasks").expect("the list is shown");
         assert_eq!(tasks["title"], "Tasks · 2/2");
         let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn attached_files_go_with_the_next_message_and_show_on_it() {
+        use base64::Engine as _;
+        let folder = temp_folder("attach");
+        let api = fake_api(vec!["Hi.", "Greeting", "Read it."]);
+        let c = work_core(&api, &folder, "smart");
+        run(&c, Action::Send { text: "hello".into() });
+        // Any text goes in, whatever its extension; a binary file is refused with a reason.
+        run(&c, Action::AttachDocument { name: "server.weird-ext".into(), data: base64::engine::general_purpose::STANDARD.encode("line one\nline two\n") });
+        run(&c, Action::AttachDocument { name: "blob.bin".into(), data: base64::engine::general_purpose::STANDARD.encode([0u8, 159, 146, 150, 0, 1]) });
+        let page = c.view()["page"].clone();
+        let chips: Vec<&str> = page["files"].as_array().unwrap().iter().filter_map(|f| f["name"].as_str()).collect();
+        assert_eq!(chips, ["server.weird-ext"], "{page}");
+        assert!(c.view()["notice"].to_string().contains("blob.bin has no text"), "{}", c.view()["notice"]);
+        run(&c, Action::Send { text: "what is in the log?".into() });
+        // Sent with that message: on it, stored with it, and no longer waiting in the composer.
+        let messages = c.view()["page"]["messages"].as_array().cloned().unwrap();
+        let asked = messages.iter().find(|m| m["role"] == "user" && m["text"] == "what is in the log?").expect("the message");
+        assert_eq!(asked["files"][0]["name"], "server.weird-ext", "{asked}");
+        assert!(c.view()["page"]["files"].as_array().unwrap().is_empty());
+        let stored = c.state.lock().unwrap().messages["c1"].iter().find(|m| m.text == "what is in the log?").cloned().unwrap();
+        assert_eq!(stored.files.len(), 1, "read back from the API with the message: {stored:?}");
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn text_is_recognised_by_its_bytes_not_by_a_list_of_extensions() {
+        assert_eq!(readable_text("fn main() {}\n".as_bytes()).as_deref(), Some("fn main() {}\n"));
+        assert!(readable_text("中文日志，第一行\n".as_bytes()).is_some());
+        assert!(readable_text(&[0x89, b'P', b'N', b'G', 0, 0, 0, 13]).is_none(), "binary");
+        assert!(readable_text(&[0xff, 0xfe, 0xfd, 0xfc, 0xfb, 0xfa]).is_none(), "not text");
+        assert!(readable_text(b"   ").is_none(), "nothing to read");
     }
 
     #[test]

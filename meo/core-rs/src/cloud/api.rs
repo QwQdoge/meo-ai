@@ -59,6 +59,9 @@ pub struct ChatMessage {
     /// stored with the answer so any device can continue it. See [`run_log_block`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run: Option<Value>,
+    /// Files sent with a user message (`{id, name, mime}`), stored as `attachment` blocks.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -271,6 +274,7 @@ impl MeoApi {
                             text,
                             steps: Vec::new(),
                             run: None,
+                            files: Vec::new(),
                         },
                         row["created_at"].as_str().unwrap_or_default().to_owned(),
                     )
@@ -301,6 +305,7 @@ impl MeoApi {
                     text,
                     steps: steps_from_blocks(&row["content"]),
                     run: run_from_blocks(&row["content"]),
+                    files: files_from_blocks(&row["content"]),
                 })
             })
             .collect())
@@ -322,6 +327,27 @@ impl MeoApi {
         )
         .await
         .map(|_| ())
+    }
+
+    /// Stores the user's message with the files sent with it (as `attachment` blocks, which the API never
+    /// sends to the model as text: the files' text reaches it as attached files of the conversation).
+    pub async fn append_user_message(&self, token: &str, conversation_id: &str, text: &str, files: &[Value]) -> Result<(), ApiError> {
+        if files.is_empty() {
+            return self.append_message(token, conversation_id, "user", text).await;
+        }
+        let mut blocks = vec![json!({ "type": "text", "block_id": "text:prompt", "text": text })];
+        for f in files.iter().take(MAX_BLOCKS - 1) {
+            let Some(id) = f["id"].as_str() else { continue };
+            blocks.push(json!({
+                "type": "attachment", "block_id": format!("file:{id}"), "resource_id": id,
+                "name": f["name"].as_str().unwrap_or("file").chars().take(250).collect::<String>(),
+                "mime_type": f["mime"].as_str().unwrap_or("text/plain"), "state": "ready",
+            }));
+        }
+        let path = format!("/v1/conversations/{conversation_id}/messages");
+        self.request(token, Method::POST, &path, Some(json!({ "role": "user", "content": blocks })))
+            .await
+            .map(|_| ())
     }
 
     /// Stores an answer with its steps, so a reload or another device shows the same steps; with the
@@ -1124,6 +1150,17 @@ pub const RUN_LOG_KIND: &str = "meo_run_log";
 /// A run's log as a content block (a `widget`, whose `data` the API keeps as JSON up to 256 KB).
 pub fn run_log_block(log: &Value) -> Value {
     json!({ "type": "widget", "block_id": "run:log", "widget_id": "run_log", "kind": RUN_LOG_KIND, "title": "Run log", "data": log })
+}
+
+/// The files sent with a message, from its `attachment` blocks.
+pub fn files_from_blocks(content: &Value) -> Vec<Value> {
+    content
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|b| b["type"] == "attachment")
+        .map(|b| json!({ "id": b["resource_id"], "name": b["name"], "mime": b["mime_type"] }))
+        .collect()
 }
 
 /// The run log stored with an answer by [`run_log_block`], if any.

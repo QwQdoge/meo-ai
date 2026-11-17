@@ -276,6 +276,11 @@ fn rtf_text(bytes: &[u8]) -> String {
     out
 }
 
+/// A file type [`extract_text`] reads as a document (not as plain text).
+pub fn is_document(name: &str) -> bool {
+    matches!(extension(name).as_str(), "pdf" | "docx" | "xlsx" | "pptx" | "rtf")
+}
+
 /// The text of a document, or an error the user can read.
 pub fn extract_text(name: &str, bytes: &[u8]) -> Result<String, String> {
     let ext = extension(name);

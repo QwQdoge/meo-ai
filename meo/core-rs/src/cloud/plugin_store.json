@@ -1,7 +1,7 @@
 [
   {
     "id": "github",
-    "name": "GitHub 开发",
+    "name": "GitHub",
     "description": "读写仓库、Issue 和 PR：GitHub MCP 工具加上完整的开发、评审、Issue 分诊流程。",
     "remoteUrl": "https://api.githubcopilot.com/mcp/",
     "requires": "需要在账号中关联 GitHub（授予 repo 权限）。写操作每次都需要你批准。",
@@ -37,7 +37,7 @@
   },
   {
     "id": "deepwiki",
-    "name": "DeepWiki 代码库问答",
+    "name": "DeepWiki",
     "description": "针对任意公开 GitHub 仓库提问，读取其自动生成的 Wiki 结构与内容（只读，无需登录）。",
     "remoteUrl": "https://mcp.deepwiki.com/mcp",
     "requires": null,
@@ -57,7 +57,7 @@
   },
   {
     "id": "context7",
-    "name": "Context7 最新文档",
+    "name": "Context7",
     "description": "按库名查询最新、对应版本的官方文档与代码示例，减少过时 API 的错误（只读）。",
     "remoteUrl": "https://mcp.context7.com/mcp",
     "requires": null,
@@ -267,7 +267,7 @@
   },
   {
     "id": "cloudflare-docs",
-    "name": "Cloudflare 文档",
+    "name": "Cloudflare Docs",
     "description": "搜索 Cloudflare 官方文档（Workers、Pages、R2 等），只读，无需登录。",
     "remoteUrl": "https://docs.mcp.cloudflare.com/mcp",
     "requires": null,
@@ -288,7 +288,7 @@
   },
   {
     "id": "microsoft-learn",
-    "name": "Microsoft Learn 文档",
+    "name": "Microsoft Learn",
     "description": "搜索并读取 Microsoft Learn（Azure、.NET、Windows 等）官方文档和代码示例，只读。",
     "remoteUrl": "https://learn.microsoft.com/api/mcp",
     "requires": null,
@@ -308,7 +308,7 @@
   },
   {
     "id": "grep-app",
-    "name": "GitHub 代码搜索 (grep.app)",
+    "name": "grep.app",
     "description": "在上百万个公开 GitHub 仓库里按代码片段搜索真实用法，只读。",
     "remoteUrl": "https://mcp.grep.app/",
     "requires": null,
