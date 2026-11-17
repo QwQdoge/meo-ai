@@ -1324,6 +1324,20 @@ pub fn observation_kept(call: &ToolCall, outcome: &str, kept: Option<&str>) -> S
     )
 }
 
+/// As [`observation_kept`], for a result also saved in the folder at `path`: the model reads the rest
+/// with `read_file` (ranges) or `search`, which works after a restart and for sub-agents.
+pub fn observation_spilled(call: &ToolCall, outcome: &str, kept: &str, path: &str) -> String {
+    let total = outcome.trim_end().chars().count();
+    let lines = outcome.trim_end().lines().count();
+    observation_kept(call, outcome, Some(kept)).replacen(
+        &more_note(kept, MAX_RESULT_CHARS, total),
+        &format!(
+            "\n… (cut at character {MAX_RESULT_CHARS} of {total}; the whole result, {lines} lines, is saved at {path}: read_file it with start and end, or search it, for the part you need)"
+        ),
+        1,
+    )
+}
+
 /// How to go on reading a result that was cut at `shown` of `total` characters.
 pub fn more_note(id: &str, shown: usize, total: usize) -> String {
     format!(
@@ -1354,6 +1368,8 @@ mod tests {
     #[test]
     fn a_cut_result_says_how_to_read_the_rest() {
         let call = ToolCall { id: "t1".into(), tool: Tool::WebSearch { query: "q".into() } };
+        let spilled = observation_spilled(&call, &"z\n".repeat(10_000), "r4", ".agent/spill/1-run.txt");
+        assert!(spilled.contains("saved at .agent/spill/1-run.txt") && spilled.contains("10000 lines") && !spilled.contains("read_more"), "{spilled}");
         let text = observation_kept(&call, &"y".repeat(20_000), Some("r3"));
         assert!(text.contains(r#"read_more with {"id": "r3", "from": 14000}"#) && text.contains("of 20000"), "{text}");
         let calls = parse_tool_calls("```meo-tool\n{\"tool\":\"read_more\",\"args\":{\"id\":\"r3\",\"from\":14000}}\n```");

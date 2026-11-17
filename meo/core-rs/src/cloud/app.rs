@@ -7818,6 +7818,8 @@ impl AppCore {
             }
             run.turns.clone()
         };
+        let mut turns = turns;
+        bound_turns(&mut turns, MAX_TURN_CHARS);
         request["tools"] = Value::Array(defs);
         if !turns.is_empty() {
             request["turns"] = Value::Array(turns);
@@ -8899,8 +8901,9 @@ impl AppCore {
     }
 
     /// What the model gets back for a call (DeepSeek Harness `tools/post-execute`), in order:
-    /// 1. **keep**: a result longer than `MAX_RESULT_CHARS` is kept whole on this device under `r<round>`
-    ///    and the model reads on with `read_more` (Harness' spill, in memory);
+    /// 1. **keep**: a result longer than `MAX_RESULT_CHARS` is kept whole under `r<round>` for
+    ///    `read_more`, and, with a folder, saved in it (`.agent/spill/`, Harness' spill store) so the
+    ///    model can `read_file` or `search` it, also after a restart and from a sub-agent;
     /// 2. **observe**: the result is wrapped as data from the device, never instructions, and cut;
     /// 3. **repeat**: the same call several times in a row gets a reminder (at 3, 5 and 8).
     ///
@@ -8924,7 +8927,15 @@ impl AppCore {
             s.agent.repeat = Some((call.tool.clone(), n));
             n
         };
-        let mut observed = agent::observation_kept(call, text, kept.as_deref());
+        let host = self.state.lock().unwrap().agent.host.clone();
+        let saved = match (&kept, host) {
+            (Some(_), Some(h)) => h.spill(&format!("{}-{}", call.tool.name(), round), text),
+            _ => None,
+        };
+        let mut observed = match (&kept, &saved) {
+            (Some(id), Some(path)) => agent::observation_spilled(call, text, id, path),
+            _ => agent::observation_kept(call, text, kept.as_deref()),
+        };
         if let Some(reminder) = agent::repeat_reminder(count, &format!("{:?}", call.tool)) {
             observed.push_str("\n\n");
             observed.push_str(&reminder);
@@ -8990,7 +9001,9 @@ impl AppCore {
                 .enumerate()
                 .map(|(i, c)| {
                     let output = match done.get(i) {
-                        Some(result) => clip(result, 12_000),
+                        // Room for a whole kept result plus its note (where the rest is): the note is
+                        // at the end, so a shorter cut would drop exactly the part that says how to go on.
+                        Some(result) => clip(result, agent::MAX_RESULT_CHARS + 2_000),
                         None if i >= MAX_CALLS_PER_ROUND => format!(
                             "not run: at most {MAX_CALLS_PER_ROUND} calls run per reply; call it again if it is still needed"
                         ),
@@ -10471,6 +10484,42 @@ impl Continue {
 
 /// Times one message's native run is sent back for saying what it would do without calling it.
 const MAX_STALLS: usize = 4;
+
+/// What the finished rounds of one run may hold in all (the server refuses more than 300,000; a
+/// character here can be two there, so the margin is wide).
+const MAX_TURN_CHARS: usize = 240_000;
+
+/// Keeps the run's finished rounds under `budget`: results of the oldest rounds shrink to their first
+/// lines first (the model can run the call again, or read a saved result from `.agent/spill/`); the
+/// newest round always stays whole. Without this a long run would be refused as `invalid_tool_turns`
+/// and fall back to the fenced protocol for no reason.
+fn bound_turns(turns: &mut [Value], budget: usize) {
+    let size = |t: &Value| -> usize {
+        let text = t["text"].as_str().map_or(0, |x| x.chars().count());
+        let calls: usize = t["calls"].as_array().map_or(0, |c| c.iter().map(|c| c["arguments"].as_str().map_or(0, |a| a.chars().count())).sum());
+        let results: usize = t["results"].as_array().map_or(0, |r| r.iter().map(|r| r["output"].as_str().map_or(0, |o| o.chars().count())).sum());
+        text + calls + results
+    };
+    let mut total: usize = turns.iter().map(size).sum();
+    let last = turns.len().saturating_sub(1);
+    for turn in turns.iter_mut().take(last) {
+        if total <= budget {
+            return;
+        }
+        if let Some(results) = turn["results"].as_array_mut() {
+            for r in results {
+                let Some(out) = r["output"].as_str() else { continue };
+                let n = out.chars().count();
+                if n <= 600 {
+                    continue;
+                }
+                let short = format!("{}… [older result shortened to save room; call again if you need it]", out.chars().take(400).collect::<String>());
+                total = total - n + short.chars().count();
+                r["output"] = json!(short);
+            }
+        }
+    }
+}
 
 /// Lower-case hex SHA-256 (the harness snapshot and its anchor; the server hashes the same way).
 fn sha256_hex(text: &str) -> String {
@@ -18535,6 +18584,52 @@ mod tests {
             "the hint scopes the search to what was named: {prompt}");
         assert!(prompt.contains("stay on what the user named"));
         let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn a_long_result_is_saved_in_the_folder_and_read_back_with_read_file() {
+        let folder = temp_folder("spill");
+        let lines: String = (1..=3000).map(|i| format!("line {i} of the build log\n")).collect();
+        std::fs::write(folder.join("log.txt"), &lines).unwrap();
+        let read = r#"{"text":"","calls":[{"id":"r1","name":"read_file","arguments":"{\"path\":\"log.txt\"}"}]}"#;
+        let api = fake_api(vec![read, "Done.", "Fine."]);
+        let c = work_core(&api, &folder, "smart");
+        run(&c, Action::Send { text: "look at the log".into() });
+        let streams = api.streams.lock().unwrap().clone();
+        let output = streams[1]["turns"][0]["results"][0]["output"].as_str().unwrap().to_owned();
+        let path = output.split("saved at ").nth(1).and_then(|r| r.split(':').next()).unwrap_or_else(|| panic!("a saved path: {}", &output[output.len().saturating_sub(600)..])).to_owned();
+        assert!(path.starts_with(".agent/spill/") && path.ends_with(".txt"), "{output}");
+        let saved = std::fs::read_to_string(folder.join(&path)).unwrap();
+        assert!(saved.contains("line 3000 of the build log"), "the whole result is in the file");
+        assert_eq!(std::fs::read_to_string(folder.join(".agent/spill/.gitignore")).unwrap().lines().last(), Some("*"),
+            "git ignores the directory");
+        // The file is an ordinary file of the folder: read_file reaches it (and so does a sub-agent).
+        let h = c.state.lock().unwrap().agent.host.clone().unwrap();
+        let back = futures_executor::block_on(h.run(agent::Tool::ReadFile { path: path.clone(), start: Some(2999), end: Some(3000) }));
+        assert!(back.text.contains("line 3000"), "{}", back.text);
+        // Only the newest are kept.
+        for i in 0..crate::cloud::host::SPILL_KEEP + 5 {
+            crate::cloud::host::spill_into(&folder, &format!("t{i}"), "x");
+        }
+        let count = std::fs::read_dir(folder.join(".agent/spill")).unwrap().filter(|e| e.as_ref().unwrap().path().extension().is_some_and(|x| x == "txt")).count();
+        assert_eq!(count, crate::cloud::host::SPILL_KEEP);
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn the_rounds_of_a_long_run_stay_under_the_server_limit_oldest_results_first() {
+        let round = |n: usize| json!({ "text": "", "calls": [{ "id": format!("c{n}"), "name": "run", "arguments": "{}" }],
+            "results": [{ "id": format!("c{n}"), "output": "x".repeat(30_000) }] });
+        let mut turns: Vec<Value> = (0..12).map(round).collect();
+        bound_turns(&mut turns, MAX_TURN_CHARS);
+        let total: usize = turns.iter().map(|t| t["results"][0]["output"].as_str().unwrap().len()).sum();
+        assert!(total <= MAX_TURN_CHARS, "{total}");
+        assert!(turns[0]["results"][0]["output"].as_str().unwrap().contains("older result shortened"), "the oldest go first");
+        assert_eq!(turns[11]["results"][0]["output"].as_str().unwrap().len(), 30_000, "the newest stays whole");
+        let mut small: Vec<Value> = (0..3).map(round).collect();
+        let before = small.clone();
+        bound_turns(&mut small, MAX_TURN_CHARS);
+        assert_eq!(small, before, "under the budget nothing changes");
     }
 
     #[test]

@@ -158,9 +158,16 @@ Changes in this slice:
    failed `/verify` now goes back before a grounding revision. The result side is `post_execute` (keep
    long output for `read_more` → wrap as data → repeat reminder), with steering added in `agent_send`.
    A new check is a `StopCheck` variant and one arm in `turn_stopping`.
-4. **Spill to a file the model can read** (dsh `spill`): a long `run` or `web_fetch` result saved under
-   the folder's `.agent/spill/` (or the scratch folder) with a path, instead of a `read_more` id that lives
-   only in memory. Survives restarts and works for sub-agents.
+4. ~~**Spill to a file the model can read.**~~ **Done 2026-11-17** (`host.rs` `spill_into`, `post_execute`).
+   A result longer than `MAX_RESULT_CHARS` with a folder open is saved whole at
+   `.agent/spill/<time>-<tool>-<round>.txt` (written by the harness directly: no checkpoint, no diff card;
+   the directory's own `.gitignore` is `*`; the newest 30 are kept), and the model is told the path and
+   line count and reads it with `read_file` ranges or `search`, also after a restart and from a
+   sub-agent. Without a folder (web, cloud chat) `read_more` keeps working from memory. Two bugs fixed on
+   the way: native results were cut at 12,000 characters, which dropped the note saying where the rest
+   is; and a long run could pass the server's 300,000-character limit for a run's rounds, which was
+   answered `invalid_tool_turns` and silently switched the run to the fenced protocol. Older round
+   results now shrink first (`bound_turns`, 240,000), the newest round stays whole.
 5. **Parallel read-only calls.** Calls of one reply run in order now; reads, searches and web fetches that
    need no approval could run together (`futures::join_all`) with results kept in call order.
 6. **Delegation depth and fan-out as context** (dsh `SUBAGENT_DELEGATION`): tell a sub-agent its depth

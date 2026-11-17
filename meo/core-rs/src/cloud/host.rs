@@ -202,6 +202,40 @@ mod native {
         dirs
     }
 
+    /// Spill files kept per folder (the oldest go first).
+    pub const SPILL_KEEP: usize = 30;
+
+    /// See [`Host::spill`]. `name` becomes one safe file name; the path returned uses `/`.
+    pub fn spill_into(root: &Path, name: &str, text: &str) -> Option<String> {
+        let dir = root.join(".agent").join("spill");
+        std::fs::create_dir_all(&dir).ok()?;
+        let ignore = dir.join(".gitignore");
+        if !ignore.exists() {
+            std::fs::write(&ignore, "# Long tool results saved by Meo AI. Not part of the project.\n*\n").ok()?;
+        }
+        let safe: String = name
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+            .take(60)
+            .collect();
+        let millis = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_millis());
+        let file = format!("{millis:013}-{safe}.txt");
+        std::fs::write(dir.join(&file), text).ok()?;
+        let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
+            .ok()?
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|x| x == "txt"))
+            .collect();
+        files.sort();
+        let extra = files.len().saturating_sub(SPILL_KEEP);
+        for old in &files[..extra] {
+            let _ = std::fs::remove_file(old);
+        }
+        Some(format!(".agent/spill/{file}"))
+    }
+
     impl Host {
         pub fn open(path: &str) -> Result<Self, String> {
             let ws = Workspace::open(path)?;
@@ -266,6 +300,15 @@ mod native {
 
         pub fn root(&self) -> &str {
             &self.root
+        }
+
+        /// Saves a long tool result in the folder, under `.agent/spill/`, and returns its path relative to
+        /// the folder (DeepSeek Harness' spill store): the model reads it with `read_file` or `search`,
+        /// after a restart and from a sub-agent too. Harness data, not the user's change: written
+        /// directly (no checkpoint, no diff card), in a directory whose own `.gitignore` ignores
+        /// everything in it. The newest `SPILL_KEEP` files are kept. `None` when it cannot be written.
+        pub fn spill(&self, name: &str, text: &str) -> Option<String> {
+            spill_into(Path::new(&self.root), name, text)
         }
 
         /// Runs the tool on its own thread and polls for the result, so the app keeps running.
@@ -450,7 +493,7 @@ mod native {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use native::Host;
+pub use native::{spill_into, Host, SPILL_KEEP};
 
 /// One file a turn changed: its text before the first change and now ("" when it did not exist or
 /// was deleted). Binary files are left out.
@@ -580,6 +623,11 @@ impl Host {
 
     pub fn root(&self) -> &str {
         &self.root
+    }
+
+    /// The browser keeps long results in memory (`read_more`); nothing is written to the folder.
+    pub fn spill(&self, _name: &str, _text: &str) -> Option<String> {
+        None
     }
 
     pub async fn run(&self, tool: Tool) -> Outcome {
