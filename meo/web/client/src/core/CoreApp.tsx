@@ -1409,9 +1409,6 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
               }}
             />
             <div className={`core-input-bar${compactBar ? " compact" : ""}`} ref={bar}>
-            {Speech && (
-              <button className={`core-icon-btn core-voice${listening ? " listening" : ""}`} aria-label="Voice input" aria-pressed={listening} title={listening ? "Stop listening" : "Voice input"} onClick={toggleVoice}><Icon name="mic" size={20} /></button>
-            )}
             {composer.attach && (
               <>
                 <PlusMenu
@@ -1436,6 +1433,10 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
               <ComposerControls toolbar={composer.toolbar ?? []} act={act} work={work} sendAction={composer.sendAction} />
               <span className="core-spacer" />
               <TuneButton toolbar={composer.toolbar ?? []} act={act} />
+              {/* Voice is another way to write and send, so it sits beside Send. */}
+              {Speech && (
+                <button className={`core-icon-btn core-voice${listening ? " listening" : ""}`} aria-label="Voice input" aria-pressed={listening} title={listening ? "Stop listening" : "Voice input"} onClick={toggleVoice}><Icon name="mic" size={20} /></button>
+              )}
             <button
                 className="core-send"
                 aria-label={composer.busy ? (strings.stop ?? "Stop") : (strings.send ?? "Send")}
