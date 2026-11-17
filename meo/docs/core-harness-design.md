@@ -149,11 +149,15 @@ Changes in this slice:
    (`historyWithHarness` in `src/chat-history.mjs`), so it stays in the cached prefix instead of after it.
    If the anchored message left the window, it falls back to the current message. An older API that
    refuses the field gets the snapshot inside the prompt (`harness_unsupported`).
-3. **Hooks at the seams** (dsh waterfalls `agent/pre-step`, `tools/pre-execute`, `tools/post-execute`,
-   `agent/turn-stopping`). The round driver, stall nudge, verify, grounding check and repeat reminder are
-   hard-wired branches in `AppCore::turn`. One ordered list of `TurnStopping` checks (each: `fn(&Run) ->
-   Option<Continue>`) and one `PostExecute` list (spill, repeat reminder, secret scrub) would replace the
-   branch ladder and make each policy testable alone.
+3. ~~**Hooks at the seams.**~~ **Done 2026-11-17** (`app.rs`). The end of a round is one ordered list,
+   `STOP_CHECKS` (`AppCore::turn_stopping`, after Harness' `agent/turn-stopping`): cut off → goal round →
+   empty final → stalled → `/verify` → grounding. The first that asks for another round wins and each
+   returns its own `Continue` value (which also says whether the reply is stored). Checks run lazily, so
+   the `/verify` command and the grounding model call only run for a reply that would be final. Two
+   deliberate order changes from the old flag ladder: a stalled reply no longer runs `/verify`, and a
+   failed `/verify` now goes back before a grounding revision. The result side is `post_execute` (keep
+   long output for `read_more` → wrap as data → repeat reminder), with steering added in `agent_send`.
+   A new check is a `StopCheck` variant and one arm in `turn_stopping`.
 4. **Spill to a file the model can read** (dsh `spill`): a long `run` or `web_fetch` result saved under
    the folder's `.agent/spill/` (or the scratch folder) with a path, instead of a `read_more` id that lives
    only in memory. Survives restarts and works for sub-agents.
