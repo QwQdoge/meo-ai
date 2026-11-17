@@ -10215,47 +10215,36 @@ impl AppCore {
             })
             .collect();
         let mut sections = sections;
-        // Models is too long for one page: profiles and routes get their own.
+        // One Models page: the connections and automatic choice, then the routes in use, then the
+        // profiles that set them. The routes are the working set; a profile fills them in.
         if let Some(pos) = sections.iter().position(|x| x["id"] == "models") {
             let all = sections[pos]["items"]
                 .as_array()
                 .cloned()
                 .unwrap_or_default();
-            let (mut routes, mut rest) = (vec![], vec![]);
+            let (mut routes, mut items) = (vec![], vec![]);
             for it in all {
                 let id = it["id"].as_str().unwrap_or_default().to_owned();
                 if id.starts_with("route_") || id == "router_add" || id.starts_with("custom") {
                     routes.push(it);
                 } else {
-                    rest.push(it);
+                    items.push(it);
                 }
             }
-            sections[pos]["items"] = Value::Array(rest);
-            let extra = [
-                ("profiles", "Model profiles", profile_items(s)),
-                ("routes", "Model routes", routes),
-            ];
-            for (n, (id, label, items)) in extra.into_iter().enumerate() {
-                if !items.is_empty() {
-                    sections.insert(
-                        pos + 1 + n,
-                        json!({ "id": id, "label": label, "items": items }),
-                    );
-                }
+            if !routes.is_empty() {
+                items.push(json!({ "id": "models_h_routes", "kind": "heading", "label": "Routes" }));
+                items.extend(routes);
             }
+            items.push(json!({ "id": "models_h_profiles", "kind": "heading", "label": "Profiles" }));
+            items.extend(profile_items(s));
+            sections[pos]["items"] = Value::Array(items);
         }
-        // Groups come from settings.json. Profiles and routes are split out of Models, so they
-        // share its group.
+        // Groups come from settings.json.
         let group_of = |id: &str| {
-            let owner = if matches!(id, "profiles" | "routes") {
-                "models"
-            } else {
-                id
-            };
             self.manifest
                 .settings
                 .iter()
-                .find(|section| section.id == owner)
+                .find(|section| section.id == id)
                 .map(|section| section.group.clone())
                 .unwrap_or_else(|| "Account".to_owned())
         };
@@ -15836,20 +15825,20 @@ mod tests {
             .iter()
             .map(|x| x["id"].as_str().unwrap())
             .collect();
-        assert!(ids.contains(&"routes") && ids.contains(&"profiles") && ids.contains(&"models"));
+        assert!(ids.contains(&"models") && !ids.contains(&"routes") && !ids.contains(&"profiles"));
         futures_executor::block_on(c.dispatch(Action::SelectSettingsSection {
-            id: "routes".into(),
+            id: "models".into(),
         }));
         let page = c.view()["page"].clone();
-        assert_eq!(page["selected"], "routes");
-        let routes = page["sections"]
+        assert_eq!(page["selected"], "models");
+        let models = page["sections"]
             .as_array()
             .unwrap()
             .iter()
-            .find(|x| x["id"] == "routes")
+            .find(|x| x["id"] == "models")
             .unwrap()
             .clone();
-        assert!(routes["items"]
+        assert!(models["items"]
             .as_array()
             .unwrap()
             .iter()
@@ -15881,7 +15870,7 @@ mod tests {
         seed_profiles(&c);
         c.update(|s| {
             s.route = "settings".into();
-            s.settings_section = "profiles".into();
+            s.settings_section = "models".into();
         });
         let page = c.view()["page"].clone();
         let items = |c: &AppCore| -> Vec<Value> {
@@ -15889,13 +15878,13 @@ mod tests {
                 .as_array()
                 .unwrap()
                 .iter()
-                .find(|x| x["id"] == "profiles")
+                .find(|x| x["id"] == "models")
                 .unwrap()["items"]
                 .as_array()
                 .unwrap()
                 .clone()
         };
-        assert_eq!(page["selected"], "profiles");
+        assert_eq!(page["selected"], "models");
         let list = items(&c);
         let ids: Vec<&str> = list.iter().map(|i| i["id"].as_str().unwrap()).collect();
         for expected in ["pf_generate", "pf_new", "pf_p1", "pf_p2"] {
