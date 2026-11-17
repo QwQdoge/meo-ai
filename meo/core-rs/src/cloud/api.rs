@@ -14,6 +14,9 @@ pub enum ApiError {
     Http(#[from] reqwest::Error),
     #[error("AI provider stream failed: {0}")]
     Stream(String),
+    /// The Meo API could not be reached (the sign-in refresh could not either).
+    #[error("network request failed")]
+    Unreachable,
 }
 
 impl ApiError {
@@ -22,6 +25,9 @@ impl ApiError {
     }
 
     pub fn is_offline(&self) -> bool {
+        if matches!(self, ApiError::Unreachable) {
+            return true;
+        }
         #[cfg(not(target_arch = "wasm32"))]
         let offline = matches!(self, ApiError::Http(e) if e.is_connect() || e.is_timeout());
         // fetch reports a failed network request as a plain request error.

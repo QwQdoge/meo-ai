@@ -268,6 +268,8 @@ pub enum Action {
     /// Runs the round that broke off again (same request, fresh consent), so the task goes on
     /// from where it stopped instead of starting over.
     RetryRound,
+    /// Sends again a message that could not be sent before an answer started.
+    RetryUnsent,
     /// The host's language (`en-US`, `zh_CN.UTF-8`, ...), used when the language setting is "system".
     SetLocale {
         locale: String,
@@ -500,6 +502,18 @@ struct Orchestration {
     route: Option<String>,
     notes: Vec<(String, String)>,
     judge: Option<Choice>,
+}
+
+/// A message that could not be sent before an answer started, kept for a Retry card.
+#[derive(Clone)]
+struct Unsent {
+    conversation: Option<String>,
+    text: String,
+    reason: String,
+    /// Already in the transcript on screen.
+    shown: bool,
+    /// Already saved on the server.
+    saved: bool,
 }
 
 #[derive(Clone)]
@@ -798,6 +812,11 @@ struct State {
     notice_action: Option<(String, String, Value)>,
     /// The round that broke off (the request, what it had written, why), shown with a Retry button.
     failed_round: Option<(PendingSend, String, String)>,
+    /// A message that could not be sent before any answer started (the conversation could not be
+    /// made, or the request could not be prepared): the conversation it was for, the text, why.
+    unsent: Option<Unsent>,
+    /// Failed connections to the Meo API in a row (two mark the app offline).
+    unreachable: u32,
     conversations: Vec<ConversationSummary>,
     active: Option<String>,
     messages: HashMap<String, Vec<ChatMessage>>,
@@ -1313,6 +1332,12 @@ impl AppCore {
                     None => self.retry().await,
                 }
             }
+            Action::RetryUnsent => {
+                let unsent = self.state.lock().unwrap().unsent.take();
+                if let Some(u) = unsent {
+                    Box::pin(self.turn(u.text, !u.shown, !u.saved)).await;
+                }
+            }
             Action::AutoConfigureRouter => {
                 let models = all_models(&self.state.lock().unwrap());
                 let suggestion = router::suggest(&models);
@@ -1678,18 +1703,23 @@ impl AppCore {
         });
     }
 
-    /// Returns a valid access token, refreshing it when needed.
-    async fn token(&self, force_refresh: bool) -> Option<String> {
-        let session = self.state.lock().unwrap().session.clone()?;
+    /// Returns a valid access token, refreshing it when needed. `Ok(None)` means not signed in;
+    /// `Err` means the refresh could not reach Meo Account, which is a connection problem.
+    async fn token(&self, force_refresh: bool) -> Result<Option<String>, ApiError> {
+        let Some(session) = self.state.lock().unwrap().session.clone() else {
+            return Ok(None);
+        };
         if !force_refresh && !session.needs_refresh() {
-            return Some(session.access_token);
+            return Ok(Some(session.access_token));
         }
         // One refresh at a time. A call that finds another already refreshing waits, then uses
         // the token it obtained (refreshing again with the old refresh token would fail).
         loop {
-            let current = self.state.lock().unwrap().session.clone()?;
+            let Some(current) = self.state.lock().unwrap().session.clone() else {
+                return Ok(None);
+            };
             if current.access_token != session.access_token {
-                return Some(current.access_token);
+                return Ok(Some(current.access_token));
             }
             if !self.refreshing.swap(true, Ordering::SeqCst) {
                 break;
@@ -1704,21 +1734,21 @@ impl AppCore {
                 let token = fresh.access_token.clone();
                 self.update(|s| {
                     s.session = Some(fresh);
+                    s.unreachable = 0;
                     s.online = true;
                 });
-                Some(token)
+                Ok(Some(token))
             }
             Err(auth::AuthError::Status { status, .. }) if status == 400 || status == 401 => {
                 self.sign_out();
                 self.notice("info", "Your Meo Account session ended. Sign in again.");
-                None
+                Ok(None)
             }
+            // The refresh never got an answer: the same connection problem as any other request.
+            Err(auth::AuthError::Http(_)) => Err(ApiError::Unreachable),
             Err(e) => {
-                self.update(|s| {
-                    s.online = false;
-                    s.notice = Some(("error".into(), e.to_string()));
-                });
-                None
+                self.update(|s| s.notice = Some(("error".into(), e.to_string())));
+                Ok(None)
             }
         }
     }
@@ -1743,8 +1773,7 @@ impl AppCore {
         if let Some(host) = self.active_remote_host() {
             let api = MeoApi::new(self.http.clone(), host.url).with_client(self.client_id.clone());
             let result = f(api, host.token).await;
-            let offline = matches!(&result, Err(e) if e.is_offline());
-            self.update(|s| s.online = !offline);
+            self.note_reach(&result);
             result
         } else {
             self.call(f).await
@@ -1865,9 +1894,26 @@ impl AppCore {
     {
         let result = self.call_quiet(f).await;
         // Only the Meo API's own requests say whether the app can reach its server.
-        let offline = matches!(&result, Err(e) if e.is_offline());
-        self.update(|s| s.online = !offline);
+        self.note_reach(&result);
         result
+    }
+
+    /// Updates the online state from a Meo API result. One failed connection is not proof of being
+    /// offline (a single dropped request is common), so the app is marked offline only after two in a
+    /// row. Any answer from the server, even an error, means it is reachable again.
+    fn note_reach<T>(&self, result: &Result<T, ApiError>) {
+        let unreachable = matches!(result, Err(e) if e.is_offline());
+        self.update(|s| {
+            if unreachable {
+                s.unreachable += 1;
+                if s.unreachable >= 2 {
+                    s.online = false;
+                }
+            } else {
+                s.unreachable = 0;
+                s.online = true;
+            }
+        });
     }
 
     /// Like `call`, but a failure does not change the online state. A plugin tool call is a request
@@ -1881,10 +1927,10 @@ impl AppCore {
             status: 401,
             code: "unauthenticated".into(),
         };
-        let token = self.token(false).await.ok_or_else(unauthorized)?;
+        let token = self.token(false).await?.ok_or_else(unauthorized)?;
         match f(self.api.clone(), token).await {
             Err(e) if e.is_unauthorized() => {
-                let token = self.token(true).await.ok_or_else(unauthorized)?;
+                let token = self.token(true).await?.ok_or_else(unauthorized)?;
                 let second = f(self.api.clone(), token).await;
                 // A freshly refreshed token that the API still refuses means the login session
                 // behind it is gone (its `sid` row expired or was revoked, while the refresh token
@@ -4354,7 +4400,7 @@ impl AppCore {
                 futures_timer::Delay::new(std::time::Duration::from_secs(2)).await;
                 continue;
             }
-            if let Some(token) = self.token(false).await {
+            if let Some(token) = self.token(false).await.ok().flatten() {
                 if let Ok(events) = self.api.open_events(&token).await {
                     let mut events = Box::pin(events);
                     backoff = 1;
@@ -5481,12 +5527,13 @@ impl AppCore {
                         }
                         id
                     }
-                    Err(e) => return self.notice("error", e.to_string()),
+                    Err(e) => return self.fail_unsent(None, &text, &e.to_string(), false, false),
                 }
             }
         };
         let continuing_round = self.state.lock().unwrap().agent.round > 0;
         if push_local {
+            self.update(|s| s.unsent = None);
             self.push_message(&conversation_id, "user", &text);
             self.update(|s| {
                 if let Some(w) = s.waiting.as_mut() {
@@ -5727,7 +5774,7 @@ impl AppCore {
         if save_prompt && request["prompt"].as_str() != Some(text.as_str()) {
             let saved = self.save_user_message(&conversation_id, &text).await;
             if let Err(e) = saved {
-                return self.notice("error", e.to_string());
+                return self.fail_unsent(Some(conversation_id.clone()), &text, &e.to_string(), true, false);
             }
             save_prompt = false;
         }
@@ -5772,7 +5819,9 @@ impl AppCore {
                 });
                 return Box::pin(self.turn(text, false, save_prompt)).await;
             }
-            Err(e) => return self.notice("error", e.to_string()),
+            Err(e) => {
+                return self.fail_unsent(Some(conversation_id.clone()), &text, &e.to_string(), true, !save_prompt);
+            }
         };
         self.record_request(&request, &level);
         let pending = PendingSend {
@@ -6120,12 +6169,15 @@ impl AppCore {
         if pending.save_prompt {
             let saved = self.save_user_message(&id, &user).await;
             if let Err(e) = saved {
-                return self.notice("error", e.to_string());
+                return self.fail_unsent(Some(id.clone()), &pending.prompt, &e.to_string(), true, false);
             }
         }
         let started = super::now_secs();
         self.cancel.store(false, Ordering::SeqCst);
-        self.update(|s| s.failed_round = None);
+        self.update(|s| {
+            s.failed_round = None;
+            s.unsent = None;
+        });
         self.store_failed_round();
         let native = pending.request["tools"].is_array();
         // One answer across the rounds of a native run: each round continues what was written.
@@ -7164,8 +7216,24 @@ impl AppCore {
 
     /// The clock: reports background jobs that finished, and delivers the first scheduled task that
     /// is due once nothing else is running (several due tasks go one per tick; missed ones coalesce).
+    /// Keeps a message that could not be sent, with the reason, for a Retry card.
+    fn fail_unsent(&self, conversation: Option<String>, text: &str, error: &str, shown: bool, saved: bool) {
+        let reason = failure_reason(error, false);
+        self.update(|s| {
+            s.unsent = Some(Unsent { conversation, text: text.to_owned(), reason, shown, saved });
+        });
+    }
+
     async fn tick(&self, utc_offset_min: i32) {
         let now = super::now_secs();
+        // While the app is offline, one cheap request now and then finds out whether the connection is back.
+        let (offline, signed_in) = {
+            let s = self.state.lock().unwrap();
+            (!s.online, s.auth == AuthState::SignedIn)
+        };
+        if offline && signed_in {
+            let _ = self.call(|api, t| async move { api.get_settings(&t).await }).await;
+        }
         // Jobs: tell the user once when one that was running has settled.
         let host = self.state.lock().unwrap().agent.host.clone();
         if let Some(host) = host {
@@ -12449,6 +12517,20 @@ fn conversation_page(s: &State) -> Value {
         let text = clean_reply(text);
         messages.push(json!({ "role": "assistant", "text": text, "streaming": true, "blocks": richtext::blocks(&richtext::close_open_markdown(&text)) }));
     }
+    // A message that could not be sent: shown again with its reason and a Retry button.
+    if streaming.is_none() {
+        if let Some(u) = s.unsent.as_ref().filter(|u| u.conversation == active) {
+            if !u.shown {
+                messages.push(json!({ "role": "user", "text": u.text, "streaming": false, "blocks": richtext::blocks(&u.text) }));
+            }
+            let text = format!("> {}", u.reason);
+            messages.push(json!({
+                "role": "assistant", "text": text, "streaming": false, "failed": true,
+                "blocks": richtext::blocks(&text),
+                "actions": [button("Retry", "primary", json!({ "type": "retry_unsent" }))],
+            }));
+        }
+    }
     // A round that broke off: what it had written, why, and a way on (Retry runs that round again).
     if streaming.is_none() {
         if let Some((pending, partial, reason)) = s.failed_round.as_ref().filter(|(p, _, _)| Some(&p.conversation_id) == active.as_ref()) {
@@ -12981,6 +13063,8 @@ fn failure_reason(e: &str, stopped: bool) -> String {
         "The connection to the model broke off.".to_owned()
     } else if e.contains("ai_provider_unreachable") || e.contains("HTTP 502") || e.contains("HTTP 503") {
         "The model provider could not be reached.".to_owned()
+    } else if e.contains("network request failed") || e.contains("error sending request") {
+        "Couldn't reach Meo. Check the connection, then try again.".to_owned()
     } else if e.contains("HTTP 429") {
         "The provider is limiting requests right now.".to_owned()
     } else {
