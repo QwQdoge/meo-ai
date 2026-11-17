@@ -5289,6 +5289,21 @@ impl AppCore {
     }
 
     /// Adds or updates a step (`status`: running / done / error) of the current answer.
+    /// Keeps the header of a model request with the answer (DeepSeek Harness' session log: what is
+    /// model-visible is logged): a `req<n>` step, stored with the answer like the plan, hidden among the
+    /// steps and listed in Details > Model calls. Only once the API has accepted the request, so a retry
+    /// on an older API is one call, not two.
+    fn record_request(&self, request: &Value, level: &str) {
+        let (permission, round) = (prompt::permission_name(self.agent_permission()), self.state.lock().unwrap().agent.round);
+        let header = request_header(request, level, permission, round);
+        self.update(|s| {
+            if let Some((_, steps)) = s.activity.as_mut() {
+                let n = steps.iter().filter(|x| is_request_step(x)).count() + 1;
+                steps.push(json!({ "id": format!("req{n}"), "title": format!("Model call {n}"), "detail": header.to_string(), "status": "done", "items": [] }));
+            }
+        });
+    }
+
     fn step(&self, id: &str, title: &str, detail: &str, status: &str, items: Vec<Value>) {
         self.update(|s| {
             if let Some((_, steps)) = s.activity.as_mut() {
@@ -5702,6 +5717,7 @@ impl AppCore {
             }
             Err(e) => return self.notice("error", e.to_string()),
         };
+        self.record_request(&request, &level);
         let pending = PendingSend {
             image: false,
             save_prompt,
@@ -10237,7 +10253,49 @@ fn account_block(s: &State) -> Value {
 /// itself): they always happen, so listing them only adds noise. What the user wants to see is what
 /// was actually done: a search, an image, a tool of a connected app, a check.
 fn is_internal_step(step: &Value) -> bool {
-    matches!(step["id"].as_str(), Some("router" | "model" | "answer" | "plan"))
+    matches!(step["id"].as_str(), Some("router" | "model" | "answer" | "plan")) || is_request_step(step)
+}
+
+/// The header of one model request (`req1`, `req2`, ...), see [`AppCore::record_request`].
+fn is_request_step(step: &Value) -> bool {
+    step["id"].as_str().and_then(|id| id.strip_prefix("req")).is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
+}
+
+/// What a model request carried, without its text: enough to see in Details exactly how the model was
+/// asked (which model, effort, permission, protocol and tools, how the standing prompt went, the limits)
+/// and to compare two calls (`prompt` is a short hash of the prompt as sent). Bounded, it is stored with
+/// the answer.
+fn request_header(request: &Value, level: &str, permission: &str, round: usize) -> Value {
+    let tools: Vec<&str> = request["tools"].as_array().into_iter().flatten().filter_map(|t| t["name"].as_str()).take(80).collect();
+    let prompt = request["prompt"].as_str().unwrap_or_default();
+    let harness = match (request["harness"]["text"].as_str(), request["harness"]["anchor"].as_str()) {
+        (Some(text), Some(anchor)) => json!({ "chars": text.chars().count(), "anchor": anchor.chars().take(12).collect::<String>() }),
+        (Some(text), None) => json!({ "chars": text.chars().count() }),
+        _ => Value::Null,
+    };
+    json!({
+        "model": request["model"],
+        "thinking": level,
+        "permission": permission,
+        "protocol": if tools.is_empty() { "fenced" } else { "native" },
+        "tools": tools,
+        "round": round,
+        "turns": request["turns"].as_array().map_or(0, Vec::len),
+        "promptChars": prompt.chars().count(),
+        "prompt": sha256_hex(prompt).chars().take(16).collect::<String>(),
+        "harness": harness,
+        "limits": request.get("limits").cloned().unwrap_or(Value::Null),
+        "role": request["environment"]["role"],
+    })
+}
+
+/// One row of Details > Model calls for a `req<n>` step.
+fn request_row(step: &Value) -> Option<Value> {
+    let h: Value = serde_json::from_str(step["detail"].as_str()?).ok()?;
+    let tools = h["tools"].as_array().map_or(0, Vec::len);
+    let how = if h["protocol"] == "native" { format!("native, {tools} tools") } else { "fenced".to_owned() };
+    let label = format!("{} · {} · {} · {how}", step["title"].as_str().unwrap_or_default(), h["model"].as_str().unwrap_or_default(), h["thinking"].as_str().unwrap_or_default());
+    Some(json!({ "label": label, "value": h["permission"], "status": "done", "detail": h }))
 }
 
 /// What the model wrote between its calls (`note1`, ...): progress, drawn as plain text among the steps.
@@ -11068,6 +11126,11 @@ fn inspector(s: &State, messages: &[Value], active: Option<&String>) -> Value {
     }
     if !step_rows.is_empty() {
         sections.push(json!({ "id": "steps", "title": format!("Tools used · {tools}"), "open": true, "rows": step_rows }));
+    }
+    // How each model call was made (the request headers kept with the answer), closed by default.
+    let calls: Vec<Value> = steps.iter().filter(|x| is_request_step(x)).filter_map(|x| request_row(x)).collect();
+    if !calls.is_empty() {
+        sections.push(json!({ "id": "requests", "title": format!("Model calls · {}", calls.len()), "open": false, "rows": calls }));
     }
     if !resources.is_empty() {
         sections.push(
@@ -19269,6 +19332,39 @@ mod tests {
         assert_eq!(stored["live"], false);
         assert!(c.activity_steps("c1").iter().all(|x| x["status"] != "running"), "the finished run is not left working");
         assert_ne!(c.view()["page"]["messages"].as_array().unwrap().last().unwrap()["streaming"], true);
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn every_model_call_keeps_its_request_header_with_the_answer() {
+        let folder = temp_folder("req-log");
+        std::fs::write(folder.join("a.txt"), "alpha\n").unwrap();
+        let read = r#"{"text":"","calls":[{"id":"r1","name":"read_file","arguments":"{\"path\":\"a.txt\"}"}]}"#;
+        let api = fake_api(vec![read, "It says alpha."]);
+        let c = work_core(&api, &folder, "smart");
+        run(&c, Action::Send { text: "what is in a.txt".into() });
+        assert_eq!(texts(&c).last().unwrap(), "It says alpha.");
+        let steps = c.activity_steps("c1");
+        let headers: Vec<Value> = steps.iter().filter(|x| is_request_step(x)).map(|x| serde_json::from_str(x["detail"].as_str().unwrap()).unwrap()).collect();
+        assert_eq!(headers.len(), 2, "one header per model call: {steps:?}");
+        for h in &headers {
+            assert_eq!(h["model"], "model");
+            assert_eq!(h["permission"], "Smart");
+            assert_eq!(h["protocol"], "native");
+            assert!(h["tools"].as_array().unwrap().iter().any(|t| t == "read_file"), "{h}");
+            assert_eq!(h["prompt"].as_str().unwrap().len(), 16);
+        }
+        assert_eq!((headers[0]["turns"].as_u64(), headers[1]["turns"].as_u64()), (Some(0), Some(1)), "the second call carried the first round");
+        assert!(headers[0]["harness"]["chars"].as_u64().unwrap() > 0);
+        // Not among the steps in the chat; listed in Details; and they survive storing with the answer.
+        let last = c.view()["page"]["messages"].as_array().unwrap().last().unwrap().clone();
+        assert!(last["steps"].as_array().into_iter().flatten().all(|x| !is_request_step(x)), "{last}");
+        let sections = c.view()["page"]["inspector"]["sections"].clone();
+        let calls = sections.as_array().unwrap().iter().find(|x| x["id"] == "requests").expect("Details lists the model calls").clone();
+        assert_eq!(calls["title"], "Model calls · 2");
+        assert!(calls["rows"][0]["label"].as_str().unwrap().starts_with("Model call 1 · model · "), "{calls}");
+        let back = super::super::api::steps_from_blocks(&super::super::api::answer_blocks("It says alpha.", &steps));
+        assert_eq!(back.iter().filter(|x| is_request_step(x)).count(), 2);
         let _ = std::fs::remove_dir_all(&folder);
     }
 

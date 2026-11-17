@@ -1086,8 +1086,23 @@ pub fn answer_blocks(text: &str, steps: &[Value]) -> Value {
             blocks.push(json!({ "type": "source_group", "block_id": format!("links:{id}"), "title": title.trim(), "sources": links }));
         }
     }
+    // The API stores at most 128 blocks: the oldest model-call headers (`req<n>`) give way first, then
+    // whatever is past the limit.
+    let is_header = |b: &Value| b["activity_id"].as_str().and_then(|id| id.strip_prefix("req")).is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()));
+    let mut extra = blocks.len().saturating_sub(MAX_BLOCKS);
+    blocks.retain(|b| {
+        if extra > 0 && is_header(b) {
+            extra -= 1;
+            return false;
+        }
+        true
+    });
+    blocks.truncate(MAX_BLOCKS);
     Value::Array(blocks)
 }
+
+/// Content blocks the Meo API accepts in one message.
+pub const MAX_BLOCKS: usize = 128;
 
 /// The steps stored with an answer by [`answer_blocks`], in the core's step shape.
 pub fn steps_from_blocks(content: &Value) -> Vec<Value> {
@@ -1316,5 +1331,19 @@ mod tests {
         assert_eq!(back[2]["status"], "error");
         assert_eq!(back[2]["detail"], "87/100 · pass");
         assert!(steps_from_blocks(&json!("plain text")).is_empty());
+    }
+
+    #[test]
+    fn a_long_answer_stays_within_the_block_limit_and_sheds_old_call_headers_first() {
+        let mut steps: Vec<Value> = (1..=60).map(|n| json!({ "id": format!("req{n}"), "title": format!("Model call {n}"), "detail": "{}", "status": "done" })).collect();
+        steps.extend((1..=90).map(|n| json!({ "id": format!("tool{n}"), "title": format!("Read {n}"), "detail": "", "status": "done" })));
+        let blocks = answer_blocks("Done.", &steps);
+        let blocks = blocks.as_array().unwrap();
+        assert_eq!(blocks.len(), MAX_BLOCKS);
+        let ids: Vec<&str> = blocks.iter().filter_map(|b| b["activity_id"].as_str()).collect();
+        assert_eq!(ids.iter().filter(|i| i.starts_with("tool")).count(), 90, "every tool step is kept");
+        assert!(!ids.contains(&"req1") && ids.contains(&"req60"), "the oldest headers go first");
+        let small = answer_blocks("Hi.", &steps[..3]);
+        assert_eq!(small.as_array().unwrap().len(), 4, "nothing is dropped below the limit");
     }
 }

@@ -197,9 +197,17 @@ Changes in this slice:
    the API recommends) still applies too. The window is turned into the API's character budget rather
    than counting tokens on the device, because the server trims by characters. An older API that refuses
    `limits` gets the request again without it (`limits_unsupported`), like `harness`.
-8. **Session-level events for replay** (dsh session log): store each step's request header (model,
-   thinking, permission, tool names) with the answer's steps, so Details shows exactly what the model saw
-   and a run can be resumed on another device from the log.
+8. ~~**Session-level events for replay**~~ **Headers done 2026-11-17** (`app.rs` `record_request`,
+   `request_header`; `api.rs` `answer_blocks`). Every model request the API accepts leaves a `req<n>`
+   step with a compact JSON header: model, thinking, permission, protocol (native or fenced), tool names,
+   round, how many round trips it carried, prompt length and a 16-character hash of the prompt (to tell
+   two calls apart without storing the text), the harness snapshot's size and anchor, the limits, and the
+   role. It is stored with the answer like the plan step, so a reload or another device has it too. It is
+   hidden among the chat's steps and listed in Details > Model calls (closed by default). A retry on an
+   older API is recorded once. `answer_blocks` now keeps a message within the API's 128 blocks, shedding
+   the oldest headers first; before this, a very long run could already exceed the limit and fail to
+   save. **Not done:** resuming a run on another device from the log. That needs the round trips
+   themselves (`turns`) stored, not only their headers, and a size budget for them.
 
 ## 6. Rules for changing prompts
 
