@@ -5454,10 +5454,13 @@ impl AppCore {
                 match steps.iter_mut().find(|x| x["id"] == id) {
                     Some(old) => {
                         // What the call changes is set once, when it starts; later updates keep it.
-                        let change = old.get("change").cloned();
+                        let (change, output) = (old.get("change").cloned(), old.get("output").cloned());
                         *old = step;
                         if let Some(change) = change {
                             old["change"] = change;
+                        }
+                        if let Some(output) = output {
+                            old["output"] = output;
                         }
                     }
                     None => steps.push(step),
@@ -5473,6 +5476,22 @@ impl AppCore {
             if let Some((_, steps)) = s.activity.as_mut() {
                 if let Some(step) = steps.iter_mut().find(|x| x["id"] == id) {
                     step["change"] = json!(change);
+                }
+            }
+        });
+    }
+
+    /// Keeps what a tool call returned with its step (clipped), for the "Detailed" view.
+    fn step_output(&self, id: &str, text: &str) {
+        let text = text.trim();
+        if text.is_empty() {
+            return;
+        }
+        let text = clip(text, 3000);
+        self.update(|s| {
+            if let Some((_, steps)) = s.activity.as_mut() {
+                if let Some(step) = steps.iter_mut().find(|x| x["id"] == id) {
+                    step["output"] = json!(text);
                 }
             }
         });
@@ -8313,6 +8332,7 @@ impl AppCore {
             }
             let first_line: String = outcome.text.lines().find(|l| !l.trim().is_empty()).unwrap_or("Done").chars().take(120).collect();
             self.step(&format!("tool{round}"), &call.tool.summary(), &first_line, if outcome.ok { "done" } else { "error" }, vec![]);
+            self.step_output(&format!("tool{round}"), &outcome.text);
             observed.push(self.post_execute(call, &outcome.text, round));
         }
         self.remote_progress(true).await;
@@ -9510,6 +9530,7 @@ impl AppCore {
             if outcome.ok { "done" } else { "error" },
             vec![],
         );
+        self.step_output(&step_id, &outcome.text);
         self.remote_progress(true).await;
         // The tool may have updated .agent/ (goal, to-do): the project page and details card follow.
         let open = project_of_view(&self.state.lock().unwrap());
@@ -10961,9 +10982,11 @@ fn detail_steps(steps: Vec<Value>, level: &str) -> Vec<Value> {
         .map(|mut x| {
             let change = x.get("change").and_then(Value::as_str).map(str::to_owned);
             let full = x.get("full").and_then(Value::as_str).map(str::to_owned);
+            let output = x.get("output").and_then(Value::as_str).map(str::to_owned);
             if let Some(o) = x.as_object_mut() {
                 o.remove("change");
                 o.remove("full");
+                o.remove("output");
                 if level == "concise" {
                     o.remove("detail");
                     o.remove("items");
@@ -10973,9 +10996,11 @@ fn detail_steps(steps: Vec<Value>, level: &str) -> Vec<Value> {
                 if let Some(full) = full.filter(|f| !f.trim().is_empty()) {
                     x["title"] = json!(full);
                 }
-                if let Some(change) = change {
-                    let detail = x["detail"].as_str().unwrap_or_default().trim().to_owned();
-                    x["detail"] = json!(if detail.is_empty() { change } else { format!("{detail}\n\n{change}") });
+                // Like a transcript: what the call ran or changed, then what came back.
+                if change.is_some() || output.is_some() {
+                    let first = x["detail"].as_str().unwrap_or_default().trim().to_owned();
+                    let parts: Vec<String> = [change, output.or(Some(first).filter(|f| !f.is_empty()))].into_iter().flatten().collect();
+                    x["detail"] = json!(parts.join("\n\n"));
                 }
             }
             x
@@ -12752,6 +12777,10 @@ fn conversation_page(s: &State) -> Value {
         } else {
             if m["stepsLabel"] != "Working…" {
                 m["stepsLabel"] = json!(steps_label(&fresh, level));
+            }
+            // Detailed reads like a transcript: the thinking and the calls stay in view.
+            if level == "detailed" {
+                m["stepsOpen"] = json!(true);
             }
             m["steps"] = Value::Array(fresh);
         }
@@ -15016,7 +15045,7 @@ mod tests {
     fn output_detail_levels_change_only_what_the_steps_show() {
         let steps = vec![
             json!({ "id": "note1", "kind": "note", "title": "Look at the file", "full": "Look at the file first, then fix the typo.", "status": "done" }),
-            json!({ "id": "tool1", "title": "Edit a.txt", "detail": "Edited", "change": "--- a.txt\n-teh\n+the", "status": "done", "items": [] }),
+            json!({ "id": "tool1", "title": "Edit a.txt", "detail": "Edited", "change": "--- a.txt\n-teh\n+the", "output": "Edited a.txt (1 line)", "status": "done", "items": [] }),
         ];
         let concise = detail_steps(steps.clone(), "concise");
         assert_eq!(concise.len(), 1);
@@ -15028,7 +15057,8 @@ mod tests {
         let detailed = detail_steps(steps, "detailed");
         assert_eq!(detailed.len(), 2);
         assert_eq!(detailed[0]["title"], "Look at the file first, then fix the typo.");
-        assert!(detailed[1]["detail"].as_str().unwrap().contains("+the"));
+        let shown = detailed[1]["detail"].as_str().unwrap();
+        assert!(shown.contains("+the") && shown.contains("Edited a.txt (1 line)"));
     }
 
     #[test]
