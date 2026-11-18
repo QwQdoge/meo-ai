@@ -383,6 +383,11 @@ pub enum Action {
     RemoveFile {
         id: String,
     },
+    /// Opens a file sent with a message for reading (Markdown rendered, other text as code).
+    OpenFile {
+        id: String,
+    },
+    CloseReader,
     CreateProject {
         text: String,
     },
@@ -815,6 +820,8 @@ struct State {
     /// A message that could not be sent before any answer started (the conversation could not be
     /// made, or the request could not be prepared): the conversation it was for, the text, why.
     unsent: Option<Unsent>,
+    /// A sent file open for reading: its name and the blocks it renders to.
+    reader: Option<(String, Value)>,
     /// Failed connections to the Meo API in a row (two mark the app offline).
     unreachable: u32,
     conversations: Vec<ConversationSummary>,
@@ -977,6 +984,7 @@ impl AppCore {
             steps: Vec::new(),
             run: None,
             files: Vec::new(),
+            pictures: Vec::new(),
         };
         self.update(|s| {
             s.auth = AuthState::SignedIn;
@@ -1467,6 +1475,8 @@ impl AppCore {
             Action::AttachPath { path } => self.attach_path(path).await,
             Action::SetWorkspace { path } => self.set_workspace(path).await,
             Action::RemoveFile { id } => self.remove_file(id).await,
+            Action::OpenFile { id } => self.open_file(id).await,
+            Action::CloseReader => self.update(|s| s.reader = None),
             Action::OpenProject { id } => self.open_project(id).await,
             Action::AttachDocument { name, data } => self.attach_document(name, data).await,
             Action::SaveFile { message, index } => self.save_file(message, index),
@@ -2940,6 +2950,10 @@ impl AppCore {
         let key = format!("messages-{id}");
         if let Some(cached) = self.load_json::<Vec<ChatMessage>>(&key) {
             self.update(|s| {
+                let mut cached = cached;
+                if let Some(old) = s.messages.get(&id) {
+                    carry_pictures(old, &mut cached);
+                }
                 s.messages.insert(id.clone(), cached);
             });
         }
@@ -2957,6 +2971,10 @@ impl AppCore {
         if let Ok(messages) = fetched {
             self.save_json(&format!("messages-{id}"), &messages);
             self.update(|s| {
+                let mut messages = messages;
+                if let Some(old) = s.messages.get(id) {
+                    carry_pictures(old, &mut messages);
+                }
                 s.messages.insert(id.to_owned(), messages);
             });
         }
@@ -3612,6 +3630,32 @@ impl AppCore {
     /// Any file: a document the core can read (PDF, Word, Excel, PowerPoint, RTF) goes in as its text;
     /// anything else that is text (code, logs, data, a file without a known extension) as it is. Only a
     /// file with no readable text is refused, and the notice says why.
+    /// Fetches a sent file's text and opens it for reading. A Markdown file renders; other text is
+    /// shown as code (with the file's extension as the language) so nothing in it is taken for markup.
+    async fn open_file(&self, id: String) {
+        let fetched = self
+            .call(|api, t| {
+                let id = id.clone();
+                async move { api.file_content(&t, &id).await }
+            })
+            .await;
+        match fetched {
+            Ok((name, text)) => {
+                let ext = name.rsplit_once('.').map(|(_, e)| e.to_lowercase()).unwrap_or_default();
+                let shown = if matches!(ext.as_str(), "md" | "markdown" | "txt" | "") {
+                    text
+                } else {
+                    let longest = text.split(|c| c != '`').map(str::len).max().unwrap_or(0);
+                    let fence = "`".repeat((longest + 1).max(3));
+                    format!("{fence}{ext}\n{text}\n{fence}")
+                };
+                let blocks = json!(richtext::blocks(&shown));
+                self.update(|s| s.reader = Some((name, blocks)));
+            }
+            Err(e) => self.notice("error", failure_reason(&e.to_string(), false)),
+        }
+    }
+
     async fn attach_bytes(&self, name: String, bytes: Vec<u8>) {
         match docs::extract_text(&name, &bytes) {
             Ok(text) => return self.attach_text(name, text).await,
@@ -5725,14 +5769,23 @@ impl AppCore {
             "done",
             vec![],
         );
-        let pictures = {
+        let (pictures, own) = {
             let mut s = self.state.lock().unwrap();
             let mut all = std::mem::take(&mut s.images);
+            let own: Vec<String> = all.iter().map(|p| format!("data:{};base64,{}", p.mime, p.data)).collect();
             // What the last tool showed (a screenshot) follows the user's own pictures; the API takes three.
             all.extend(std::mem::take(&mut s.agent.shots));
             all.truncate(3);
-            all
+            (all, own)
         };
+        // The pictures stay with the message that carried them, so the chat shows what was sent.
+        if !own.is_empty() {
+            self.update(|s| {
+                if let Some(m) = s.messages.get_mut(&conversation_id).and_then(|l| l.iter_mut().rev().find(|m| m.role == "user" && !is_tool_result(m))) {
+                    m.pictures = own;
+                }
+            });
+        }
         if !pictures.is_empty() {
             request["images"] = pictures
                 .iter()
@@ -10126,6 +10179,7 @@ impl AppCore {
                 "email": s.session.as_ref().map(|x| x.email.clone()).unwrap_or_default(),
             },
             "online": s.online,
+            "reader": s.reader.as_ref().map(|(name, blocks)| json!({ "name": name, "blocks": blocks, "close": { "type": "close_reader" } })),
             "sync": { "live": s.sync_live, "devices": s.sync_devices },
             "route": s.route,
             "mode": if Self::in_work(&s) { "work" } else { "chat" },
@@ -12482,7 +12536,13 @@ fn conversation_page(s: &State) -> Value {
                     });
                     // The files sent with this message.
                     if !m.files.is_empty() {
-                        message["files"] = json!(m.files.iter().map(|f| json!({ "name": f["name"], "mime": f["mime"] })).collect::<Vec<_>>());
+                        message["files"] = json!(m.files.iter().map(|f| json!({
+                            "name": f["name"], "mime": f["mime"],
+                            "open": f["id"].as_str().map(|id| json!({ "type": "open_file", "id": id })),
+                        })).collect::<Vec<_>>());
+                    }
+                    if !m.pictures.is_empty() {
+                        message["pictures"] = json!(m.pictures);
                     }
                     if let Some(mut plan) = stored_plan(&m.steps) {
                         // The newest answer's goal can be continued when the run stopped before it was done.
@@ -13223,6 +13283,17 @@ fn native_done_summary(turns: &[Value]) -> String {
 }
 
 /// A user message that only carries a tool result back to the model.
+/// Pictures are not stored on the server: when a message list is loaded again, a user message with the
+/// same text as one that had pictures gets them back (each earlier message is used once, in order).
+fn carry_pictures(old: &[ChatMessage], new: &mut [ChatMessage]) {
+    let mut with: Vec<&ChatMessage> = old.iter().filter(|m| m.role == "user" && !m.pictures.is_empty()).collect();
+    for m in new.iter_mut().filter(|m| m.role == "user" && m.pictures.is_empty()) {
+        if let Some(i) = with.iter().position(|o| o.text == m.text) {
+            m.pictures = with.remove(i).pictures.clone();
+        }
+    }
+}
+
 fn is_tool_result(m: &ChatMessage) -> bool {
     m.role == "user" && m.text.starts_with("Tool result for ")
 }
@@ -15656,7 +15727,7 @@ mod tests {
     #[test]
     fn a_fenced_reply_that_only_announced_its_next_step_is_shown_as_progress() {
         let c = signed_in_core();
-        let m = |id: &str, role: &str, text: &str| ChatMessage { id: id.into(), role: role.into(), text: text.into(), steps: Vec::new(), run: None, files: Vec::new() };
+        let m = |id: &str, role: &str, text: &str| ChatMessage { id: id.into(), role: role.into(), text: text.into(), steps: Vec::new(), run: None, files: Vec::new(), pictures: Vec::new() };
         c.update(|s| {
             s.active = Some("c1".into());
             s.messages.insert("c1".into(), vec![
@@ -16835,6 +16906,7 @@ mod tests {
                         steps: vec![],
                         run: None,
                         files: Vec::new(),
+                        pictures: Vec::new(),
                     })
                     .collect(),
             );
@@ -16867,8 +16939,8 @@ mod tests {
             s.messages.insert(
                 "c1".into(),
                 vec![
-                    ChatMessage { id: "m1".into(), role: "user".into(), text: long.clone(), steps: vec![], run: None, files: Vec::new() },
-                    ChatMessage { id: "m2".into(), role: "assistant".into(), text: "ok".into(), steps: vec![], run: None, files: Vec::new() },
+                    ChatMessage { id: "m1".into(), role: "user".into(), text: long.clone(), steps: vec![], run: None, files: Vec::new(), pictures: Vec::new() },
+                    ChatMessage { id: "m2".into(), role: "assistant".into(), text: "ok".into(), steps: vec![], run: None, files: Vec::new(), pictures: Vec::new() },
                 ],
             );
             s.cloud_settings = Some(json!({ "personalInstructions": "Be brief and kind. ".repeat(20) }));
@@ -16921,6 +16993,7 @@ mod tests {
                         steps: vec![],
                         run: None,
                         files: Vec::new(),
+                        pictures: Vec::new(),
                     },
                     ChatMessage {
                         id: "m2".into(),
@@ -16929,6 +17002,7 @@ mod tests {
                         steps: vec![],
                         run: None,
                         files: Vec::new(),
+                        pictures: Vec::new(),
                     },
                 ],
             );
@@ -17979,8 +18053,14 @@ mod tests {
                         let mut up = uploads.lock().unwrap();
                         let id = format!("file{}", up.len() + 1);
                         let text = body["text"].as_str().unwrap_or_default().len();
-                        up.insert(0, json!({ "id": id, "name": body["name"], "mime_type": body["mime_type"], "extracted_text_bytes": text }));
+                        up.insert(0, json!({ "id": id, "name": body["name"], "mime_type": body["mime_type"], "extracted_text_bytes": text, "text": body["text"] }));
                         (200, "application/json", json!({ "file": up[0] }).to_string())
+                    } else if path.starts_with("/v1/files/") && path.ends_with("/content") && method == "GET" {
+                        let up = uploads.lock().unwrap();
+                        match up.iter().find(|f| path.contains(f["id"].as_str().unwrap_or("-"))) {
+                            Some(f) => (200, "application/json", json!({ "file": { "name": f["name"] }, "text": f["text"] }).to_string()),
+                            None => (404, "application/json", "{}".to_owned()),
+                        }
                     } else if path.starts_with("/v1/files") && method == "GET" {
                         (200, "application/json", json!({ "files": *uploads.lock().unwrap() }).to_string())
                     } else if path.ends_with("/messages") && method == "POST" {
@@ -18588,6 +18668,7 @@ mod tests {
                 steps: Vec::new(),
                 run: None,
                 files: Vec::new(),
+                pictures: Vec::new(),
             })
             .collect();
         c.update(|s| {
@@ -18701,7 +18782,7 @@ mod tests {
         let fill = |c: &AppCore, window: Option<u64>| {
             let list: Vec<ChatMessage> = long(10)
                 .iter()
-                .map(|m| ChatMessage { id: m["id"].as_str().unwrap().into(), role: m["role"].as_str().unwrap().into(), text: m["content"].as_str().unwrap().into(), steps: Vec::new(), run: None, files: Vec::new() })
+                .map(|m| ChatMessage { id: m["id"].as_str().unwrap().into(), role: m["role"].as_str().unwrap().into(), text: m["content"].as_str().unwrap().into(), steps: Vec::new(), run: None, files: Vec::new(), pictures: Vec::new() })
                 .collect();
             let listed = Model { id: "small".into(), name: "small".into(), task: "chat".into(), tasks: vec!["chat".into()], input: vec!["text".into()], output: vec!["text".into()], context_window: window, max_output: Some(1_024) };
             c.update(|s| {
@@ -19784,11 +19865,20 @@ mod tests {
         let chips: Vec<&str> = page["files"].as_array().unwrap().iter().filter_map(|f| f["name"].as_str()).collect();
         assert_eq!(chips, ["server.weird-ext"], "{page}");
         assert!(c.view()["notice"].to_string().contains("blob.bin has no text"), "{}", c.view()["notice"]);
+        run(&c, Action::AttachImage { name: "p.jpg".into(), mime: "image/jpeg".into(), data: "AAAA".into() });
         run(&c, Action::Send { text: "what is in the log?".into() });
         // Sent with that message: on it, stored with it, and no longer waiting in the composer.
         let messages = c.view()["page"]["messages"].as_array().cloned().unwrap();
         let asked = messages.iter().find(|m| m["role"] == "user" && m["text"] == "what is in the log?").expect("the message");
         assert_eq!(asked["files"][0]["name"], "server.weird-ext", "{asked}");
+        assert_eq!(asked["pictures"][0], "data:image/jpeg;base64,AAAA", "the picture stays on the message: {asked}");
+        // The file opens for reading: its text, as code (its extension is not Markdown).
+        run(&c, asked["files"][0]["open"].clone().to_string().parse::<serde_json::Value>().map(|v| serde_json::from_value::<Action>(v).unwrap()).unwrap());
+        let reader = c.view()["reader"].clone();
+        assert_eq!(reader["name"], "server.weird-ext", "{reader}");
+        assert!(reader["blocks"].to_string().contains("line two"), "{reader}");
+        run(&c, Action::CloseReader);
+        assert!(c.view()["reader"].is_null());
         assert!(c.view()["page"]["files"].as_array().unwrap().is_empty());
         let stored = c.state.lock().unwrap().messages["c1"].iter().find(|m| m.text == "what is in the log?").cloned().unwrap();
         assert_eq!(stored.files.len(), 1, "read back from the API with the message: {stored:?}");

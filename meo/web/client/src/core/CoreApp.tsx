@@ -1,6 +1,7 @@
 import { Switch } from "./Switch";
 import React, { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Blocks } from "./rich";
+import { Lightbox, planPaste } from "./attachments";
 import { Icon, hasIcon } from "./icons";
 import browserHost from "./browserHost";
 
@@ -56,6 +57,7 @@ export default function CoreApp() {
       {view.sidebar && <Sidebar sidebar={view.sidebar} strings={strings} act={act} open={drawer} setOpen={setDrawer} />}
       {view.sidebar && drawer && <div className="core-drawer-scrim" onClick={() => setDrawer(false)} />}
       {view.dialog && <Dialog dialog={view.dialog} act={act} />}
+      {view.reader && <Reader reader={view.reader} act={act} strings={strings} />}
       <div className="core-main">
         {view.sidebar && (
           <div className="core-appbar">
@@ -218,6 +220,35 @@ function Banner(props: { children: ReactNode; error?: boolean; action?: string; 
 }
 
 /** Generic modal question from the core: `prompt` has a text field, `confirm` does not. */
+/** A file sent with a message, opened for reading: Markdown rendered, other text as code. */
+function Reader({ reader, act, strings }: { reader: Spec; act: Act; strings: Spec }) {
+  const close = () => act(reader.close);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") act(reader.close); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [reader, act]);
+  return (
+    <div className="core-reader" role="dialog" aria-modal="true" aria-label={reader.name} onMouseDown={(e) => { if (e.target === e.currentTarget) close(); }}>
+      <div className="core-reader-card">
+        <header>
+          <strong title={reader.name}>{reader.name}</strong>
+          <button className="core-reader-close" aria-label={strings.close ?? "Close"} onClick={close}>×</button>
+        </header>
+        <div className="core-reader-body">
+          <Blocks
+            blocks={reader.blocks ?? []}
+            act={act as (action: Spec) => void}
+            copy={strings.copy ?? "Copy"}
+            copied={strings.copied ?? "Copied"}
+            components={{ pre: (props: any) => <CodeBlock {...props} label={strings.copy ?? "Copy"} done={strings.copied ?? "Copied"} /> }}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Dialog({ dialog, act }: { dialog: Spec; act: Act }) {
   const [value, setValue] = useState<string>(dialog.input?.value ?? "");
   const run = (a: Spec) => act(a.withInput ? { ...a.action, text: value } : a.action);
@@ -1013,7 +1044,7 @@ const planKey = (m: Spec) => {
 const sameMessage = (a: Spec, b: Spec) =>
   a.id === b.id && a.role === b.role && a.text === b.text && !!a.streaming === !!b.streaming &&
   !!a.stepsOpen === !!b.stepsOpen && !!a.stepsLive === !!b.stepsLive && a.remote === b.remote && a.stepsLabel === b.stepsLabel &&
-  (a.blocks?.length ?? 0) === (b.blocks?.length ?? 0) && planKey(a) === planKey(b) && (a.images?.length ?? 0) === (b.images?.length ?? 0) &&
+  (a.blocks?.length ?? 0) === (b.blocks?.length ?? 0) && planKey(a) === planKey(b) && (a.images?.length ?? 0) === (b.images?.length ?? 0) && (a.pictures?.length ?? 0) === (b.pictures?.length ?? 0) &&
   (a.actions?.length ?? 0) === (b.actions?.length ?? 0) && (a.files?.length ?? 0) === (b.files?.length ?? 0) &&
   (a.steps ? JSON.stringify(a.steps) : "") === (b.steps ? JSON.stringify(b.steps) : "");
 
@@ -1064,13 +1095,25 @@ function usePresence(open: boolean, ms: number) {
 
 const MessageView = React.memo(
   function MessageView({ m, strings, act }: { m: Spec; strings: Spec; act: Act }) {
+    const [zoom, setZoom] = useState<string | null>(null);
     return (
+          <>
+            {zoom && <Lightbox src={zoom} onClose={() => setZoom(null)} />}
           <div className={`core-message ${m.role === "user" ? "user" : "assistant"}`}>
             {m.role === "user" ? (
               <div className="core-bubble user">
+                {(m.pictures ?? []).length > 0 && (
+                  <div className="core-sent-pictures">
+                    {m.pictures.map((src: string, k: number) => (
+                      <button key={k} className="core-sent-picture" aria-label="View picture" onClick={() => setZoom(src)}><img src={src} alt="" /></button>
+                    ))}
+                  </div>
+                )}
                 {(m.files ?? []).length > 0 && (
                   <div className="core-sent-files">
-                    {m.files.map((f: Spec, k: number) => (
+                    {m.files.map((f: Spec, k: number) => f.open ? (
+                      <button key={k} className="core-sent-file" title={f.name} onClick={() => act(f.open)}><Icon name="description" size={14} /><span>{f.name}</span></button>
+                    ) : (
                       <span key={k} className="core-sent-file" title={f.name}><Icon name="description" size={14} /><span>{f.name}</span></span>
                     ))}
                   </div>
@@ -1123,7 +1166,7 @@ const MessageView = React.memo(
                 />
                 {(m.images ?? []).map((img: Spec, k: number) => (
                   <span key={k} className="core-image-wrap">
-                    <img className="core-image" src={img.url} alt="" loading="lazy" />
+                    <img className="core-image zoomable" src={img.url} alt="" loading="lazy" onClick={() => setZoom(img.url)} />
                     <a className="core-image-save" href={img.url} download={`meo-image-${k + 1}.png`} aria-label="Download">Download</a>
                   </span>
                 ))}
@@ -1138,6 +1181,7 @@ const MessageView = React.memo(
               </div>
             )}
           </div>
+          </>
     );
   },
   (a, b) => sameMessage(a.m, b.m) && a.strings.copy === b.strings.copy && a.strings.copied === b.strings.copied,
@@ -1227,6 +1271,7 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
     return () => watch.disconnect();
   });
   const [attachNote, setAttachNote] = useState("");
+  const pasted = useRef(0);
   const note = (text: string) => { setAttachNote(text); window.setTimeout(() => setAttachNote(""), 4000); };
   // One path for the picker, paste and drag-and-drop: pictures are shrunk, text files go in as text.
   const attachFiles = async (files: File[]) => {
@@ -1387,10 +1432,17 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
               placeholder={composer.placeholder}
               onChange={(e) => { setInput(e.target.value); fit(e.target); }}
               onPaste={(e) => {
-                const files = Array.from(e.clipboardData.files);
-                if (files.length === 0) return;
-                e.preventDefault();
-                void attachFiles(files);
+                // Text wins over the picture an app renders of it; real files attach; long text becomes a Markdown file.
+                const plan = planPaste(e.clipboardData);
+                if (plan.kind === "files") {
+                  e.preventDefault();
+                  void attachFiles(plan.files);
+                } else if (plan.kind === "text-as-file" && composer.attach) {
+                  e.preventDefault();
+                  pasted.current += 1;
+                  act({ type: "attach_document", name: pasted.current > 1 ? `Pasted text ${pasted.current}.md` : "Pasted text.md", data: toBase64(new TextEncoder().encode(plan.markdown)) });
+                  note("Long text added as a Markdown file");
+                }
               }}
               onKeyDown={(e) => {
                 if (e.key === "Escape" && composer.busy) act(composer.stopAction);

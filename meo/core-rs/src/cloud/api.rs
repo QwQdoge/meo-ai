@@ -68,6 +68,10 @@ pub struct ChatMessage {
     /// Files sent with a user message (`{id, name, mime}`), stored as `attachment` blocks.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub files: Vec<Value>,
+    /// Pictures sent with a user message, as data URLs. The server does not store pictures, so they
+    /// last for this session: not saved, and carried over when the list is loaded again.
+    #[serde(skip)]
+    pub pictures: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -281,6 +285,7 @@ impl MeoApi {
                             steps: Vec::new(),
                             run: None,
                             files: Vec::new(),
+                            pictures: Vec::new(),
                         },
                         row["created_at"].as_str().unwrap_or_default().to_owned(),
                     )
@@ -312,6 +317,7 @@ impl MeoApi {
                     steps: steps_from_blocks(&row["content"]),
                     run: run_from_blocks(&row["content"]),
                     files: files_from_blocks(&row["content"]),
+                    pictures: Vec::new(),
                 })
             })
             .collect())
@@ -785,6 +791,16 @@ impl MeoApi {
         self.request(token, Method::POST, "/v1/files", Some(input))
             .await
             .map(|_| ())
+    }
+
+    /// A stored file's name and the text the model reads.
+    pub async fn file_content(&self, token: &str, id: &str) -> Result<(String, String), ApiError> {
+        let path = format!("/v1/files/{id}/content");
+        let body = self.request(token, Method::GET, &path, None).await?;
+        Ok((
+            body["file"]["name"].as_str().unwrap_or_default().to_owned(),
+            body["text"].as_str().unwrap_or_default().to_owned(),
+        ))
     }
 
     pub async fn delete_file(&self, token: &str, id: &str) -> Result<(), ApiError> {
