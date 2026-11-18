@@ -5452,8 +5452,27 @@ impl AppCore {
             if let Some((_, steps)) = s.activity.as_mut() {
                 let step = json!({ "id": id, "title": title, "detail": detail, "status": status, "items": items });
                 match steps.iter_mut().find(|x| x["id"] == id) {
-                    Some(old) => *old = step,
+                    Some(old) => {
+                        // What the call changes is set once, when it starts; later updates keep it.
+                        let change = old.get("change").cloned();
+                        *old = step;
+                        if let Some(change) = change {
+                            old["change"] = change;
+                        }
+                    }
                     None => steps.push(step),
+                }
+            }
+        });
+    }
+
+    /// Keeps what a tool call changes or runs with its step, for the "Detailed" view.
+    fn step_change(&self, id: &str, tool: &agent::Tool) {
+        let Some(change) = tool.change() else { return };
+        self.update(|s| {
+            if let Some((_, steps)) = s.activity.as_mut() {
+                if let Some(step) = steps.iter_mut().find(|x| x["id"] == id) {
+                    step["change"] = json!(change);
                 }
             }
         });
@@ -5470,7 +5489,7 @@ impl AppCore {
         self.update(|s| {
             if let Some((_, steps)) = s.activity.as_mut() {
                 let n = steps.iter().filter(|x| is_note_step(x)).count() + 1;
-                steps.push(json!({ "id": format!("note{n}"), "title": note_line(text), "detail": "", "status": "done", "items": [] }));
+                steps.push(json!({ "id": format!("note{n}"), "title": note_line(text), "detail": "", "full": clip(text, 4000), "status": "done", "items": [] }));
             }
         });
     }
@@ -8268,6 +8287,7 @@ impl AppCore {
         };
         for (i, call) in batch.iter().enumerate() {
             self.step(&format!("tool{}", first_round + i), &call.tool.summary(), "Running…", "running", vec![]);
+            self.step_change(&format!("tool{}", first_round + i), &call.tool);
         }
         self.remote_progress(true).await;
         let outcomes = futures_util::future::join_all(batch.iter().map(|call| {
@@ -8678,6 +8698,7 @@ impl AppCore {
             "running",
             vec![],
         );
+        self.step_change(&format!("tool{round}"), &call.tool);
         self.update(|s| {
             s.agent.pending = Some(PendingTool {
                 conversation_id: id.to_owned(),
@@ -9422,6 +9443,7 @@ impl AppCore {
         let step_id = format!("tool{round}");
         let title = call.tool.summary();
         self.step(&step_id, &title, "Running…", "running", vec![]);
+        self.step_change(&step_id, &call.tool);
         if let agent::Tool::ReadMore { id: kept, from } = &call.tool {
             let whole = self.state.lock().unwrap().agent.outputs.get(kept).cloned();
             let text = match whole {
@@ -10228,6 +10250,8 @@ impl AppCore {
                                 "select" => {
                                     if b == "appearance.text_size" {
                                         json!("default")
+                                    } else if b == "general.output_detail" {
+                                        json!("standard")
                                     } else {
                                         json!(item.options.first())
                                     }
@@ -10916,6 +10940,56 @@ fn steps_summary(steps: &[Value]) -> String {
         out.push_str(&format!(" · +{more} more"));
     }
     out
+}
+
+/// The "Answer details" setting: `concise`, `standard` (default) or `detailed`.
+fn output_detail(s: &State) -> &'static str {
+    match s.prefs.get("general.output_detail").and_then(Value::as_str) {
+        Some("concise") => "concise",
+        Some("detailed") => "detailed",
+        _ => "standard",
+    }
+}
+
+/// The steps of an answer as the "Answer details" setting shows them. Only the display changes:
+/// concise keeps what each step did (its title), standard adds the results, detailed adds the
+/// thinking between steps (the whole note) and what each call changed or ran.
+fn detail_steps(steps: Vec<Value>, level: &str) -> Vec<Value> {
+    steps
+        .into_iter()
+        .filter(|x| level == "detailed" || !is_note_step(x))
+        .map(|mut x| {
+            let change = x.get("change").and_then(Value::as_str).map(str::to_owned);
+            let full = x.get("full").and_then(Value::as_str).map(str::to_owned);
+            if let Some(o) = x.as_object_mut() {
+                o.remove("change");
+                o.remove("full");
+                if level == "concise" {
+                    o.remove("detail");
+                    o.remove("items");
+                }
+            }
+            if level == "detailed" {
+                if let Some(full) = full.filter(|f| !f.trim().is_empty()) {
+                    x["title"] = json!(full);
+                }
+                if let Some(change) = change {
+                    let detail = x["detail"].as_str().unwrap_or_default().trim().to_owned();
+                    x["detail"] = json!(if detail.is_empty() { change } else { format!("{detail}\n\n{change}") });
+                }
+            }
+            x
+        })
+        .collect()
+}
+
+/// The line on the steps of a finished answer: a plain count when concise, else the summary.
+fn steps_label(steps: &[Value], level: &str) -> String {
+    if level == "concise" {
+        if steps.len() == 1 { "1 step".to_owned() } else { format!("{} steps", steps.len()) }
+    } else {
+        steps_summary(steps)
+    }
 }
 
 fn steps_empty(activity: &Option<(String, Vec<Value>)>) -> bool {
@@ -12488,6 +12562,7 @@ fn rendered(m: &ChatMessage) -> std::sync::Arc<Rendered> {
 
 fn conversation_page(s: &State) -> Value {
     let active = s.active.clone();
+    let level = output_detail(s);
     let mut messages: Vec<Value> = active
         .as_ref()
         .and_then(|id| s.messages.get(id))
@@ -12544,7 +12619,7 @@ fn conversation_page(s: &State) -> Value {
                     if !m.pictures.is_empty() {
                         message["pictures"] = json!(m.pictures);
                     }
-                    if let Some(mut plan) = stored_plan(&m.steps) {
+                    if let Some(mut plan) = stored_plan(&m.steps).filter(|p| level != "concise" || matches!(p["goal"]["status"].as_str(), Some("paused" | "blocked" | "active"))) {
                         // The newest answer's goal can be continued when the run stopped before it was done.
                         if i == last && s.streaming.is_none() && matches!(plan["goal"]["status"].as_str(), Some("paused" | "blocked" | "active")) {
                             plan["actions"] = json!([{ "label": "Resume", "icon": "play_arrow", "action": { "type": "goal_resume" } }]);
@@ -12641,7 +12716,7 @@ fn conversation_page(s: &State) -> Value {
             }
             // The run's own task list (native `update_tasks`) lives at the top of the answer and
             // changes in place, instead of being written out again as text each round.
-            if latest {
+            if latest && level != "concise" {
                 if let Some(block) = progress_of(s, running || streaming.is_some()) {
                     let mut blocks = target["blocks"].as_array().cloned().unwrap_or_default();
                     if blocks.is_empty() && !target["text"].as_str().unwrap_or_default().is_empty() {
@@ -12667,6 +12742,7 @@ fn conversation_page(s: &State) -> Value {
             .into_iter()
             .filter(|x| x["id"].as_str().is_none_or(|id| seen.insert(id.to_owned())))
             .collect();
+        let fresh = detail_steps(fresh, level);
         if fresh.is_empty() {
             if let Some(o) = m.as_object_mut() {
                 o.remove("steps");
@@ -12675,7 +12751,7 @@ fn conversation_page(s: &State) -> Value {
             }
         } else {
             if m["stepsLabel"] != "Working…" {
-                m["stepsLabel"] = json!(steps_summary(&fresh));
+                m["stepsLabel"] = json!(steps_label(&fresh, level));
             }
             m["steps"] = Value::Array(fresh);
         }
@@ -14149,6 +14225,9 @@ fn option_label(binding: &str, value: &str) -> String {
         ("appearance.text_size", "small") => "Small",
         ("appearance.text_size", "default") => "Default",
         ("appearance.text_size", "large") => "Large",
+        ("general.output_detail", "concise") => "Concise",
+        ("general.output_detail", "standard") => "Standard",
+        ("general.output_detail", "detailed") => "Detailed",
         (_, other) => other,
     }
     .to_owned()
@@ -14931,6 +15010,25 @@ mod tests {
             text: text.into(),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn output_detail_levels_change_only_what_the_steps_show() {
+        let steps = vec![
+            json!({ "id": "note1", "kind": "note", "title": "Look at the file", "full": "Look at the file first, then fix the typo.", "status": "done" }),
+            json!({ "id": "tool1", "title": "Edit a.txt", "detail": "Edited", "change": "--- a.txt\n-teh\n+the", "status": "done", "items": [] }),
+        ];
+        let concise = detail_steps(steps.clone(), "concise");
+        assert_eq!(concise.len(), 1);
+        assert!(concise[0].get("detail").is_none() && concise[0].get("change").is_none());
+        assert_eq!(steps_label(&concise, "concise"), "1 step");
+        let standard = detail_steps(steps.clone(), "standard");
+        assert_eq!(standard.len(), 1);
+        assert_eq!(standard[0]["detail"], "Edited");
+        let detailed = detail_steps(steps, "detailed");
+        assert_eq!(detailed.len(), 2);
+        assert_eq!(detailed[0]["title"], "Look at the file first, then fix the typo.");
+        assert!(detailed[1]["detail"].as_str().unwrap().contains("+the"));
     }
 
     #[test]

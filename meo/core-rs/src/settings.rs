@@ -28,11 +28,19 @@ pub enum TextSize {
 #[serde(deny_unknown_fields)]
 pub struct GeneralPreferences {
     pub enter_to_send: bool,
+    /// How much of a run is shown under an answer: `concise`, `standard` or `detailed`.
+    /// Only the display changes; the run itself is the same.
+    #[serde(default = "standard_detail")]
+    pub output_detail: String,
+}
+fn standard_detail() -> String {
+    "standard".to_owned()
 }
 impl Default for GeneralPreferences {
     fn default() -> Self {
         Self {
             enter_to_send: true,
+            output_detail: standard_detail(),
         }
     }
 }

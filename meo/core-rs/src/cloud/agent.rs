@@ -308,6 +308,40 @@ impl Tool {
             Tool::App { app, tool, .. } => format!("{app} / {tool}"),
         }
     }
+
+    /// What exactly the call changes or runs, for the "Detailed" view of a step: the edit as a diff,
+    /// the patch, the command, or the arguments of an app's tool. `None` for a call that only looks.
+    pub fn change(&self) -> Option<String> {
+        let json = |v: &Value| (!v.is_null() && v.as_object().is_none_or(|o| !o.is_empty())).then(|| serde_json::to_string_pretty(v).unwrap_or_default());
+        let text = match self {
+            Tool::SearchReplace { path, old, new } => {
+                let mut out = format!("--- {path}\n+++ {path}\n");
+                for line in old.lines() {
+                    out.push_str(&format!("-{line}\n"));
+                }
+                for line in new.lines() {
+                    out.push_str(&format!("+{line}\n"));
+                }
+                out
+            }
+            Tool::ApplyPatch { patch } => patch.clone(),
+            Tool::Run { command, .. } | Tool::Job(JobOp::Start { command, .. }) => format!("$ {command}"),
+            Tool::Search { pattern, path } => format!("{pattern}{}", path.as_deref().map(|p| format!(" in {p}")).unwrap_or_default()),
+            Tool::Subagent { jobs } => jobs.iter().map(|j| format!("- {}", j.task)).collect::<Vec<_>>().join("\n"),
+            Tool::AgentSend { message, .. } => message.clone(),
+            Tool::Computer { args, .. } | Tool::Schedule { args, .. } | Tool::App { args, .. } | Tool::Mcp { args, .. } => json(args)?,
+            _ => return None,
+        };
+        let text = text.trim_end();
+        (!text.is_empty()).then(|| {
+            const MAX: usize = 4000;
+            if text.chars().count() > MAX {
+                format!("{}\n…", text.chars().take(MAX).collect::<String>())
+            } else {
+                text.to_owned()
+            }
+        })
+    }
 }
 
 fn text(value: &Value, key: &str) -> Option<String> {

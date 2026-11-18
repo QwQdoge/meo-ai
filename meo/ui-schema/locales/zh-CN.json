@@ -345,5 +345,11 @@
   "To-do": "待办",
   "Goal": "目标",
   "Log out": "退出登录",
-  "About Meo AI": "关于 Meo AI"
+  "About Meo AI": "关于 Meo AI",
+  "Answer details": "过程显示",
+  "Concise": "简洁",
+  "Standard": "标准",
+  "Detailed": "详细",
+  "1 step": "1 个步骤",
+  "Concise: what each step did. Standard: plus summary, tasks and tool results. Detailed: plus the thinking and exact changes. The answer is the same.": "简洁：只列出每一步做了什么。标准：再加上总结、任务和工具调用结果。详细：再加上每一步的思考和具体改动。回答本身完全一样。"
 }

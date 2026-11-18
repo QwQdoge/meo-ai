@@ -17,6 +17,19 @@
           "description": "Press Enter to send a message. Shift+Enter starts a new line."
         },
         {
+          "id": "output_detail",
+          "label": "Answer details",
+          "labelKey": "meo.settings.outputDetail",
+          "kind": "select",
+          "binding": "general.output_detail",
+          "options": [
+            "concise",
+            "standard",
+            "detailed"
+          ],
+          "description": "Concise: what each step did. Standard: plus summary, tasks and tool results. Detailed: plus the thinking and exact changes. The answer is the same."
+        },
+        {
           "id": "language",
           "label": "Language",
           "labelKey": "meo.settings.language",
@@ -32,8 +45,11 @@
       ],
       "keywords": [
         "keyboard",
-        "enter",
         "language",
+        "details",
+        "thinking",
+        "详细",
+        "简洁",
         "输入",
         "语言"
       ]
