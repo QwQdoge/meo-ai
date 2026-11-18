@@ -5755,6 +5755,9 @@ impl AppCore {
             && !text.starts_with("<goal_resume>")
             && !text.starts_with("<run_resume>")
             && pref_bool(&self.state.lock().unwrap(), "chat.understand", true)
+            // A whole extra model call before the first word: in Chat only for a request about a
+            // connected app or an open folder; a plain question (GTA 6's date) goes straight to the model.
+            && (work || self.state.lock().unwrap().agent.host.is_some() || self.mentions_connected_app(&text))
         {
             let made = Box::pin(self.understand(&text)).await;
             let (text_brief, tasks) = match made {
@@ -5773,6 +5776,14 @@ impl AppCore {
         if let Some(brief) = &brief {
             let current = request["prompt"].as_str().unwrap_or_default().to_owned();
             request["prompt"] = json!(format!("{brief}\n\n{current}"));
+        }
+        // The saved history holds the earlier answers' text, not their calls: without this the model
+        // reads its last answer, sees no search, and tells the user it did not search when it did.
+        if !continuing_round {
+            if let Some(calls) = earlier_calls(&self.state.lock().unwrap(), &conversation_id) {
+                let current = request["prompt"].as_str().unwrap_or_default().to_owned();
+                request["prompt"] = json!(format!("{current}\n\n{calls}"));
+            }
         }
         // The server keeps the newest text and trims the oldest first, so after a few large tool
         // results the user's own message can fall out of what the model sees (it then asks "what do
@@ -11129,6 +11140,30 @@ fn steps_label(steps: &[Value], level: &str) -> String {
     }
 }
 
+/// The calls the previous answer of this chat made (searches, pages, tools), one line each, for the next
+/// request: the stored history has the answer's text only.
+fn earlier_calls(s: &State, conversation_id: &str) -> Option<String> {
+    let list = s.messages.get(conversation_id)?;
+    let last = list.iter().rev().find(|m| m.role == "assistant")?;
+    let lines: Vec<String> = visible_steps(&last.steps)
+        .into_iter()
+        .filter(|x| x["group"] == "tool")
+        .take(10)
+        .map(|x| {
+            let detail = x["detail"].as_str().unwrap_or_default().lines().next().unwrap_or_default().trim().to_owned();
+            let status = if x["status"] == "error" { " (failed)" } else { "" };
+            if detail.is_empty() || detail == "Done" {
+                format!("- {}{status}", clip(x["title"].as_str().unwrap_or_default(), 160))
+            } else {
+                format!("- {}{status}: {}", clip(x["title"].as_str().unwrap_or_default(), 160), clip(&detail, 120))
+            }
+        })
+        .collect();
+    (!lines.is_empty()).then(|| {
+        format!("<earlier_calls>\nYour previous answer in this chat made these calls (their full results are not repeated here; search again if you need them):\n{}\n</earlier_calls>", lines.join("\n"))
+    })
+}
+
 fn steps_empty(activity: &Option<(String, Vec<Value>)>) -> bool {
     activity.as_ref().is_none_or(|(_, steps)| steps.is_empty())
 }
@@ -15950,6 +15985,26 @@ mod tests {
         assert!(streams.iter().any(|x| x["prompt"].as_str().is_some_and(|p| p.contains("cut off right after"))), "the cut answer is continued");
         assert!(texts(&c).last().unwrap().contains("one, two, and"), "{:?}", texts(&c));
         let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn the_next_message_knows_what_the_last_answer_searched() {
+        let c = signed_in_core();
+        let m = |role: &str, text: &str, steps: Vec<Value>| ChatMessage { id: String::new(), role: role.into(), text: text.into(), steps, run: None, files: Vec::new(), pictures: Vec::new() };
+        c.update(|s| {
+            s.messages.insert("c1".into(), vec![
+                m("user", "GTA 6 什么时候发售", vec![]),
+                m("assistant", "2026 年 11 月 19 日", vec![
+                    json!({ "id": "router", "title": "Router", "status": "done" }),
+                    json!({ "id": "tool1", "title": "Search the web for “GTA 6 release date”", "detail": "Rockstar Newswire: November 19, 2026", "status": "done" }),
+                ]),
+                m("user", "你没有搜？", vec![]),
+            ]);
+        });
+        let calls = earlier_calls(&c.state.lock().unwrap(), "c1").expect("the search is listed");
+        assert!(calls.contains("Search the web for “GTA 6 release date”: Rockstar Newswire"), "{calls}");
+        assert!(!calls.contains("Router"), "only real calls: {calls}");
+        assert!(earlier_calls(&c.state.lock().unwrap(), "none").is_none());
     }
 
     #[test]
@@ -20801,6 +20856,7 @@ mod tests {
                 s.prefs.insert("chat.understand".into(), json!(true));
                 s.prefs.insert("chat.web_search".into(), json!(true));
                 s.prefs.insert("chat.thinking".into(), json!(level));
+                s.plugins = Some(Ok(vec![json!({ "id": "gh", "name": "GitHub", "kind": "mcp", "enabled": true, "remoteUrl": "https://api.githubcopilot.com/mcp/" })]));
                 s.prefs.insert("chat.mode".into(), json!(mode));
             }
         };
@@ -20809,7 +20865,7 @@ mod tests {
         let api = fake_api(vec![reading, "Answer."]);
         let c = work_core(&api, &folder, "smart");
         c.update(prefs("low", "auto"));
-        run(&c, Action::Send { text: "go through my project and tell me what to fix".into() });
+        run(&c, Action::Send { text: "go through my GitHub project and tell me what to fix".into() });
         let streams = api.streams.lock().unwrap().clone();
         assert!(!streams[0]["prompt"].as_str().unwrap().contains("Read the user's request and decide"), "no reading at low");
         assert!(!streams.iter().any(|b| b["prompt"].as_str().is_some_and(|p| p.contains("## What the user wants"))));
@@ -20819,7 +20875,7 @@ mod tests {
         let api = fake_api(vec![reading, "Answer."]);
         let c = work_core(&api, &folder, "smart");
         c.update(prefs("medium", "auto"));
-        run(&c, Action::Send { text: "go through my project and tell me what to fix".into() });
+        run(&c, Action::Send { text: "go through my GitHub project and tell me what to fix".into() });
         let streams = api.streams.lock().unwrap().clone();
         assert!(streams[0]["prompt"].as_str().unwrap().contains("Read the user's request and decide"));
         assert!(c.state.lock().unwrap().agent.native.as_ref().is_none_or(|n| n.tasks.is_empty()), "no list is started at medium");
@@ -20829,7 +20885,7 @@ mod tests {
         let api = fake_api(vec![reading, "Partial.", r#"{"text":"","calls":[{"id":"t","name":"update_tasks","arguments":"{\"tasks\":[{\"title\":\"the main sources\",\"state\":\"done\"},{\"title\":\"authentication\",\"state\":\"done\"}]}"}]}"#, "All read."]);
         let c = work_core(&api, &folder, "smart");
         c.update(prefs("high", "default"));
-        run(&c, Action::Send { text: "go through my project and tell me what to fix".into() });
+        run(&c, Action::Send { text: "go through my GitHub project and tell me what to fix".into() });
         let streams = api.streams.lock().unwrap().clone();
         let driver = streams.iter().find(|b| b["prompt"].as_str().is_some_and(|p| p.contains("<goal_round>"))).expect("the unfinished list kept the run going");
         let prompt = driver["prompt"].as_str().unwrap();
@@ -20849,15 +20905,17 @@ mod tests {
             s.prefs.remove("work.workspace");
             s.prefs.insert("chat.understand".into(), json!(true));
             s.prefs.insert("chat.web_search".into(), json!(true));
+            s.plugins = Some(Ok(vec![json!({ "id": "gh", "name": "GitHub", "kind": "mcp", "enabled": true, "remoteUrl": "https://api.githubcopilot.com/mcp/" })]));
         });
-        run(&c, Action::Send { text: "go through my project and tell me what to fix".into() });
+        run(&c, Action::Send { text: "go through my GitHub project and tell me what to fix".into() });
         let streams = api.streams.lock().unwrap().clone();
         assert!(streams[0]["prompt"].as_str().unwrap().contains("Read the user's request and decide"), "the first call is the reading");
         let main = streams[1]["prompt"].as_str().unwrap();
         assert!(main.contains("## What the user wants") && main.contains("find weaknesses in the code"), "{main}");
         assert!(main.contains("Not wanted: repository settings such as CI") && main.contains("Subject: the Meo AI repository"));
         // A plain question is `direct`: nothing is added.
-        let api = fake_api(vec![r#"{"direct": true}"#, "Paris."]);
+        // In Chat a plain question about no app or folder is not read first at all: one call, the answer.
+        let api = fake_api(vec!["Paris."]);
         let c = work_core(&api, &folder, "smart");
         c.update(|s| {
             s.route = "chat".into();
@@ -20868,7 +20926,8 @@ mod tests {
         });
         run(&c, Action::Send { text: "what is the capital of France?".into() });
         let streams = api.streams.lock().unwrap().clone();
-        assert!(!streams[1]["prompt"].as_str().unwrap().contains("## What the user wants"));
+        assert!(streams[0]["prompt"].as_str().unwrap().contains("what is the capital of France?"), "the first call is the answer: {:?}", streams[0]["prompt"]);
+        assert!(!streams.iter().any(|b| b["prompt"].as_str().is_some_and(|p| p.contains("Read the user's request and decide"))), "no reading call");
         let _ = std::fs::remove_dir_all(&folder);
     }
 
