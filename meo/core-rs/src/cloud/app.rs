@@ -701,6 +701,10 @@ struct AgentRun {
     verifies: usize,
     /// Times a reply that announced a next step without calling a tool was sent back for this message.
     nudges: usize,
+    /// Fenced runs: tasks done when the last nudge was sent, and nudges in a row that finished none.
+    /// A nudge that follows another finished task is always allowed, so a task list is worked through.
+    done_at_nudge: usize,
+    idle_nudges: usize,
     /// Native rounds that said what they would do next but called nothing, sent back to do it.
     stalls: usize,
     /// Rounds of this message run again on their own after the connection to the model broke.
@@ -6444,6 +6448,8 @@ impl AppCore {
                     s.agent.done_before = done;
                     s.agent.round = 0;
                     s.agent.nudges = 0;
+                    s.agent.done_at_nudge = 0;
+                    s.agent.idle_nudges = 0;
                 });
                 // Which protocol carries the tools is plumbing: the user sees the same run go on.
                 return Box::pin(self.turn(asked, false, false)).await;
@@ -7640,28 +7646,37 @@ impl AppCore {
     /// the middle of a task and with tools available: taken as the final answer it would end the task
     /// half done. It is sent back (at most twice per message) to either call the tool or finish.
     fn agent_stalled(&self, reply: &str) -> bool {
-        let s = self.state.lock().unwrap();
+        let mut s = self.state.lock().unwrap();
         let apps = s
             .app_tools
             .values()
             .any(|r| r.as_ref().is_ok_and(|t| !t.is_empty()));
         // A native run has functions whenever it is native; it gets its own, larger budget, since a
         // model that narrates instead of calling would otherwise end a long task after a few reads.
+        // The fenced protocol: with a task list, a nudge is allowed while tasks keep getting done (two
+        // in a row that finish nothing end it); without one, the two-nudge limit.
+        let done = s.agent.tasks.iter().filter(|t| t["state"] == "done").count();
+        let idle = if done > s.agent.done_at_nudge { 0 } else { s.agent.idle_nudges + 1 };
         let budget = if s.agent.native.is_some() {
             s.agent.stalls < MAX_STALLS
         } else {
             (s.agent.host.is_some() || pref_bool(&s, "chat.web_search", false) || apps)
                 && s.agent.round > 0
-                && s.agent.nudges < 2
+                && if s.agent.tasks.is_empty() { s.agent.nudges < 2 } else { idle <= 2 }
         };
         // A task the router judged to need investigating (it wrote a brief), with functions to call, that
         // gets a first reply without a single call: whatever the wording, nothing was looked at yet, so
         // it is not the answer.
         let nothing_looked_at = s.agent.native.is_some() && s.agent.brief.is_some() && s.agent.round == 0;
-        budget
+        let stalled = budget
             && s.agent.round < MAX_TOOL_ROUNDS
             && agent::parse_tool_calls(reply).is_empty()
-            && (nothing_looked_at || announces_next_step(reply) || has_unfinished_tasks(reply))
+            && (nothing_looked_at || announces_next_step(reply) || has_unfinished_tasks(reply));
+        if stalled && s.agent.native.is_none() {
+            s.agent.done_at_nudge = done;
+            s.agent.idle_nudges = idle;
+        }
+        stalled
     }
 
     fn agent_permission(&self) -> agent::Permission {
