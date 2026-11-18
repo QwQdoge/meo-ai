@@ -4804,13 +4804,18 @@ impl AppCore {
                 .map(|id| project_env::snapshot(id, &s.project_env.get(id).cloned().unwrap_or_default(), &name))
                 .collect()
         };
-        for mut shot in shots {
-            shot["type"] = json!("remote.projects");
-            if let Some(to) = to {
-                shot["to"] = json!(to);
-            }
-            self.remote_send(shot).await;
+        // Every send is a Meo API request: several projects go in one message (`projects`), and devices
+        // say hello to each other on every connect, so one per project added up fast.
+        let mut message = match shots.len() {
+            0 => return,
+            1 => shots.into_iter().next().unwrap_or_default(),
+            _ => json!({ "projects": shots }),
+        };
+        message["type"] = json!("remote.projects");
+        if let Some(to) = to {
+            message["to"] = json!(to);
         }
+        self.remote_send(message).await;
     }
 
     /// Controller: pause, resume or steer the task running on the host.
@@ -5128,14 +5133,22 @@ impl AppCore {
                 if from.is_empty() || !self.remote_enabled() {
                     return;
                 }
-                let Some(id) = data["project"].as_str().filter(|p| !p.is_empty() && p.len() <= 64) else { return };
-                let id = id.to_owned();
+                // One project, or several in `projects`.
+                let items: Vec<Value> = match data["projects"].as_array() {
+                    Some(list) => list.iter().take(100).cloned().collect(),
+                    None => vec![data.clone()],
+                };
                 let changed = {
                     let mut s = self.state.lock().unwrap();
-                    let entry = s.project_env.entry(id.clone()).or_default();
-                    let changed = project_env::merge(entry, data, &from);
-                    if entry.is_empty() {
-                        s.project_env.remove(&id);
+                    let mut changed = false;
+                    for item in &items {
+                        let Some(id) = item["project"].as_str().filter(|p| !p.is_empty() && p.len() <= 64) else { continue };
+                        let id = id.to_owned();
+                        let entry = s.project_env.entry(id.clone()).or_default();
+                        changed |= project_env::merge(entry, item, &from);
+                        if entry.is_empty() {
+                            s.project_env.remove(&id);
+                        }
                     }
                     changed
                 };
@@ -16661,7 +16674,19 @@ mod tests {
         let hello = json!({ "origin": "phone", "to": me, "name": "Phone", "platform": "android", "hosts": false, "reply": false });
         rt.block_on(c.on_remote_message("remote.hello", &hello, false));
         let to_phone: Vec<Value> = api.remotes.lock().unwrap().iter().filter(|m| m["type"] == "remote.projects" && m["to"] == "phone").cloned().collect();
-        assert_eq!(to_phone.len(), 2, "{to_phone:?}");
+        // Both projects in one message (each send is a Meo API request).
+        assert_eq!(to_phone.len(), 1, "{to_phone:?}");
+        assert_eq!(to_phone[0]["projects"].as_array().map(Vec::len), Some(2), "{to_phone:?}");
+        // And a batch is read back the same way as single ones.
+        let batch = json!({ "origin": "laptop", "to": me, "projects": [
+            { "project": "p3", "repo": "a/b", "sharedAt": i64::MAX / 2, "sources": [], "device": "Laptop", "folders": [], "foldersAt": 0 },
+            { "project": "p4", "repo": "c/d", "sharedAt": i64::MAX / 2, "sources": [], "device": "Laptop", "folders": [], "foldersAt": 0 },
+        ] });
+        rt.block_on(c.on_remote_message("remote.projects", &batch, false));
+        let s = c.state.lock().unwrap();
+        assert_eq!(s.project_env.get("p3").and_then(|e| e.repo.clone()).as_deref(), Some("a/b"));
+        assert_eq!(s.project_env.get("p4").and_then(|e| e.repo.clone()).as_deref(), Some("c/d"));
+        drop(s);
         let _ = std::fs::remove_dir_all(&main);
     }
 
