@@ -27,6 +27,11 @@ MEO_OUTPUT_ROOT="$work" MEO_UI_ROOT="$MEO_UI_ROOT" npm run build
 mkdir -p "$work/stage"
 cp -r "$work/meo-ai/build/web" "$work/stage/site"
 cp -r "$here/functions" "$work/stage/functions"
+# Build stamp for the Meo Account release center (what chat.meoarch.org is actually running).
+printf '{"product":"meo-ai-web","commit":"%s","describe":"%s","message":%s,"builtAt":"%s"}\n' \
+  "$(git rev-parse HEAD)" "$(git describe --tags --always --match 'v[0-9]*')" \
+  "$(git log -1 --format=%s | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.stdout.write(JSON.stringify(s.trim())))')" \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$work/stage/site/meo-version.json"
 
 echo "Current production deployment (rollback target):"
 npx --yes wrangler pages deployment list --project-name="$project" --environment=production | sed -n '1,6p'
