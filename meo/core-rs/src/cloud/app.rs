@@ -631,6 +631,11 @@ struct NativeRun {
     final_asked: bool,
     /// Continuation rounds the driver started for this message (the goal's round count).
     goal_rounds: usize,
+    /// How many tasks were done when the last continuation round started: a round that finishes
+    /// another task earns the next one, so a long task list is worked through in one run.
+    done_at_round: usize,
+    /// Continuation rounds in a row that finished no task.
+    idle_rounds: usize,
 }
 
 impl NativeRun {
@@ -8053,8 +8058,14 @@ impl AppCore {
     /// The continuation prompt for a native run whose task list still has open items (and rounds
     /// and nudges left): the objective, the open tasks, and what it just said.
     fn goal_round_prompt(&self, last: &str) -> Option<String> {
-        let s = self.state.lock().unwrap();
-        let run = s.agent.native.as_ref()?;
+        let mut s = self.state.lock().unwrap();
+        let round = s.agent.round;
+        let run = s.agent.native.as_mut()?;
+        let done = run.tasks.iter().filter(|t| t["state"] == "done").count();
+        // A round that finished another task always earns the next one (up to the call cap), so every
+        // task of the list gets done in one go; the limits below only stop a run that stopped moving.
+        let progressed = done > run.done_at_round;
+        let idle = if progressed { 0 } else { run.idle_rounds + 1 };
         let open: Vec<String> = run
             .tasks
             .iter()
@@ -8062,14 +8073,18 @@ impl AppCore {
             .map(|t| format!("- [{}] {}", if t["state"] == "doing" { ">" } else { " " }, t["title"].as_str().unwrap_or_default()))
             .collect();
         let goal = run.goal_open().then(|| run.goal.clone()).flatten();
-        // A goal has its own round allowance (`maxRounds`); a bare task list keeps the two-nudge limit.
-        let cap_hit = match &goal {
-            Some(g) => run.goal_rounds >= g["maxRounds"].as_u64().unwrap_or(2) as usize,
-            None => s.agent.nudges >= 2,
-        };
-        if (open.is_empty() && goal.is_none()) || s.agent.round >= MAX_TOOL_ROUNDS || cap_hit {
+        // Without progress: a goal has its own round allowance (`maxRounds`); a bare task list gets two
+        // rounds in a row that finish nothing, then the run ends.
+        let cap_hit = !progressed
+            && match &goal {
+                Some(g) => run.goal_rounds >= g["maxRounds"].as_u64().unwrap_or(2) as usize,
+                None => idle > 2,
+            };
+        if (open.is_empty() && goal.is_none()) || round >= MAX_TOOL_ROUNDS || cap_hit {
             return None;
         }
+        run.done_at_round = done;
+        run.idle_rounds = idle;
         let said: String = last.trim().chars().take(1200).collect();
         let objective = match &goal {
             Some(g) => format!(
@@ -11185,7 +11200,7 @@ fn has_verify_command(s: &State) -> bool {
 
 /// Tool calls one user message may run before Work stops and says so.
 /// Rounds of tool calls in one run: a review of a real project reads a dozen files and more.
-const MAX_TOOL_ROUNDS: usize = 20;
+const MAX_TOOL_ROUNDS: usize = 50;
 /// Calls of one native reply that run; later ones are answered "not run" (a reply of 30 reads is a loop, not a plan).
 const MAX_CALLS_PER_ROUND: usize = 8;
 /// What the fenced nudge says about a reply that announced a step without calling it (also how the view
@@ -18694,7 +18709,7 @@ mod tests {
     fn the_loop_stops_at_the_round_cap_and_chat_runs_the_same_tools() {
         let folder = temp_folder("cap");
         std::fs::write(folder.join("notes.txt"), "x\n").unwrap();
-        let api = fake_api(vec![READ; 40]);
+        let api = fake_api(vec![READ; 100]);
         let c = work_core(&api, &folder, "all");
         run(
             &c,
