@@ -1433,15 +1433,19 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
               onChange={(e) => { setInput(e.target.value); fit(e.target); }}
               onPaste={(e) => {
                 // Text wins over the picture an app renders of it; real files attach; long text becomes a Markdown file.
-                const plan = planPaste(e.clipboardData);
+                // The system's paste: a long formatted text becomes a file card (the core names it .md or .txt
+                // from its content); plain text goes into the box as pasted.
+                const paste = composer.paste;
+                const plan = planPaste(e.clipboardData, paste ? { chars: paste.chars, lines: paste.lines } : undefined);
                 if (plan.kind === "files") {
                   e.preventDefault();
                   void attachFiles(plan.files);
-                } else if (plan.kind === "text-as-file" && composer.attach) {
+                } else if (plan.kind === "text-as-file" && paste) {
                   e.preventDefault();
                   pasted.current += 1;
-                  act({ type: "attach_document", name: pasted.current > 1 ? `Pasted text ${pasted.current}.md` : "Pasted text.md", data: toBase64(new TextEncoder().encode(plan.markdown)) });
-                  note("Long text added as a Markdown file");
+                  const name = pasted.current > 1 ? `${paste.name} ${pasted.current}` : paste.name;
+                  act({ type: paste.action, name, text: plan.markdown });
+                  note(strings.pastedAsFile ?? "Long text added as a file · paste as plain text to keep it in the box");
                 }
               }}
               onKeyDown={(e) => {

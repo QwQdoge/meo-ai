@@ -4,9 +4,9 @@ import { createPortal } from "react-dom";
 // What a paste into the composer becomes. The page decides only what the clipboard holds; the core
 // reads the files and keeps the text (see attach_document in the core).
 
-/** A pasted text this long goes in as a Markdown file instead of filling the box. */
-export const LONG_PASTE_CHARS = 3000;
-export const LONG_PASTE_LINES = 60;
+/** How long a Ctrl+V text must be to go in as a file (the core sends its own limits with the composer). */
+export type PasteLimits = { chars: number; lines: number };
+const DEFAULT_LIMITS: PasteLimits = { chars: 1500, lines: 30 };
 
 // Structure worth keeping when rich text is pasted: headings, lists, tables, code, quotes, emphasis, links.
 const STRUCTURE = /<(h[1-6]|table|ul|ol|pre|blockquote|strong|b|em|a)\b/i;
@@ -20,16 +20,19 @@ export type PastePlan =
 // clipboard too, named "image.png" or nothing. That picture is not a file the person copied.
 const renderedPicture = (f: File) => f.type.startsWith("image/") && (!f.name || /^image\.\w+$/i.test(f.name));
 
-export function planPaste(data: DataTransfer): PastePlan {
+// Only what the system's paste delivers decides, never a key of our own: a paste with formatting (a page,
+// a document, an editor) that is long becomes a file; plain text only (the system's "paste as plain text",
+// whatever shortcut the person uses, or a plain source) goes into the box as the system pasted it.
+export function planPaste(data: DataTransfer, limits: PasteLimits = DEFAULT_LIMITS): PastePlan {
   const text = data.getData("text/plain");
   const html = data.getData("text/html");
   const files = Array.from(data.files);
   const hasText = text.trim() !== "";
   // Real files (a screenshot, a file from the file manager) are attached; text beats its own picture.
   if (files.length > 0 && !(hasText && files.every(renderedPicture))) return { kind: "files", files };
-  if (!hasText) return { kind: "default" };
+  if (!hasText || !html.trim()) return { kind: "default" };
   const markdown = html && STRUCTURE.test(html) ? htmlToMarkdown(html) || text : text;
-  const long = markdown.length >= LONG_PASTE_CHARS || markdown.split("\n").length >= LONG_PASTE_LINES;
+  const long = markdown.length >= limits.chars || markdown.split("\n").length >= limits.lines;
   return long ? { kind: "text-as-file", markdown } : { kind: "default" };
 }
 

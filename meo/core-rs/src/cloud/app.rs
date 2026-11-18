@@ -3059,6 +3059,13 @@ impl AppCore {
 
     async fn attach_text(&self, name: String, text: String) {
         let name: String = name.trim().chars().take(200).collect();
+        // A paste the client turned into a file comes without an extension: Markdown when it reads as
+        // Markdown, plain text otherwise. Decided here once for every client.
+        let name = if name.starts_with(PASTE_NAME) && !name.contains('.') {
+            format!("{name}.{}", if looks_like_markdown(&text) { "md" } else { "txt" })
+        } else {
+            name
+        };
         if name.is_empty() || text.trim().is_empty() {
             return self.notice("error", "That file has no text to attach.");
         }
@@ -10338,6 +10345,7 @@ impl AppCore {
                 "copy": "Copy", "copied": "Copied", "dismiss": "Dismiss", "more": "More",
                 "send": "Send", "stop": "Stop", "offline": "Offline — showing saved data",
                 "jump": "Jump to the latest message", "thinking": "Thinking",
+                "pastedAsFile": "Long text added as a file · paste as plain text to keep it in the box",
                 "waiting": "Waiting for the model",
             },
             "auth": {
@@ -11162,6 +11170,27 @@ fn earlier_calls(s: &State, conversation_id: &str) -> Option<String> {
     (!lines.is_empty()).then(|| {
         format!("<earlier_calls>\nYour previous answer in this chat made these calls (their full results are not repeated here; search again if you need them):\n{}\n</earlier_calls>", lines.join("\n"))
     })
+}
+
+/// Text pasted with Ctrl+V at least this long (characters or lines) becomes a file instead of filling the box.
+const PASTE_CHARS: usize = 1500;
+const PASTE_LINES: usize = 30;
+/// The name a paste turned into a file starts with ("Pasted text", "Pasted text 2"); the core adds the extension.
+const PASTE_NAME: &str = "Pasted text";
+
+/// Text with Markdown structure: a fence, a table, or at least two headings, list items or quotes.
+fn looks_like_markdown(text: &str) -> bool {
+    let mut marks = 0;
+    for line in text.lines().map(str::trim_start) {
+        if line.starts_with("```") || (line.starts_with('|') && line.ends_with('|') && line.matches('|').count() >= 3) {
+            return true;
+        }
+        let numbered = line.split_once(". ").is_some_and(|(n, _)| !n.is_empty() && n.len() <= 3 && n.chars().all(|c| c.is_ascii_digit()));
+        if line.starts_with("# ") || line.starts_with("## ") || line.starts_with("### ") || line.starts_with("- ") || line.starts_with("* ") || line.starts_with("> ") || numbered || line.contains("**") || line.contains("](") {
+            marks += 1;
+        }
+    }
+    marks >= 2
 }
 
 fn steps_empty(activity: &Option<(String, Vec<Value>)>) -> bool {
@@ -13029,6 +13058,9 @@ fn conversation_page(s: &State) -> Value {
         "composer": {
             // `extensions` are the types read as text for sure; any other file is tried too (documents are
             // extracted, other text is read as text), so the list is a hint, not a gate.
+            // A long paste that carries formatting is attached as a file named `name` (the core adds .md or
+            // .txt); a plain-text paste (the system's own "paste as plain text") goes into the box as usual.
+            "paste": { "chars": PASTE_CHARS, "lines": PASTE_LINES, "name": PASTE_NAME, "action": "attach_text" },
             "attach": { "label": "Add files or photos", "action": "attach_text", "any": true, "extensions": ["txt", "md", "markdown", "csv", "json", "py", "rs", "js", "ts", "tsx", "jsx", "java", "kt", "c", "h", "cpp", "go", "sh", "toml", "yaml", "yml", "html", "css", "sql", "log", "png", "jpg", "jpeg", "webp", "gif"] },
             "placeholder": "Message Meo",
             "commands": COMMANDS.iter().map(|(name, hint, about)| json!({ "name": name, "hint": hint, "label": about })).collect::<Vec<_>>(),
@@ -15985,6 +16017,15 @@ mod tests {
         assert!(streams.iter().any(|x| x["prompt"].as_str().is_some_and(|p| p.contains("cut off right after"))), "the cut answer is continued");
         assert!(texts(&c).last().unwrap().contains("one, two, and"), "{:?}", texts(&c));
         let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn a_paste_turned_into_a_file_is_markdown_only_when_it_reads_as_markdown() {
+        assert!(looks_like_markdown("# Title\n\n- one\n- two\n"));
+        assert!(looks_like_markdown("text\n```rust\nfn main() {}\n```\n"));
+        assert!(looks_like_markdown("| a | b |\n|---|---|\n| 1 | 2 |\n"));
+        assert!(!looks_like_markdown("just a long log line\nanother line\n2026-11-18 12:00 error: x"));
+        assert!(!looks_like_markdown("一段普通的文字，没有任何格式。\n第二行。"));
     }
 
     #[test]
