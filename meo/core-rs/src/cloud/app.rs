@@ -701,6 +701,8 @@ struct AgentRun {
     verifies: usize,
     /// Times a reply that announced a next step without calling a tool was sent back for this message.
     nudges: usize,
+    /// The last failed tool call (its summary and error) and how many times in a row it failed so.
+    last_failure: Option<(String, usize)>,
     /// Fenced runs: tasks done when the last nudge was sent, and nudges in a row that finished none.
     /// A nudge that follows another finished task is always allowed, so a task list is worked through.
     done_at_nudge: usize,
@@ -8210,7 +8212,22 @@ impl AppCore {
     /// What a native call of the model stands for, as a call of the shared tool set.
     fn native_call(&self, first: &NativeCall) -> Result<agent::ToolCall, String> {
         let s = self.state.lock().unwrap();
-        let args: Value = serde_json::from_str(&first.arguments).unwrap_or_else(|_| json!({}));
+        // Arguments that are not one JSON object (cut off, or not JSON) go back as an error the model can
+        // fix; quietly calling with `{}` instead made the tool complain about a missing field, again and again.
+        let args: Value = if first.arguments.trim().is_empty() {
+            json!({})
+        } else {
+            match serde_json::from_str::<Value>(&first.arguments) {
+                Ok(v) if v.is_object() => v,
+                _ => {
+                    return Err(format!(
+                        "the arguments of {} are not one valid JSON object (got {}); send the call again with complete JSON arguments",
+                        first.name,
+                        serde_json::to_string(&clip(&first.arguments, 200)).unwrap_or_default()
+                    ))
+                }
+            }
+        };
         match s.agent.native.as_ref().and_then(|n| n.targets.get(&first.name)) {
             Some(NativeTarget::App { app, tool }) => Ok(agent::ToolCall {
                 id: first.id.clone(),
@@ -8236,7 +8253,12 @@ impl AppCore {
                         tool: agent::Tool::App {
                             app: app.to_owned(),
                             tool: tool.to_owned(),
-                            args: if args["arguments"].is_object() { args["arguments"].clone() } else { json!({}) },
+                            // Models often send the nested arguments as a JSON string: read it as the object.
+                            args: match &args["arguments"] {
+                                Value::Object(_) => args["arguments"].clone(),
+                                Value::String(text) => serde_json::from_str::<Value>(text).ok().filter(Value::is_object).unwrap_or_else(|| json!({})),
+                                _ => json!({}),
+                            },
                         },
                     }),
                 }
@@ -9541,6 +9563,24 @@ impl AppCore {
         // (the first post-execute step; it must run before the step line and the kept copy below).
         if let Some(jobs) = jobs_host.as_ref().map(|h| h.settled_jobs()).filter(|j| !j.is_empty()) {
             outcome.text.push_str(&format!("\n\n[Background jobs]\n{}", jobs.join("\n")));
+        }
+        // The same call failing the same way again: say so plainly, so the run changes course instead of
+        // spending its calls on retries.
+        let failure = (!outcome.ok).then(|| format!("{}\n{}", call.tool.summary(), clip(outcome.text.trim(), 300)));
+        let repeats = {
+            let mut s = self.state.lock().unwrap();
+            let n = match (&failure, &s.agent.last_failure) {
+                (Some(f), Some((last, n))) if f == last => n + 1,
+                (Some(_), _) => 1,
+                (None, _) => 0,
+            };
+            s.agent.last_failure = failure.map(|f| (f, n));
+            n
+        };
+        if repeats >= 2 {
+            outcome.text.push_str(&format!(
+                "\n\n[This exact call has now failed {repeats} times in a row with the same error. Do not send it again: fix the arguments, use another tool or approach, or tell the user what is blocking.]"
+            ));
         }
         if call.tool.risk() != agent::Risk::Read {
             self.refresh_changes().await;
@@ -15845,6 +15885,10 @@ mod tests {
             other => panic!("{other:?}"),
         }
         let unknown = c.native_call(&NativeCall { id: "a2".into(), name: "app_call".into(), arguments: r#"{"app":"GitHub","tool":"list_everything"}"#.into() }).unwrap_err();
+        let stringified = c.native_call(&NativeCall { id: "a3".into(), name: "app_call".into(), arguments: r#"{"app":"GitHub","tool":"tool_099","arguments":"{\"owner\":\"o\"}"}"#.into() }).unwrap();
+        assert!(matches!(stringified.tool, agent::Tool::App { ref args, .. } if args["owner"] == "o"), "string arguments are read as the object");
+        let broken = c.native_call(&NativeCall { id: "a4".into(), name: "app_call".into(), arguments: r#"{"app":"GitHub","tool":"#.into() }).unwrap_err();
+        assert!(broken.contains("not one valid JSON object"), "{broken}");
         assert!(unknown.contains("its tools are: tool_000"), "{unknown}");
         let _ = std::fs::remove_dir_all(&folder);
     }
