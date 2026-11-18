@@ -2,6 +2,7 @@ package org.meo.ai.ui
 
 import androidx.compose.material.icons.rounded.ViewSidebar
 import androidx.compose.material.icons.rounded.Cable
+import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.material.icons.rounded.Build
 import androidx.compose.material.icons.rounded.Bolt
