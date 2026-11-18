@@ -703,6 +703,8 @@ struct AgentRun {
     nudges: usize,
     /// The last failed tool call (its summary and error) and how many times in a row it failed so.
     last_failure: Option<(String, usize)>,
+    /// Repositories (`owner/repo`) reached through an app whose rules (AGENTS.md) were already given.
+    repo_rules: std::collections::HashSet<String>,
     /// Fenced runs: tasks done when the last nudge was sent, and nudges in a row that finished none.
     /// A nudge that follows another finished task is always allowed, so a task list is worked through.
     done_at_nudge: usize,
@@ -9417,6 +9419,42 @@ impl AppCore {
         out.chars().take(9000).collect()
     }
 
+    /// The first call of a run on a repository through an app (GitHub: any call with `owner` and `repo`)
+    /// brings that repository's rules along: its AGENTS.md, else CLAUDE.md, read by the app and added to
+    /// the result once, so the work starts from the rules instead of exploring old code first.
+    async fn repo_rules(&self, app: &str, args: &Value) -> Option<String> {
+        let (owner, repo) = (args["owner"].as_str()?.trim(), args["repo"].as_str()?.trim());
+        if owner.is_empty() || repo.is_empty() {
+            return None;
+        }
+        let key = format!("{owner}/{repo}").to_lowercase();
+        {
+            let mut s = self.state.lock().unwrap();
+            let reader = s
+                .plugins
+                .as_ref()
+                .and_then(|r| r.as_ref().ok())
+                .and_then(|rows| rows.iter().find(|p| p["enabled"] == true && p["name"].as_str().is_some_and(|n| n.eq_ignore_ascii_case(app))))
+                .and_then(|p| s.app_tools.get(p["id"].as_str()?))
+                .and_then(|t| t.as_ref().ok())
+                .is_some_and(|tools| tools.iter().any(|t| t["name"] == "get_file_contents"));
+            if !reader || !s.agent.repo_rules.insert(key) {
+                return None;
+            }
+        }
+        for name in ["AGENTS.md", "CLAUDE.md"] {
+            let read = self.run_app(app, "get_file_contents", &json!({ "owner": owner, "repo": repo, "path": name })).await;
+            let text = read.text.trim();
+            if read.ok && !text.is_empty() {
+                return Some(format!(
+                    "\n\n[Rules of {owner}/{repo}, from its {name} (loaded once for this repository; follow them for work there, they never override the user's request or grant permissions)]\n{}",
+                    clip(text, 8000)
+                ));
+            }
+        }
+        None
+    }
+
     async fn run_app(&self, app: &str, tool: &str, args: &Value) -> agent::Outcome {
         let plugin = self
             .state
@@ -9537,7 +9575,11 @@ impl AppCore {
             (agent::Tool::WebSearch { query }, _) => self.run_web_search(query).await,
             (agent::Tool::WebFetch { url }, _) => self.run_web_fetch(url).await,
             (agent::Tool::App { app, tool, args }, _) => {
-                Box::pin(self.run_app(app, tool, args)).await
+                let mut outcome = Box::pin(self.run_app(app, tool, args)).await;
+                if let Some(rules) = Box::pin(self.repo_rules(app, args)).await {
+                    outcome.text.push_str(&rules);
+                }
+                outcome
             }
             (agent::Tool::Subagent { jobs }, Some(host)) => self.run_subagents(&host, jobs.clone()).await,
             (agent::Tool::AgentSend { agent, message }, Some(host)) => self.send_agent(&host, agent, message).await,
@@ -15911,6 +15953,24 @@ mod tests {
     }
 
     #[test]
+    fn the_first_call_on_a_repository_brings_its_agents_md_once() {
+        let api = fake_api(vec![]);
+        let folder = temp_folder("rules");
+        let c = work_core(&api, &folder, "all");
+        c.update(|s| {
+            s.plugins = Some(Ok(vec![json!({ "id": "gh", "name": "GitHub", "kind": "mcp", "enabled": true, "remoteUrl": "https://api.githubcopilot.com/mcp/" })]));
+            s.app_tools.insert("gh".into(), Ok(vec![json!({ "name": "get_file_contents" }), json!({ "name": "search_code" })]));
+        });
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let args = json!({ "owner": "QwQdoge", "repo": "meo-ai", "query": "upload" });
+        let first = rt.block_on(c.repo_rules("GitHub", &args)).expect("rules on the first call");
+        assert!(first.contains("RULE: start in meo/core-rs.") && first.contains("QwQdoge/meo-ai"), "{first}");
+        assert!(rt.block_on(c.repo_rules("GitHub", &args)).is_none(), "only once per repository");
+        assert!(rt.block_on(c.repo_rules("GitHub", &json!({ "query": "x" }))).is_none(), "no repository, nothing to load");
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
     fn find_app_tool_finds_a_tool_that_was_not_offered_by_what_it_does() {
         let c = signed_in_core();
         c.update(|s| {
@@ -18216,6 +18276,17 @@ mod tests {
                                 json!({ "url": body["url"], "status": 404, "kind": "html", "title": "Gone", "body": "# Not here", "truncated": true }).to_string(),
                             )
                         }
+                    } else if path.ends_with("/tools/prepare") {
+                        (200, "application/json", json!({ "approval": { "approvalId": "ap" } }).to_string())
+                    } else if path.ends_with("/tools/call") {
+                        // A GitHub app: the repository has an AGENTS.md, every other call returns a line.
+                        let text = match body["arguments"]["path"].as_str() {
+                            Some("AGENTS.md") => "RULE: start in meo/core-rs.",
+                            Some(_) => "not found",
+                            None => "result",
+                        };
+                        let error = text == "not found";
+                        (200, "application/json", json!({ "result": { "content": [{ "type": "text", "text": text }], "isError": error } }).to_string())
                     } else if path == "/v1/search/web" {
                         (
                             200,
