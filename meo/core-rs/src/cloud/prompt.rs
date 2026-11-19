@@ -34,6 +34,8 @@ pub mod order {
     pub const LOCAL_SERVERS: i32 = 3200;
     pub const BROWSER: i32 = 3300;
     pub const COMPUTER: i32 = 3400;
+    /// What Meo AI can do on this device now, and how to turn on what is off (always sent).
+    pub const CAPABILITIES: i32 = 3500;
     /// What the folder's AGENTS.md / CLAUDE.md mean.
     pub const PROJECT_RULES: i32 = 9000;
     /// The `.agent/` state convention.

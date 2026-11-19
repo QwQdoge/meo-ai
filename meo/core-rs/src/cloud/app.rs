@@ -8742,6 +8742,7 @@ impl AppCore {
             plan_mode,
             apps: &hints,
         });
+        prompt.section("capabilities", prompt::order::CAPABILITIES, self.capabilities());
         let mut volatile = prompt::Prompt::new();
         self.run_context(&mut prompt, &mut volatile, root.as_deref(), &local_servers);
         self.put_harness(request, &prompt, &volatile);
@@ -9928,6 +9929,7 @@ impl AppCore {
             // No tools, but the project's repository still tells the model where its work lives.
             prompt::Prompt::new()
         };
+        prompt.section("capabilities", prompt::order::CAPABILITIES, self.capabilities());
         let host = self.state.lock().unwrap().agent.host.clone();
         let local_servers = match host.as_ref() {
             Some(h) => self.local_server_text(h).await,
@@ -9936,6 +9938,77 @@ impl AppCore {
         let mut volatile = prompt::Prompt::new();
         self.run_context(&mut prompt, &mut volatile, tools_root.as_deref(), &local_servers);
         self.put_harness(request, &prompt, &volatile);
+    }
+
+    /// What Meo AI can do on this device right now, and how the user turns on what is off. Sent with every
+    /// request (it changes only when a setting or the devices change), so the model never answers "I can't"
+    /// for something Meo AI does, and points to the switch instead.
+    fn capabilities(&self) -> String {
+        let s = self.state.lock().unwrap();
+        let computer_here = remote::can_host();
+        let work = s.route == "work";
+        let browser = s.prefs.get("work.browser").and_then(Value::as_str).unwrap_or("off").to_owned();
+        let computer_use = pref_bool(&s, "work.computer_use", false);
+        let web = pref_bool(&s, "chat.web_search", false);
+        let folder = s.agent.host.as_ref().map(|h| h.root().to_owned());
+        let computers: Vec<String> = s.remote.devices.values().filter(|d| d.hosts).map(|d| d.name.clone()).collect();
+        let apps: Vec<String> = s
+            .plugins
+            .as_ref()
+            .and_then(|r| r.as_ref().ok())
+            .map(|rows| rows.iter().filter(|p| p["enabled"] == true).filter_map(|p| p["name"].as_str().map(str::to_owned)).collect())
+            .unwrap_or_default();
+        let image = s.router.choice("image").is_some();
+        let schedules = s.schedule.len();
+        drop(s);
+        let mut lines = vec![
+            "## What Meo AI can do here".to_owned(),
+            format!(
+                "This device: {}. Never tell the user you cannot do something listed here; if it is off or lives on another device, say how to turn it on or where it works, in one sentence, and do what you can now.",
+                if computer_here { "a computer (desktop app)" } else if cfg!(target_arch = "wasm32") { "the web app" } else { "a phone or tablet" }
+            ),
+        ];
+        let off = |what: &str, how: &str| format!("- {what}: off. {how}");
+        lines.push(if web {
+            "- Web search and reading pages: on (web_search, web_fetch).".to_owned()
+        } else {
+            off("Web search", "The user turns it on with the globe button under the message box (or /search on); Auto also searches when a question needs fresh facts.")
+        });
+        lines.push(match (computer_here, browser.as_str()) {
+            (true, "off") => off("Browser control (opening sites, clicking, filling forms in a real browser)", "Settings > Permissions > Browser control. Until then use web_fetch to read pages."),
+            (true, mode) => format!("- Browser control: on ({mode}); see Browser control below."),
+            (false, _) if !computers.is_empty() => format!("- Browser control: runs on a computer, not here. The user can send this task to {} with Run on (under the message box).", computers.join(" or ")),
+            (false, _) => "- Browser control: runs in the Meo AI desktop app on a computer (Settings > Permissions > Browser control there).".to_owned(),
+        });
+        lines.push(match (computer_here, computer_use) {
+            (true, true) => "- Computer control (screen, mouse, keyboard): on; see Computer control below.".to_owned(),
+            (true, false) => off("Computer control (seeing and using the screen)", "Settings > Permissions > Computer control."),
+            (false, _) => "- Computer control: only in the desktop app on a computer.".to_owned(),
+        });
+        lines.push(match (&folder, computer_here, work) {
+            (Some(f), _, _) => format!("- Files and commands: on, in {f} (read, edit, run, background jobs with /jobs)."),
+            (None, true, true) => "- Files and commands: open a folder for this task (the folder button, or /workspace) and they work there.".to_owned(),
+            (None, true, false) => "- Files and commands: in Work (switch to Work at the top), with a folder of this computer.".to_owned(),
+            (None, false, _) if !computers.is_empty() => format!("- Files and commands: on a computer. Run on {} sends the task there, in the project's folder on that computer.", computers.join(" or ")),
+            (None, false, _) => "- Files and commands: in Work in the desktop app on a computer.".to_owned(),
+        });
+        if !computers.is_empty() {
+            lines.push(format!("- The user's other online computers: {}. Run on sends a message to one of them; an interrupted run or answer can be continued there with Continue on.", computers.join(", ")));
+        }
+        lines.push(if image {
+            "- Images: Meo makes pictures when the user asks for one (Auto picks the image model) or picks Image under Model, with shape, how many and quality there. You cannot draw inside this reply.".to_owned()
+        } else {
+            "- Images: need an image model, chosen in Settings > Models (Image route); then asking for a picture makes one.".to_owned()
+        });
+        lines.push(if apps.is_empty() {
+            "- Connected apps (GitHub, Google Drive, Notion and others through MCP): none connected yet; the user adds them on the Plugins page.".to_owned()
+        } else {
+            format!("- Connected apps: {} (their tools are listed with yours when they apply).", apps.join(", "))
+        });
+        lines.push(format!(
+            "- Scheduled tasks: /loop 30m <message> repeats a message, /schedule lists and changes them ({schedules} now). Projects keep instructions, files and memory for their chats; /remember saves a note to memory; /plan plans first and asks before changing anything; Sub-agents (under the message box) split big tasks."
+        ));
+        lines.join("\n")
     }
 
     /// The folder host's local MCP servers, with the browser and computer guidance when those are on.
@@ -17342,6 +17415,23 @@ mod tests {
         let s = c.state.lock().unwrap();
         assert_eq!(s.prefs.get("remote.project.p1"), Some(&json!("lap")));
         assert_eq!((s.route.as_str(), s.new_chat_project.as_deref(), s.active.as_deref()), ("work", Some("p1"), None));
+    }
+
+    #[test]
+    fn every_request_tells_the_model_what_meo_ai_can_do_and_how_to_turn_on_what_is_off() {
+        let folder = temp_folder("capabilities");
+        let api = fake_api(vec!["Sure.", "Sure."]);
+        let c = slow_chat_core(&api, &folder, Some("c1"));
+        c.update(|s| { s.prefs.insert("work.browser".into(), json!("off")); });
+        run(&c, Action::Send { text: "open example.com and check the price".into() });
+        let sent = |api: &FakeApi| api.streams.lock().unwrap().iter().map(|b| format!("{} {}", b["harness"]["text"].as_str().unwrap_or_default(), b["prompt"].as_str().unwrap_or_default())).collect::<Vec<_>>().join("\n");
+        let text = sent(&api);
+        assert!(text.contains("What Meo AI can do here") && text.contains("Never tell the user you cannot do something listed here"), "{text}");
+        if remote::can_host() {
+            assert!(text.contains("Browser control") && text.contains("Settings > Permissions > Browser control"), "{text}");
+        }
+        assert!(text.contains("Images:") && text.contains("Scheduled tasks"), "{text}");
+        let _ = std::fs::remove_dir_all(&folder);
     }
 
     #[test]
