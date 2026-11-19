@@ -850,6 +850,8 @@ struct RemoteLink {
     progress: Option<Value>,
     /// The background jobs each host last reported (device id → rows).
     jobs: BTreeMap<String, Vec<Value>>,
+    /// Controller side: a device asked to run or continue something, and when (unix seconds), until it answers.
+    awaiting: Option<(String, i64)>,
 }
 
 /// A self-hosted Meo API server the user configured as a personal cloud backend.
@@ -958,6 +960,8 @@ struct State {
     run_checkpoint: Option<(String, Value)>,
     /// The Meo API has no run checkpoints yet: stop writing them.
     checkpoints_unsupported: bool,
+    /// When this device last wrote its run checkpoint or heartbeat (unix seconds).
+    run_heartbeat_at: i64,
     /// Recent failures per model (`credential|model`), kept on the device; see [`ModelHealth`].
     model_health: HashMap<String, ModelHealth>,
     /// A chat opened with nothing cached yet: its messages are on the way.
@@ -5022,7 +5026,10 @@ impl AppCore {
             let s = self.state.lock().unwrap();
             (project_of_view(&s), permission_value(&s))
         };
-        self.update(|s| s.remote.task_host = Some(device.id.clone()));
+        self.update(|s| {
+            s.remote.task_host = Some(device.id.clone());
+            s.remote.awaiting = Some((device.id.clone(), super::now_secs()));
+        });
         self.remote_send(remote::message("task", &device.id, json!({ "text": text, "project": project, "permission": level })))
             .await;
         self.notice(
@@ -5345,6 +5352,11 @@ impl AppCore {
                 }
             }
             "remote.status" => {
+                self.update(|s| {
+                    if s.remote.awaiting.as_ref().is_some_and(|(id, _)| *id == from) {
+                        s.remote.awaiting = None;
+                    }
+                });
                 let host = self
                     .state
                     .lock()
@@ -6959,7 +6971,7 @@ impl AppCore {
             } else {
                 "finished"
             };
-            self.checkpoint_run(&id, status).await;
+            Box::pin(self.checkpoint_run(&id, status)).await;
         }
         match failure {
             Some(e) => {
@@ -7834,6 +7846,8 @@ impl AppCore {
 
     async fn tick(&self, utc_offset_min: i32) {
         let now = super::now_secs();
+        self.check_awaiting();
+        Box::pin(self.run_heartbeat()).await;
         // While the app is offline, one cheap request now and then finds out whether the connection is back.
         let (offline, signed_in) = {
             let s = self.state.lock().unwrap();
@@ -9606,11 +9620,81 @@ impl AppCore {
                 run["mine"] = json!(true);
                 run["fetchedAt"] = json!(super::now_secs());
                 s.run_checkpoint = Some((conversation_id.to_owned(), run));
+                s.run_heartbeat_at = super::now_secs();
             }),
-            Err(ApiError::Status { status: 404 | 405, code }) if code != "conversation_not_found" => {
+            Err(e) => Box::pin(self.checkpoint_refused(conversation_id, &e)).await,
+        }
+    }
+
+    /// A checkpoint write was refused: an API without checkpoints is not asked again; a run that another
+    /// device has continued meanwhile stops here, so the same work never runs twice.
+    async fn checkpoint_refused(&self, conversation_id: &str, e: &ApiError) {
+        match e {
+            ApiError::Status { code, .. } if code == "run_owned_elsewhere" => {
+                self.cancel.store(true, Ordering::SeqCst);
+                Box::pin(self.refresh_run(conversation_id)).await;
+                let device = self
+                    .state
+                    .lock()
+                    .unwrap()
+                    .run_checkpoint
+                    .as_ref()
+                    .and_then(|(_, r)| r["deviceName"].as_str().map(str::to_owned))
+                    .unwrap_or_else(|| "another device".to_owned());
+                self.notice("info", format!("This run is continuing on {device}, so it stopped here."));
+            }
+            ApiError::Status { status: 404 | 405, code } if code != "conversation_not_found" => {
                 self.update(|s| s.checkpoints_unsupported = true);
             }
-            Err(_) => {}
+            _ => {}
+        }
+    }
+
+    /// On each tick: a run going on here says so every minute, even in a long round (a long command),
+    /// so other devices do not take it for stopped.
+    async fn run_heartbeat(&self) {
+        let now = super::now_secs();
+        let due = {
+            let s = self.state.lock().unwrap();
+            s.run_checkpoint
+                .as_ref()
+                .filter(|(_, r)| r["mine"] == true && r["status"] == "running" && !s.checkpoints_unsupported)
+                .filter(|_| now - s.run_heartbeat_at >= 60)
+                .map(|(c, _)| c.clone())
+        };
+        let Some(conversation) = due else { return };
+        self.update(|s| s.run_heartbeat_at = now);
+        let result = self
+            .call(|api, t| {
+                let (cid, me) = (conversation.clone(), self.client_id.clone());
+                async move { api.run_heartbeat(&t, &cid, &me).await }
+            })
+            .await;
+        if let Err(e) = result {
+            Box::pin(self.checkpoint_refused(&conversation, &e)).await;
+        }
+    }
+
+    /// On each tick: a device asked to run or continue something that has not answered in 20 s is
+    /// probably closed. Say so and leave it out until it says hello again.
+    fn check_awaiting(&self) {
+        let now = super::now_secs();
+        let gone = {
+            let mut s = self.state.lock().unwrap();
+            match s.remote.awaiting.clone() {
+                Some((id, at)) if now - at >= 20 => {
+                    s.remote.awaiting = None;
+                    if s.remote.task_host.as_deref() == Some(id.as_str()) {
+                        s.remote.task_host = None;
+                        s.remote.progress = None;
+                    }
+                    s.remote.devices.remove(&id).map(|d| d.name)
+                }
+                _ => None,
+            }
+        };
+        if let Some(name) = gone {
+            self.notice("error", format!("{name} did not answer. It may be closed or offline; nothing was started there."));
         }
     }
 
@@ -9671,7 +9755,10 @@ impl AppCore {
         let (Some(target), Some(conversation)) = (target, conversation) else {
             return self.notice("error", "That device is not online any more.");
         };
-        self.update(|s| s.remote.task_host = Some(target.id.clone()));
+        self.update(|s| {
+            s.remote.task_host = Some(target.id.clone());
+            s.remote.awaiting = Some((target.id.clone(), super::now_secs()));
+        });
         self.remote_send(remote::message("continue", &target.id, json!({ "conversationId": conversation, "source": source })))
             .await;
         self.notice("info", format!("Continuing on {}. It runs there; follow it here.", target.name));
@@ -17033,6 +17120,55 @@ mod tests {
     }
 
     #[test]
+    fn a_device_that_does_not_answer_is_reported_and_left_out() {
+        let api = fake_api(vec![]);
+        let folder = temp_folder("awaiting");
+        let c = slow_chat_core(&api, &folder, Some("c1"));
+        c.update(|s| {
+            s.remote.devices.insert("lap".into(), remote::Device { id: "lap".into(), name: "Laptop".into(), platform: "linux", hosts: true });
+        });
+        run(&c, Action::ContinueOn { device: "lap".into(), source: "checkpoint".into() });
+        assert!(c.state.lock().unwrap().remote.awaiting.is_some());
+        // An answer clears it.
+        futures_executor::block_on(c.on_remote_message("remote.status", &json!({ "origin": "lap", "state": "started" }), false));
+        assert!(c.state.lock().unwrap().remote.awaiting.is_none());
+        // No answer within 20 s: told, and the device is left out.
+        c.update(|s| s.remote.awaiting = Some(("lap".into(), super::super::now_secs() - 30)));
+        c.check_awaiting();
+        let s = c.state.lock().unwrap();
+        assert!(!s.remote.devices.contains_key("lap"));
+        assert!(s.notice.as_ref().is_some_and(|n| n.1.contains("Laptop did not answer")), "{:?}", s.notice);
+        drop(s);
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn a_busy_run_sends_a_heartbeat_and_a_run_taken_over_elsewhere_stops_here() {
+        let folder = temp_folder("heartbeat");
+        let api = fake_api(vec![]);
+        let c = slow_chat_core(&api, &folder, Some("c1"));
+        c.update(|s| {
+            s.run_checkpoint = Some(("c1".into(), json!({ "status": "running", "mine": true })));
+            s.run_heartbeat_at = super::super::now_secs() - 90;
+        });
+        run(&c, Action::Tick { utc_offset_min: 0 });
+        let runs = api.runs.lock().unwrap().clone();
+        assert!(runs.iter().any(|r| r["heartbeat"] == true && r["deviceId"] == c.client_id.as_str()), "{runs:?}");
+        // Taken over: the next write is refused, so this device stops the run and says where it went.
+        let api = fake_api(vec!["@owned-elsewhere"]);
+        let c = slow_chat_core(&api, &folder, Some("c1"));
+        c.update(|s| {
+            s.run_checkpoint = Some(("c1".into(), json!({ "status": "running", "mine": true })));
+            s.run_heartbeat_at = super::super::now_secs() - 90;
+        });
+        run(&c, Action::Tick { utc_offset_min: 0 });
+        assert!(c.cancel.load(Ordering::SeqCst), "the run here stops");
+        let notice = c.state.lock().unwrap().notice.clone();
+        assert!(notice.as_ref().is_some_and(|n| n.1.contains("continuing on")), "{notice:?}");
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
     fn a_stream_that_ends_without_done_is_continued_not_kept_as_the_answer() {
         let folder = temp_folder("eof");
         let api = fake_api(vec!["@eof:The commits today: one, two, and", "Greeting", " three."]);
@@ -19245,9 +19381,11 @@ mod tests {
         let failing_image = replies.contains(&"@failing-image");
         let images = Arc::new(Mutex::new(Vec::<Value>::new()));
         let image_log = images.clone();
+        // "@owned-elsewhere": another device has continued the run, so checkpoint writes are refused.
+        let owned_elsewhere = replies.contains(&"@owned-elsewhere");
         let runs = Arc::new(Mutex::new(Vec::<Value>::new()));
         let run_log = runs.clone();
-        let replies: Vec<String> = replies.into_iter().filter(|r| *r != "@legacy" && *r != "@reject-native" && *r != "@no-harness" && *r != "@no-limits" && *r != "@slow" && *r != "@old-images" && *r != "@failing-image").map(str::to_owned).collect();
+        let replies: Vec<String> = replies.into_iter().filter(|r| *r != "@legacy" && *r != "@reject-native" && *r != "@no-harness" && *r != "@no-limits" && *r != "@slow" && *r != "@old-images" && *r != "@failing-image" && *r != "@owned-elsewhere").map(str::to_owned).collect();
         let streams = Arc::new(Mutex::new(Vec::<Value>::new()));
         let store = Arc::new(Mutex::new(seed));
         let compacts = Arc::new(Mutex::new(Vec::<Value>::new()));
@@ -19346,7 +19484,10 @@ mod tests {
                     let (status, content_type, payload) = if path.starts_with("/v1/images/") && old_images && (body.get("quality").is_some() || body.get("background").is_some()) {
                         (400, "application/json", json!({ "error": "invalid_request" }).to_string())
                     } else if path.starts_with("/v1/conversations/") && path.ends_with("/run") {
-                        if method == "PUT" {
+                        if method == "PUT" && owned_elsewhere {
+                            runs.lock().unwrap().push(body.clone());
+                            (409, "application/json", json!({ "error": { "code": "run_owned_elsewhere" }, "run": { "status": "running", "deviceId": "lap", "deviceName": "Laptop" } }).to_string())
+                        } else if method == "PUT" {
                             runs.lock().unwrap().push(body.clone());
                             (200, "application/json", json!({ "run": body }).to_string())
                         } else {

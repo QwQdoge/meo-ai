@@ -379,6 +379,12 @@ impl MeoApi {
         self.request(token, Method::PUT, &path, Some(body.clone())).await.map(|_| ())
     }
 
+    /// Says the run is still going on this device (a long round), without sending the log again.
+    pub async fn run_heartbeat(&self, token: &str, conversation_id: &str, device_id: &str) -> Result<(), ApiError> {
+        let path = format!("/v1/conversations/{conversation_id}/run");
+        self.request(token, Method::PUT, &path, Some(json!({ "heartbeat": true, "deviceId": device_id }))).await.map(|_| ())
+    }
+
     /// Tells Meo API the user stopped this answer, so it is not finished in the background.
     pub async fn chat_stop(&self, token: &str, request_id: &str) -> Result<(), ApiError> {
         self.request(token, Method::POST, "/v1/chat/stop", Some(json!({ "requestId": request_id }))).await.map(|_| ())
