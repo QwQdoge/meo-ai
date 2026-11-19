@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "Meo AI for Chrome",
+  "version": "0.1.0",
+  "description": "Lets Meo AI (chat.meoarch.org) open pages, read them, click and type in your Chrome, only after you turn it on.",
+  "permissions": ["tabs", "scripting", "storage"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    { "matches": ["https://chat.meoarch.org/*"], "js": ["bridge.js"], "run_at": "document_start" }
+  ],
+  "action": { "default_title": "Meo AI for Chrome", "default_popup": "popup.html" },
+  "icons": { "128": "icon.png" }
+}

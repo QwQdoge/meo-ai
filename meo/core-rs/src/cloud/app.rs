@@ -676,6 +676,8 @@ enum NativeTarget {
     WebFetch,
     /// `meo_docs`: Meo's own documentation and release notes (fixed first-party addresses, read like web_fetch).
     Docs,
+    /// A browser tool run in the user's Chrome through the Meo extension (web app; see `chrome.rs`).
+    Chrome,
     /// The model's own task list (`update_tasks`): kept here, never sent anywhere to run.
     Tasks,
     /// The run's goal (`set_goal`): kept here like the task list.
@@ -8306,6 +8308,16 @@ impl AppCore {
                 "parameters": { "type": "object", "properties": { "url": { "type": "string", "description": "The page address (http or https)." } }, "required": ["url"] } }));
             targets.insert("web_fetch".into(), NativeTarget::WebFetch);
         }
+        // The web app with the Meo extension and Browser control set to "My Chrome": the browser tools run
+        // in the user's own Chrome (on a computer the desktop's browser server provides them instead).
+        if chrome_on(&s) {
+            for d in super::chrome::tool_defs() {
+                if let Some(name) = d["name"].as_str() {
+                    targets.insert(name.to_owned(), NativeTarget::Chrome);
+                }
+                defs.push(d);
+            }
+        }
         // Meo's own documentation, always: how Meo AI works, where its settings are and what is new.
         defs.push(json!({ "name": "meo_docs", "description": "Read Meo's own documentation: how Meo AI, Meo Account and MeoArch work, where settings are, and what changed in the latest Meo AI releases. page: empty for the list of pages, a page name from that list (for example meo-ai, meo-account, install, privacy, api-reference), meoui/<name> for the design system, or whats-new for the latest release notes. Use it when the user asks how to do something in Meo, where a setting is, or what is new, instead of guessing.",
             "parameters": { "type": "object", "properties": { "page": { "type": "string" } } } }));
@@ -8871,6 +8883,10 @@ impl AppCore {
                 }),
                 None => Err("read_more needs an \"id\"".to_owned()),
             },
+            Some(NativeTarget::Chrome) => Ok(agent::ToolCall {
+                id: first.id.clone(),
+                tool: agent::Tool::Mcp { server: "browser".into(), tool: first.name.clone(), args },
+            }),
             Some(NativeTarget::Docs) => Ok(agent::ToolCall { id: first.id.clone(), tool: agent::Tool::WebFetch { url: docs_url(args["page"].as_str().unwrap_or_default()) } }),
             Some(NativeTarget::WebFetch) => match args["url"].as_str().filter(|u| !u.trim().is_empty()) {
                 Some(u) => Ok(agent::ToolCall { id: first.id.clone(), tool: agent::Tool::WebFetch { url: u.trim().to_owned() } }),
@@ -10018,6 +10034,9 @@ impl AppCore {
         lines.push(match (computer_here, browser.as_str()) {
             (true, "off") => off("Browser control (opening sites, clicking, filling forms in a real browser)", "Settings > Permissions > Browser control. Until then use web_fetch to read pages."),
             (true, mode) => format!("- Browser control: on ({mode}); see Browser control below."),
+            (false, "chrome") if super::chrome::ready() => format!("- Browser control: on, in the user's own Chrome through the Meo AI extension (browser_* tools; it opens a tab to work in, with the user's logins). If a tool says control is off, the user turns it on in the extension's popup.\n\n{}", agent::BROWSER_GUIDANCE),
+            (false, "chrome") => "- Browser control: set to My Chrome, but the Meo AI for Chrome extension is not installed or not answering in this Chrome; the user installs it (see meo_docs page meo-ai) and reloads this page.".to_owned(),
+            (false, _) if cfg!(target_arch = "wasm32") => "- Browser control: in Chrome with the Meo AI for Chrome extension: Settings > Permissions > Browser control > My Chrome (extension), then turn it on in the extension's popup. On a computer the desktop app can also do it.".to_owned(),
             (false, _) if !computers.is_empty() => format!("- Browser control: runs on a computer, not here. The user can send this task to {} with Run on (under the message box).", computers.join(" or ")),
             (false, _) => "- Browser control: runs in the Meo AI desktop app on a computer (Settings > Permissions > Browser control there).".to_owned(),
         });
@@ -10389,7 +10408,8 @@ impl AppCore {
             }
             _ => {}
         }
-        let needs_folder = !matches!(
+        let in_chrome = matches!(&call.tool, agent::Tool::Mcp { server, .. } if server == "browser") && chrome_on(&self.state.lock().unwrap());
+        let needs_folder = !in_chrome && !matches!(
             call.tool,
             agent::Tool::WebSearch { .. }
                 | agent::Tool::WebFetch { .. }
@@ -10429,6 +10449,7 @@ impl AppCore {
         let mut outcome = match (&call.tool, host) {
             (agent::Tool::WebSearch { query }, _) => self.run_web_search(query).await,
             (agent::Tool::WebFetch { url }, _) => self.run_web_fetch(url).await,
+            (agent::Tool::Mcp { tool, args, .. }, _) if in_chrome => super::chrome::call(tool, args).await,
             (agent::Tool::App { app, tool, args }, _) => {
                 let mut outcome = Box::pin(self.run_app(app, tool, args)).await;
                 if let Some(rules) = Box::pin(self.repo_rules(app, args)).await {
@@ -13654,6 +13675,12 @@ struct Rendered {
     blocks: Vec<Value>,
     /// In-app links the model wrote (`[Open settings](meo:settings/permissions)`), as buttons.
     links: Vec<Value>,
+}
+
+/// The browser tools go to the user's Chrome: the Meo extension answered on this page and Browser
+/// control is set to "My Chrome".
+fn chrome_on(s: &State) -> bool {
+    s.prefs.get("work.browser").and_then(Value::as_str) == Some("chrome") && super::chrome::ready()
 }
 
 /// Whether the background answer at `i` repeats an assistant answer right before or after it.

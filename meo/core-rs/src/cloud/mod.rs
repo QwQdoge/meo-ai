@@ -9,6 +9,7 @@ pub mod agent;
 pub mod api;
 pub mod app;
 pub mod auth;
+pub mod chrome;
 pub mod compaction;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod computer;

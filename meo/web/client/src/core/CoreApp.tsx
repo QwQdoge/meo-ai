@@ -4,6 +4,7 @@ import { Blocks } from "./rich";
 import { Lightbox, planPaste } from "./attachments";
 import { Icon, hasIcon } from "./icons";
 import browserHost from "./browserHost";
+import "./chromeBridge";
 
 // Formats the core reads itself (PDF, Word, Excel, PowerPoint, RTF): the page only hands over the bytes.
 const documentExtensions = ["pdf", "docx", "xlsx", "pptx", "rtf"];

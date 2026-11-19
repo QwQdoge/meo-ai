@@ -214,7 +214,7 @@ impl Tool {
             // Looking at a page in the browser (not clicking, typing or opening addresses) asks nothing.
             Tool::Mcp { server, tool, .. }
                 if server == "browser"
-                    && ["browser_snapshot", "browser_take_screenshot", "browser_tab_list", "browser_tabs", "browser_console_messages", "browser_network_requests", "browser_wait_for"]
+                    && ["browser_snapshot", "browser_take_screenshot", "browser_tab_list", "browser_tabs", "browser_console_messages", "browser_network_requests", "browser_wait_for", "browser_scroll"]
                         .iter()
                         .any(|p| tool == p) =>
             {
