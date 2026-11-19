@@ -1370,31 +1370,108 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
   };
   const last = messages[messages.length - 1]?.text?.length ?? 0;
 
+  // ---- Scrolling: the view glides after the reply instead of jumping, and stops the moment the reader
+  // scrolls. Big jumps (opening a chat) are instant; reduced motion makes every move instant.
+  const gliding = useRef(0);
+  const programmatic = useRef(false);
+  const reduced = () => document.documentElement.dataset.reduceMotion === "true" || matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const toBottom = (smooth = true) => {
+    const el = list.current;
+    if (!el) return;
+    const target = () => el.scrollHeight - el.clientHeight;
+    if (!smooth || reduced() || target() - el.scrollTop > el.clientHeight * 1.5) {
+      cancelAnimationFrame(gliding.current);
+      gliding.current = 0;
+      programmatic.current = true;
+      el.scrollTop = target();
+      requestAnimationFrame(() => { programmatic.current = false; });
+      return;
+    }
+    if (gliding.current) return;
+    const step = () => {
+      const left = target() - el.scrollTop;
+      if (!stick.current || left <= 0.5) { gliding.current = 0; programmatic.current = false; return; }
+      programmatic.current = true;
+      // Eases toward the moving bottom: fast when far, gentle when close, never overshooting.
+      el.scrollTop += Math.max(1, left * 0.22);
+      gliding.current = requestAnimationFrame(step);
+    };
+    gliding.current = requestAnimationFrame(step);
+  };
+  useEffect(() => () => cancelAnimationFrame(gliding.current), []);
+  // The reader takes over: wheel, touch or keys stop the glide; the position then decides whether to follow.
   useEffect(() => {
-    if (!stick.current) return;
-    end.current?.scrollIntoView({ block: "end" });
-    // Heights of messages that were skipped by content-visibility settle after the first pass.
-    const frame = requestAnimationFrame(() => stick.current && end.current?.scrollIntoView({ block: "end" }));
-    return () => cancelAnimationFrame(frame);
+    const el = list.current;
+    if (!el) return;
+    const takeOver = () => { cancelAnimationFrame(gliding.current); gliding.current = 0; programmatic.current = false; };
+    el.addEventListener("wheel", takeOver, { passive: true });
+    el.addEventListener("touchstart", takeOver, { passive: true });
+    el.addEventListener("keydown", takeOver);
+    return () => { el.removeEventListener("wheel", takeOver); el.removeEventListener("touchstart", takeOver); el.removeEventListener("keydown", takeOver); };
+  }, []);
+  // Something new arrived below while the reader was up the page: the jump button says so.
+  const [fresh, setFresh] = useState(false);
+  const seen = useRef({ count: messages.length, last });
+  useEffect(() => {
+    const grew = messages.length > seen.current.count || last > seen.current.last;
+    seen.current = { count: messages.length, last };
+    if (!stick.current) {
+      if (grew) setFresh(true);
+      return;
+    }
+    toBottom(true);
   }, [messages.length, last]);
+  // Opening another chat lands at its end at once.
+  useEffect(() => {
+    stick.current = true;
+    setFresh(false);
+    toBottom(false);
+    const frame = requestAnimationFrame(() => toBottom(false));
+    return () => cancelAnimationFrame(frame);
+  }, [page.id]);
+
+  // ---- Sending: the message flies from the box to its place in the chat; the button gives a small launch.
+  const flight = useRef<{ rect: DOMRect; text: string } | null>(null);
+  const [launched, setLaunched] = useState(false);
+  useLayoutEffect(() => {
+    const from = flight.current;
+    if (!from || reduced()) { flight.current = null; return; }
+    const bubbles = list.current?.querySelectorAll<HTMLElement>(".core-message.user .core-bubble");
+    const bubble = bubbles?.[bubbles.length - 1];
+    if (!bubble || !(bubble.textContent ?? "").includes(from.text.slice(0, 40))) return;
+    flight.current = null;
+    const to = bubble.getBoundingClientRect();
+    const dx = from.rect.left + from.rect.width / 2 - (to.left + to.width / 2);
+    const dy = from.rect.top + Math.min(from.rect.height, 60) / 2 - (to.top + to.height / 2);
+    const sx = Math.min(1.6, Math.max(0.6, from.rect.width / Math.max(to.width, 1)));
+    bubble.animate(
+      [
+        { transform: `translate(${dx}px, ${dy}px) scale(${sx}, 0.9)`, opacity: 0.35, filter: "blur(1px)" },
+        { transform: `translate(${dx * 0.15}px, ${dy * 0.08}px) scale(1.02)`, opacity: 1, filter: "none", offset: 0.7 },
+        { transform: "none", opacity: 1 },
+      ],
+      { duration: 420, easing: "cubic-bezier(.2,.8,.2,1)" },
+    );
+  }, [messages.length]);
   useEffect(() => fadeEdges(list.current), [messages.length, last, page.id]);
   // Steps opening, a step arriving or an image loading change the height without changing the text:
   // follow the bottom whenever the content resizes, so nothing jumps while a reply is being written.
   useEffect(() => {
     const el = list.current;
     if (!el || typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(() => { if (stick.current) end.current?.scrollIntoView({ block: "end" }); fadeEdges(el); });
+    const ro = new ResizeObserver(() => { if (stick.current) toBottom(true); fadeEdges(el); });
     Array.from(el.children).forEach((c) => ro.observe(c));
     return () => ro.disconnect();
   }, [page.id, messages.length]);
-  // Another chat opens at its end.
-  const firstId = messages[0]?.id;
-  useEffect(() => { stick.current = true; }, [firstId]);
 
   const send = () => {
     const text = input.trim();
     if (!text || composer.busy || !composer.sendAction) return;
     stick.current = true;
+    setFresh(false);
+    if (area.current) flight.current = { rect: area.current.getBoundingClientRect(), text };
+    setLaunched(true);
+    window.setTimeout(() => setLaunched(false), 450);
     recognition.current?.abort?.();
     recognition.current = null;
     setListening(false);
@@ -1432,8 +1509,10 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
         <div className="core-messages" ref={list} onScroll={(e) => {
           const el = e.currentTarget;
           const near = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-          stick.current = near;
-          setAtEnd(near);
+          // The glide's own steps are not the reader leaving the bottom.
+          if (!programmatic.current) stick.current = near;
+          setAtEnd(near || (programmatic.current && stick.current));
+          if (near) setFresh(false);
           fadeEdges(el);
         }}>
           {page.loading && (
@@ -1462,7 +1541,8 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
           <div ref={end} />
         </div>
         {!atEnd && messages.length > 0 && (
-          <button className="core-jump" aria-label={strings.jump ?? "Jump to the latest message"} title={strings.jump ?? "Jump to the latest message"} onClick={() => end.current?.scrollIntoView({ block: "end", behavior: "smooth" })}>
+          <button className={`core-jump${fresh ? " fresh" : ""}`} aria-label={strings.jump ?? "Jump to the latest message"} title={strings.jump ?? "Jump to the latest message"}
+            onClick={() => { stick.current = true; setFresh(false); toBottom(true); }}>
             <Icon name="arrow_down" size={18} />
           </button>
         )}
@@ -1575,7 +1655,7 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
                 <button className={`core-icon-btn core-voice${listening ? " listening" : ""}`} aria-label="Voice input" aria-pressed={listening} title={listening ? "Stop listening" : "Voice input"} onClick={toggleVoice}><Icon name="mic" size={20} /></button>
               )}
             <button
-                className="core-send"
+                className={`core-send${launched ? " launched" : ""}`}
                 aria-label={composer.busy ? (strings.stop ?? "Stop") : (strings.send ?? "Send")}
                 onClick={() => (composer.busy ? act(composer.stopAction) : send())}
               >

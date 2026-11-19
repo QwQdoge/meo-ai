@@ -781,3 +781,30 @@
 .core-app .core-sidebar .core-chat-row.device > button strong { font-weight: 500; }
 .core-app .core-sidebar .core-chat-row > button:disabled { opacity: .6; cursor: default; }
 @media (prefers-reduced-motion: reduce) { .core-app .core-sidebar .core-tree-toggle svg { transition: none; } }
+
+/* Send: the arrow lifts off and comes back from below; the button gives a small pulse. */
+.core-app .core-send.launched { animation: core-send-pulse .45s var(--ease, ease); }
+.core-app .core-send.launched svg { animation: core-launch .45s cubic-bezier(.3,.7,.2,1); }
+@keyframes core-launch { 0% { transform: none; opacity: 1; } 40% { transform: translateY(-16px); opacity: 0; } 41% { transform: translateY(12px); opacity: 0; } 100% { transform: none; opacity: 1; } }
+@keyframes core-send-pulse { 0% { box-shadow: 0 0 0 0 rgb(var(--accent-primary) / .45); } 100% { box-shadow: 0 0 0 10px rgb(var(--accent-primary) / 0); } }
+
+/* Jump to the latest: rises in, and a dot says something new arrived below. */
+.core-app .core-jump { animation: core-jump-in .22s cubic-bezier(.2,.8,.2,1); transition: transform .15s var(--ease, ease), box-shadow .2s; }
+.core-app .core-jump:hover { transform: translateX(-50%) translateY(-2px); }
+.core-app .core-jump.fresh::after { content: ""; position: absolute; top: 3px; right: 3px; width: 9px; height: 9px; border-radius: 50%;
+  background: rgb(var(--accent-primary)); box-shadow: 0 0 0 2px rgb(var(--surface-secondary)); animation: core-dot-in .25s cubic-bezier(.2,.9,.3,1.4); }
+@keyframes core-jump-in { from { opacity: 0; transform: translateX(-50%) translateY(10px) scale(.9); } }
+@keyframes core-dot-in { from { transform: scale(0); } }
+
+/* An assistant reply starts with a soft rise; the composer settles after sending. */
+.core-app .core-messages > .core-message.assistant:last-child { animation: core-reply-in .35s cubic-bezier(.2,.8,.2,1) both; }
+@keyframes core-reply-in { from { opacity: 0; transform: translateY(6px); } }
+.core-app .core-messages { scroll-behavior: auto; overscroll-behavior: contain; }
+
+@media (prefers-reduced-motion: reduce) {
+  .core-app .core-send.launched, .core-app .core-send.launched svg, .core-app .core-jump, .core-app .core-jump.fresh::after,
+  .core-app .core-messages > .core-message.assistant:last-child { animation: none; }
+}
+:root[data-reduce-motion="true"] .core-app .core-send.launched, :root[data-reduce-motion="true"] .core-app .core-send.launched svg,
+:root[data-reduce-motion="true"] .core-app .core-jump { animation: none; }
+.core-app .core-jump:not(:disabled):active { transform: translateX(-50%) scale(.94); }

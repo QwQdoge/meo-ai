@@ -44,11 +44,22 @@ export class WebCore {
         { role: "assistant", text: "", streaming: true, blocks: [{ type: "image_progress", count: images, done, failed: 0, aspect: params.get("shape") || "1:1" }] }];
       setTimeout(() => this.changed(), 500);
     }
+    for (const text of window.__sent ?? []) {
+      view.page?.messages?.push({ id: "", role: "user", text, actions: [], images: [], blocks: [] });
+    }
     // ?loading shows a chat whose messages are still on the way.
     if (params.has("loading") && view.page) { view.page.messages = []; view.page.empty = null; view.page.loading = true; }
     return JSON.stringify(view);
   }
-  dispatch(action) { console.log("action", action); }
+  dispatch(action) {
+    console.log("action", action);
+    // A sent message shows up like a real one, so the send animation can be seen.
+    const a = JSON.parse(action);
+    if (a.type === "send" && a.text) {
+      (window.__sent ??= []).push(a.text);
+      setTimeout(() => this.changed(), 0);
+    }
+  }
   async start() {}
   free() {}
 }
