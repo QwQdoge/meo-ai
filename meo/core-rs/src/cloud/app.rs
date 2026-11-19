@@ -231,6 +231,16 @@ pub enum Action {
     StartProjectWork {
         id: String,
     },
+    /// Starts a Work task in a project on `device` ("" = this one), which becomes the project's default.
+    WorkOn {
+        project: String,
+        device: String,
+    },
+    /// Makes `device` ("" = this one) where this project's tasks run by default.
+    SetProjectDevice {
+        project: String,
+        device: String,
+    },
     DismissNotice,
     /// Filters the chat list by title and message text (empty clears it).
     Search {
@@ -1428,6 +1438,19 @@ impl AppCore {
                 self.project_agent_write(&id, |root| project_env::add_todo(root, &text));
             }
             Action::CloneProjectRepo { id } => self.clone_project_repo(&id).await,
+            Action::WorkOn { project, device } => {
+                self.set_setting(format!("remote.project.{project}"), json!(device)).await;
+                self.update(|s| {
+                    s.files.clear();
+                    s.pending_files.clear();
+                    s.active = None;
+                    s.route = "work".into();
+                    s.new_chat_project = Some(project);
+                });
+            }
+            Action::SetProjectDevice { project, device } => {
+                self.set_setting(format!("remote.project.{project}"), json!(device)).await;
+            }
             Action::StartProjectWork { id } => self.update(|s| {
                 s.files.clear();
                 s.pending_files.clear();
@@ -5012,8 +5035,8 @@ impl AppCore {
         if !matches!(s.route.as_str(), "work" | "chat") || !pref_bool(&s, "remote.enabled", true) {
             return None;
         }
-        let id = s.prefs.get("remote.target").and_then(Value::as_str)?;
-        s.remote.devices.get(id).filter(|d| d.hosts).cloned()
+        let (id, _) = run_on_choice(&s);
+        s.remote.devices.get(&id).filter(|d| d.hosts).cloned()
     }
 
     async fn remote_dispatch(&self, device: remote::Device, text: String) {
@@ -11472,7 +11495,29 @@ fn shell_sidebar(s: &State) -> Value {
                         "title": p["name"],
                         "selected": s.open_project.as_deref() == Some(id) && s.route == "projects",
                         "action": { "type": "open_project", "id": id },
-                        "children": if work { vec![] } else {
+                        // A tree: in Chat the project's chats; in Work the computers that have its folders
+                        // (one tap starts a task there) and then its tasks.
+                        "children": if work {
+                            let default = project_default_device(s, id);
+                            let mut rows: Vec<Value> = project_devices(s, id)
+                                .into_iter()
+                                .filter(|(_, _, folders, _, _)| !folders.is_empty())
+                                .map(|(device, name, folders, online, can_work)| {
+                                    let folder = folders.first().map(|f| {
+                                        std::path::Path::new(f).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| f.clone())
+                                    }).unwrap_or_default();
+                                    json!({
+                                        "id": format!("dev:{id}:{device}"),
+                                        "title": format!("{name} · {folder}"),
+                                        "subtitle": if device == default { "Default" } else if online || device.is_empty() { "" } else { "Offline" },
+                                        "icon": "device", "kind": "device", "device": name,
+                                        "action": if can_work { json!({ "type": "work_on", "project": id, "device": device }) } else { Value::Null },
+                                    })
+                                })
+                                .collect();
+                            rows.extend(s.conversations.iter().filter(|c| c.project_id.as_deref() == Some(id) && s.work_ids.contains(&c.id)).map(&chat_item));
+                            rows
+                        } else {
                             s.conversations.iter().filter(|c| c.project_id.as_deref() == Some(id) && !s.work_ids.contains(&c.id)).map(&chat_item).collect::<Vec<_>>()
                         },
                     })
@@ -11486,10 +11531,11 @@ fn shell_sidebar(s: &State) -> Value {
         .filter(|c| c.project_id.is_none() && !s.work_ids.contains(&c.id))
         .map(&chat_item)
         .collect();
+    // Tasks of a project sit under it in the tree (like project chats in Chat).
     let tasks: Vec<Value> = s
         .conversations
         .iter()
-        .filter(|c| s.work_ids.contains(&c.id))
+        .filter(|c| s.work_ids.contains(&c.id) && c.project_id.is_none())
         .map(&chat_item)
         .collect();
     let mut sections = vec![
@@ -13907,6 +13953,33 @@ fn conversation_page(s: &State) -> Value {
     })
 }
 
+/// Where "Run on" is remembered for what is open: per project (`remote.project.<id>`), else per mode
+/// (`remote.target.chat` for Chat, `remote.target` for Work). Choosing a device once makes it the default
+/// there; a project without its own choice uses the mode's.
+fn run_on_keys(s: &State) -> Vec<String> {
+    let mode = if s.route == "chat" { "remote.target.chat" } else { "remote.target" };
+    let mut keys = Vec::new();
+    if let Some(project) = project_of_view(s) {
+        keys.push(format!("remote.project.{project}"));
+    }
+    keys.push(mode.to_owned());
+    if mode != "remote.target" {
+        keys.push("remote.target".to_owned());
+    }
+    keys
+}
+
+/// The chosen device id for what is open ("" = this device), and the key it is saved under when changed.
+fn run_on_choice(s: &State) -> (String, String) {
+    let keys = run_on_keys(s);
+    let chosen = keys
+        .iter()
+        .find_map(|k| s.prefs.get(k).and_then(Value::as_str))
+        .unwrap_or_default()
+        .to_owned();
+    (chosen, keys[0].clone())
+}
+
 /// "Run on": this device or another of the user's devices that can host Work (Chat and Work pages).
 fn run_on_control(s: &State) -> Option<Value> {
     if !matches!(s.route.as_str(), "work" | "chat") || !pref_bool(s, "remote.enabled", true) {
@@ -13928,18 +14001,22 @@ fn run_on_control(s: &State) -> Option<Value> {
             }
         }
     }
-    let chosen = s
-        .prefs
-        .get("remote.target")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    let value = if options.iter().any(|o| o["value"] == chosen) {
+    let (chosen, key) = run_on_choice(s);
+    let value = if options.iter().any(|o| o["value"] == chosen.as_str()) {
         chosen
     } else {
-        ""
+        String::new()
+    };
+    // The label says what the choice is remembered for.
+    let label = if key.starts_with("remote.project.") {
+        "Run this project on"
+    } else if s.route == "chat" {
+        "Run chats on"
+    } else {
+        "Run on"
     };
     Some(json!({
-        "id": "run_on", "label": "Run on", "kind": "select", "binding": "remote.target",
+        "id": "run_on", "label": label, "kind": "select", "binding": key,
         "icon": "devices", "value": value, "options": options, "align": "start",
     }))
 }
@@ -14490,6 +14567,36 @@ fn item(id: String, label: &str, value: &str, buttons: Vec<Value>) -> Value {
     json!({ "id": id, "kind": "item", "label": label, "value": value, "buttons": buttons })
 }
 
+/// One device of a project: (id, name, folders, online, can run Work for it now). "" is this device.
+type ProjectDevice = (String, String, Vec<String>, bool, bool);
+
+/// The devices a project can run on: this one, every device that told us its folders for the project,
+/// and every other online computer (which can be given a folder there).
+fn project_devices(s: &State, project: &str) -> Vec<ProjectDevice> {
+    let env = s.project_env.get(project).cloned().unwrap_or_default();
+    let mut here: Vec<String> = env.folder.iter().cloned().collect();
+    here.extend(env.folders.iter().cloned());
+    let mut out: Vec<ProjectDevice> = vec![(String::new(), "This device".to_owned(), here, true, remote::can_host())];
+    for (id, other) in &env.elsewhere {
+        let online = s.remote.devices.get(id).is_some_and(|d| d.hosts);
+        out.push((id.clone(), other.device.clone(), other.folders.clone(), online, online));
+    }
+    for d in s.remote.devices.values().filter(|d| d.hosts && !env.elsewhere.contains_key(&d.id)) {
+        out.push((d.id.clone(), d.name.clone(), Vec::new(), true, true));
+    }
+    out
+}
+
+/// The device a project's tasks run on by default ("" = this device).
+fn project_default_device(s: &State, project: &str) -> String {
+    s.prefs
+        .get(&format!("remote.project.{project}"))
+        .or_else(|| s.prefs.get("remote.target"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned()
+}
+
 /// Like [`item`], for rows whose texts are ours (not the user's content), so they are translated.
 fn own_item(id: String, label: &str, value: &str, buttons: Vec<Value>) -> Value {
     let mut row = item(id, label, value, buttons);
@@ -14636,8 +14743,38 @@ fn project_page(s: &State, id: &str) -> Value {
             } else {
                 "Everything this project needs is in your account, so its runs can continue on any device, and hosted runs will be able to start from it."
             } }),
-        json!({ "id": "env_h_folder", "kind": "heading", "label": "Folder" }),
     ];
+    // ---- Devices: where this project's Work can run, each with its own folders.
+    environment.push(json!({ "id": "env_h_devices", "kind": "heading", "label": "Devices" }));
+    let default_device = project_default_device(s, id);
+    for (device, name, folders, online, can_work) in project_devices(s, id) {
+        let is_default = device == default_device;
+        let mut buttons = Vec::new();
+        if can_work {
+            buttons.push(button(
+                if device.is_empty() { "Work here" } else { "Work there" },
+                if is_default { "primary" } else { "secondary" },
+                json!({ "type": "work_on", "project": id, "device": device }),
+            ));
+        }
+        if !is_default {
+            buttons.push(button("Make default", "secondary", json!({ "type": "set_project_device", "project": id, "device": device })));
+        }
+        let folders_text = if folders.is_empty() { "No folder for this project yet".to_owned() } else { folders.join("\n") };
+        let status = match (is_default, online || device.is_empty()) {
+            (true, true) => " · default",
+            (true, false) => " · default · offline",
+            (false, false) => " · offline",
+            _ => "",
+        };
+        let mut row = own_item(format!("env_device_{}", if device.is_empty() { "here" } else { device.as_str() }), &format!("{name}{status}"), &folders_text, buttons);
+        row["icon"] = json!("device");
+        row["device"] = json!(name);
+        environment.push(row);
+    }
+    environment.push(json!({ "id": "env_devices_note", "kind": "hint",
+        "text": "Each computer keeps its own folders for the project. To give another computer a folder, open this project there and choose it; Work there then runs in that folder. New tasks in this project run on the default device." }));
+    environment.push(json!({ "id": "env_h_folder", "kind": "heading", "label": "Folder" }));
     let folder_buttons = match (&env.folder, can_host) {
         (Some(_), true) => vec![
             button(
@@ -14687,14 +14824,6 @@ fn project_page(s: &State, id: &str) -> Value {
             "action": { "type": "pick_project_folder", "id": id, "add": true } }));
         environment.push(json!({ "id": "env_add_folder", "kind": "button", "label": "Type a folder path", "style": "secondary",
             "action": { "type": "begin_add_project_folder", "id": id } }));
-    }
-    for (device_id, other) in &env.elsewhere {
-        environment.push(own_item(
-            format!("env_elsewhere_{device_id}"),
-            &format!("On {}", other.device),
-            &other.folders.join("\n"),
-            vec![],
-        ));
     }
     environment.push(json!({ "id": "env_h_cloud", "kind": "heading", "label": "Cloud files" }));
     for (i, source) in env.sources.iter().enumerate() {
@@ -17169,6 +17298,53 @@ mod tests {
     }
 
     #[test]
+    fn run_on_is_remembered_per_project_and_for_chat_and_projects_list_their_devices() {
+        let c = signed_in_core();
+        c.update(|s| {
+            s.remote.devices.insert("desk".into(), remote::Device { id: "desk".into(), name: "Studio PC".into(), platform: "linux", hosts: true });
+            s.remote.devices.insert("lap".into(), remote::Device { id: "lap".into(), name: "Laptop".into(), platform: "linux", hosts: true });
+            s.conversations = vec![
+                ConversationSummary { id: "c1".into(), title: "plain".into(), updated_at: String::new(), project_id: None, mode: None },
+                ConversationSummary { id: "t1".into(), title: "task".into(), updated_at: String::new(), project_id: Some("p1".into()), mode: None },
+            ];
+            s.work_ids.push("t1".into());
+            s.projects = Some(Ok(vec![json!({ "id": "p1", "name": "Site" })]));
+            let mut env = project_env::ProjectEnv::default();
+            env.elsewhere.insert("desk".into(), project_env::Elsewhere { device: "Studio PC".into(), folders: vec!["/home/me/site".into()], at: 1 });
+            s.project_env.insert("p1".into(), env);
+            s.prefs.insert("remote.target.chat".into(), json!("lap"));
+            s.prefs.insert("remote.project.p1".into(), json!("desk"));
+        });
+        // Chat: its own default.
+        c.update(|s| { s.route = "chat".into(); s.active = Some("c1".into()); });
+        let s = c.state.lock().unwrap();
+        assert_eq!(run_on_choice(&s), ("lap".to_owned(), "remote.target.chat".to_owned()));
+        drop(s);
+        assert_eq!(c.remote_target().map(|d| d.id), Some("lap".into()));
+        // A task in the project: the project's default.
+        c.update(|s| { s.route = "work".into(); s.active = Some("t1".into()); });
+        assert_eq!(c.remote_target().map(|d| d.id), Some("desk".into()));
+        // The project page lists this device and the computers, with their folders and Work there.
+        let s = c.state.lock().unwrap();
+        let devices = project_devices(&s, "p1");
+        assert!(devices.iter().any(|d| d.0 == "desk" && d.2 == vec!["/home/me/site".to_owned()] && d.4));
+        assert!(devices.iter().any(|d| d.0 == "lap" && d.2.is_empty()));
+        drop(s);
+        // Work sidebar: the project is a tree with the computer that has its folder, then its task.
+        let v = c.view();
+        let projects = v["sidebar"]["sections"].as_array().unwrap().iter().find(|s| s["id"] == "projects").cloned().unwrap();
+        let kids = projects["items"][0]["children"].as_array().cloned().unwrap();
+        assert_eq!(kids[0]["kind"], "device");
+        assert_eq!(kids[0]["action"]["type"], "work_on");
+        assert!(kids.iter().any(|k| k["id"] == "t1"), "{kids:?}");
+        // Work there: that device becomes the project's default and a new task opens in the project.
+        run(&c, Action::WorkOn { project: "p1".into(), device: "lap".into() });
+        let s = c.state.lock().unwrap();
+        assert_eq!(s.prefs.get("remote.project.p1"), Some(&json!("lap")));
+        assert_eq!((s.route.as_str(), s.new_chat_project.as_deref(), s.active.as_deref()), ("work", Some("p1"), None));
+    }
+
+    #[test]
     fn a_stream_that_ends_without_done_is_continued_not_kept_as_the_answer() {
         let folder = temp_folder("eof");
         let api = fake_api(vec!["@eof:The commits today: one, two, and", "Greeting", " three."]);
@@ -17819,7 +17995,8 @@ mod tests {
         assert!(env.sources.is_empty(), "the newer change removed the cloud file");
         assert!(env.folder.is_none() && env.elsewhere["laptop"].folders == ["/home/me/site"]);
         assert!(c.storage.load(KEY_PROJECT_ENV).unwrap().contains("acme/site"), "kept for the next start");
-        assert!(project_page(&c.state.lock().unwrap(), "p1").to_string().contains("On Laptop"));
+        let page = project_page(&c.state.lock().unwrap(), "p1").to_string();
+        assert!(page.contains("env_device_laptop") && page.contains("/home/me/site"), "{page}");
         // A device that appears is told everything this one has.
         c.update(|s| {
             s.project_env.entry("p2".into()).or_default().repo = Some("me/other".into());

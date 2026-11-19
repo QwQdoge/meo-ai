@@ -384,5 +384,13 @@
   "Nothing": "没有",
   "Instructions, files, memory, cloud links, the GitHub repository, its chats and where each Work run stands": "说明、文件、记忆、云端链接、GitHub 仓库、对话，以及每个 Work 任务的进度",
   "A Work run here saves its progress after every round, so another device can continue it if this one closes. Give the project a GitHub repository or cloud links so the work does not depend on this folder; hosted runs will start from those.": "在这里运行的 Work 任务每一轮都会保存进度，这台设备关掉了，其他设备也能接着做。给项目关联 GitHub 仓库或云端链接，工作就不会依赖这个文件夹；以后的云端运行也会从它们开始。",
-  "Everything this project needs is in your account, so its runs can continue on any device, and hosted runs will be able to start from it.": "这个项目需要的东西都在你的账号里，任务可以在任何设备上继续，以后也能直接在云端运行。"
+  "Everything this project needs is in your account, so its runs can continue on any device, and hosted runs will be able to start from it.": "这个项目需要的东西都在你的账号里，任务可以在任何设备上继续，以后也能直接在云端运行。",
+  "Run chats on": "聊天在哪台设备运行",
+  "Run this project on": "这个项目在哪台设备运行",
+  "Devices": "设备",
+  "Work there": "在那里工作",
+  "Make default": "设为默认",
+  "No folder for this project yet": "这台设备上还没有这个项目的文件夹",
+  "Each computer keeps its own folders for the project. To give another computer a folder, open this project there and choose it; Work there then runs in that folder. New tasks in this project run on the default device.": "每台电脑都有自己的项目文件夹。要给另一台电脑设置文件夹，在那台电脑上打开这个项目并选择文件夹；之后在那里的 Work 就会在那个文件夹里运行。这个项目的新任务默认在默认设备上运行。",
+  "This device": "这台设备"
 }

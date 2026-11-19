@@ -97,9 +97,25 @@ function Sidebar({ sidebar, strings, act, open, setOpen }: { sidebar: Spec; stri
       </aside>
     );
   }
-  const row = (item: Spec, depth = 0): ReactNode => (
-    <li key={item.id} className="core-chat-row" style={{ paddingInlineStart: depth * 14 }}>
-      <button aria-current={item.selected ? "true" : undefined} onClick={() => go(item.action)}>
+  // Projects open and close in the tree; which are closed is remembered on this device.
+  const [closed, setClosed] = useState<Record<string, boolean>>(() => {
+    try { return JSON.parse(localStorage.getItem("meo.tree.closed") ?? "{}"); } catch { return {}; }
+  });
+  const toggle = (id: string) => setClosed((was) => {
+    const next = { ...was, [id]: !was[id] };
+    try { localStorage.setItem("meo.tree.closed", JSON.stringify(next)); } catch { /* private mode */ }
+    return next;
+  });
+  const row = (item: Spec, depth = 0, branch?: { open: boolean; count: number }): ReactNode => (
+    <li key={item.id} className={`core-chat-row depth-${depth}${item.kind ? " " + item.kind : ""}`} style={{ paddingInlineStart: depth * 14 }}>
+      {branch && branch.count > 0 && (
+        <span role="button" tabIndex={0} className={`core-tree-toggle${branch.open ? " open" : ""}`} aria-label={branch.open ? "Collapse" : "Expand"}
+          aria-expanded={branch.open} onClick={() => toggle(item.id)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(item.id); } }}>
+          <Icon name="chevron_right" size={14} />
+        </span>
+      )}
+      <button aria-current={item.selected ? "true" : undefined} disabled={!item.action} onClick={() => go(item.action)}>
+        {item.icon && hasIcon(item.icon) && <Icon name={item.icon} size={14} className="core-row-icon" />}
         <strong>{item.title}</strong>
         {item.subtitle && <span>{item.subtitle}</span>}
       </button>
@@ -148,12 +164,17 @@ function Sidebar({ sidebar, strings, act, open, setOpen }: { sidebar: Spec; stri
                 </button>
                 {!collapsed && sec.kind === "tree" && (
                   <ul className="core-list">
-                    {(sec.items ?? []).map((p: Spec) => (
-                      <React.Fragment key={p.id}>
-                        {row(p, 1)}
-                        {(p.children ?? []).map((c: Spec) => row(c, 2))}
-                      </React.Fragment>
-                    ))}
+                    {(sec.items ?? []).map((p: Spec) => {
+                      const kids: Spec[] = p.children ?? [];
+                      // A project with the open chat or task inside stays open.
+                      const open = !closed[p.id] || kids.some((c) => c.selected);
+                      return (
+                        <React.Fragment key={p.id}>
+                          {row(p, 1, { open, count: kids.length })}
+                          {open && kids.map((c: Spec) => row(c, 2))}
+                        </React.Fragment>
+                      );
+                    })}
                   </ul>
                 )}
               </>

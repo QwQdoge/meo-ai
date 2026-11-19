@@ -68,7 +68,30 @@ export function useCore() {
         core.current = instance;
         setView(JSON.parse(instance.view()));
         instance.dispatch(JSON.stringify({ type: "set_locale", locale: navigator.language }));
-        await instance.start();
+        // Start reads the saved session at once and then syncs with the network (seconds). The address the
+        // tab was opened at (/settings, a chat) is applied as soon as the saved session says "signed in",
+        // without waiting for that sync.
+        const starting = instance.start();
+        const open = (path: string) => instance.dispatch(JSON.stringify({ type: "open_path", path }));
+        const first = sessionStorage.getItem(WANTED);
+        if (!first) synced.current = true;
+        const applyWanted = async () => {
+          if (!first) return;
+          for (let i = 0; i < 300 && !disposed; i++) {
+            const state = JSON.parse(instance.view()).auth?.state;
+            if (state === "signed_in") {
+              sessionStorage.removeItem(WANTED);
+              open(first);
+              synced.current = true;
+              return;
+            }
+            // Signed out after start finished: the address waits for the sign-in redirect.
+            if (state === "signed_out" && i > 40) return;
+            await new Promise((done) => window.setTimeout(done, i < 40 ? 25 : 200));
+          }
+        };
+        const applying = applyWanted();
+        await starting;
         // Live sync with the user's other devices.
         instance.dispatch(JSON.stringify({ type: "realtime" }));
         // The core has no clock of its own: it delivers scheduled tasks and reports finished jobs on this tick.
@@ -80,14 +103,11 @@ export function useCore() {
           history.replaceState(null, "", "/");
           instance.dispatch(JSON.stringify({ type: "auth_callback", url }));
         }
-        const open = (path: string) => instance.dispatch(JSON.stringify({ type: "open_path", path }));
         // Back and forward buttons.
         listen(window, "popstate", () => { if (!disposed && core.current === instance) open(location.pathname); });
-        // The address the tab was opened at is applied once the user is signed in (after the sign-in
-        // redirect, when there was one); until then the address bar is left alone.
-        const first = sessionStorage.getItem(WANTED);
-        if (!first) synced.current = true;
-        else {
+        // After a sign-in redirect the session arrives only now: the address is applied then.
+        await applying;
+        if (!synced.current && first && sessionStorage.getItem(WANTED)) {
           for (let i = 0; i < 75 && !disposed; i++) {
             if (JSON.parse(instance.view()).auth?.state === "signed_in") {
               sessionStorage.removeItem(WANTED);

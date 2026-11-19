@@ -104,6 +104,18 @@ fn control(c: &HashMap<String, String>, item: &mut Value) {
     field(c, item, "label");
     field(c, item, "description");
     field(c, item, "placeholder");
+    // A project's device rows: "<name> · default · offline" with the device's own name kept.
+    if item["id"].as_str().is_some_and(|id| id.starts_with("env_device_")) {
+        let name = item["device"].as_str().unwrap_or_default().to_owned();
+        let label = item["label"].as_str().unwrap_or_default().to_owned();
+        let rest = label.strip_prefix(name.as_str()).unwrap_or_default()
+            .replace(" · default", " · 默认").replace(" · offline", " · 离线");
+        let name = if name == "This device" { "这台设备".to_owned() } else { name };
+        item["label"] = Value::String(format!("{name}{rest}"));
+        field(c, item, "value");
+        buttons(c, item, "buttons");
+        return;
+    }
     // The project's "where it lives" rows: product copy, plus the folder's own name.
     if item["id"].as_str().is_some_and(|id| id.starts_with("env_where_")) {
         field(c, item, "value");
@@ -190,6 +202,14 @@ pub fn localize(view: &mut Value, locale: &str) {
             buttons(c, section, "tabs");
             let chats = section["id"] == "chats";
             let each_item = |item: &mut Value| {
+                // A computer under a project: "This device · folder", and Default / Offline.
+                if item["kind"] == "device" {
+                    field(c, item, "subtitle");
+                    if let Some(rest) = item["title"].as_str().and_then(|t| t.strip_prefix("This device")).map(str::to_owned) {
+                        item["title"] = Value::String(format!("这台设备{rest}"));
+                    }
+                    return;
+                }
                 // Only the "New chat" placeholder matches; titles are the user's own.
                 if chats || item.get("menu").is_some() {
                     field(c, item, "title");
