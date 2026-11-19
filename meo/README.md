@@ -10,6 +10,7 @@ Newelle attribution and license remain in the repository root.
 
 See [architecture](docs/architecture.md), [AgentService contract](docs/agent-service-contract.md),
 [SystemTool contract](docs/system-tool-contract.md) and [upstream policy](docs/upstream-policy.md).
+What real usage shows and what was fixed: [reliability audit 2026-11-19](docs/reliability-audit-2026-11-19.md).
 
 ## Build
 

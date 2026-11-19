@@ -373,5 +373,7 @@
   "{done} of {n} ready": "已完成 {done}/{n}",
   "Ready": "已完成",
   "Could not be made": "生成失败",
-  "Your images are ready.": "图片已生成。"
+  "Your images are ready.": "图片已生成。",
+  "not available": "不可用",
+  "not answering": "没有回应"
 }

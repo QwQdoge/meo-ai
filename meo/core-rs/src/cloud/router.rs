@@ -490,7 +490,9 @@ pub fn suggest(models: &[(String, Model)]) -> HashMap<String, Choice> {
                 "doubao-seedream-5",
                 "gpt-image",
                 "seedream",
-                "qwen-image-max",
+                // qwen-image-max is left out: through the OpenAI-style images endpoint it fails in 1-3 s
+                // (DashScope serves it on its own API). A model that fails like that is also marked
+                // "not available" in Settings by the model health record.
                 "imagen",
                 "dall-e-3",
                 "flux-1.1-pro",

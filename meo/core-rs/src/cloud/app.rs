@@ -509,6 +509,44 @@ struct Orchestration {
     judge: Option<Choice>,
 }
 
+/// What this device has seen of a model's recent calls. A model the provider does not offer, or one
+/// that keeps answering busy / unavailable, rests for a while so answers stop waiting on it.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+struct ModelHealth {
+    /// Failed calls in a row (a success resets it).
+    fails: u32,
+    /// The provider said it does not offer this model (404).
+    missing: bool,
+    /// The last error code from Meo API.
+    code: String,
+    /// Unix seconds until which the model is skipped when another one can answer.
+    until: i64,
+}
+
+const KEY_MODEL_HEALTH: &str = "model-health";
+
+/// A failure that says something about the model itself: Some(true) when it does not exist, Some(false)
+/// when it is busy, down or too slow. A refused request or a sign-in problem is not the model's fault.
+fn model_failure(e: &ApiError) -> Option<bool> {
+    match e {
+        // Not offered by the provider, or (for pictures) a model that cannot answer this kind of request.
+        ApiError::Status { code, .. } if code == "ai_model_or_endpoint_not_found" || code == "invalid_ai_provider_image" => Some(true),
+        ApiError::Status { code, .. } if matches!(code.as_str(),
+            "ai_provider_rate_limited" | "ai_provider_unavailable" | "ai_provider_request_timeout" | "ai_provider_unreachable") => Some(false),
+        ApiError::Stream(_) => Some(false),
+        _ => None,
+    }
+}
+
+fn health_key(choice: &Choice) -> String {
+    format!("{}|{}", choice.0, choice.1)
+}
+
+/// Whether `choice` is resting now.
+fn resting(s: &State, choice: &Choice, now: i64) -> bool {
+    s.model_health.get(&health_key(choice)).is_some_and(|h| h.until > now)
+}
+
 /// Pictures being created: how many, how many landed or failed, and their shape for the placeholders.
 #[derive(Clone, Debug)]
 struct ImageJob {
@@ -900,6 +938,8 @@ struct State {
     waiting: Option<(Option<String>, String, bool)>,
     /// Pictures being created for a chat: shown as placeholder cards that fill in as each one lands.
     image_job: Option<ImageJob>,
+    /// Recent failures per model (`credential|model`), kept on the device; see [`ModelHealth`].
+    model_health: HashMap<String, ModelHealth>,
     /// A chat opened with nothing cached yet: its messages are on the way.
     loading_chat: Option<String>,
     /// The Meo API refused the image quality / background options (an older API): send without them.
@@ -1678,7 +1718,9 @@ impl AppCore {
             .and_then(|v| v.split_once('|'))
             .map(|(c, m)| (c.to_owned(), m.to_owned()));
         let signed_in = session.is_some();
+        let model_health = self.load_json::<HashMap<String, ModelHealth>>(KEY_MODEL_HEALTH).unwrap_or_default();
         self.update(|s| {
+            s.model_health = model_health;
             s.session = session;
             s.auth = if signed_in {
                 AuthState::SignedIn
@@ -2155,10 +2197,58 @@ impl AppCore {
             "judge" => "thinking",
             other => other,
         };
-        from_profile
-            .or_else(|| router::resolve(&s.router, fallback, None).cloned())
-            .or_else(|| router::resolve(&s.router, "default", s.selected.as_ref()).cloned())
-            .filter(|(_, m)| !m.is_empty())
+        // The first candidate that is not resting; if every one is, the first (it may have recovered).
+        let now = super::now_secs();
+        let candidates: Vec<Choice> = [
+            from_profile,
+            router::resolve(&s.router, fallback, None).cloned(),
+            router::resolve(&s.router, "default", s.selected.as_ref()).cloned(),
+        ]
+        .into_iter()
+        .flatten()
+        .filter(|(_, m)| !m.is_empty())
+        .collect();
+        candidates
+            .iter()
+            .find(|c| !resting(&s, c, now))
+            .or(candidates.first())
+            .cloned()
+    }
+
+    /// Remembers how a call to `choice` went: a success clears its record; a missing model rests a day;
+    /// busy / down rests from the second failure in a row, 10 minutes doubling up to 6 hours.
+    fn note_model(&self, choice: &Choice, error: Option<&ApiError>) {
+        let key = health_key(choice);
+        let changed = {
+            let mut s = self.state.lock().unwrap();
+            match error.and_then(|e| model_failure(e).map(|missing| (missing, e))) {
+                None if error.is_none() => s.model_health.remove(&key).is_some(),
+                None => false,
+                Some((missing, e)) => {
+                    let now = super::now_secs();
+                    let h = s.model_health.entry(key).or_default();
+                    h.fails += 1;
+                    h.missing |= missing;
+                    h.code = match e {
+                        ApiError::Status { code, .. } => code.clone(),
+                        _ => "ai_provider_stream_failed".into(),
+                    };
+                    h.until = if missing {
+                        now + 24 * 3600
+                    } else if h.fails >= 2 {
+                        now + (600i64 << (h.fails - 2).min(5)).min(6 * 3600)
+                    } else {
+                        h.until
+                    };
+                    true
+                }
+            }
+        };
+        if changed {
+            let snapshot = self.state.lock().unwrap().model_health.clone();
+            self.save_json(KEY_MODEL_HEALTH, &snapshot);
+            self.hooks.changed();
+        }
     }
 
     /// One stage's reply: the API words the prompt for `stage`, the stage's model answers.
@@ -2631,6 +2721,11 @@ impl AppCore {
         };
         // Busy (rate limited), or not offered by this provider at all (a 404 for the model name):
         // either way the same question goes once to another model, with fresh consent.
+        let asked: Choice = (
+            request["credentialId"].as_str().unwrap_or_default().to_owned(),
+            request["model"].as_str().unwrap_or_default().to_owned(),
+        );
+        self.note_model(&asked, first.as_ref().err());
         let missing = matches!(&first, Err(ApiError::Status { code, .. }) if code == "ai_model_or_endpoint_not_found");
         let busy = matches!(&first, Err(ApiError::Status { code, .. }) if code == "ai_provider_rate_limited");
         if !busy && !missing {
@@ -2651,11 +2746,18 @@ impl AppCore {
         } else {
             self.notice("info", "That model is busy. Trying another one.");
         }
-        self.call_chat(|api, t| {
-            let retry = retry.clone();
-            async move { api.chat_stream(&t, &retry).await.map(Box::pin) }
-        })
-        .await
+        let second = self
+            .call_chat(|api, t| {
+                let retry = retry.clone();
+                async move { api.chat_stream(&t, &retry).await.map(Box::pin) }
+            })
+            .await;
+        let tried: Choice = (
+            retry["credentialId"].as_str().unwrap_or_default().to_owned(),
+            retry["model"].as_str().unwrap_or_default().to_owned(),
+        );
+        self.note_model(&tried, second.as_ref().err());
+        second
     }
 
     /// The same request on a different model with fresh consent, or None when no other route exists.
@@ -2663,10 +2765,13 @@ impl AppCore {
         let current = request["model"].as_str().unwrap_or_default().to_owned();
         let (credential, model) = {
             let s = self.state.lock().unwrap();
-            order
+            let now = super::now_secs();
+            let routes: Vec<Choice> = order
                 .iter()
                 .filter_map(|r| router::resolve(&s.router, r, None).cloned())
-                .find(|(_, m)| *m != current)?
+                .filter(|(_, m)| *m != current)
+                .collect();
+            routes.iter().find(|c| !resting(&s, c, now)).or(routes.first()).cloned()?
         };
         let mut retry = request.clone();
         retry["credentialId"] = json!(credential);
@@ -2693,7 +2798,30 @@ impl AppCore {
 
     /// `ask_model` that counts the call in the account's usage under `role` (execution for sub-agents,
     /// classification for the router and the check, title, reasoning, tool for everything else).
-    async fn ask_model_for(&self, role: &str, (credential, model): &Choice, prompt: &str) -> Option<String> {
+    async fn ask_model_for(&self, role: &str, choice: &Choice, prompt: &str) -> Option<String> {
+        // Helper calls (router, reading the request, titles, checks) are optional: a slow model must not
+        // hold the answer back, so they give up after a short while and the answer goes on without them.
+        let limit = match role {
+            "classification" | "title" | "understand" => Some(12),
+            "check" => Some(25),
+            _ => None,
+        };
+        let Some(secs) = limit else {
+            return self.ask_model_once(role, choice, prompt).await;
+        };
+        let call = Box::pin(self.ask_model_once(role, choice, prompt));
+        let timer = futures_timer::Delay::new(std::time::Duration::from_secs(secs));
+        match futures_util::future::select(call, timer).await {
+            futures_util::future::Either::Left((reply, _)) => reply,
+            futures_util::future::Either::Right(_) => {
+                self.note_model(choice, Some(&ApiError::Status { status: 504, code: "ai_provider_request_timeout".into() }));
+                None
+            }
+        }
+    }
+
+    async fn ask_model_once(&self, role: &str, (credential, model): &Choice, prompt: &str) -> Option<String> {
+        let choice: Choice = (credential.clone(), model.clone());
         let started = super::now_secs();
         let request = json!({ "credentialId": credential, "model": model, "prompt": prompt });
         let consent = self
@@ -2709,24 +2837,39 @@ impl AppCore {
             "payloadSha256": consent["payloadSha256"],
             "confirmationVersion": 1,
         });
-        let mut events = self
+        let opened = self
             .call_chat(|api, t| {
                 let body = body.clone();
                 async move { api.chat_stream(&t, &body).await.map(Box::pin) }
             })
-            .await
-            .ok()?;
+            .await;
+        let mut events = match opened {
+            Ok(events) => events,
+            Err(e) => {
+                self.note_model(&choice, Some(&e));
+                return None;
+            }
+        };
         let mut text = String::new();
         while let Some(event) = events.next().await {
             match event {
                 Ok(ChatEvent::Delta(piece)) => text.push_str(&piece),
-                Ok(ChatEvent::Done) | Err(_) => break,
+                Ok(ChatEvent::Done) => break,
+                Err(e) => {
+                    if text.is_empty() {
+                        self.note_model(&choice, Some(&e));
+                    }
+                    break;
+                }
                 Ok(_) => {}
             }
         }
         if !text.is_empty() {
+            self.note_model(&choice, None);
             let request_id = consent["requestId"].as_str().unwrap_or_default().to_owned();
-            self.record_side_usage(role, credential, model, &request_id, prompt, &text, started).await;
+            // Usage keeps its fixed role names: reading the request counts as a tool call, the check as classification.
+            let usage_role = match role { "understand" => "tool", "check" => "classification", r => r };
+            self.record_side_usage(usage_role, credential, model, &request_id, prompt, &text, started).await;
         }
         (!text.is_empty()).then_some(text)
     }
@@ -5694,6 +5837,21 @@ impl AppCore {
             );
             return;
         };
+        // A text route whose model is resting goes to the next one that answers, without waiting on it.
+        if !image {
+            let now = super::now_secs();
+            let s = self.state.lock().unwrap();
+            if resting(&s, &(credential.clone(), model.clone()), now) {
+                let next = ["default", "balanced", "fast", "thinking"]
+                    .iter()
+                    .filter_map(|r| router::resolve(&s.router, r, None).cloned())
+                    .find(|c| c.1 != model && !c.1.is_empty() && !resting(&s, c, now));
+                if let Some((c, m)) = next {
+                    credential = c;
+                    model = m;
+                }
+            }
+        }
         let conversation_id = match active {
             Some(id) => id,
             None => {
@@ -6208,6 +6366,11 @@ impl AppCore {
                         async move { api.image_generate(&t, &body).await }
                     })
                     .await;
+                let image_choice: Choice = (
+                    body["credentialId"].as_str().unwrap_or_default().to_owned(),
+                    body["model"].as_str().unwrap_or_default().to_owned(),
+                );
+                self.note_model(&image_choice, result.as_ref().err());
                 // Each picture counts as it lands, so the cards fill in one by one.
                 self.update(|s| {
                     if let Some(job) = s.image_job.as_mut() {
@@ -8123,7 +8286,7 @@ impl AppCore {
             serde_json::to_string(text).unwrap_or_default(),
             tools.join(", ")
         );
-        let answer = self.ask_model(&choice, &prompt).await?;
+        let answer = self.ask_model_for("understand", &choice, &prompt).await?;
         let v = orchestration::first_json(&answer)?;
         if v["direct"] != false {
             return None;
@@ -8212,7 +8375,7 @@ impl AppCore {
             calls.join("\n"),
             shown
         );
-        let answer = Box::pin(self.ask_model(&choice, &prompt)).await;
+        let answer = Box::pin(self.ask_model_for("check", &choice, &prompt)).await;
         let list: Vec<String> = answer
             .as_deref()
             .and_then(orchestration::first_json)
@@ -12790,6 +12953,18 @@ fn router_controls(s: &State) -> Vec<Value> {
         json!({ "id": "router_auto", "label": "Choose the model automatically", "kind": "toggle", "binding": "models.auto", "value": s.router.auto }),
         json!({ "id": "router_setup", "label": "Set up automatically", "kind": "button", "style": "secondary", "action": { "type": "auto_configure_router" } }),
     ]);
+    // A model this device has seen failing: marked in the lists, and under its route a note and a fix.
+    let health = |choice: &Choice| s.model_health.get(&health_key(choice)).filter(|h| h.fails > 0 || h.missing);
+    let mark = |mut options: Vec<Value>| -> Vec<Value> {
+        for o in options.iter_mut() {
+            let Some((c, m)) = o["value"].as_str().and_then(|v| v.split_once('|')).map(|(c, m)| (c.to_owned(), m.to_owned())) else { continue };
+            if let Some(h) = health(&(c, m)) {
+                let label = o["label"].as_str().unwrap_or_default().to_owned();
+                o["label"] = json!(format!("{label} · {}", if h.missing { "not available" } else { "not answering" }));
+            }
+        }
+        options
+    };
     for slot in &router::SLOTS {
         let needs_image = slot.id == "vision";
         items.push(select(
@@ -12797,9 +12972,36 @@ fn router_controls(s: &State) -> Vec<Value> {
             slot.label,
             format!("route:{}", slot.id),
             s.router.choice(slot.id),
-            options_for(slot.task, needs_image),
+            mark(options_for(slot.task, needs_image)),
             slot.id != "default",
         ));
+        let Some(current) = s.router.choice(slot.id) else { continue };
+        let Some(h) = health(current) else { continue };
+        let why = match h.code.as_str() {
+            "ai_provider_rate_limited" => "it is busy (rate limited)",
+            "ai_provider_unavailable" => "the provider says it is unavailable",
+            "ai_provider_request_timeout" => "it takes too long",
+            _ => "it failed",
+        };
+        items.push(json!({
+            "id": format!("route_{}_health", slot.id), "kind": "hint",
+            "model": current.1, "fails": h.fails, "reason": h.code, "missing": h.missing,
+            "text": if h.missing {
+                format!("Your provider does not offer {} for this, so every request to it fails. Pick another model.", current.1)
+            } else {
+                format!("{} has not answered the last {} tries: {why}. Meo uses another model meanwhile; pick a different one to stop the wait.", current.1, h.fails)
+            },
+        }));
+        // One tap: the everyday model takes this route over (when it is a different, working one).
+        if slot.id != "default" {
+            if let Some(default) = s.router.choice("default").filter(|d| *d != current && health(d).is_none()) {
+                items.push(json!({
+                    "id": format!("route_{}_fix", slot.id), "kind": "button", "style": "primary",
+                    "label": format!("Use {} instead", model_name(s, default)), "modelName": model_name(s, default),
+                    "action": { "type": "set_setting", "binding": format!("route:{}", slot.id), "value": format!("{}|{}", default.0, default.1) },
+                }));
+            }
+        }
     }
     for custom in &s.router.custom {
         items.push(json!({
@@ -16368,6 +16570,37 @@ mod tests {
         let last = texts(&c).last().cloned().unwrap_or_default();
         assert!(last.contains("Created 2 images") && last.contains("1 of 3 could not be made"), "{last}");
         let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn a_model_that_keeps_failing_rests_is_skipped_and_shows_in_settings() {
+        let c = signed_in_core();
+        let fast: Choice = ("cred".into(), "doubao-mini".into());
+        let default: Choice = ("cred".into(), "gpt-main".into());
+        c.update(|s| {
+            s.router.slots.insert("default".into(), default.clone());
+            s.router.slots.insert("fast".into(), fast.clone());
+        });
+        let busy = ApiError::Status { status: 502, code: "ai_provider_unavailable".into() };
+        c.note_model(&fast, Some(&busy));
+        assert_eq!(c.role_model("router"), Some(fast.clone()), "one failure is not enough to rest");
+        c.note_model(&fast, Some(&busy));
+        assert_eq!(c.role_model("router"), Some(default.clone()), "two in a row: the helper uses the everyday model");
+        // A refused request says nothing about the model.
+        c.note_model(&default, Some(&ApiError::Status { status: 502, code: "ai_provider_rejected_request".into() }));
+        assert!(c.state.lock().unwrap().model_health.get(&health_key(&default)).is_none());
+        // Settings marks it and offers the fix.
+        futures_executor::block_on(c.dispatch(Action::OpenSettings { section: "models".into() }));
+        let text = c.view().to_string();
+        assert!(text.contains("route_fast_health") && text.contains("has not answered the last 2 tries") && text.contains("route_fast_fix"), "{}", &text[..text.len().min(300)]);
+        // A success clears it.
+        c.note_model(&fast, None);
+        assert_eq!(c.role_model("router"), Some(fast));
+        // A model the provider does not have rests at once.
+        let gone: Choice = ("cred".into(), "deepseek-v4-pro".into());
+        c.update(|s| { s.router.slots.insert("fast".into(), gone.clone()); });
+        c.note_model(&gone, Some(&ApiError::Status { status: 502, code: "ai_model_or_endpoint_not_found".into() }));
+        assert_eq!(c.role_model("router"), Some(default));
     }
 
     #[test]

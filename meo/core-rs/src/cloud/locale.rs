@@ -60,6 +60,27 @@ fn buttons(c: &HashMap<String, String>, value: &mut Value, key: &str) {
 }
 
 fn control(c: &HashMap<String, String>, item: &mut Value) {
+    // Settings > Models: a model that keeps failing, and the one-tap fix (built from their fields).
+    if item["id"].as_str().is_some_and(|id| id.starts_with("route_") && id.ends_with("_health")) {
+        let model = item["model"].as_str().unwrap_or_default().to_owned();
+        let why = match item["reason"].as_str().unwrap_or_default() {
+            "ai_provider_rate_limited" => "服务商说它太忙（限流）",
+            "ai_provider_unavailable" => "服务商说它暂时不可用",
+            "ai_provider_request_timeout" => "它响应太慢",
+            _ => "调用失败",
+        };
+        item["text"] = Value::String(if item["missing"] == true {
+            format!("你的服务商不提供 {model}（或不能这样用它），所以每次请求都会失败。请换一个模型。")
+        } else {
+            format!("{model} 最近 {} 次都没有回答：{why}。Meo 会先改用其他模型；换一个模型可以彻底避免等待。", item["fails"].as_u64().unwrap_or(1))
+        });
+        return;
+    }
+    if item["id"].as_str().is_some_and(|id| id.starts_with("route_") && id.ends_with("_fix")) {
+        let name = item["modelName"].as_str().unwrap_or_default().to_owned();
+        item["label"] = Value::String(format!("改用 {name}"));
+        return;
+    }
     if item["kind"] == "item" {
         // Chat titles, memories and the like are the user's own content; generated profiles are ours.
         if item["translate"] == true
@@ -89,6 +110,12 @@ fn control(c: &HashMap<String, String>, item: &mut Value) {
     }
     for option in each(item, "options") {
         field(c, option, "label");
+        // A failing model's mark at the end of its option.
+        for (en, zh) in [(" · not answering", " · 没有回应"), (" · not available", " · 不可用")] {
+            if let Some(head) = option["label"].as_str().and_then(|l| l.strip_suffix(en)).map(str::to_owned) {
+                option["label"] = Value::String(format!("{head}{zh}"));
+            }
+        }
         // "Lightweight · gpt-5-mini": translate the route name, keep the model name.
         if let Some(label) = option["label"].as_str() {
             if let Some((head, tail)) = label.split_once(" · ") {
