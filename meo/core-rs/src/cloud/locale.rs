@@ -55,6 +55,13 @@ fn each<'a>(value: &'a mut Value, key: &str) -> impl Iterator<Item = &'a mut Val
 
 fn buttons(c: &HashMap<String, String>, value: &mut Value, key: &str) {
     for button in each(value, key) {
+        // "Continue on <device>": the device's own name stays.
+        if let Some(device) = button["device"].as_str().map(str::to_owned) {
+            if button["label"].as_str().is_some_and(|l| l.starts_with("Continue on ")) {
+                button["label"] = Value::String(format!("在 {device} 上继续"));
+                continue;
+            }
+        }
         field(c, button, "label");
     }
 }
@@ -217,9 +224,9 @@ pub fn localize(view: &mut Value, locale: &str) {
                     } else {
                         let minutes = (quiet / 60).max(1);
                         let tail = if message["actions"].as_array().is_some_and(|a| !a.is_empty()) {
-                            "点“在这里继续”从它的最后一轮接着做；它用过的文件和网页可能已经变了。"
+                            "可以在这里或其他在线设备上从它的最后一轮接着做；它用过的文件和网页可能已经变了。"
                         } else {
-                            "在电脑上打开 Meo AI 就能从最后一轮接着做（云端运行即将推出）。"
+                            "它用的是那台电脑上的文件，请在电脑上打开 Meo AI 接着做（云端运行即将推出）。"
                         };
                         (format!("{device} 已经停止回报"), format!("{device} 已经 {minutes} 分钟没有回报了，停在第 {rounds} 轮。{tail}"))
                     };

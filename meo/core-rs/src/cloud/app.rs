@@ -441,6 +441,14 @@ pub enum Action {
     ResumeRun,
     /// Continue here the run whose device stopped reporting (its run checkpoint).
     ContinueRunHere,
+    /// Continue the answer Meo API saved after the app went away, where it was cut off.
+    ContinueAnswer,
+    /// Continue on another online device: `source` is `checkpoint` (a run that went quiet), `answer`
+    /// (a run stored with the last answer) or `cutoff` (an answer cut off in the background).
+    ContinueOn {
+        device: String,
+        source: String,
+    },
     BeginEditGoal,
     EditGoal {
         text: String,
@@ -870,6 +878,8 @@ struct RemoteHostForm {
 /// Work the realtime loop runs beside the event stream, so approvals and stop keep arriving.
 enum RemoteJob {
     Task { from: String, text: String, project: Option<String>, permission: Option<String> },
+    /// Continue a run or a cut-off answer of `conversation_id` here (see `Action::ContinueOn`).
+    Continue { from: String, conversation_id: String, source: String },
     Decide { allow: bool },
 }
 
@@ -1093,6 +1103,7 @@ impl AppCore {
             run: None,
             files: Vec::new(),
             pictures: Vec::new(),
+            background: false,
         };
         self.update(|s| {
             s.auth = AuthState::SignedIn;
@@ -1706,6 +1717,8 @@ impl AppCore {
             Action::GoalResume => Box::pin(self.goal_resume()).await,
             Action::ResumeRun => Box::pin(self.resume_run()).await,
             Action::ContinueRunHere => Box::pin(self.continue_run_here()).await,
+            Action::ContinueAnswer => Box::pin(self.continue_answer()).await,
+            Action::ContinueOn { device, source } => self.continue_on(device, source).await,
             Action::BeginEditGoal => self.begin_edit_goal(),
             Action::EditGoal { text } => self.edit_goal(&text),
             Action::GoalRounds { delta } => self.goal_rounds(delta),
@@ -5167,6 +5180,11 @@ impl AppCore {
                 project: data["project"].as_str().filter(|p| !p.is_empty() && p.len() <= 64).map(str::to_owned),
                 permission: data["permission"].as_str().filter(|p| matches!(*p, "ask" | "low" | "smart" | "all")).map(str::to_owned),
             }),
+            "remote.continue" => Some(RemoteJob::Continue {
+                from,
+                conversation_id: data["conversationId"].as_str().filter(|c| c.len() <= 80 && !c.is_empty())?.to_owned(),
+                source: data["source"].as_str().filter(|s| matches!(*s, "checkpoint" | "answer" | "cutoff"))?.to_owned(),
+            }),
             "remote.decision" => {
                 let s = self.state.lock().unwrap();
                 (s.remote.controller.as_deref() == Some(from.as_str()) && s.agent.pending.is_some())
@@ -5237,6 +5255,29 @@ impl AppCore {
                 .await;
                 self.remote_progress(true).await;
                 self.send(text).await;
+            }
+            RemoteJob::Continue { from, conversation_id, source } => {
+                let busy = {
+                    let s = self.state.lock().unwrap();
+                    s.streaming.is_some() || s.agent.pending.is_some() || s.remote.controller.is_some()
+                };
+                if !self.remote_enabled() || !remote::can_host() {
+                    return self.remote_refuse(&from, "Remote control is off on that device.").await;
+                }
+                if busy {
+                    return self.remote_refuse(&from, "That device is busy with another task.").await;
+                }
+                self.update(|s| s.remote.controller = Some(from.clone()));
+                // Open the same chat here (its messages, run checkpoint and stored log), then go on in it.
+                Box::pin(self.select_conversation(conversation_id.clone())).await;
+                self.remote_send(remote::message("status", &from, json!({ "state": "started", "conversationId": conversation_id })))
+                    .await;
+                self.remote_progress(true).await;
+                match source.as_str() {
+                    "checkpoint" => Box::pin(self.continue_run_here()).await,
+                    "answer" => Box::pin(self.resume_run()).await,
+                    _ => Box::pin(self.continue_answer()).await,
+                }
             }
             RemoteJob::Decide { allow } => {
                 let action = if allow {
@@ -9517,9 +9558,12 @@ impl AppCore {
             return None;
         };
         bound_turns(&mut turns, RUN_LOG_CHARS);
+        // What continuing needs: a computer when the run used this device's files or shell (Work, a host),
+        // otherwise any device (chat tools such as search and apps run through Meo API).
+        let needs = if s.route == "work" || s.agent.host.is_some() { "computer" } else { "any" };
         let mut log = json!({
             "v": 1, "reason": reason, "request": s.agent.request.chars().take(4_000).collect::<String>(),
-            "turns": turns, "tasks": run.tasks, "goal": run.goal, "rounds": s.agent.round,
+            "turns": turns, "tasks": run.tasks, "goal": run.goal, "rounds": s.agent.round, "needs": needs,
         });
         let bytes = |v: &Value| v.to_string().len();
         while bytes(&log) > RUN_LOG_BYTES && log["turns"].as_array().is_some_and(|t| t.len() > 1) {
@@ -9596,6 +9640,41 @@ impl AppCore {
             }
             Err(_) => {}
         }
+    }
+
+    /// Continue an answer Meo API saved after the app went away and that ends cut off ("…").
+    async fn continue_answer(&self) {
+        let tail = {
+            let s = self.state.lock().unwrap();
+            let Some(id) = s.active.clone() else { return };
+            let Some(last) = s.messages.get(&id).and_then(|l| l.last()).filter(|m| m.role == "assistant" && m.background) else {
+                return;
+            };
+            let text = last.text.trim_end().trim_end_matches('…').trim_end().to_owned();
+            let all: Vec<char> = text.chars().collect();
+            all[all.len().saturating_sub(300)..].iter().collect::<String>()
+        };
+        let prompt = format!(
+            "<continue>\nYour previous answer above was cut off when the app closed (it ends right after: {}). Continue it exactly from there, without repeating what is already written.\n</continue>",
+            serde_json::to_string(&tail).unwrap_or_default()
+        );
+        Box::pin(self.turn(prompt, false, false)).await;
+    }
+
+    /// Asks another online device to continue this chat's run or cut-off answer; it runs there and is
+    /// followed here like a task sent with "Run on".
+    async fn continue_on(&self, device: String, source: String) {
+        let (target, conversation) = {
+            let s = self.state.lock().unwrap();
+            (s.remote.devices.get(&device).cloned(), s.active.clone())
+        };
+        let (Some(target), Some(conversation)) = (target, conversation) else {
+            return self.notice("error", "That device is not online any more.");
+        };
+        self.update(|s| s.remote.task_host = Some(target.id.clone()));
+        self.remote_send(remote::message("continue", &target.id, json!({ "conversationId": conversation, "source": source })))
+            .await;
+        self.notice("info", format!("Continuing on {}. It runs there; follow it here.", target.name));
     }
 
     /// Continue here: the run whose device went quiet goes on on this device, from its last round.
@@ -13393,7 +13472,11 @@ fn conversation_page(s: &State) -> Value {
                             // card's Resume, which does the same, is shown).
                             let goal_card = stored_plan(&m.steps).is_some_and(|p| matches!(p["goal"]["status"].as_str(), Some("paused" | "blocked" | "active")));
                             if s.streaming.is_none() && !goal_card && m.run.as_ref().is_some_and(|r| r["turns"].as_array().is_some_and(|t| !t.is_empty())) {
-                                actions.push(button("Continue", "primary", json!({ "type": "resume_run" })));
+                                let needs = m.run.as_ref().and_then(|r| r["needs"].as_str()).unwrap_or("computer");
+                                actions.extend(continue_buttons(s, needs, json!({ "type": "resume_run" }), "answer", None));
+                            } else if s.streaming.is_none() && m.background && m.text.trim_end().ends_with('…') {
+                                // Meo API saved this answer after the app went away and it was cut off.
+                                actions.extend(continue_buttons(s, "any", json!({ "type": "continue_answer" }), "cutoff", None));
                             }
                             actions.push(button("Regenerate", "secondary", json!({ "type": "regenerate" })));
                         }
@@ -13623,7 +13706,7 @@ fn conversation_page(s: &State) -> Value {
         .run_checkpoint
         .as_ref()
         .filter(|(c, _)| Some(c) == active.as_ref() && s.streaming.is_none())
-        .and_then(|(_, run)| run_elsewhere_card(run, super::now_secs()))
+        .and_then(|(_, run)| run_elsewhere_card(s, run, super::now_secs()))
     {
         messages.push(card);
     }
@@ -13868,9 +13951,29 @@ fn goal_rounds_pref(s: &State) -> usize {
 /// The card of an open question or plan review: `{type: "question", kind, title, text, choices, input,
 /// actions}`. Choices are buttons; the text field is for a free answer; actions are Answer/Skip or
 /// Approve/Keep planning. It stays until the user answers (no timeout) and does not stop the composer.
+/// The ways to continue a run or answer: here when this device can do what it needs (any device for a
+/// chat run, a computer for one that used files or commands), and on every other online computer.
+/// `skip` is a device to leave out (the one that went quiet).
+fn continue_buttons(s: &State, needs: &str, here: Value, source: &str, skip: Option<&str>) -> Vec<Value> {
+    let mut buttons = Vec::new();
+    if needs == "any" || remote::can_host() {
+        buttons.push(button("Continue here", "primary", here));
+    }
+    if pref_bool(s, "remote.enabled", true) {
+        for d in s.remote.devices.values().filter(|d| d.hosts && Some(d.id.as_str()) != skip) {
+            buttons.push(json!({
+                "label": format!("Continue on {}", d.name), "style": if buttons.is_empty() { "primary" } else { "secondary" },
+                "action": { "type": "continue_on", "device": d.id, "source": source },
+                "device": d.name,
+            }));
+        }
+    }
+    buttons
+}
+
 /// The card for a run of this chat that another device is running (or stopped reporting from). A run
 /// is "quiet" after 5 minutes without a new round; it can then be continued on a device that runs Work.
-fn run_elsewhere_card(run: &Value, now: i64) -> Option<Value> {
+fn run_elsewhere_card(s: &State, run: &Value, now: i64) -> Option<Value> {
     if run["status"] != "running" || run["mine"] == true {
         return None;
     }
@@ -13885,17 +13988,14 @@ fn run_elsewhere_card(run: &Value, now: i64) -> Option<Value> {
         )
     } else {
         let minutes = (quiet / 60).max(1);
-        let text = if remote::can_host() {
-            format!("{device} has not reported for {minutes} min, after round {rounds}. Continue here to pick it up from its last round; files and pages it used may have changed.")
+        let needs = run["log"]["needs"].as_str().unwrap_or("computer");
+        let buttons = continue_buttons(s, needs, json!({ "type": "continue_run_here" }), "checkpoint", run["deviceId"].as_str());
+        let text = if buttons.is_empty() {
+            format!("{device} has not reported for {minutes} min, after round {rounds}. It used that computer's files, so continue it from Meo AI on a computer (running it in the cloud is coming).")
         } else {
-            format!("{device} has not reported for {minutes} min, after round {rounds}. Open Meo AI on a computer to continue it from its last round (running it in the cloud is coming).")
+            format!("{device} has not reported for {minutes} min, after round {rounds}. Continue it from its last round, here or on another online device; files and pages it used may have changed.")
         };
-        let actions = if remote::can_host() {
-            json!([button("Continue here", "primary", json!({ "type": "continue_run_here" }))])
-        } else {
-            json!([])
-        };
-        (format!("{device} stopped reporting"), text, actions)
+        (format!("{device} stopped reporting"), text, json!(buttons))
     };
     Some(json!({
         "id": "", "role": "assistant", "text": "", "streaming": false, "actions": actions,
@@ -16854,18 +16954,82 @@ mod tests {
     #[test]
     fn a_run_on_another_device_shows_and_can_be_continued_once_it_goes_quiet() {
         let now = 1_000_000;
-        let run = |quiet: i64, mine: bool| json!({ "status": "running", "mine": mine, "deviceName": "Studio PC", "rounds": 4,
-            "quietSeconds": quiet, "fetchedAt": now, "placement": "device" });
-        assert!(run_elsewhere_card(&run(30, true), now).is_none(), "this device's own run");
-        let live = run_elsewhere_card(&run(30, false), now).unwrap();
+        let c = signed_in_core();
+        c.update(|s| {
+            for (id, name, hosts) in [("desk", "Studio PC", true), ("lap", "Laptop", true), ("phone", "Pixel", false)] {
+                s.remote.devices.insert(id.into(), remote::Device { id: id.into(), name: name.into(), platform: "linux", hosts });
+            }
+        });
+        let s = c.state.lock().unwrap();
+        let run = |quiet: i64, mine: bool, needs: &str| json!({ "status": "running", "mine": mine, "deviceId": "desk", "deviceName": "Studio PC", "rounds": 4,
+            "quietSeconds": quiet, "fetchedAt": now, "placement": "device", "log": { "needs": needs } });
+        assert!(run_elsewhere_card(&s, &run(30, true, "computer"), now).is_none(), "this device's own run");
+        let live = run_elsewhere_card(&s, &run(30, false, "computer"), now).unwrap();
         assert_eq!(live["blocks"][0]["title"], "Running on Studio PC");
         assert!(live["actions"].as_array().unwrap().is_empty());
-        let quiet = run_elsewhere_card(&run(30, false), now + 400).unwrap();
+        // Quiet: continue on another online computer (never the quiet one, never a phone), and here when
+        // this device can do what the run needs.
+        let quiet = run_elsewhere_card(&s, &run(30, false, "computer"), now + 400).unwrap();
         assert_eq!(quiet["blocks"][0]["title"], "Studio PC stopped reporting");
+        let labels: Vec<String> = quiet["actions"].as_array().unwrap().iter().map(|a| a["label"].as_str().unwrap().to_owned()).collect();
+        assert!(labels.contains(&"Continue on Laptop".to_owned()), "{labels:?}");
+        assert!(!labels.iter().any(|l| l.contains("Studio PC") || l.contains("Pixel")), "{labels:?}");
+        assert_eq!(labels.contains(&"Continue here".to_owned()), remote::can_host());
+        // A chat run needs no computer: it can always continue here.
+        let chat = run_elsewhere_card(&s, &run(30, false, "any"), now + 400).unwrap();
+        assert_eq!(chat["actions"][0]["action"]["type"], "continue_run_here");
+        assert!(run_elsewhere_card(&s, &json!({ "status": "finished", "mine": false }), now).is_none());
+    }
+
+    #[test]
+    fn continue_on_sends_the_chat_to_that_device_and_a_cut_off_answer_continues() {
+        let api = fake_api(vec!["…and that is the end of the story."]);
+        let folder = temp_folder("continue-on");
+        let c = slow_chat_core(&api, &folder, Some("c1"));
+        c.update(|s| {
+            s.remote.devices.insert("lap".into(), remote::Device { id: "lap".into(), name: "Laptop".into(), platform: "linux", hosts: true });
+            s.messages.insert("c1".into(), vec![
+                ChatMessage { id: "m1".into(), role: "user".into(), text: "tell me a story".into(), ..Default::default() },
+                ChatMessage { id: "m2".into(), role: "assistant".into(), text: "Once upon a time\n\n…".into(), background: true, ..Default::default() },
+            ]);
+        });
+        let last = last_message(&c).unwrap();
+        let actions = last["actions"].as_array().cloned().unwrap_or_default();
+        assert!(actions.iter().any(|a| a["action"]["type"] == "continue_answer"), "{actions:?}");
+        assert!(actions.iter().any(|a| a["action"]["type"] == "continue_on" && a["action"]["source"] == "cutoff"), "{actions:?}");
+        run(&c, Action::ContinueOn { device: "lap".into(), source: "cutoff".into() });
+        let sent = api.remotes.lock().unwrap().clone();
+        assert!(sent.iter().any(|m| m.to_string().contains("remote.continue") && m.to_string().contains("cutoff") && m.to_string().contains("c1")), "{sent:?}");
+        run(&c, Action::ContinueAnswer);
+        let streams = api.streams.lock().unwrap().clone();
+        assert!(streams.iter().any(|b| b["prompt"].as_str().is_some_and(|p| p.contains("<continue>") && p.contains("Once upon a time"))), "{streams:?}");
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn a_computer_asked_to_continue_opens_that_chat_and_goes_on_from_the_cut() {
+        let folder = temp_folder("continue-host");
+        let api = fake_api_seeded(vec!["…and they lived happily ever after."], vec![
+            json!({ "id": "m1", "role": "user", "content": "tell me a story" }),
+            json!({ "id": "m2", "role": "assistant", "content": "Once upon a time\n\n…", "executor": "background" }),
+        ]);
+        let c = work_core(&api, &folder, "smart");
+        c.update(|s| {
+            s.route = "chat".into();
+            s.active = None;
+            s.prefs.remove("work.workspace");
+        });
+        let data = json!({ "origin": "phone", "to": c.client_id, "conversationId": "c1", "source": "cutoff" });
+        let job = c.remote_job_for(&RemoteEvent { name: "remote.continue".into(), data }).expect("a continue job");
+        tokio::runtime::Runtime::new().unwrap().block_on(c.remote_job(job));
         if remote::can_host() {
-            assert_eq!(quiet["actions"][0]["action"]["type"], "continue_run_here");
+            assert_eq!(c.state.lock().unwrap().active.as_deref(), Some("c1"), "it opened the chat");
+            let streams = api.streams.lock().unwrap().clone();
+            assert!(streams.iter().any(|b| b["prompt"].as_str().is_some_and(|p| p.contains("<continue>"))), "{streams:?}");
+            let sent = api.remotes.lock().unwrap().clone();
+            assert!(sent.iter().any(|m| m.to_string().contains("started")), "the phone is told: {sent:?}");
         }
-        assert!(run_elsewhere_card(&json!({ "status": "finished", "mine": false }), now).is_none());
+        let _ = std::fs::remove_dir_all(&folder);
     }
 
     #[test]
@@ -16897,7 +17061,7 @@ mod tests {
     #[test]
     fn the_next_message_knows_what_the_last_answer_searched() {
         let c = signed_in_core();
-        let m = |role: &str, text: &str, steps: Vec<Value>| ChatMessage { id: String::new(), role: role.into(), text: text.into(), steps, run: None, files: Vec::new(), pictures: Vec::new() };
+        let m = |role: &str, text: &str, steps: Vec<Value>| ChatMessage { id: String::new(), role: role.into(), text: text.into(), steps, run: None, files: Vec::new(), pictures: Vec::new(), background: false };
         c.update(|s| {
             s.messages.insert("c1".into(), vec![
                 m("user", "GTA 6 什么时候发售", vec![]),
@@ -16951,7 +17115,7 @@ mod tests {
     #[test]
     fn a_fenced_reply_that_only_announced_its_next_step_is_shown_as_progress() {
         let c = signed_in_core();
-        let m = |id: &str, role: &str, text: &str| ChatMessage { id: id.into(), role: role.into(), text: text.into(), steps: Vec::new(), run: None, files: Vec::new(), pictures: Vec::new() };
+        let m = |id: &str, role: &str, text: &str| ChatMessage { id: id.into(), role: role.into(), text: text.into(), steps: Vec::new(), run: None, files: Vec::new(), pictures: Vec::new(), background: false };
         c.update(|s| {
             s.active = Some("c1".into());
             s.messages.insert("c1".into(), vec![
@@ -18143,6 +18307,7 @@ mod tests {
                         run: None,
                         files: Vec::new(),
                         pictures: Vec::new(),
+                        background: false,
                     })
                     .collect(),
             );
@@ -18175,8 +18340,8 @@ mod tests {
             s.messages.insert(
                 "c1".into(),
                 vec![
-                    ChatMessage { id: "m1".into(), role: "user".into(), text: long.clone(), steps: vec![], run: None, files: Vec::new(), pictures: Vec::new() },
-                    ChatMessage { id: "m2".into(), role: "assistant".into(), text: "ok".into(), steps: vec![], run: None, files: Vec::new(), pictures: Vec::new() },
+                    ChatMessage { id: "m1".into(), role: "user".into(), text: long.clone(), steps: vec![], run: None, files: Vec::new(), pictures: Vec::new(), background: false },
+                    ChatMessage { id: "m2".into(), role: "assistant".into(), text: "ok".into(), steps: vec![], run: None, files: Vec::new(), pictures: Vec::new(), background: false },
                 ],
             );
             s.cloud_settings = Some(json!({ "personalInstructions": "Be brief and kind. ".repeat(20) }));
@@ -18230,6 +18395,7 @@ mod tests {
                         run: None,
                         files: Vec::new(),
                         pictures: Vec::new(),
+                        background: false,
                     },
                     ChatMessage {
                         id: "m2".into(),
@@ -18239,6 +18405,7 @@ mod tests {
                         run: None,
                         files: Vec::new(),
                         pictures: Vec::new(),
+                        background: false,
                     },
                 ],
             );
@@ -19957,6 +20124,7 @@ mod tests {
                 run: None,
                 files: Vec::new(),
                 pictures: Vec::new(),
+                background: false,
             })
             .collect();
         c.update(|s| {
@@ -20070,7 +20238,7 @@ mod tests {
         let fill = |c: &AppCore, window: Option<u64>| {
             let list: Vec<ChatMessage> = long(10)
                 .iter()
-                .map(|m| ChatMessage { id: m["id"].as_str().unwrap().into(), role: m["role"].as_str().unwrap().into(), text: m["content"].as_str().unwrap().into(), steps: Vec::new(), run: None, files: Vec::new(), pictures: Vec::new() })
+                .map(|m| ChatMessage { id: m["id"].as_str().unwrap().into(), role: m["role"].as_str().unwrap().into(), text: m["content"].as_str().unwrap().into(), steps: Vec::new(), run: None, files: Vec::new(), pictures: Vec::new(), background: false })
                 .collect();
             let listed = Model { id: "small".into(), name: "small".into(), task: "chat".into(), tasks: vec!["chat".into()], input: vec!["text".into()], output: vec!["text".into()], context_window: window, max_output: Some(1_024) };
             c.update(|s| {
@@ -21479,7 +21647,7 @@ mod tests {
         assert!(log["turns"][1]["results"][1]["output"].as_str().unwrap().starts_with("not run"));
         let view = c.view();
         let actions = view["page"]["messages"].as_array().unwrap().last().unwrap()["actions"].clone();
-        assert!(actions.as_array().unwrap().iter().any(|a| a["label"] == "Continue" && a["action"]["type"] == "resume_run"), "{actions}");
+        assert!(actions.as_array().unwrap().iter().any(|a| a["label"] == "Continue here" && a["action"]["type"] == "resume_run"), "{actions}");
         // Continue: a new run that starts with the stored round trips and the original request.
         c.update(|s| s.agent = AgentRun::default());
         run(&c, Action::ResumeRun);

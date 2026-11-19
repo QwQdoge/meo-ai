@@ -72,6 +72,9 @@ pub struct ChatMessage {
     /// last for this session: not saved, and carried over when the list is loaded again.
     #[serde(skip)]
     pub pictures: Vec<String>,
+    /// Written by Meo API after the app went away (`executor: background`): the answer may have been cut off.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub background: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -286,6 +289,7 @@ impl MeoApi {
                             run: None,
                             files: Vec::new(),
                             pictures: Vec::new(),
+                            background: false,
                         },
                         row["created_at"].as_str().unwrap_or_default().to_owned(),
                     )
@@ -318,6 +322,7 @@ impl MeoApi {
                     run: run_from_blocks(&row["content"]),
                     files: files_from_blocks(&row["content"]),
                     pictures: Vec::new(),
+                    background: row["executor"] == "background",
                 })
             })
             .collect())
