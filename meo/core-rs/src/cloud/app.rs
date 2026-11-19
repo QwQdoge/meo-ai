@@ -13760,7 +13760,6 @@ fn conversation_page(s: &State) -> Value {
                     }
                     let done = rendered(m);
                     // Pages the answer points to (Settings sections and the like) open with one tap.
-                    let mut actions = actions;
                     if s.streaming.is_none() {
                         actions.splice(0..0, done.links.iter().cloned());
                     }
@@ -21224,7 +21223,7 @@ mod tests {
         assert_eq!(streams.len(), 3, "the call, the final answer, then the chat title");
         assert!(streams[2]["prompt"].as_str().unwrap().contains("Write a short title"));
         let names: Vec<&str> = streams[0]["tools"].as_array().unwrap().iter().filter_map(|t| t["name"].as_str()).collect();
-        assert_eq!(names, ["web_search", "web_fetch", "search_chats", "read_chat", "schedule_create", "schedule_list", "schedule_edit", "schedule_run", "update_tasks", "set_goal", "ask_user_question", "get_goal", "read_more"], "{:?}", streams[0]["tools"]);
+        assert_eq!(names, ["web_search", "web_fetch", "meo_docs", "search_chats", "read_chat", "schedule_create", "schedule_list", "schedule_edit", "schedule_run", "update_tasks", "set_goal", "ask_user_question", "get_goal", "read_more"], "{:?}", streams[0]["tools"]);
         let first = streams[0]["prompt"].as_str().unwrap();
         assert!(first.contains("functions you are given") && !first.contains("meo-tool"), "{first}");
         assert!(streams[0]["turns"].is_null());
