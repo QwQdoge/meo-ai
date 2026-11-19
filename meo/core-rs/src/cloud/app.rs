@@ -544,6 +544,7 @@ struct ModelHealth {
 }
 
 const KEY_MODEL_HEALTH: &str = "model-health";
+const KEY_CHAT_ROUTES: &str = "chat-routes";
 
 /// A failure that says something about the model itself: Some(true) when it does not exist, Some(false)
 /// when it is busy, down or too slow. A refused request or a sign-in problem is not the model's fault.
@@ -976,6 +977,8 @@ struct State {
     run_heartbeat_at: i64,
     /// Recent failures per model (`credential|model`), kept on the device; see [`ModelHealth`].
     model_health: HashMap<String, ModelHealth>,
+    /// The text route each conversation was last answered with (Auto keeps it, see `router::sticky_route`).
+    chat_routes: HashMap<String, String>,
     /// A chat opened with nothing cached yet: its messages are on the way.
     loading_chat: Option<String>,
     /// The Meo API refused the image quality / background options (an older API): send without them.
@@ -1782,8 +1785,10 @@ impl AppCore {
             .map(|(c, m)| (c.to_owned(), m.to_owned()));
         let signed_in = session.is_some();
         let model_health = self.load_json::<HashMap<String, ModelHealth>>(KEY_MODEL_HEALTH).unwrap_or_default();
+        let chat_routes = self.load_json::<HashMap<String, String>>(KEY_CHAT_ROUTES).unwrap_or_default();
         self.update(|s| {
             s.model_health = model_health;
+            s.chat_routes = chat_routes;
             s.session = session;
             s.auth = if signed_in {
                 AuthState::SignedIn
@@ -5937,6 +5942,20 @@ impl AppCore {
                 route = wanted.into();
             }
         }
+        // Auto keeps a conversation on the model it was answered with (cache), see `router::sticky_route`.
+        if mode == "auto" {
+            if let Some(id) = active.as_deref() {
+                let (previous, tokens) = {
+                    let s = self.state.lock().unwrap();
+                    let tokens = s.messages.get(id).map_or(0, |l| l.iter().map(|m| m.text.len() / 4).sum::<usize>());
+                    (s.chat_routes.get(id).cloned(), tokens)
+                };
+                let kept = router::sticky_route(previous.as_deref(), &route, tokens, &text);
+                if kept != route && router.choice(&kept).is_some_and(|c| !c.1.is_empty()) {
+                    route = kept;
+                }
+            }
+        }
         let task = router::slot(&route).map_or("chat", |slot| slot.task);
         let image = task == "image_generation";
         if task != "chat" && !image {
@@ -6084,6 +6103,12 @@ impl AppCore {
                 orchestrated = true;
                 let o = self.orchestrate(&text, &level, search, work).await;
                 if let Some(chosen) = o.route {
+                    // The router's pick follows the same rule: no move to a weaker model in a long chat.
+                    let chosen = {
+                        let s = self.state.lock().unwrap();
+                        let tokens = s.messages.get(&conversation_id).map_or(0, |l| l.iter().map(|m| m.text.len() / 4).sum::<usize>());
+                        router::sticky_route(s.chat_routes.get(&conversation_id).map(String::as_str), &chosen, tokens, &text)
+                    };
                     let found =
                         router::resolve(&self.state.lock().unwrap().router, &chosen, None).cloned();
                     if let Some((c, m)) = found.filter(|(_, m)| !m.is_empty()) {
@@ -6327,6 +6352,15 @@ impl AppCore {
             }
         };
         self.record_request(&request, &level);
+        // The route this conversation is answered with now (for the next message's stickiness).
+        if router::slot(&route).is_none_or(|x| x.task == "chat") {
+            let (cid, r) = (conversation_id.clone(), route.clone());
+            self.update(|s| {
+                s.chat_routes.insert(cid, r);
+            });
+            let snapshot = self.state.lock().unwrap().chat_routes.clone();
+            self.save_json(KEY_CHAT_ROUTES, &snapshot);
+        }
         let pending = PendingSend {
             image: false,
             save_prompt,
@@ -13622,6 +13656,20 @@ struct Rendered {
     links: Vec<Value>,
 }
 
+/// Whether the background answer at `i` repeats an assistant answer right before or after it.
+fn duplicate_of_neighbour(list: &[&ChatMessage], i: usize) -> bool {
+    let norm = |t: &str| t.trim().trim_end_matches('…').trim().to_owned();
+    let me = norm(&list[i].text);
+    if me.is_empty() {
+        return false;
+    }
+    [i.checked_sub(1), Some(i + 1)]
+        .into_iter()
+        .flatten()
+        .filter_map(|j| list.get(j))
+        .any(|o| o.role == "assistant" && !o.background && { let other = norm(&o.text); other == me || other.starts_with(&me) })
+}
+
 /// Where `meo_docs` reads a page: only Meo's documentation site and Meo AI's public release notes.
 fn docs_url(page: &str) -> String {
     let page = page.trim().trim_matches('/').trim_end_matches(".md").to_lowercase();
@@ -13733,6 +13781,14 @@ fn conversation_page(s: &State) -> Value {
                 .collect();
             // Tool results go back to the model as user messages; the user reads them as steps.
             let list: Vec<&ChatMessage> = list.iter().filter(|m| !is_tool_result(m)).collect();
+            // A copy Meo API saved in the background next to the same answer the app saved (an older API
+            // took the app closing after "done" for the app going away) is not shown twice.
+            let list: Vec<&ChatMessage> = list
+                .iter()
+                .enumerate()
+                .filter(|(i, m)| !(m.background && duplicate_of_neighbour(&list, *i)))
+                .map(|(_, m)| *m)
+                .collect();
             let last = list.len().saturating_sub(1);
             list.into_iter()
                 .enumerate()
@@ -17534,6 +17590,23 @@ mod tests {
         assert!(docs_url("whats-new").starts_with("https://api.github.com/repos/QwQdoge/meo-ai/releases"));
         assert_eq!(docs_url("../../evil.example/x"), "https://meoarch.org/llms.txt");
         assert_eq!(docs_url("https://evil.example"), "https://meoarch.org/llms.txt");
+    }
+
+    #[test]
+    fn a_background_copy_of_the_same_answer_is_not_shown_twice() {
+        let c = signed_in_core();
+        c.update(|s| {
+            s.messages.insert("c1".into(), vec![
+                ChatMessage { id: "m1".into(), role: "user".into(), text: "hi".into(), ..Default::default() },
+                ChatMessage { id: "m2".into(), role: "assistant".into(), text: "Hello there, how can I help?".into(), background: true, ..Default::default() },
+                ChatMessage { id: "m3".into(), role: "assistant".into(), text: "Hello there, how can I help?".into(), ..Default::default() },
+                ChatMessage { id: "m4".into(), role: "user".into(), text: "tell me more".into(), ..Default::default() },
+                ChatMessage { id: "m5".into(), role: "assistant".into(), text: "Only the server kept this one\n\n…".into(), background: true, ..Default::default() },
+            ]);
+        });
+        let texts = texts(&c);
+        assert_eq!(texts.iter().filter(|t| t.starts_with("Hello there")).count(), 1, "{texts:?}");
+        assert!(texts.iter().any(|t| t.starts_with("Only the server kept this one")), "a lone background answer stays: {texts:?}");
     }
 
     #[test]

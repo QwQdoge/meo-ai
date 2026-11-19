@@ -255,7 +255,7 @@ const IMAGE_INTENTS: [&str; 14] = [
     "绘制",
 ];
 
-fn wants_thinking(prompt: &str) -> bool {
+pub fn wants_thinking(prompt: &str) -> bool {
     let lower = prompt.to_lowercase();
     prompt.chars().count() > 1200
         || (prompt.contains("```") && prompt.chars().count() > 300)
@@ -295,6 +295,37 @@ pub fn route_for(router: &Router, mode: &str, prompt: &str, has_image: bool) -> 
         "default"
     }
     .into()
+}
+
+/// How strong a text route is, for keeping a conversation on one model (see [`sticky_route`]).
+fn strength(route: &str) -> Option<u8> {
+    match route {
+        "fast" => Some(0),
+        "default" | "balanced" => Some(1),
+        "thinking" => Some(2),
+        _ => None,
+    }
+}
+
+/// Keeps a conversation on one model so the provider's prompt cache of its history keeps working:
+/// switching models re-reads the whole history at the full price. A short history switches freely
+/// (`proposed`); a longer one never moves to a weaker model, and moves to a stronger one only when the
+/// message calls for it (then stays there). Images, vision and custom routes are not affected.
+pub fn sticky_route(previous: Option<&str>, proposed: &str, history_tokens: usize, prompt: &str) -> String {
+    const CHEAP_TO_SWITCH: usize = 3_000;
+    let Some(previous) = previous else { return proposed.to_owned() };
+    let (Some(was), Some(now)) = (strength(previous), strength(proposed)) else { return proposed.to_owned() };
+    if history_tokens < CHEAP_TO_SWITCH {
+        return proposed.to_owned();
+    }
+    if now < was {
+        return previous.to_owned();
+    }
+    // Up to the thinking model only when the message itself asks for careful reasoning.
+    if now == 2 && was < 2 && !wants_thinking(prompt) {
+        return previous.to_owned();
+    }
+    proposed.to_owned()
 }
 
 /// The model for a route, falling back to Everyday chat and then to `fallback`.
@@ -591,6 +622,21 @@ pub fn wants_search(prompt: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_long_conversation_keeps_its_model_and_only_moves_up_when_asked() {
+        // Short history: switch freely.
+        assert_eq!(sticky_route(Some("default"), "fast", 500, "ok"), "fast");
+        // Long history: never down.
+        assert_eq!(sticky_route(Some("default"), "fast", 9_000, "ok"), "default");
+        assert_eq!(sticky_route(Some("thinking"), "default", 9_000, "and this?"), "thinking");
+        // Up to the everyday model when the message needs it; to thinking only when asked to reason.
+        assert_eq!(sticky_route(Some("fast"), "default", 9_000, "write a longer explanation of the plan with examples"), "default");
+        assert_eq!(sticky_route(Some("default"), "thinking", 9_000, "and this?"), "default");
+        // A new conversation, pictures and custom routes are not affected.
+        assert_eq!(sticky_route(None, "fast", 9_000, "hi"), "fast");
+        assert_eq!(sticky_route(Some("default"), "image", 9_000, "draw a cat"), "image");
+    }
 
     #[test]
     fn search_is_wanted_for_recent_topics_only() {
