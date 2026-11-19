@@ -4,7 +4,7 @@ import {
   Image as ImageIcon, Info, Lightbulb, Loader, Mail, OctagonAlert, Pencil, RefreshCw, Search, Send, Shield,
   SlidersHorizontal, Sparkles, TriangleAlert, Workflow, Briefcase, Folder, MessageSquare, Menu, MoreVertical, Monitor,
   Cable, FilePen, Terminal, Wrench, Zap, ChevronUp, Flag, Circle, Ban, Hourglass, Clock,
-  PanelLeftClose, PanelLeftOpen, Paperclip, Plus, Puzzle, Settings, ArrowUp, ArrowDown, Square, X, Pause, Play, Minus, Mic, type LucideIcon,
+  PanelLeftClose, PanelLeftOpen, Crop, Images, Gem, Layers, Paperclip, Plus, Puzzle, Settings, ArrowUp, ArrowDown, Square, X, Pause, Play, Minus, Mic, type LucideIcon,
 } from "lucide-react";
 
 // The core names icons with Material Symbols names (desktop and Android draw those). The Web draws
@@ -19,6 +19,7 @@ const MAP: Record<string, LucideIcon> = {
   cable: Cable, edit_document: FilePen, terminal: Terminal, build: Wrench, bolt: Zap, expand_less: ChevronUp,
   collapse: PanelLeftClose, expand: PanelLeftOpen, chevron_right: ChevronRight, progress_activity: Loader,
   mic: Mic, flag: Flag, radio_button_unchecked: Circle, block: Ban, hourglass_empty: Hourglass, schedule: Clock,
+  crop: Crop, photo_library: Images, high_quality: Gem, layers: Layers,
 };
 
 export function hasIcon(name: string): boolean {

@@ -259,6 +259,8 @@ export function Blocks({ blocks, components, copy, copied, streaming, act }: { b
         if (b.type === "plan") return <PlanCard key="plan" block={b} act={act} />;
         if (b.type === "question" && act) return <QuestionCard key={`${b.title}|${b.text}`} block={b} act={act} />;
         if (b.type === "draft") return <DraftCard key={i} block={b} copy={copy} copied={copied} />;
+        // Drawn by the message itself (it has the translated strings).
+        if (b.type === "image_progress") return null;
         const last = streaming && i === blocks.length - 1;
         // The caret is drawn by CSS after the last character, so it never changes how the text parses.
         return last ? <div key={i} className="core-tail"><SmoothMarkdown text={b.text} components={components} /></div> : <Markdown key={i} text={b.text} components={components} />;

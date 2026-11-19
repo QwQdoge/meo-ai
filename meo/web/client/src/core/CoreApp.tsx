@@ -1082,6 +1082,37 @@ function LiveStatus({ icon, label, longLabel }: { icon: string; label: string; l
   );
 }
 
+/** Pictures being created: a card per picture in the chosen shape, a light drifting over each
+ *  until it is ready, then a check. The status line above counts them and the time. */
+function ImageProgress({ block, strings, status }: { block: Spec; strings: Spec; status: boolean }) {
+  const n = Math.max(1, Number(block.count) || 1);
+  const done = Number(block.done) || 0;
+  const failed = Number(block.failed) || 0;
+  const [w, h] = String(block.aspect || "1:1").split(":").map(Number);
+  const fill = (s: string) => s.replace("{n}", String(n)).replace("{done}", String(done));
+  const label = n > 1 ? fill(strings.imageMany ?? "Creating {n} images") : (strings.imageOne ?? "Creating your image");
+  return (
+    <div className="core-image-progress" data-count={n}>
+      {status && <LiveStatus icon="image" label={n > 1 && done + failed > 0 ? `${label} · ${fill(strings.imageReady ?? "{done} of {n} ready")}` : label} />}
+      <div className="core-image-cards">
+        {Array.from({ length: n }, (_, i) => {
+          const state = i < done ? "done" : i < done + failed ? "failed" : "working";
+          return (
+            <div key={i} className={`core-image-card ${state}`} style={{ aspectRatio: `${w || 1} / ${h || 1}`, animationDelay: `${i * 120}ms` }}>
+              <span className="core-image-card-glow" style={{ animationDelay: `${-i * 1.3}s` }} />
+              {state === "working" ? (
+                <span className="core-image-card-icon"><Icon name="image" size={22} /></span>
+              ) : (
+                <span className="core-image-card-badge"><Icon name={state === "done" ? "check_circle" : "error"} size={16} />{state === "done" ? (strings.imageDone ?? "Ready") : (strings.imageFailed ?? "Could not be made")}</span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 /** Keeps something mounted for `ms` after it is hidden, so it can animate out. */
 function usePresence(open: boolean, ms: number) {
   const [mounted, setMounted] = useState(open);
@@ -1155,6 +1186,7 @@ const MessageView = React.memo(
                     </ol>
                   </details>
                 )}
+                {(m.blocks ?? []).filter((b: Spec) => b.type === "image_progress").map((b: Spec, k: number) => <ImageProgress key={`ip${k}`} block={b} strings={strings} status={!m.steps} />)}
                 {m.streaming && !m.steps && !m.text && !(m.blocks ?? []).length && <LiveStatus icon="psychology" label={strings.thinking ?? "Thinking"} longLabel="Still waiting for the model, no reply yet" />}
                 <Blocks
                   blocks={m.blocks?.length ? m.blocks : [{ type: "markdown", text: m.text }]}

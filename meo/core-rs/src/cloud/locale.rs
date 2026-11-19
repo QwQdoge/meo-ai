@@ -188,6 +188,11 @@ pub fn localize(view: &mut Value, locale: &str) {
                 // The "Creating your image…" placeholder is product copy, not the model's words.
                 if message["streaming"] == true && message["role"] == "assistant" {
                     field(c, message, "text");
+                    // Pictures in progress: the text a client without the placeholder cards shows.
+                    for block in each(message, "blocks").filter(|b| b["type"] == "image_progress") {
+                        let (n, done) = (block["count"].as_u64().unwrap_or(1), block["done"].as_u64().unwrap_or(0));
+                        block["text"] = Value::String(if n > 1 { format!("正在生成 {n} 张图片… 已完成 {done}/{n}") } else { "正在生成图片…".to_owned() });
+                    }
                 }
             }
             if let Some(empty) = page.get_mut("empty").filter(|e| e.is_object()) {

@@ -698,3 +698,29 @@
 .core-app .core-reader-card header strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .core-app .core-reader-close { width: 32px; height: 32px; border: 0; border-radius: 50%; background: none; color: inherit; font-size: 22px; line-height: 1; cursor: pointer; }
 .core-app .core-reader-body { padding: 8px 20px 20px; overflow: auto; }
+
+/* Pictures being created: one card per picture in its shape, a soft light drifting over it. */
+.core-image-progress { display: grid; gap: 10px; margin: 2px 0 6px; }
+.core-image-cards { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); max-width: 640px; }
+.core-image-progress[data-count="1"] .core-image-cards { grid-template-columns: minmax(0, 320px); }
+.core-image-card { position: relative; overflow: hidden; border-radius: 16px; display: grid; place-items: center;
+  background: rgb(var(--surface-tertiary)); border: 1px solid rgb(var(--border-light) / .7);
+  animation: core-card-in .35s cubic-bezier(.2,.8,.2,1) both; max-height: 360px; }
+.core-image-card-glow { position: absolute; inset: -40%; background:
+  radial-gradient(closest-side, rgb(var(--accent-primary) / .28), transparent 70%) 20% 30% / 60% 60% no-repeat,
+  radial-gradient(closest-side, rgb(var(--accent-primary) / .16), transparent 70%) 75% 70% / 55% 55% no-repeat;
+  filter: blur(18px); animation: core-card-drift 5.2s ease-in-out infinite alternate; }
+.core-image-card::after { content: ""; position: absolute; inset: 0;
+  background: linear-gradient(110deg, transparent 30%, rgb(255 255 255 / .22) 48%, transparent 66%) -150% 0 / 220% 100% no-repeat;
+  animation: core-card-sheen 1.9s ease-in-out infinite; }
+.core-image-card-icon { position: relative; color: rgb(var(--accent-primary)); opacity: .75; animation: core-card-breathe 1.6s ease-in-out infinite; }
+.core-image-card-badge { position: relative; display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600;
+  padding: 5px 10px; border-radius: 999px; background: rgb(var(--surface-primary) / .85); color: rgb(var(--text-primary)); }
+.core-image-card.done .core-image-card-badge { color: rgb(var(--accent-primary)); }
+.core-image-card.failed .core-image-card-badge { color: rgb(var(--status-error-strong)); }
+.core-image-card.done::after, .core-image-card.failed::after, .core-image-card.failed .core-image-card-glow { animation: none; opacity: 0; }
+@keyframes core-card-in { from { opacity: 0; transform: scale(.96) translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes core-card-drift { from { transform: translate(-6%, -4%) rotate(0deg); } to { transform: translate(6%, 5%) rotate(25deg); } }
+@keyframes core-card-sheen { from { background-position: -150% 0; } to { background-position: 250% 0; } }
+@keyframes core-card-breathe { 0%, 100% { transform: scale(1); opacity: .6; } 50% { transform: scale(1.12); opacity: .95; } }
+@media (prefers-reduced-motion: reduce) { .core-image-card, .core-image-card-glow, .core-image-card::after, .core-image-card-icon { animation: none; } }

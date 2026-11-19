@@ -509,6 +509,45 @@ struct Orchestration {
     judge: Option<Choice>,
 }
 
+/// Pictures being created: how many, how many landed or failed, and their shape for the placeholders.
+#[derive(Clone, Debug)]
+struct ImageJob {
+    conversation_id: String,
+    total: usize,
+    done: usize,
+    failed: usize,
+    aspect: &'static str,
+}
+
+/// The composer's image options (`image.*` settings).
+struct ImageOptions {
+    size: &'static str,
+    aspect: &'static str,
+    count: usize,
+    quality: Option<&'static str>,
+    background: Option<&'static str>,
+}
+
+fn image_options(s: &State) -> ImageOptions {
+    let pref = |key: &str| s.prefs.get(key).and_then(Value::as_str).unwrap_or_default().to_owned();
+    let (size, aspect) = match pref("image.shape").as_str() {
+        "portrait" => ("1024x1536", "2:3"),
+        "landscape" => ("1536x1024", "3:2"),
+        _ => ("1024x1024", "1:1"),
+    };
+    let count = pref("image.count").parse::<usize>().unwrap_or(1).clamp(1, IMAGE_MAX_COUNT);
+    let quality = match pref("image.quality").as_str() {
+        "high" => Some("high"),
+        "standard" => Some("standard"),
+        _ => None,
+    };
+    let background = (pref("image.background") == "transparent").then_some("transparent");
+    ImageOptions { size, aspect, count, quality, background }
+}
+
+/// The most pictures one message asks for (each is its own request).
+const IMAGE_MAX_COUNT: usize = 4;
+
 /// A message that could not be sent before an answer started, kept for a Retry card.
 #[derive(Clone)]
 struct Unsent {
@@ -859,6 +898,10 @@ struct State {
     /// A message just sent, before the model has started to answer: (chat, text, stored yet). The page shows the
     /// message and a thinking indicator at once instead of waiting for the network.
     waiting: Option<(Option<String>, String, bool)>,
+    /// Pictures being created for a chat: shown as placeholder cards that fill in as each one lands.
+    image_job: Option<ImageJob>,
+    /// The Meo API refused the image quality / background options (an older API): send without them.
+    image_options_unsupported: bool,
     /// Steps of the current or last answer: (conversation id, steps) — shown collapsed on that answer.
     activity: Option<(String, Vec<Value>)>,
     remote_run: Option<RemoteRun>,
@@ -5635,6 +5678,11 @@ impl AppCore {
                             s.conversations.insert(0, conversation);
                             s.active = Some(id.clone());
                             s.new_chat_project = None;
+                            // The message and its thinking row move into the new chat in the same change,
+                            // so they never disappear while the chat is being set up.
+                            if let Some(w) = s.waiting.as_mut().filter(|w| w.0.is_none()) {
+                                w.0 = Some(id.clone());
+                            }
                         });
                         if task {
                             self.mark_work(&id, true);
@@ -5983,7 +6031,10 @@ impl AppCore {
         }
     }
 
-    /// Text to image: consent preview first, like chat.
+    /// Text to image: consent preview first, like chat. The composer's image options pick the shape,
+    /// how many pictures, the quality and a transparent background; several pictures are separate
+    /// requests made side by side (each its own consent), so one slow or failed picture does not hold
+    /// the others back.
     async fn image_flow(
         &self,
         conversation_id: String,
@@ -5992,24 +6043,58 @@ impl AppCore {
         model: String,
         save_prompt: bool,
     ) {
-        let request = json!({ "credentialId": credential, "model": model, "prompt": prompt });
-        let consent = match self
-            .call(|api, t| {
+        let options = image_options(&self.state.lock().unwrap());
+        let mut request = json!({ "credentialId": credential, "model": model, "prompt": prompt, "size": options.size });
+        if !self.state.lock().unwrap().image_options_unsupported {
+            if let Some(q) = options.quality {
+                request["quality"] = json!(q);
+            }
+            if let Some(b) = options.background {
+                request["background"] = json!(b);
+            }
+        }
+        // The thinking row says what is happening while the consents are asked for.
+        self.update(|s| {
+            s.image_job = Some(ImageJob { conversation_id: conversation_id.clone(), total: options.count, done: 0, failed: 0, aspect: options.aspect });
+        });
+        let prepare = |request: Value| async move {
+            self.call(|api, t| {
                 let request = request.clone();
                 async move { api.image_prepare(&t, &request).await }
             })
             .await
-        {
-            Ok(consent) => consent,
-            Err(e) => return self.notice("error", e.to_string()),
         };
+        let mut first = prepare(request.clone()).await;
+        // A Meo API from before the quality / background options refuses the unknown keys: ask without them.
+        if matches!(&first, Err(ApiError::Status { code, .. }) if code == "invalid_request")
+            && (request.get("quality").is_some() || request.get("background").is_some())
+        {
+            if let Some(o) = request.as_object_mut() {
+                o.remove("quality");
+                o.remove("background");
+            }
+            self.update(|s| s.image_options_unsupported = true);
+            first = prepare(request.clone()).await;
+        }
+        let first = match first {
+            Ok(consent) => consent,
+            Err(e) => {
+                self.update(|s| s.image_job = None);
+                return self.notice("error", e.to_string());
+            }
+        };
+        let mut consents = vec![first];
+        if options.count > 1 {
+            let more = futures_util::future::join_all((1..options.count).map(|_| prepare(request.clone()))).await;
+            consents.extend(more.into_iter().filter_map(Result::ok));
+        }
         let pending = PendingSend {
             image: true,
             save_prompt,
             conversation_id,
             prompt,
             request,
-            consent,
+            consent: Value::Array(consents),
             judge: None,
         };
         let auto = self
@@ -6023,7 +6108,10 @@ impl AppCore {
         if auto {
             self.run_image(pending).await;
         } else {
-            self.update(|s| s.consent = Some(pending));
+            self.update(|s| {
+                s.image_job = None;
+                s.consent = Some(pending);
+            });
         }
     }
 
@@ -6033,6 +6121,23 @@ impl AppCore {
             .as_str()
             .unwrap_or_default()
             .to_owned();
+        let consents: Vec<Value> = match &pending.consent {
+            Value::Array(list) => list.clone(),
+            one => vec![one.clone()],
+        };
+        let total = consents.len().max(1);
+        let aspect = self.state.lock().unwrap().image_job.as_ref().map_or_else(
+            || image_options(&self.state.lock().unwrap()).aspect,
+            |j| j.aspect,
+        );
+        self.update(|s| {
+            s.image_job = Some(ImageJob { conversation_id: id.clone(), total, done: 0, failed: 0, aspect });
+            s.streaming = Some((id.clone(), String::new()));
+        });
+        self.hooks.busy(true);
+        self.begin_activity(&id);
+        let label = if total > 1 { format!("{total} images") } else { "Image".to_owned() };
+        self.step("image", &label, &model, "running", vec![]);
         if pending.save_prompt {
             let (cid, prompt) = (id.clone(), pending.prompt.clone());
             if let Err(e) = self
@@ -6042,52 +6147,83 @@ impl AppCore {
                 })
                 .await
             {
+                self.update(|s| {
+                    s.streaming = None;
+                    s.image_job = None;
+                });
+                self.hooks.busy(false);
+                self.step("image", &label, &model, "error", vec![]);
                 return self.notice("error", e.to_string());
             }
         }
-        let mut body = pending.request.clone();
-        body["consent"] = json!({
-            "requestId": pending.consent["requestId"],
-            "payloadSha256": pending.consent["payloadSha256"],
-            "confirmationVersion": 1,
+        let results = futures_util::future::join_all(consents.iter().map(|consent| {
+            let mut body = pending.request.clone();
+            body["consent"] = json!({
+                "requestId": consent["requestId"],
+                "payloadSha256": consent["payloadSha256"],
+                "confirmationVersion": 1,
+            });
+            async move {
+                let result = self
+                    .call(|api, t| {
+                        let body = body.clone();
+                        async move { api.image_generate(&t, &body).await }
+                    })
+                    .await;
+                // Each picture counts as it lands, so the cards fill in one by one.
+                self.update(|s| {
+                    if let Some(job) = s.image_job.as_mut() {
+                        if result.is_ok() { job.done += 1 } else { job.failed += 1 }
+                    }
+                });
+                result
+            }
+        }))
+        .await;
+        self.update(|s| {
+            s.streaming = None;
+            s.image_job = None;
         });
-        self.update(|s| s.streaming = Some((id.clone(), "Creating your image…".to_owned())));
-        self.hooks.busy(true);
-        self.begin_activity(&id);
-        self.step("image", "Image", &model, "running", vec![]);
-        let result = self
-            .call(|api, t| {
-                let body = body.clone();
-                async move { api.image_generate(&t, &body).await }
-            })
-            .await;
-        self.update(|s| s.streaming = None);
         self.hooks.busy(false);
+        let mut links: Vec<String> = Vec::new();
+        let mut raws: Vec<String> = Vec::new();
+        let mut errors: Vec<String> = Vec::new();
+        for result in results {
+            match result {
+                Ok(image) => {
+                    let mime = image["mimeType"].as_str().unwrap_or("image/png");
+                    if let Some(url) = image["url"].as_str() {
+                        links.push(url.to_owned());
+                    } else if let Some(b64) = image["base64"].as_str() {
+                        raws.push(format!("data:{mime};base64,{b64}"));
+                    } else {
+                        errors.push("The provider returned no image.".to_owned());
+                    }
+                }
+                Err(e) => errors.push(e.to_string()),
+            }
+        }
+        let made = links.len() + raws.len();
         self.step(
             "image",
-            "Image",
+            &label,
             &model,
-            if result.is_ok() { "done" } else { "error" },
+            if made > 0 { "done" } else { "error" },
             vec![],
         );
-        let image = match result {
-            Ok(image) => image,
-            Err(e) => return self.notice("error", e.to_string()),
-        };
-        let mime = image["mimeType"].as_str().unwrap_or("image/png");
-        let (text, raw): (String, Option<String>) = if let Some(url) = image["url"].as_str() {
-            (
-                format!("Created with {model}.\n\n![Generated image]({url})"),
-                None,
-            )
-        } else if let Some(b64) = image["base64"].as_str() {
-            (
-                format!("Created with {model}. This image is not saved."),
-                Some(format!("data:{mime};base64,{b64}")),
-            )
-        } else {
-            return self.notice("error", "The provider returned no image.");
-        };
+        if made == 0 {
+            return self.notice("error", errors.first().cloned().unwrap_or_else(|| "The provider returned no image.".to_owned()));
+        }
+        let mut text = if made > 1 { format!("Created {made} images with {model}.") } else { format!("Created with {model}.") };
+        if !raws.is_empty() {
+            text.push_str(if raws.len() > 1 { " These images are not saved." } else { " This image is not saved." });
+        }
+        if made < total {
+            text.push_str(&format!(" {} of {total} could not be made: {}", total - made, errors.first().cloned().unwrap_or_default()));
+        }
+        for (i, url) in links.iter().enumerate() {
+            text.push_str(&format!("\n\n![Generated image {}]({url})", i + 1));
+        }
         let reply = text.clone();
         let _ = self
             .call(|api, t| {
@@ -6096,7 +6232,7 @@ impl AppCore {
             })
             .await;
         self.refresh_messages(&id).await;
-        if let Some(raw) = raw {
+        if !raws.is_empty() {
             let last = self
                 .state
                 .lock()
@@ -6111,11 +6247,11 @@ impl AppCore {
                 .map(|m| m.id.clone());
             if let Some(message) = last {
                 self.update(|s| {
-                    s.generated.insert(message, vec![raw]);
+                    s.generated.insert(message, raws);
                 });
             }
         }
-        self.notify_answer(&id, "Your image is ready.");
+        self.notify_answer(&id, if made > 1 { "Your images are ready." } else { "Your image is ready." });
     }
 
     fn active_messages(&self) -> Option<(String, Vec<ChatMessage>, bool)> {
@@ -6171,9 +6307,25 @@ impl AppCore {
             return;
         }
         let (text, last_id) = (prompt.text.clone(), last.id.clone());
+        // The old answer goes and the thinking row shows at once; the server catches up behind it.
+        self.answer_now(&cid, n - 1, &text, true);
         if self.truncate_from(&cid, n - 1, &last_id).await {
             self.turn(text, false, false).await;
+        } else {
+            self.refresh_messages(&cid).await;
         }
+        self.update(|s| s.waiting = None);
+    }
+
+    /// Shows a new answer starting right away: messages from `keep` on leave the page and the thinking
+    /// row appears under `text` (already on the page when `stored`, else shown as the message to send).
+    fn answer_now(&self, conversation_id: &str, keep: usize, text: &str, stored: bool) {
+        self.update(|s| {
+            if let Some(list) = s.messages.get_mut(conversation_id) {
+                list.truncate(keep);
+            }
+            s.waiting = Some((Some(conversation_id.to_owned()), text.to_owned(), stored));
+        });
     }
 
     /// The same round again: a fresh consent for the same request, the prompt not saved twice.
@@ -6203,7 +6355,10 @@ impl AppCore {
             return;
         };
         if let Some(last) = list.last().filter(|m| m.role == "user" && !busy) {
-            self.turn(last.text.clone(), false, false).await;
+            let (cid, text) = (self.state.lock().unwrap().active.clone().unwrap_or_default(), last.text.clone());
+            self.answer_now(&cid, list.len(), &text, true);
+            self.turn(text, false, false).await;
+            self.update(|s| s.waiting = None);
         }
     }
 
@@ -6247,9 +6402,13 @@ impl AppCore {
         if busy || text.is_empty() {
             return;
         }
+        self.answer_now(&cid, index, &text, false);
         if self.truncate_from(&cid, index, &id).await {
             self.turn(text, true, true).await;
+        } else {
+            self.refresh_messages(&cid).await;
         }
+        self.update(|s| s.waiting = None);
     }
 
     /// Saves the user's message with the files attached since the last one, which then show on that
@@ -10360,6 +10519,8 @@ impl AppCore {
                 "jump": "Jump to the latest message", "thinking": "Thinking",
                 "pastedAsFile": "Long text added as a file · paste as plain text to keep it in the box",
                 "waiting": "Waiting for the model",
+                "imageOne": "Creating your image", "imageMany": "Creating {n} images",
+                "imageReady": "{done} of {n} ready", "imageDone": "Ready", "imageFailed": "Could not be made",
             },
             "auth": {
                 "state": s.auth,
@@ -11308,6 +11469,16 @@ fn model_name(s: &State, choice: &Choice) -> String {
         .map_or_else(|| choice.1.clone(), |m| m.name.clone())
 }
 
+/// Placeholder cards for pictures being created. `text` is what a client without this block shows.
+fn image_progress_block(job: &ImageJob) -> Value {
+    let text = if job.total > 1 {
+        format!("Creating {} images… {} of {} ready", job.total, job.done, job.total)
+    } else {
+        "Creating your image…".to_owned()
+    };
+    json!({ "type": "image_progress", "count": job.total, "done": job.done, "failed": job.failed, "aspect": job.aspect, "text": text })
+}
+
 /// The composer's routing control: Auto, or force one route for the next messages.
 fn mode_control(s: &State) -> Option<Value> {
     let mut options: Vec<Value> = Vec::new();
@@ -11628,8 +11799,27 @@ fn composer_controls(s: &State) -> Vec<Value> {
         "value": s.prefs.get("chat.web_search").cloned().unwrap_or(json!(false)), "align": "start",
     }));
     if let Some(mut model) = mode_control(s) {
+        let image = model["value"] == "image";
         model["align"] = json!("end");
         controls.push(model);
+        // Image mode: what the next pictures look like and how many to make.
+        if image {
+            let select = |id: &str, label: &str, icon: &str, binding: &str, default: &str, options: &[(&str, &str)]| {
+                json!({
+                    "id": id, "label": label, "kind": "select", "binding": binding, "icon": icon, "align": "end",
+                    "value": text(binding, default),
+                    "options": options.iter().map(|(v, l)| json!({ "value": v, "label": l })).collect::<Vec<_>>(),
+                })
+            };
+            controls.push(select("image_shape", "Shape", "crop", "image.shape", "square",
+                &[("square", "Square"), ("portrait", "Portrait"), ("landscape", "Landscape")]));
+            controls.push(select("image_count", "Images", "photo_library", "image.count", "1",
+                &[("1", "1 image"), ("2", "2 images"), ("3", "3 images"), ("4", "4 images")]));
+            controls.push(select("image_quality", "Quality", "high_quality", "image.quality", "auto",
+                &[("auto", "Auto quality"), ("standard", "Standard"), ("high", "High quality")]));
+            controls.push(select("image_background", "Background", "layers", "image.background", "auto",
+                &[("auto", "Any background"), ("transparent", "Transparent")]));
+        }
     }
     let list = profile_list(s);
     if !list.is_empty() {
@@ -12862,9 +13052,14 @@ fn conversation_page(s: &State) -> Value {
         .streaming
         .as_ref()
         .filter(|(id, _)| Some(id) == active.as_ref());
+    let image_job = s.image_job.as_ref().filter(|j| Some(&j.conversation_id) == active.as_ref());
     if let Some((_, text)) = streaming {
-        let text = clean_reply(text);
-        messages.push(json!({ "role": "assistant", "text": text, "streaming": true, "blocks": richtext::blocks(&richtext::close_open_markdown(&text)) }));
+        if let Some(job) = image_job {
+            messages.push(json!({ "role": "assistant", "text": "", "streaming": true, "blocks": [image_progress_block(job)] }));
+        } else {
+            let text = clean_reply(text);
+            messages.push(json!({ "role": "assistant", "text": text, "streaming": true, "blocks": richtext::blocks(&richtext::close_open_markdown(&text)) }));
+        }
     }
     // A message that could not be sent: shown again with its reason and a Retry button.
     if streaming.is_none() {
@@ -13009,11 +13204,16 @@ fn conversation_page(s: &State) -> Value {
     if let Some((chat, text, stored)) = s.waiting.as_ref().filter(|_| s.streaming.is_none() && remote_progress.is_none()) {
         if chat == &active || (!*stored && chat.is_none() && active.is_none()) {
             let last_user = messages.last().is_some_and(|m| m["role"] == "user");
+            // Pictures already show their placeholder cards while the request is being set up.
+            let thinking = match image_job {
+                Some(job) => json!({ "role": "assistant", "text": "", "streaming": true, "blocks": [image_progress_block(job)] }),
+                None => json!({ "role": "assistant", "text": "", "streaming": true }),
+            };
             if !*stored {
                 messages.push(json!({ "id": "", "role": "user", "text": text, "streaming": false, "actions": [], "blocks": [], "images": [] }));
-                messages.push(json!({ "role": "assistant", "text": "", "streaming": true }));
+                messages.push(thinking);
             } else if last_user {
-                messages.push(json!({ "role": "assistant", "text": "", "streaming": true }));
+                messages.push(thinking);
             }
         }
     }
@@ -16015,6 +16215,122 @@ mod tests {
         let _ = std::fs::remove_dir_all(&folder);
     }
 
+    /// Sends `text` against a slow fake API and returns every moment the page showed neither the sent
+    /// message nor a live assistant (thinking) row before the answer began.
+    fn thinking_gaps(c: &AppCore, text: &str) -> Vec<String> {
+        let done = std::sync::atomic::AtomicBool::new(false);
+        let mut gaps = Vec::new();
+        let mut seen_send = false;
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                run(c, Action::Send { text: text.into() });
+                done.store(true, Ordering::SeqCst);
+            });
+            let start = std::time::Instant::now();
+            while !done.load(Ordering::SeqCst) && start.elapsed() < std::time::Duration::from_secs(20) {
+                let msgs = c.view()["page"]["messages"].as_array().cloned().unwrap_or_default();
+                let sent = msgs.iter().any(|m| m["role"] == "user" && m["text"] == text);
+                seen_send |= sent;
+                let answering = msgs.iter().any(|m| m["role"] == "assistant"
+                    && m["text"].as_str().is_some_and(|t| !t.is_empty() && !t.starts_with("Creating")));
+                let live = msgs.last().is_some_and(|m| m["role"] == "assistant" && (m["streaming"] == true || m["stepsLive"] == true));
+                if seen_send && !answering && !(sent && live) {
+                    gaps.push(format!("{}ms {}", start.elapsed().as_millis(), serde_json::to_string(&msgs).unwrap().chars().take(400).collect::<String>()));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+        });
+        gaps
+    }
+
+    fn slow_chat_core(api: &FakeApi, folder: &std::path::Path, active: Option<&str>) -> AppCore {
+        let c = work_core(api, folder, "smart");
+        c.update(|s| {
+            s.route = "chat".into();
+            s.active = active.map(str::to_owned);
+            s.agent.host = None;
+            s.prefs.remove("work.workspace");
+        });
+        c
+    }
+
+    #[test]
+    fn the_thinking_indicator_shows_from_the_moment_of_sending_until_the_answer_starts() {
+        for (name, active, level) in [("new", None, "medium"), ("existing", Some("c1"), "medium"), ("high", Some("c1"), "high")] {
+            let folder = temp_folder(&format!("thinking-{name}"));
+            let api = fake_api(vec!["@slow", "Hello back.", "Hello back.", "Hello back.", "Hello back."]);
+            let c = slow_chat_core(&api, &folder, active);
+            c.update(|s| { s.prefs.insert("chat.thinking".into(), json!(level)); });
+            let gaps = thinking_gaps(&c, "hello");
+            assert!(texts(&c).last().is_some_and(|t| t.contains("Hello back")), "{name}: {:?}", texts(&c));
+            assert!(gaps.is_empty(), "{name}: no thinking indicator at {:#?}", &gaps[..gaps.len().min(4)]);
+            let _ = std::fs::remove_dir_all(&folder);
+        }
+    }
+
+    fn image_core(api: &FakeApi, folder: &std::path::Path, count: &str) -> AppCore {
+        let c = slow_chat_core(api, folder, Some("c1"));
+        c.update(|s| {
+            s.router.slots.insert("default".into(), ("cred".into(), "model".into()));
+            s.router.slots.insert("image".into(), ("cred".into(), "gpt-image-1".into()));
+            s.prefs.insert("chat.mode".into(), json!("image"));
+            s.prefs.insert("image.count".into(), json!(count));
+            s.prefs.insert("image.shape".into(), json!("landscape"));
+            s.prefs.insert("image.quality".into(), json!("high"));
+        });
+        c
+    }
+
+    #[test]
+    fn image_mode_makes_the_chosen_number_of_pictures_side_by_side_with_their_options() {
+        let folder = temp_folder("images-set");
+        let api = fake_api(vec!["@slow"]);
+        let c = image_core(&api, &folder, "3");
+        let toolbar = c.view()["page"]["composer"]["toolbar"].clone();
+        for id in ["image_shape", "image_count", "image_quality", "image_background"] {
+            assert!(toolbar.as_array().unwrap().iter().any(|t| t["id"] == id), "{id} in {toolbar}");
+        }
+        let cards = std::sync::Mutex::new(Vec::new());
+        let done = std::sync::atomic::AtomicBool::new(false);
+        let started = std::time::Instant::now();
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                run(&c, Action::Send { text: "a cat in the rain".into() });
+                done.store(true, Ordering::SeqCst);
+            });
+            while !done.load(Ordering::SeqCst) && started.elapsed() < std::time::Duration::from_secs(20) {
+                if let Some(block) = last_message(&c).and_then(|m| m["blocks"].as_array().and_then(|b| b.first().cloned())).filter(|b| b["type"] == "image_progress") {
+                    cards.lock().unwrap().push(block);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+        });
+        let cards = cards.into_inner().unwrap();
+        assert!(cards.iter().any(|b| b["count"] == 3 && b["aspect"] == "3:2"), "placeholder cards while waiting: {:?}", cards.first());
+        let prepared = api.images.lock().unwrap().clone();
+        assert_eq!(prepared.len(), 3, "{prepared:?}");
+        assert!(prepared.iter().all(|b| b["size"] == "1536x1024" && b["quality"] == "high" && b.get("background").is_none()), "{prepared:?}");
+        // Three requests, each its own Worker call, taken side by side: well under three times one.
+        assert!(started.elapsed() < std::time::Duration::from_millis(200 * 9), "{:?}", started.elapsed());
+        let last = last_message(&c).unwrap_or_default();
+        let shown = serde_json::to_string(&last).unwrap();
+        assert!(last["text"].as_str().is_some_and(|t| t.contains("Created 3 images")) && shown.matches("https://img.example/").count() >= 3, "{shown}");
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn image_options_an_older_api_refuses_are_dropped_and_one_failed_picture_keeps_the_rest() {
+        let folder = temp_folder("images-old");
+        let api = fake_api(vec!["@old-images", "@failing-image"]);
+        let c = image_core(&api, &folder, "3");
+        run(&c, Action::Send { text: "a lighthouse".into() });
+        let prepared = api.images.lock().unwrap().clone();
+        assert!(prepared.iter().all(|b| b.get("quality").is_none()), "asked again without the options: {prepared:?}");
+        let last = texts(&c).last().cloned().unwrap_or_default();
+        assert!(last.contains("Created 2 images") && last.contains("1 of 3 could not be made"), "{last}");
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
     #[test]
     fn a_stream_that_ends_without_done_is_continued_not_kept_as_the_answer() {
         let folder = temp_folder("eof");
@@ -18192,6 +18508,8 @@ mod tests {
         compacts: Arc<Mutex<Vec<Value>>>,
         /// Every body posted to /v1/realtime/send.
         remotes: Arc<Mutex<Vec<Value>>>,
+        /// Every body posted to /v1/images/prepare.
+        images: Arc<Mutex<Vec<Value>>>,
     }
 
     fn fake_api(replies: Vec<&str>) -> FakeApi {
@@ -18213,7 +18531,15 @@ mod tests {
         let no_harness = replies.contains(&"@no-harness");
         // "@no-limits": a Meo API from before the limits field.
         let no_limits = replies.contains(&"@no-limits");
-        let replies: Vec<String> = replies.into_iter().filter(|r| *r != "@legacy" && *r != "@reject-native" && *r != "@no-harness" && *r != "@no-limits").map(str::to_owned).collect();
+        // "@slow": every response waits 200 ms, like a real network, so tests can look at the page meanwhile.
+        let slow = replies.contains(&"@slow");
+        // "@old-images": a Meo API from before the image quality / background options.
+        let old_images = replies.contains(&"@old-images");
+        // "@failing-image": the second picture of a set fails at the provider.
+        let failing_image = replies.contains(&"@failing-image");
+        let images = Arc::new(Mutex::new(Vec::<Value>::new()));
+        let image_log = images.clone();
+        let replies: Vec<String> = replies.into_iter().filter(|r| *r != "@legacy" && *r != "@reject-native" && *r != "@no-harness" && *r != "@no-limits" && *r != "@slow" && *r != "@old-images" && *r != "@failing-image").map(str::to_owned).collect();
         let streams = Arc::new(Mutex::new(Vec::<Value>::new()));
         let store = Arc::new(Mutex::new(seed));
         let compacts = Arc::new(Mutex::new(Vec::<Value>::new()));
@@ -18229,6 +18555,7 @@ mod tests {
             for conn in listener.incoming() {
                 let Ok(mut conn) = conn else { continue };
                 let uploads = uploads.clone();
+                let images = images.clone();
                 let (replies, seen, kept, saved, relayed) = (
                     replies.clone(),
                     seen.clone(),
@@ -18267,6 +18594,9 @@ mod tests {
                     }
                     let body: Value =
                         serde_json::from_slice(&raw[head_end..]).unwrap_or(Value::Null);
+                    if slow {
+                        std::thread::sleep(std::time::Duration::from_millis(200));
+                    }
                     let request_line = head.lines().next().unwrap_or_default().to_owned();
                     let path = request_line
                         .split_whitespace()
@@ -18304,7 +18634,20 @@ mod tests {
                         (lines, prompt).hash(&mut h);
                         format!("{:x}", h.finish())
                     };
-                    let (status, content_type, payload) = if path.starts_with("/v1/chat/") && ((no_harness && body.get("harness").is_some()) || (no_limits && body.get("limits").is_some())) {
+                    let (status, content_type, payload) = if path.starts_with("/v1/images/") && old_images && (body.get("quality").is_some() || body.get("background").is_some()) {
+                        (400, "application/json", json!({ "error": "invalid_request" }).to_string())
+                    } else if path == "/v1/images/prepare" {
+                        images.lock().unwrap().push(body.clone());
+                        let n = images.lock().unwrap().len();
+                        (200, "application/json", json!({ "consent": { "requestId": format!("img{n}"), "payloadSha256": "h", "provider": "fake", "model": "m" } }).to_string())
+                    } else if path == "/v1/images/generate" {
+                        let id = body["consent"]["requestId"].as_str().unwrap_or_default().to_owned();
+                        if id == "img2" && failing_image {
+                            (502, "application/json", json!({ "error": "ai_provider_unreachable" }).to_string())
+                        } else {
+                            (200, "application/json", json!({ "image": { "url": format!("https://img.example/{id}.png"), "mimeType": "image/png" } }).to_string())
+                        }
+                    } else if path.starts_with("/v1/chat/") && ((no_harness && body.get("harness").is_some()) || (no_limits && body.get("limits").is_some())) {
                         (400, "application/json", json!({ "error": "invalid_request" }).to_string())
                     } else if path == "/v1/chat/prepare"
                         && legacy
@@ -18486,6 +18829,7 @@ mod tests {
             streams,
             compacts,
             remotes,
+            images: image_log,
         }
     }
 
