@@ -362,6 +362,23 @@ impl MeoApi {
             .map(|_| ())
     }
 
+    /// Where a Work run stands in `conversation_id` (`{run: null | {...}}`), written by the device running it.
+    pub async fn run_checkpoint(&self, token: &str, conversation_id: &str) -> Result<Value, ApiError> {
+        let path = format!("/v1/conversations/{conversation_id}/run");
+        Ok(self.request(token, Method::GET, &path, None).await?["run"].clone())
+    }
+
+    /// Writes this device's latest round of the run (status `running` / `stopped` / `finished`).
+    pub async fn put_run_checkpoint(&self, token: &str, conversation_id: &str, body: &Value) -> Result<(), ApiError> {
+        let path = format!("/v1/conversations/{conversation_id}/run");
+        self.request(token, Method::PUT, &path, Some(body.clone())).await.map(|_| ())
+    }
+
+    /// Tells Meo API the user stopped this answer, so it is not finished in the background.
+    pub async fn chat_stop(&self, token: &str, request_id: &str) -> Result<(), ApiError> {
+        self.request(token, Method::POST, "/v1/chat/stop", Some(json!({ "requestId": request_id }))).await.map(|_| ())
+    }
+
     /// Stores an answer with its steps, so a reload or another device shows the same steps; with the
     /// run's log when it stopped unfinished, so it can be continued anywhere.
     pub async fn append_answer(

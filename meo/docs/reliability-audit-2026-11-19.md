@@ -94,3 +94,9 @@ folded into a reliability fix.
 - Read `error_code` / `provider_error_type` for gpt-6-luna after a week to explain the 400s.
 - Model health is per device; the server could keep it per account so a new device starts informed.
 - Track time to first word per answer (the audit row has only start and end).
+
+## Follow-up: work that outlives the device (same day)
+
+Answers that Meo API finishes when the app goes away, and Work runs that save where they stand after every round so
+another device can continue them: see meo-api `docs/paid-and-cloud-readiness.md` §4a. Core: `checkpoint_run`,
+`refresh_run`, `continue_run_here`, `run_elsewhere_card`; Stop calls `POST /v1/chat/stop`.

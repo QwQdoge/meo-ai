@@ -97,6 +97,13 @@ fn control(c: &HashMap<String, String>, item: &mut Value) {
     field(c, item, "label");
     field(c, item, "description");
     field(c, item, "placeholder");
+    // The project's "where it lives" rows: product copy, plus the folder's own name.
+    if item["id"].as_str().is_some_and(|id| id.starts_with("env_where_")) {
+        field(c, item, "value");
+        if let Some(name) = item["value"].as_str().and_then(|v| v.strip_prefix("The folder ")).map(str::to_owned) {
+            item["value"] = Value::String(format!("文件夹 {name}"));
+        }
+    }
     // Tiles and bars carry their own labels.
     for entry in each(item, "items") {
         field(c, entry, "label");
@@ -200,6 +207,27 @@ pub fn localize(view: &mut Value, locale: &str) {
             }
             for message in each(page, "messages") {
                 buttons(c, message, "actions");
+                // A run on another device: rebuilt from its fields (the names and numbers are not in the catalog).
+                if let Some(run) = message.get("runElsewhere").cloned() {
+                    let device = run["device"].as_str().unwrap_or("另一台设备").to_owned();
+                    let rounds = run["rounds"].as_u64().unwrap_or(0);
+                    let quiet = run["quietSeconds"].as_i64().unwrap_or(0);
+                    let (title, text) = if quiet < 300 {
+                        (format!("正在 {device} 上运行"), format!("这个任务正在 {device} 上进行（第 {rounds} 轮）。关掉这个窗口也不会影响它。"))
+                    } else {
+                        let minutes = (quiet / 60).max(1);
+                        let tail = if message["actions"].as_array().is_some_and(|a| !a.is_empty()) {
+                            "点“在这里继续”从它的最后一轮接着做；它用过的文件和网页可能已经变了。"
+                        } else {
+                            "在电脑上打开 Meo AI 就能从最后一轮接着做（云端运行即将推出）。"
+                        };
+                        (format!("{device} 已经停止回报"), format!("{device} 已经 {minutes} 分钟没有回报了，停在第 {rounds} 轮。{tail}"))
+                    };
+                    if let Some(block) = message.get_mut("blocks").and_then(|b| b.get_mut(0)) {
+                        block["title"] = Value::String(title);
+                        block["text"] = Value::String(text);
+                    }
+                }
                 for step in each(message, "steps") {
                     field(c, step, "title");
                 }

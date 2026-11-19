@@ -439,6 +439,8 @@ pub enum Action {
     GoalResume,
     /// Continue the unfinished run stored with the last answer (see `resume_run`).
     ResumeRun,
+    /// Continue here the run whose device stopped reporting (its run checkpoint).
+    ContinueRunHere,
     BeginEditGoal,
     EditGoal {
         text: String,
@@ -938,6 +940,14 @@ struct State {
     waiting: Option<(Option<String>, String, bool)>,
     /// Pictures being created for a chat: shown as placeholder cards that fill in as each one lands.
     image_job: Option<ImageJob>,
+    /// The consent request id of the answer streaming now (Stop names it to Meo API).
+    streaming_request: Option<String>,
+    /// The Meo API refused `finishInBackground` (older API): do not send it again.
+    background_unsupported: bool,
+    /// The open conversation's run checkpoint as Meo API last returned it (see `refresh_run`).
+    run_checkpoint: Option<(String, Value)>,
+    /// The Meo API has no run checkpoints yet: stop writing them.
+    checkpoints_unsupported: bool,
     /// Recent failures per model (`credential|model`), kept on the device; see [`ModelHealth`].
     model_health: HashMap<String, ModelHealth>,
     /// A chat opened with nothing cached yet: its messages are on the way.
@@ -1242,6 +1252,16 @@ impl AppCore {
             Action::Send { text } => self.send(text).await,
             Action::Stop => {
                 self.cancel.store(true, Ordering::SeqCst);
+                // An answer that would be finished in the background must not be: the user stopped it.
+                let request_id = self.state.lock().unwrap().streaming_request.take();
+                if let Some(request_id) = request_id {
+                    let _ = self
+                        .call(|api, t| {
+                            let request_id = request_id.clone();
+                            async move { api.chat_stop(&t, &request_id).await }
+                        })
+                        .await;
+                }
                 // Stopped between rounds: nothing is left running on the page.
                 self.update(|s| {
                     if let Some((_, steps)) = s.activity.as_mut() {
@@ -1685,6 +1705,7 @@ impl AppCore {
             Action::GoalPause => self.goal_pause(),
             Action::GoalResume => Box::pin(self.goal_resume()).await,
             Action::ResumeRun => Box::pin(self.resume_run()).await,
+            Action::ContinueRunHere => Box::pin(self.continue_run_here()).await,
             Action::BeginEditGoal => self.begin_edit_goal(),
             Action::EditGoal { text } => self.edit_goal(&text),
             Action::GoalRounds { delta } => self.goal_rounds(delta),
@@ -2721,6 +2742,23 @@ impl AppCore {
         };
         // Busy (rate limited), or not offered by this provider at all (a 404 for the model name):
         // either way the same question goes once to another model, with fresh consent.
+        // A Meo API from before background answers refuses the flag: ask again without it, and stop sending it.
+        let first = if matches!(&first, Err(ApiError::Status { code, .. }) if code == "invalid_request")
+            && body.get("finishInBackground").is_some()
+        {
+            self.update(|s| s.background_unsupported = true);
+            let mut plain = body.clone();
+            if let Some(o) = plain.as_object_mut() {
+                o.remove("finishInBackground");
+            }
+            self.call_chat(|api, t| {
+                let plain = plain.clone();
+                async move { api.chat_stream(&t, &plain).await.map(Box::pin) }
+            })
+            .await
+        } else {
+            first
+        };
         let asked: Choice = (
             request["credentialId"].as_str().unwrap_or_default().to_owned(),
             request["model"].as_str().unwrap_or_default().to_owned(),
@@ -3169,6 +3207,7 @@ impl AppCore {
                 s.loading_chat = None;
             }
         });
+        self.refresh_run(&id).await;
         self.refresh_files().await;
     }
 
@@ -4751,6 +4790,13 @@ impl AppCore {
                 self.refresh_conversations().await;
             }
             "files.changed" if !own => self.refresh_files().await,
+            // Another device wrote where its run stands: show it if that chat is open here.
+            "run.checkpoint" if !own => {
+                let cid = data["conversationId"].as_str().unwrap_or_default().to_owned();
+                if self.state.lock().unwrap().active.as_deref() == Some(cid.as_str()) {
+                    self.refresh_run(&cid).await;
+                }
+            }
             "presence" => {
                 let devices = data["devices"].as_u64().unwrap_or(0) as usize;
                 self.update(|s| {
@@ -6659,6 +6705,13 @@ impl AppCore {
             "confirmationVersion": 1,
         });
         let id = pending.conversation_id.clone();
+        // A chat answer (not Work) is finished and saved by Meo API if this app goes away
+        // before it ends; Stop tells the API first (see `Action::Stop`).
+        let plain = self.state.lock().unwrap().route != "work";
+        if plain && !self.state.lock().unwrap().background_unsupported {
+            body["finishInBackground"] = json!(true);
+        }
+        self.update(|s| s.streaming_request = pending.consent["requestId"].as_str().map(str::to_owned));
         // Save the prompt first so the user's other devices see it while the answer streams.
         let user = pending.prompt.clone();
         if pending.save_prompt {
@@ -6849,6 +6902,23 @@ impl AppCore {
                 // Which protocol carries the tools is plumbing: the user sees the same run go on.
                 return Box::pin(self.turn(asked, false, false)).await;
             }
+        }
+        self.update(|s| s.streaming_request = None);
+        // A Work run (or any run with tools) records where it stands after every round, so it survives
+        // this device: another device, and later a hosted runner, can continue from here.
+        let in_run = {
+            let s = self.state.lock().unwrap();
+            s.agent.native.is_some() || s.route == "work"
+        };
+        if in_run {
+            let status = if failure.is_some() || self.cancel.load(Ordering::SeqCst) {
+                "stopped"
+            } else if tooling || next.is_some() || reflect.is_some() {
+                "running"
+            } else {
+                "finished"
+            };
+            self.checkpoint_run(&id, status).await;
         }
         match failure {
             Some(e) => {
@@ -9464,6 +9534,87 @@ impl AppCore {
         (bytes(&log) <= RUN_LOG_BYTES).then_some(log)
     }
 
+    /// Writes where the run stands to Meo API (`/v1/conversations/{id}/run`): the run log so far, the
+    /// round, the request and this device. Best effort; an API without checkpoints is not asked again.
+    async fn checkpoint_run(&self, conversation_id: &str, status: &str) {
+        if self.state.lock().unwrap().checkpoints_unsupported {
+            return;
+        }
+        let (request, rounds, name) = {
+            let s = self.state.lock().unwrap();
+            (s.agent.request.chars().take(8000).collect::<String>(), s.agent.round, self.device_name_in(&s))
+        };
+        let log = self.run_log().unwrap_or_else(|| json!({}));
+        let body = json!({
+            "status": status, "deviceId": self.client_id, "deviceName": name,
+            "request": request, "rounds": rounds, "log": log,
+        });
+        let result = self
+            .call(|api, t| {
+                let (cid, body) = (conversation_id.to_owned(), body.clone());
+                async move { api.put_run_checkpoint(&t, &cid, &body).await }
+            })
+            .await;
+        match result {
+            Ok(()) => self.update(|s| {
+                let mut run = body.clone();
+                run["quietSeconds"] = json!(0);
+                run["mine"] = json!(true);
+                run["fetchedAt"] = json!(super::now_secs());
+                s.run_checkpoint = Some((conversation_id.to_owned(), run));
+            }),
+            Err(ApiError::Status { status: 404 | 405, code }) if code != "conversation_not_found" => {
+                self.update(|s| s.checkpoints_unsupported = true);
+            }
+            Err(_) => {}
+        }
+    }
+
+    /// Reads the open conversation's run checkpoint, to show a run going on (or gone quiet) elsewhere.
+    async fn refresh_run(&self, conversation_id: &str) {
+        if self.state.lock().unwrap().checkpoints_unsupported {
+            return;
+        }
+        let result = self
+            .call(|api, t| {
+                let cid = conversation_id.to_owned();
+                async move { api.run_checkpoint(&t, &cid).await }
+            })
+            .await;
+        match result {
+            Ok(mut run) => {
+                if !run.is_null() {
+                    run["mine"] = json!(run["deviceId"].as_str() == Some(self.client_id.as_str()));
+                    run["fetchedAt"] = json!(super::now_secs());
+                }
+                self.update(|s| {
+                    s.run_checkpoint = (!run.is_null()).then(|| (conversation_id.to_owned(), run));
+                });
+            }
+            Err(ApiError::Status { status: 404 | 405, code }) if code != "conversation_not_found" => {
+                self.update(|s| s.checkpoints_unsupported = true);
+            }
+            Err(_) => {}
+        }
+    }
+
+    /// Continue here: the run whose device went quiet goes on on this device, from its last round.
+    async fn continue_run_here(&self) {
+        let Some((cid, run)) = self.state.lock().unwrap().run_checkpoint.clone() else { return };
+        if self.state.lock().unwrap().active.as_deref() != Some(cid.as_str()) {
+            return;
+        }
+        let log = run["log"].clone();
+        if log.as_object().is_none_or(|o| o.is_empty()) {
+            return self.notice("info", "That run has nothing saved to continue from yet.");
+        }
+        let reason = format!(
+            "its device ({}) stopped reporting",
+            run["deviceName"].as_str().unwrap_or("another device")
+        );
+        Box::pin(self.resume_from_log(log, &reason)).await;
+    }
+
     /// Stop between rounds: what the run did so far is stored as an answer with its steps and log, so
     /// this or another device can Continue it.
     async fn store_stopped_run(&self, id: &str) {
@@ -9494,6 +9645,12 @@ impl AppCore {
     /// is told why it stopped and that the files or pages it read may have changed since.
     async fn resume_run(&self) {
         let Some(log) = self.stored_run() else { return };
+        let reason = log["reason"].as_str().unwrap_or("it stopped").to_owned();
+        Box::pin(self.resume_from_log(log, &reason)).await;
+    }
+
+    /// Continues a run from its log (stored with an answer, or a checkpoint from another device).
+    async fn resume_from_log(&self, log: Value, reason: &str) {
         let turns = log["turns"].as_array().cloned().unwrap_or_default();
         let tasks = log["tasks"].as_array().cloned().unwrap_or_default();
         let mut goal = log["goal"].clone();
@@ -9504,7 +9661,6 @@ impl AppCore {
             goal["revision"] = json!(goal["revision"].as_u64().unwrap_or(0) + 1);
         }
         let request = log["request"].as_str().unwrap_or_default().to_owned();
-        let reason = log["reason"].as_str().unwrap_or("it stopped");
         let prompt = format!(
             "<run_resume>\nThe user asked to continue the run that stopped because {reason}. Your earlier calls and their results are above. Files, pages and commands may have changed since, and this may be another device: check what you rely on before you act. Continue from where it stopped and do not redo finished work; when it is done, give the final answer.\nThe request: {request}\n</run_resume>"
         );
@@ -13462,6 +13618,15 @@ fn conversation_page(s: &State) -> Value {
     if let Some(card) = s.agent.asking.as_ref().filter(|a| Some(&a.conversation_id) == active.as_ref()).map(question_card) {
         messages.push(json!({ "id": "", "role": "assistant", "text": "", "streaming": false, "blocks": [card], "actions": [] }));
     }
+    // A run of this chat going on (or gone quiet) on another device: say so, and offer to continue here.
+    if let Some(card) = s
+        .run_checkpoint
+        .as_ref()
+        .filter(|(c, _)| Some(c) == active.as_ref() && s.streaming.is_none())
+        .and_then(|(_, run)| run_elsewhere_card(run, super::now_secs()))
+    {
+        messages.push(card);
+    }
     let busy = s.streaming.is_some();
     let using = using_label(s);
     // ↑ in an empty composer edits the last message you sent (when there is one to edit).
@@ -13581,6 +13746,8 @@ fn run_on_control(s: &State) -> Option<Value> {
     if options.len() < 2 {
         return None;
     }
+    // Where hosted runs will appear: shown, not selectable yet (see meo-api docs/paid-and-cloud-readiness.md).
+    options.push(json!({ "value": "cloud", "label": "Cloud (coming soon)", "disabled": true }));
     // In a project, the devices that have a folder bound to it say so: that is where its files are.
     if let Some(env) = project_of_view(s).and_then(|id| s.project_env.get(&id)) {
         for option in options.iter_mut() {
@@ -13701,6 +13868,45 @@ fn goal_rounds_pref(s: &State) -> usize {
 /// The card of an open question or plan review: `{type: "question", kind, title, text, choices, input,
 /// actions}`. Choices are buttons; the text field is for a free answer; actions are Answer/Skip or
 /// Approve/Keep planning. It stays until the user answers (no timeout) and does not stop the composer.
+/// The card for a run of this chat that another device is running (or stopped reporting from). A run
+/// is "quiet" after 5 minutes without a new round; it can then be continued on a device that runs Work.
+fn run_elsewhere_card(run: &Value, now: i64) -> Option<Value> {
+    if run["status"] != "running" || run["mine"] == true {
+        return None;
+    }
+    let quiet = run["quietSeconds"].as_i64().unwrap_or(0) + (now - run["fetchedAt"].as_i64().unwrap_or(now)).max(0);
+    let device = run["deviceName"].as_str().filter(|d| !d.is_empty()).unwrap_or("another device");
+    let rounds = run["rounds"].as_u64().unwrap_or(0);
+    let (title, text, actions) = if quiet < RUN_QUIET_SECS {
+        (
+            format!("Running on {device}"),
+            format!("This run is going on {device} (round {rounds}). It keeps going if you close this window."),
+            json!([]),
+        )
+    } else {
+        let minutes = (quiet / 60).max(1);
+        let text = if remote::can_host() {
+            format!("{device} has not reported for {minutes} min, after round {rounds}. Continue here to pick it up from its last round; files and pages it used may have changed.")
+        } else {
+            format!("{device} has not reported for {minutes} min, after round {rounds}. Open Meo AI on a computer to continue it from its last round (running it in the cloud is coming).")
+        };
+        let actions = if remote::can_host() {
+            json!([button("Continue here", "primary", json!({ "type": "continue_run_here" }))])
+        } else {
+            json!([])
+        };
+        (format!("{device} stopped reporting"), text, actions)
+    };
+    Some(json!({
+        "id": "", "role": "assistant", "text": "", "streaming": false, "actions": actions,
+        "blocks": [{ "type": "callout", "kind": if quiet < RUN_QUIET_SECS { "info" } else { "warning" }, "icon": "device", "title": title, "text": text }],
+        "runElsewhere": { "device": device, "rounds": rounds, "quietSeconds": quiet, "placement": run["placement"] },
+    }))
+}
+
+/// Seconds without a new round after which a run on another device counts as stopped.
+const RUN_QUIET_SECS: i64 = 300;
+
 fn question_card(a: &Asking) -> Value {
     if a.plan.is_some() {
         return json!({
@@ -14227,8 +14433,24 @@ fn project_page(s: &State, id: &str) -> Value {
     memory_items.extend(memories);
 
     // ---- Environment: where the work happens (a folder here, a repository online).
-    let mut environment: Vec<Value> =
-        vec![json!({ "id": "env_h_folder", "kind": "heading", "label": "Folder" })];
+    // What carries over to any device (and to hosted runs later) and what stays on this one.
+    let local_only = env.folder.as_deref().map(|f| {
+        std::path::Path::new(f).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| f.to_owned())
+    });
+    let mut environment: Vec<Value> = vec![
+        json!({ "id": "env_h_where", "kind": "heading", "label": "Where this project lives" }),
+        json!({ "id": "env_where_cloud", "kind": "info", "label": "In your account", "icon": "cloud",
+            "value": "Instructions, files, memory, cloud links, the GitHub repository, its chats and where each Work run stands" }),
+        json!({ "id": "env_where_device", "kind": "info", "label": "Only on this device", "icon": "device",
+            "value": local_only.clone().map_or_else(|| "Nothing".to_owned(), |name| format!("The folder {name}")) }),
+        json!({ "id": "env_where_note", "kind": "hint",
+            "text": if local_only.is_some() {
+                "A Work run here saves its progress after every round, so another device can continue it if this one closes. Give the project a GitHub repository or cloud links so the work does not depend on this folder; hosted runs will start from those."
+            } else {
+                "Everything this project needs is in your account, so its runs can continue on any device, and hosted runs will be able to start from it."
+            } }),
+        json!({ "id": "env_h_folder", "kind": "heading", "label": "Folder" }),
+    ];
     let folder_buttons = match (&env.folder, can_host) {
         (Some(_), true) => vec![
             button(
@@ -16604,6 +16826,49 @@ mod tests {
     }
 
     #[test]
+    fn a_work_run_saves_where_it_stands_after_every_round_and_chat_asks_to_finish_in_background() {
+        let folder = temp_folder("checkpoints");
+        std::fs::write(folder.join("notes.txt"), "todo: ship it").unwrap();
+        let api = fake_api(vec![READ, "Done: the note says ship it."]);
+        let c = work_core(&api, &folder, "smart");
+        let host = c.ensure_host();
+        c.update(|s| s.agent.host = host);
+        run(&c, Action::Send { text: "read my notes".into() });
+        let runs = api.runs.lock().unwrap().clone();
+        assert!(runs.len() >= 2, "a checkpoint per round: {runs:?}");
+        assert_eq!(runs.first().unwrap()["status"], "running");
+        assert_eq!(runs.last().unwrap()["status"], "finished");
+        assert!(runs.iter().all(|r| r["deviceId"].is_string() && r["request"] == "read my notes"), "{runs:?}");
+        // Work rounds are never finished by the server: they continue from the checkpoint instead.
+        assert!(api.streams.lock().unwrap().iter().all(|b| b.get("finishInBackground").is_none()));
+        // A plain chat answer asks Meo API to finish it if this app goes away.
+        let api = fake_api(vec!["Hello back."]);
+        let c = slow_chat_core(&api, &folder, Some("c1"));
+        run(&c, Action::Send { text: "hello".into() });
+        let streams = api.streams.lock().unwrap().clone();
+        assert!(streams.iter().any(|b| b["finishInBackground"] == true && b["prompt"].as_str().is_some_and(|p| p.contains("hello"))),
+            "{:?}", streams.iter().map(|b| (b["prompt"].as_str().unwrap_or_default().chars().take(40).collect::<String>(), b.get("finishInBackground").cloned())).collect::<Vec<_>>());
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn a_run_on_another_device_shows_and_can_be_continued_once_it_goes_quiet() {
+        let now = 1_000_000;
+        let run = |quiet: i64, mine: bool| json!({ "status": "running", "mine": mine, "deviceName": "Studio PC", "rounds": 4,
+            "quietSeconds": quiet, "fetchedAt": now, "placement": "device" });
+        assert!(run_elsewhere_card(&run(30, true), now).is_none(), "this device's own run");
+        let live = run_elsewhere_card(&run(30, false), now).unwrap();
+        assert_eq!(live["blocks"][0]["title"], "Running on Studio PC");
+        assert!(live["actions"].as_array().unwrap().is_empty());
+        let quiet = run_elsewhere_card(&run(30, false), now + 400).unwrap();
+        assert_eq!(quiet["blocks"][0]["title"], "Studio PC stopped reporting");
+        if remote::can_host() {
+            assert_eq!(quiet["actions"][0]["action"]["type"], "continue_run_here");
+        }
+        assert!(run_elsewhere_card(&json!({ "status": "finished", "mine": false }), now).is_none());
+    }
+
+    #[test]
     fn a_stream_that_ends_without_done_is_continued_not_kept_as_the_answer() {
         let folder = temp_folder("eof");
         let api = fake_api(vec!["@eof:The commits today: one, two, and", "Greeting", " three."]);
@@ -18782,6 +19047,8 @@ mod tests {
         remotes: Arc<Mutex<Vec<Value>>>,
         /// Every body posted to /v1/images/prepare.
         images: Arc<Mutex<Vec<Value>>>,
+        /// Every run checkpoint written (PUT /v1/conversations/{id}/run).
+        runs: Arc<Mutex<Vec<Value>>>,
     }
 
     fn fake_api(replies: Vec<&str>) -> FakeApi {
@@ -18811,6 +19078,8 @@ mod tests {
         let failing_image = replies.contains(&"@failing-image");
         let images = Arc::new(Mutex::new(Vec::<Value>::new()));
         let image_log = images.clone();
+        let runs = Arc::new(Mutex::new(Vec::<Value>::new()));
+        let run_log = runs.clone();
         let replies: Vec<String> = replies.into_iter().filter(|r| *r != "@legacy" && *r != "@reject-native" && *r != "@no-harness" && *r != "@no-limits" && *r != "@slow" && *r != "@old-images" && *r != "@failing-image").map(str::to_owned).collect();
         let streams = Arc::new(Mutex::new(Vec::<Value>::new()));
         let store = Arc::new(Mutex::new(seed));
@@ -18828,6 +19097,7 @@ mod tests {
                 let Ok(mut conn) = conn else { continue };
                 let uploads = uploads.clone();
                 let images = images.clone();
+                let runs = runs.clone();
                 let (replies, seen, kept, saved, relayed) = (
                     replies.clone(),
                     seen.clone(),
@@ -18908,6 +19178,13 @@ mod tests {
                     };
                     let (status, content_type, payload) = if path.starts_with("/v1/images/") && old_images && (body.get("quality").is_some() || body.get("background").is_some()) {
                         (400, "application/json", json!({ "error": "invalid_request" }).to_string())
+                    } else if path.starts_with("/v1/conversations/") && path.ends_with("/run") {
+                        if method == "PUT" {
+                            runs.lock().unwrap().push(body.clone());
+                            (200, "application/json", json!({ "run": body }).to_string())
+                        } else {
+                            (200, "application/json", json!({ "run": Value::Null }).to_string())
+                        }
                     } else if path == "/v1/images/prepare" {
                         images.lock().unwrap().push(body.clone());
                         let n = images.lock().unwrap().len();
@@ -19102,6 +19379,7 @@ mod tests {
             compacts,
             remotes,
             images: image_log,
+            runs: run_log,
         }
     }
 

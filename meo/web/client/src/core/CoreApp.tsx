@@ -525,7 +525,7 @@ function SettingRow({ item, act }: { item: Spec; act: Act }) {
           <span className="set-select">
             <select aria-label={item.label} value={item.value ?? ""} onChange={(e) => act(setting(item, e.target.value))}>
               {!(item.options ?? []).some((o: Spec) => o.value === item.value) && <option value="">—</option>}
-              {(item.options ?? []).map((o: Spec) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              {(item.options ?? []).map((o: Spec) => <option key={o.value} value={o.value} disabled={!!o.disabled}>{o.label}</option>)}
             </select>
             <Icon name="expand_more" size={16} />
           </span>
@@ -612,7 +612,7 @@ function Control({ item, act }: { item: Spec; act: Act }) {
           <span>{item.label}</span>
           <select value={item.value ?? ""} onChange={(e) => act(setting(item, e.target.value))}>
             {!(item.options ?? []).some((o: Spec) => o.value === item.value) && <option value="">—</option>}
-            {(item.options ?? []).map((o: Spec) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            {(item.options ?? []).map((o: Spec) => <option key={o.value} value={o.value} disabled={!!o.disabled}>{o.label}</option>)}
           </select>
         </label>
       );
