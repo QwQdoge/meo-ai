@@ -1046,7 +1046,9 @@ const sameMessage = (a: Spec, b: Spec) =>
   !!a.stepsOpen === !!b.stepsOpen && !!a.stepsLive === !!b.stepsLive && a.remote === b.remote && a.stepsLabel === b.stepsLabel &&
   (a.blocks?.length ?? 0) === (b.blocks?.length ?? 0) && planKey(a) === planKey(b) && (a.images?.length ?? 0) === (b.images?.length ?? 0) && (a.pictures?.length ?? 0) === (b.pictures?.length ?? 0) &&
   (a.actions?.length ?? 0) === (b.actions?.length ?? 0) && (a.files?.length ?? 0) === (b.files?.length ?? 0) &&
-  (a.steps ? JSON.stringify(a.steps) : "") === (b.steps ? JSON.stringify(b.steps) : "");
+  (a.steps ? JSON.stringify(a.steps) : "") === (b.steps ? JSON.stringify(b.steps) : "") && progressKey(a) === progressKey(b);
+/** Pictures in progress change in place (how many are ready), so they take part in the comparison. */
+const progressKey = (m: Spec) => JSON.stringify((m.blocks ?? []).filter((b: Spec) => b.type === "image_progress"));
 
 /** What a step is doing: the core sends `kind`; the icon and sentence for each kind live here. */
 const STEP_KINDS: Record<string, [string, string]> = {
@@ -1082,8 +1084,9 @@ function LiveStatus({ icon, label, longLabel }: { icon: string; label: string; l
   );
 }
 
-/** Pictures being created: a card per picture in the chosen shape, a light drifting over each
- *  until it is ready, then a check. The status line above counts them and the time. */
+/** Pictures being created: a card per picture in the chosen shape. Colour drifts and grain settles
+ *  over each like a photo developing, a bar fills on a time estimate, and a card turns to Ready
+ *  when its picture lands. */
 function ImageProgress({ block, strings, status }: { block: Spec; strings: Spec; status: boolean }) {
   const n = Math.max(1, Number(block.count) || 1);
   const done = Number(block.done) || 0;
@@ -1091,6 +1094,14 @@ function ImageProgress({ block, strings, status }: { block: Spec; strings: Spec;
   const [w, h] = String(block.aspect || "1:1").split(":").map(Number);
   const fill = (s: string) => s.replace("{n}", String(n)).replace("{done}", String(done));
   const label = n > 1 ? fill(strings.imageMany ?? "Creating {n} images") : (strings.imageOne ?? "Creating your image");
+  const started = useRef(performance.now());
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const t = window.setInterval(() => tick((v) => v + 1), 200);
+    return () => window.clearInterval(t);
+  }, []);
+  // Most pictures take 10-30 s: the estimate rises quickly at first and never claims to be done.
+  const estimate = Math.min(0.94, 1 - Math.exp(-(performance.now() - started.current) / 15000));
   return (
     <div className="core-image-progress" data-count={n}>
       {status && <LiveStatus icon="image" label={n > 1 && done + failed > 0 ? `${label} · ${fill(strings.imageReady ?? "{done} of {n} ready")}` : label} />}
@@ -1098,19 +1109,28 @@ function ImageProgress({ block, strings, status }: { block: Spec; strings: Spec;
         {Array.from({ length: n }, (_, i) => {
           const state = i < done ? "done" : i < done + failed ? "failed" : "working";
           return (
-            <div key={i} className={`core-image-card ${state}`} style={{ aspectRatio: `${w || 1} / ${h || 1}`, animationDelay: `${i * 120}ms` }}>
-              <span className="core-image-card-glow" style={{ animationDelay: `${-i * 1.3}s` }} />
+            <div key={i} className={`core-image-card ${state}`} style={{ aspectRatio: `${w || 1} / ${h || 1}`, animationDelay: `${i * 90}ms` }}>
+              <span className="core-image-card-glow a" style={{ animationDelay: `${-i * 1.7}s` }} />
+              <span className="core-image-card-glow b" style={{ animationDelay: `${-i * 2.3}s` }} />
+              <span className="core-image-card-grain" />
               {state === "working" ? (
-                <span className="core-image-card-icon"><Icon name="image" size={22} /></span>
+                <span className="core-image-card-icon"><Icon name="auto_awesome" size={22} /></span>
               ) : (
                 <span className="core-image-card-badge"><Icon name={state === "done" ? "check_circle" : "error"} size={16} />{state === "done" ? (strings.imageDone ?? "Ready") : (strings.imageFailed ?? "Could not be made")}</span>
               )}
+              <span className="core-image-card-bar"><i style={{ transform: `scaleX(${state === "working" ? estimate : 1})` }} /></span>
             </div>
           );
         })}
       </div>
     </div>
   );
+}
+
+/** A picture that develops from a soft blur when it has loaded. */
+function DevelopingImage(props: React.ImgHTMLAttributes<HTMLImageElement>) {
+  const [ready, setReady] = useState(false);
+  return <img {...props} className={`${props.className ?? ""} core-develop${ready ? " ready" : ""}`} onLoad={(e) => { setReady(true); props.onLoad?.(e); }} onError={() => setReady(true)} />;
 }
 
 /** Keeps something mounted for `ms` after it is hidden, so it can animate out. */
@@ -1198,7 +1218,7 @@ const MessageView = React.memo(
                 />
                 {(m.images ?? []).map((img: Spec, k: number) => (
                   <span key={k} className="core-image-wrap">
-                    <img className="core-image zoomable" src={img.url} alt="" loading="lazy" onClick={() => setZoom(img.url)} />
+                    <DevelopingImage className="core-image zoomable" src={img.url} alt="" loading="lazy" onClick={() => setZoom(img.url)} />
                     <a className="core-image-save" href={img.url} download={`meo-image-${k + 1}.png`} aria-label="Download">Download</a>
                   </span>
                 ))}
@@ -1395,6 +1415,14 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
           setAtEnd(near);
           fadeEdges(el);
         }}>
+          {page.loading && (
+            <div className="core-skeleton" role="status" aria-label="Loading">
+              <div className="core-skeleton-row user"><i style={{ width: "38%" }} /></div>
+              <div className="core-skeleton-row"><i style={{ width: "86%" }} /><i style={{ width: "72%" }} /><i style={{ width: "54%" }} /></div>
+              <div className="core-skeleton-row user"><i style={{ width: "28%" }} /></div>
+              <div className="core-skeleton-row"><i style={{ width: "80%" }} /><i style={{ width: "62%" }} /></div>
+            </div>
+          )}
           {page.empty && (
             <div className="core-empty">
               <img src="/meo-ai.svg" alt="" width={48} height={48} />

@@ -35,6 +35,17 @@ export class WebCore {
         last.streaming = true;
       }
     }
+    // ?images=3 adds a set of pictures being created (one lands every 2 s); ?images=3&shape=2:3 for portrait.
+    const images = Number(params.get("images") || 0);
+    if (images > 0 && view.page) {
+      const done = Math.min(images, Math.floor((performance.now() - (window.__imgStart ??= performance.now())) / 2000));
+      view.page.messages = [...(view.page.messages ?? []),
+        { id: "", role: "user", text: "A lighthouse at dusk, watercolour", actions: [], images: [], blocks: [] },
+        { role: "assistant", text: "", streaming: true, blocks: [{ type: "image_progress", count: images, done, failed: 0, aspect: params.get("shape") || "1:1" }] }];
+      setTimeout(() => this.changed(), 500);
+    }
+    // ?loading shows a chat whose messages are still on the way.
+    if (params.has("loading") && view.page) { view.page.messages = []; view.page.empty = null; view.page.loading = true; }
     return JSON.stringify(view);
   }
   dispatch(action) { console.log("action", action); }

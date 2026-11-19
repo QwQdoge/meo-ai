@@ -900,6 +900,8 @@ struct State {
     waiting: Option<(Option<String>, String, bool)>,
     /// Pictures being created for a chat: shown as placeholder cards that fill in as each one lands.
     image_job: Option<ImageJob>,
+    /// A chat opened with nothing cached yet: its messages are on the way.
+    loading_chat: Option<String>,
     /// The Meo API refused the image quality / background options (an older API): send without them.
     image_options_unsupported: bool,
     /// Steps of the current or last answer: (conversation id, steps) — shown collapsed on that answer.
@@ -3004,7 +3006,12 @@ impl AppCore {
             }
         });
         let key = format!("messages-{id}");
-        if let Some(cached) = self.load_json::<Vec<ChatMessage>>(&key) {
+        let cached_now = self.load_json::<Vec<ChatMessage>>(&key);
+        if cached_now.is_none() && !self.state.lock().unwrap().messages.contains_key(&id) {
+            // Nothing to show yet: the page draws placeholder messages instead of the empty chat.
+            self.update(|s| s.loading_chat = Some(id.clone()));
+        }
+        if let Some(cached) = cached_now {
             self.update(|s| {
                 let mut cached = cached;
                 if let Some(old) = s.messages.get(&id) {
@@ -3014,6 +3021,11 @@ impl AppCore {
             });
         }
         self.refresh_messages(&id).await;
+        self.update(|s| {
+            if s.loading_chat.as_deref() == Some(id.as_str()) {
+                s.loading_chat = None;
+            }
+        });
         self.refresh_files().await;
     }
 
@@ -4446,6 +4458,19 @@ impl AppCore {
     }
 
     async fn change_conversation(&self, id: &str, patch: Value) {
+        // The list changes at once; the server catches up, and a refusal puts it back.
+        self.update(|s| {
+            if let Some(title) = patch["title"].as_str().filter(|t| !t.is_empty()) {
+                if let Some(c) = s.conversations.iter_mut().find(|c| c.id == id) {
+                    c.title = title.to_owned();
+                }
+            }
+            if let Some(archived) = patch["archived"].as_bool() {
+                if archived != s.show_archived {
+                    s.conversations.retain(|c| c.id != id);
+                }
+            }
+        });
         let result = self
             .call(|api, t| {
                 let (id, patch) = (id.to_owned(), patch.clone());
@@ -4454,12 +4479,22 @@ impl AppCore {
             .await;
         match result {
             Ok(()) => self.refresh_conversations().await,
-            Err(e) => self.notice("error", e.to_string()),
+            Err(e) => {
+                self.notice("error", e.to_string());
+                self.refresh_conversations().await;
+            }
         }
     }
 
     async fn delete_conversation(&self, id: String) {
-        self.update(|s| s.dialog = None);
+        // Gone from the list at once; brought back if the server refuses.
+        self.update(|s| {
+            s.dialog = None;
+            s.conversations.retain(|c| c.id != id);
+            if s.active.as_deref() == Some(id.as_str()) {
+                s.active = None;
+            }
+        });
         let result = self
             .call(|api, t| {
                 let id = id.clone();
@@ -4471,7 +4506,10 @@ impl AppCore {
                 self.forget_conversation(&id);
                 self.refresh_conversations().await;
             }
-            Err(e) => self.notice("error", e.to_string()),
+            Err(e) => {
+                self.notice("error", e.to_string());
+                self.refresh_conversations().await;
+            }
         }
     }
 
@@ -13250,7 +13288,8 @@ fn conversation_page(s: &State) -> Value {
         ])),
         "inspector": inspector(s, &messages, active.as_ref()),
         "messages": messages,
-        "empty": messages.is_empty().then(|| json!({
+        "loading": messages.is_empty() && active.is_some() && s.loading_chat == active,
+        "empty": (messages.is_empty() && !(active.is_some() && s.loading_chat == active)).then(|| json!({
             "title": if s.route == "work" { "What should Meo work on?" } else { "How can Meo help?" },
             "text": format!("Using {using}"),
             "suggestions": (if s.route == "work" { WORK_STARTERS } else { STARTERS })

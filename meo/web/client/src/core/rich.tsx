@@ -51,12 +51,59 @@ function useMathPlugins(text: string): MathPlugins | null {
   return needed ? mathPlugins : null;
 }
 
-export function Markdown({ text, components }: { text: string; components?: Record<string, any> }) {
+/** Text revealed in the last moments: from this source offset on, revealed `age` ms ago. */
+type Fresh = { from: number; age: number }[];
+const FRESH_MS = 520;
+
+/** Wraps text revealed in the last half second in spans that fade in. Each span's animation starts
+ *  in the past by its age, so re-rendering every frame never restarts it. Code is left alone. */
+function rehypeFresh(fresh: Fresh) {
+  return () => (tree: any) => {
+    const ageAt = (offset: number) => {
+      let age = -1;
+      for (const f of fresh) if (offset >= f.from) age = f.age;
+      return age;
+    };
+    const walk = (node: any) => {
+      if (!node.children || node.tagName === "pre" || node.tagName === "code") return;
+      const out: any[] = [];
+      for (const child of node.children) {
+        const start = child.position?.start?.offset;
+        if (child.type !== "text" || typeof start !== "number" || start + child.value.length < fresh[0].from) {
+          walk(child);
+          out.push(child);
+          continue;
+        }
+        // Split the text where its reveal time changes.
+        let run = "", runAge = ageAt(start);
+        const flush = () => {
+          if (!run) return;
+          out.push(runAge < 0 ? { type: "text", value: run } : {
+            type: "element", tagName: "span",
+            properties: { className: ["core-fresh"], style: `animation-delay:-${Math.round(runAge)}ms` },
+            children: [{ type: "text", value: run }],
+          });
+          run = "";
+        };
+        for (let i = 0; i < child.value.length; i++) {
+          const a = ageAt(start + i);
+          if (a !== runAge) { flush(); runAge = a; }
+          run += child.value[i];
+        }
+        flush();
+      }
+      node.children = out;
+    };
+    if (fresh.length) walk(tree);
+  };
+}
+
+export function Markdown({ text, components, fresh }: { text: string; components?: Record<string, any>; fresh?: Fresh }) {
   const math = useMathPlugins(text);
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm, ...(math ? math.mathRemark : []), remarkIcons]}
-      rehypePlugins={math ? math.mathRehype : []}
+      rehypePlugins={[...(math ? math.mathRehype : []), ...(fresh?.length && !math ? [rehypeFresh(fresh)] : [])]}
       components={{
         ...components,
         span: ({ node: _node, ...props }: any) =>
@@ -247,7 +294,20 @@ function SmoothMarkdown({ text, components }: { text: string; components?: Recor
   const n = reduce ? text.length : Math.min(shown, text.length);
   // Never cut inside a surrogate pair.
   const cut = n > 0 && n < text.length && /[\uD800-\uDBFF]/.test(text[n - 1]) ? n + 1 : n;
-  return <Markdown text={text.slice(0, cut)} components={components} />;
+  // When each stretch of text appeared, so the newest words fade in (older than FRESH_MS: plain text).
+  const reveals = useRef<{ from: number; at: number }[]>([]);
+  const last = useRef(0);
+  const now = performance.now();
+  if (cut > last.current) {
+    reveals.current.push({ from: last.current, at: now });
+    last.current = cut;
+  } else if (cut < last.current) {
+    reveals.current = [];
+    last.current = cut;
+  }
+  reveals.current = reveals.current.filter((r) => now - r.at < FRESH_MS);
+  const fresh = reduce ? [] : reveals.current.map((r) => ({ from: r.from, age: now - r.at }));
+  return <Markdown text={text.slice(0, cut)} components={components} fresh={fresh} />;
 }
 
 export function Blocks({ blocks, components, copy, copied, streaming, act }: { blocks: Spec[]; components?: Record<string, any>; copy: string; copied: string; streaming?: boolean; act?: (action: Spec) => void }): ReactNode {
