@@ -10444,6 +10444,7 @@ impl AppCore {
             (agent::Tool::WebFetch { url }, _) => self.run_web_fetch(url).await,
             (agent::Tool::Mcp { tool, args, .. }, _) if in_chrome => super::chrome::call(tool, args).await,
             (agent::Tool::App { app, tool, args }, _) => {
+                let args = &with_forks(tool, args);
                 let mut outcome = Box::pin(self.run_app(app, tool, args)).await;
                 if let Some(rules) = Box::pin(self.repo_rules(app, args)).await {
                     outcome.text.push_str(&rules);
@@ -11852,12 +11853,14 @@ fn visible_steps(steps: &[Value]) -> Vec<Value> {
 }
 
 /// What a step does, for the icon and the sentence shown while it runs. Decided here once so the
-/// three clients do not each guess from the title: connect, web, image, edit, read, run, think, tool, other.
+/// three clients do not each guess from the title: connect, app, web, image, edit, read, run, think, tool, other.
 fn step_action(step: &Value) -> &'static str {
     let id = step["id"].as_str().unwrap_or_default();
     let l = format!("{id} {}", step["title"].as_str().unwrap_or_default()).to_lowercase();
     let has = |words: &[&str]| words.iter().any(|w| l.contains(w));
     if has(&["connect", "mcp", "connector", "oauth", "authoriz", "authoris"]) { "connect" }
+    // A connected app's tool ("GitHub / search_repositories"): clients show its own title, not "Searching the web".
+    else if step["title"].as_str().is_some_and(|t| t.contains(" / ")) { "app" }
     else if has(&["search", "web", "browse", "fetch", "http"]) { "web" }
     else if has(&["image", "picture", "draw"]) { "image" }
     else if has(&["edit", "write", "patch", "save", "create file", "apply", "modif"]) { "edit" }
@@ -12376,6 +12379,18 @@ fn names_connected_app(s: &State, text: &str) -> bool {
                         .any(|w| lower.contains(&w))
                 })
         })
+}
+
+/// GitHub's repository search leaves forks out unless the query says `fork:true`, so a user's own fork
+/// ("my meo-ai repository") was reported as missing. Repository searches include forks.
+fn with_forks(tool: &str, args: &Value) -> Value {
+    let mut args = args.clone();
+    if tool == "search_repositories" {
+        if let Some(q) = args["query"].as_str().filter(|q| !q.contains("fork:")) {
+            args["query"] = json!(format!("{q} fork:true"));
+        }
+    }
+    args
 }
 
 /// App tools offered as their own functions per app in a lean (plain chat) request.
@@ -17200,6 +17215,13 @@ mod tests {
                 .all(|x| x["id"] != "connectors"),
             "apps are managed on the Plugins page, not in Settings"
         );
+    }
+
+    #[test]
+    fn repository_searches_include_forks() {
+        assert_eq!(with_forks("search_repositories", &json!({ "query": "meo-ai user:QwQdoge" }))["query"], "meo-ai user:QwQdoge fork:true");
+        assert_eq!(with_forks("search_repositories", &json!({ "query": "x fork:only" }))["query"], "x fork:only");
+        assert_eq!(with_forks("search_code", &json!({ "query": "x" }))["query"], "x");
     }
 
     #[test]
