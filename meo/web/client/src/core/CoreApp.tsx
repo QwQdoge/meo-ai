@@ -1538,9 +1538,15 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
               </div>
             </div>
           )}
-          {messages.map((m, i) => (
-            <MessageView key={`${page.id ?? "new"}:${i}`} m={m} strings={strings} act={act} />
-          ))}
+          {messages.map((m, i) => {
+            // While a run is busy the newest answer can be an empty placeholder not yet marked streaming (the
+            // request is being prepared): it still shows "Thinking" instead of a blank gap of several seconds.
+            const waiting = composer.busy && i === messages.length - 1 && m.role === "assistant" && !m.streaming && !m.text && !m.steps && !(m.blocks ?? []).length;
+            return <MessageView key={`${page.id ?? "new"}:${i}`} m={waiting ? { ...m, streaming: true } : m} strings={strings} act={act} />;
+          })}
+          {composer.busy && messages.length > 0 && messages[messages.length - 1].role === "user" && (
+            <MessageView key={`${page.id ?? "new"}:wait`} m={{ role: "assistant", text: "", streaming: true }} strings={strings} act={act} />
+          )}
           <div ref={end} />
         </div>
         {!atEnd && messages.length > 0 && (
