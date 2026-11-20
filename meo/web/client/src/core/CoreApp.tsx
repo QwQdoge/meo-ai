@@ -88,6 +88,12 @@ function Sidebar({ sidebar, strings, act, open, setOpen }: { sidebar: Spec; stri
   const collapsed = !!sidebar.collapsed;
   const sideScroll = useRef<HTMLDivElement>(null);
   useEffect(() => fadeEdges(sideScroll.current));
+  // Projects open and close in the tree; which are closed is remembered on this device. Declared before the
+  // skeleton return: a direct chat link renders the skeleton first, and a hook after an early return changes
+  // the hook count on the next render (React #310, a white page).
+  const [closed, setClosed] = useState<Record<string, boolean>>(() => {
+    try { return JSON.parse(localStorage.getItem("meo.tree.closed") ?? "{}"); } catch { return {}; }
+  });
   // While the saved session is read: the sidebar as the last run left it, with placeholders for its rows.
   if (sidebar.skeleton) {
     const bars = collapsed ? [30, 30, 30, 30, 30] : [30, 34, 30, 28, 28, 28, 28, 28, 28];
@@ -98,10 +104,6 @@ function Sidebar({ sidebar, strings, act, open, setOpen }: { sidebar: Spec; stri
       </aside>
     );
   }
-  // Projects open and close in the tree; which are closed is remembered on this device.
-  const [closed, setClosed] = useState<Record<string, boolean>>(() => {
-    try { return JSON.parse(localStorage.getItem("meo.tree.closed") ?? "{}"); } catch { return {}; }
-  });
   const toggle = (id: string) => setClosed((was) => {
     const next = { ...was, [id]: !was[id] };
     try { localStorage.setItem("meo.tree.closed", JSON.stringify(next)); } catch { /* private mode */ }
