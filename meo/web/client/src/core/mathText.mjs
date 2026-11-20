@@ -52,6 +52,7 @@ function convertLine(line) {
 export function prepareMath(text) {
   if (typeof text !== 'string' || (!text.includes('$') && !text.includes('\\'))) return text;
   let fence = null;                                  // { char, length } while inside a fenced code block
+  let display = false;                               // inside a $$ block opened on a line of its own
   return text
     .split('\n')
     .map((line) => {
@@ -62,6 +63,17 @@ export function prepareMath(text) {
         return line;
       }
       if (fence) return line;
+      // Models often half-close a block: "$$" alone, then "formula$$", or "$$formula", then "$$" alone.
+      // remark-math only closes a block on a line of its own, so the rest of the answer would become math.
+      if (display) {
+        if (/^\s*\$\$\s*$/.test(line)) { display = false; return line; }
+        const closing = /^(.*\S)\s*\$\$\s*$/.exec(line);
+        if (closing) { display = false; return `${closing[1]}\n$$`; }
+        return line;
+      }
+      if (/^\s*\$\$\s*$/.test(line)) { display = true; return line; }
+      const opening = /^\s*\$\$(?!\$)(.*\S)\s*$/.exec(line);
+      if (opening && !opening[1].includes('$$')) { display = true; return `$$\n${opening[1].trim()}`; }
       // a formula alone on its line is display math: put it between block delimiters so it is centred and full size
       const alone = /^\s*\$\$(?!\$)(.+?)\$\$\s*$/.exec(line) || /^\s*\\\[(.+?)\\\]\s*$/.exec(line);
       return alone ? `$$\n${alone[1].trim()}\n$$` : convertLine(line);

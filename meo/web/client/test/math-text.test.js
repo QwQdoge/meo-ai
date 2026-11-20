@@ -33,3 +33,9 @@ test('plain text passes through', () => {
   assert.equal(prepareMath('Nothing special here.'), 'Nothing special here.');
   assert.equal(prepareMath(''), '');
 });
+
+test('a half-closed display block is closed on its own line', () => {
+  assert.equal(prepareMath('$$\nh_n = h_0 \\times 2^n$$\n\n折叠 42 次：'), '$$\nh_n = h_0 \\times 2^n\n$$\n\n折叠 42 次：');
+  assert.equal(prepareMath('$$h = 2^n\n$$\nafter $5'), '$$\nh = 2^n\n$$\nafter \\$5');
+  assert.equal(prepareMath('$$\na\nb\n$$\ntext'), '$$\na\nb\n$$\ntext');
+});

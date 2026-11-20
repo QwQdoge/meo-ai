@@ -8447,7 +8447,15 @@ impl AppCore {
                 "parameters": { "type": "object", "properties": { "id": { "type": "string" }, "from": { "type": "integer" } }, "required": ["id", "from"] } }));
             targets.insert("read_more".into(), NativeTarget::ReadMore);
         }
-        fit_app_tools(&mut defs, &mut targets, per_app);
+        // A plain chat message that names no connected app gets each app's best few tools as functions; the
+        // rest stay one find_app_tool / app_call away. Every app tool's schema in every request made a
+        // homework check carry ~20k tokens of GitHub and Drive definitions. Later rounds, Work, an open
+        // folder and messages that name an app get the full set.
+        let lean = !Self::in_work(&s)
+            && s.agent.host.is_none()
+            && s.agent.native.as_ref().map_or(true, |n| n.turns.is_empty())
+            && !names_connected_app(&s, &s.agent.request);
+        fit_app_tools(&mut defs, &mut targets, per_app, lean.then_some(LEAN_APP_TOOLS));
         (!defs.is_empty()).then_some((defs, targets))
     }
 
@@ -9418,24 +9426,7 @@ impl AppCore {
     /// True when the text names one of the enabled connected apps (then the model should use the
     /// app, not a web search about the name).
     fn mentions_connected_app(&self, text: &str) -> bool {
-        let lower = text.to_lowercase();
-        let s = self.state.lock().unwrap();
-        s.plugins
-            .as_ref()
-            .and_then(|r| r.as_ref().ok())
-            .is_some_and(|rows| {
-                rows.iter()
-                    .filter(|p| p["enabled"] == true && p["remoteUrl"].is_string())
-                    .any(|p| {
-                        p["name"]
-                            .as_str()
-                            .unwrap_or_default()
-                            .split_whitespace()
-                            .map(str::to_lowercase)
-                            .filter(|w| w.is_ascii() && w.len() >= 4)
-                            .any(|w| lower.contains(&w))
-                    })
-            })
+        names_connected_app(&self.state.lock().unwrap(), text)
     }
 
     /// The model asks the user: a dialog per question, the run waits; the answers go back as the result.
@@ -12366,7 +12357,31 @@ const MAX_ONE_SCHEMA: usize = 7_900;
 /// and runs any of them. Before this, a big app (GitHub lists about a hundred tools) pushed a request past
 /// the limits, the API refused the functions, and the run fell back to the fenced protocol; or its later
 /// tools (`list_commits`) were never offered, and the model said it could not look.
-fn fit_app_tools(defs: &mut Vec<Value>, targets: &mut HashMap<String, NativeTarget>, per_app: Vec<Vec<(String, Value, NativeTarget)>>) {
+/// The message names a connected app ("look at my GitHub"): by a word of the app's name, 4+ letters.
+fn names_connected_app(s: &State, text: &str) -> bool {
+    let lower = text.to_lowercase();
+    s.plugins
+        .as_ref()
+        .and_then(|r| r.as_ref().ok())
+        .is_some_and(|rows| {
+            rows.iter()
+                .filter(|p| p["enabled"] == true && p["remoteUrl"].is_string())
+                .any(|p| {
+                    p["name"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .split_whitespace()
+                        .map(str::to_lowercase)
+                        .filter(|w| w.is_ascii() && w.len() >= 4)
+                        .any(|w| lower.contains(&w))
+                })
+        })
+}
+
+/// App tools offered as their own functions per app in a lean (plain chat) request.
+const LEAN_APP_TOOLS: usize = 2;
+
+fn fit_app_tools(defs: &mut Vec<Value>, targets: &mut HashMap<String, NativeTarget>, per_app: Vec<Vec<(String, Value, NativeTarget)>>, cap: Option<usize>) {
     let size = |d: &Value| d["parameters"].to_string().len();
     let all: usize = per_app.iter().map(Vec::len).sum();
     if all == 0 {
@@ -12392,7 +12407,8 @@ fn fit_app_tools(defs: &mut Vec<Value>, targets: &mut HashMap<String, NativeTarg
     let used: usize = defs.iter().map(size).sum();
     let mut room_n = MAX_FUNCTIONS.saturating_sub(defs.len());
     let mut room_c = MAX_SCHEMA_CHARS.saturating_sub(used);
-    let fits_all = queue.len() <= room_n && queue.iter().all(|q| size(&q.1) <= MAX_ONE_SCHEMA) && queue.iter().map(|q| size(&q.1)).sum::<usize>() <= room_c;
+    let capped = cap.is_some_and(|c| apps.iter().any(|a| queue.iter().filter(|q| &q.3 == a).count() > c));
+    let fits_all = !capped && queue.len() <= room_n && queue.iter().all(|q| size(&q.1) <= MAX_ONE_SCHEMA) && queue.iter().map(|q| size(&q.1)).sum::<usize>() <= room_c;
     let call_def = |left: &[(String, String)]| -> Value {
         let mut list = String::new();
         let mut shown = 0;
@@ -12423,9 +12439,12 @@ fn fit_app_tools(defs: &mut Vec<Value>, targets: &mut HashMap<String, NativeTarg
         room_c = room_c.saturating_sub(size(&call_def(&[])) + size(&find_def) + 200);
     }
     let mut left: Vec<(String, String)> = Vec::new();
+    let mut offered: HashMap<String, usize> = HashMap::new();
     for (tool, def, target, app) in queue {
         let n = size(&def);
-        if room_n > 0 && n <= MAX_ONE_SCHEMA && n <= room_c {
+        let count = offered.entry(app.clone()).or_default();
+        if room_n > 0 && n <= MAX_ONE_SCHEMA && n <= room_c && cap.is_none_or(|c| *count < c) {
+            *count += 1;
             room_n -= 1;
             room_c -= n;
             targets.insert(def["name"].as_str().unwrap_or_default().to_owned(), target);
@@ -17181,6 +17200,28 @@ mod tests {
                 .all(|x| x["id"] != "connectors"),
             "apps are managed on the Plugins page, not in Settings"
         );
+    }
+
+    #[test]
+    fn a_plain_chat_message_offers_few_app_tools_and_the_rest_through_app_call() {
+        let c = signed_in_core();
+        let tools: Vec<Value> = (0..40)
+            .map(|i| json!({ "name": format!("tool_{i:02}"), "description": "Does something.", "inputSchema": { "type": "object", "properties": { "q": { "type": "string" } } } }))
+            .collect();
+        c.update(|s| {
+            s.route = "chat".into();
+            s.plugins = Some(Ok(vec![json!({ "id": "gh", "name": "GitHub", "kind": "mcp", "enabled": true, "remoteUrl": "https://api.githubcopilot.com/mcp/" })]));
+            s.app_tools.insert("gh".into(), Ok(tools));
+            s.agent.request = "帮我检查这三道二次函数题".into();
+        });
+        let (defs, targets) = c.native_tool_defs("cred", false).expect("functions");
+        let app_defs = defs.iter().filter(|d| d["name"].as_str().is_some_and(|n| n.starts_with("github__"))).count();
+        assert_eq!(app_defs, LEAN_APP_TOOLS, "a plain question carries only the app's best few tools");
+        assert!(targets.contains_key("app_call") && targets.contains_key("find_app_tool"), "the rest stay reachable");
+        // Naming the app brings the whole set.
+        c.update(|s| s.agent.request = "看看我 GitHub 上最新的提交".into());
+        let (defs, _) = c.native_tool_defs("cred", false).expect("functions");
+        assert_eq!(defs.iter().filter(|d| d["name"].as_str().is_some_and(|n| n.starts_with("github__"))).count(), 40);
     }
 
     #[test]
