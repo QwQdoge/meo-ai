@@ -342,6 +342,27 @@ pub enum Action {
     ImportLocalUsage,
     /// Counts the chats written before usage was recorded (token counts are estimates from the text).
     BackfillUsage,
+    /// Saves the draft of a Settings > Services row. It also saves as soon as a key is entered;
+    /// pressing Save again is harmless and confirms with "Saved".
+    ServiceSave {
+        service: String,
+    },
+    /// Tests a saved service connection.
+    ServiceTest {
+        id: String,
+    },
+    /// Removes a saved service connection.
+    ServiceDelete {
+        id: String,
+    },
+    /// Chooses a Meo Storage plan (`free`, `tier` + `tier` code, `dynamic`). Paid plans ask first.
+    StoragePlan {
+        plan: String,
+        #[serde(default)]
+        tier: String,
+        #[serde(default)]
+        consent: bool,
+    },
     /// Opens Meo Account, where GitHub or Google is linked for the apps that use that account.
     ConnectAccount {
         provider: String,
@@ -953,8 +974,14 @@ struct State {
     generating: bool,
     /// A generation waiting for the user's approval to send: (generator, prompt).
     pending_generation: Option<(Choice, String)>,
-    /// `/v1/usage-dashboard` of the signed-in account (Settings > Usage).
+    /// `/v1/usage-dashboard` of the signed-in account (Settings > Usage). Carries `credits`.
     usage: Option<Value>,
+    /// `GET /v1/storage` (Settings > Usage & credits).
+    storage_info: Option<Value>,
+    /// `GET /v1/service-connections` (Settings > Services & keys).
+    services: Option<Value>,
+    /// Unsaved Services fields, keyed "service:field". A key leaves this map once it is saved.
+    svc_form: HashMap<String, String>,
     /// Codex and Claude Code records found on this computer: (codex, claude). Desktop only.
     local_usage: Option<(usize, usize)>,
     /// How many local records the user added to the account in this session.
@@ -1539,10 +1566,13 @@ impl AppCore {
                     None => self.notice("info", "You can have up to 5 custom routes."),
                 }
             }
-            Action::SelectSettingsSection { id } => self.update(|s| {
-                s.settings_section = id;
-                s.settings_query.clear();
-            }),
+            Action::SelectSettingsSection { id } => {
+                self.update(|s| {
+                    s.settings_section = id;
+                    s.settings_query.clear();
+                });
+                self.load_section_data().await;
+            }
             Action::CloseSettings => self.close_settings().await,
             Action::OpenPath { path } => self.open_path(&path).await,
             Action::OpenSettings { section } => self.open_settings(section).await,
@@ -1654,6 +1684,10 @@ impl AppCore {
             Action::ConnectPlugin { id } => Box::pin(self.connect_plugin(id)).await,
             Action::ImportLocalUsage => Box::pin(self.import_local_usage()).await,
             Action::BackfillUsage => Box::pin(self.backfill_usage()).await,
+            Action::ServiceSave { service } => Box::pin(self.service_save(&service)).await,
+            Action::ServiceTest { id } => self.service_test(&id).await,
+            Action::ServiceDelete { id } => self.service_delete(&id).await,
+            Action::StoragePlan { plan, tier, consent } => self.storage_plan(&plan, &tier, consent).await,
             Action::ConnectAccount { provider, grant } => {
                 let (message, url) = if grant {
                     (
@@ -2391,12 +2425,7 @@ impl AppCore {
             let (mut found, mut items) = (String::new(), Vec::new());
             if !step.search.is_empty() {
                 let query = step.search.clone();
-                if let Ok(results) = self
-                    .call(|api, t| {
-                        let query = query.clone();
-                        async move { api.web_search(&t, &query).await }
-                    })
-                    .await
+                if let Ok(results) = self.search_web(&query).await
                 {
                     for r in results.iter().take(5) {
                         found.push_str(&format!(
@@ -3129,6 +3158,7 @@ impl AppCore {
                 {
                     self.update(|s| s.usage = Some(usage));
                 }
+                self.load_section_data().await;
             }
             "projects" => {
                 let r = self
@@ -6280,12 +6310,7 @@ impl AppCore {
             // Search once here: the same results go to both prepare and stream so consent covers them.
             let query: String = text.chars().take(100).collect();
             self.step("search", "Web search", &query, "running", vec![]);
-            let found = self
-                .call(|api, t| {
-                    let query = query.clone();
-                    async move { api.web_search(&t, &query).await }
-                })
-                .await;
+            let found = self.search_web(&query).await;
             match found {
                 Ok(results) if !results.is_empty() => {
                     let items = results
@@ -7177,6 +7202,184 @@ impl AppCore {
     }
 
     /// Looks for Codex and Claude Code logs on this computer (desktop only; the browser has no files).
+    // ---- credits, storage, services (Credits plan v1.1) -----------------
+
+    /// Data the open Settings section needs beyond the usage dashboard.
+    async fn load_section_data(&self) {
+        let section = self.state.lock().unwrap().settings_section.clone();
+        match section.as_str() {
+            "services" => self.refresh_services().await,
+            "usage" => {
+                if let Ok(v) = self.call(|api, t| async move { api.storage(&t).await }).await {
+                    self.update(|s| s.storage_info = Some(v));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    async fn refresh_services(&self) {
+        if let Ok(v) = self
+            .call(|api, t| async move { api.service_connections(&t).await })
+            .await
+        {
+            self.update(|s| s.services = Some(v));
+        }
+    }
+
+    /// Web search through Meo API; a credits notice in the answer (out of credits, low balance,
+    /// hosted search paused) becomes a notice with the way forward.
+    async fn search_web(&self, query: &str) -> Result<Vec<Value>, ApiError> {
+        let query = query.to_owned();
+        let body = self
+            .call(|api, t| {
+                let query = query.clone();
+                async move { api.web_search_full(&t, &query).await }
+            })
+            .await?;
+        self.credits_notice(&body["credits"]);
+        Ok(body["results"].as_array().cloned().unwrap_or_default())
+    }
+
+    fn credits_notice(&self, credits: &Value) {
+        if let Some(balance) = credits["balance_mc"].as_f64() {
+            self.update(|s| {
+                if let Some(u) = s.usage.as_mut() {
+                    if u["credits"].is_object() {
+                        u["credits"]["balance_mc"] = json!(balance);
+                    }
+                }
+            });
+        }
+        let notice = &credits["notice"];
+        if !notice.is_object() {
+            return;
+        }
+        let text = format!(
+            "{}. {}",
+            notice["title"].as_str().unwrap_or("Meo Credits"),
+            notice["message"].as_str().unwrap_or_default()
+        );
+        let first = notice["actions"].as_array().and_then(|a| a.first()).cloned().unwrap_or(Value::Null);
+        let label = first["label"].as_str().unwrap_or("Open Services & keys").to_owned();
+        self.notice_with_action(&text, &label, route_action(first["route"].as_str().unwrap_or("settings/services")));
+    }
+
+    fn svc_field(s: &State, service: &str, field: &str) -> String {
+        s.svc_form.get(&format!("{service}:{field}")).cloned().unwrap_or_default()
+    }
+
+    async fn service_save(&self, service: &str) {
+        let (provider, key, endpoint, mode, saved) = {
+            let s = self.state.lock().unwrap();
+            let provider = Some(Self::svc_field(&s, service, "provider"))
+                .filter(|p| !p.is_empty())
+                .unwrap_or_else(|| default_provider(service).to_owned());
+            let saved = saved_connection(&s, service).cloned();
+            (provider, Self::svc_field(&s, service, "key"), Self::svc_field(&s, service, "endpoint"), Self::svc_field(&s, service, "mode"), saved)
+        };
+        if service == "ai_model" {
+            if key.trim().is_empty() {
+                return self.notice("info", "Paste the API key first. It saves as soon as you enter it.");
+            }
+            let body = json!({ "provider": provider, "displayName": provider_label(&provider), "apiKey": key.trim() });
+            match self.call(|api, t| { let body = body.clone(); async move { api.create_credential(&t, &body).await } }).await {
+                Ok(_) => {
+                    self.update(|s| { s.svc_form.remove("ai_model:key"); });
+                    self.notice("info", "Saved");
+                    Box::pin(self.load_all()).await;
+                }
+                Err(e) => self.notice("error", service_error_text(&e)),
+            }
+            return;
+        }
+        let already = saved.as_ref().is_some_and(|c| c["provider"] == provider.as_str());
+        if key.trim().is_empty() && endpoint.is_empty() && mode.is_empty() && already {
+            // Nothing new to send: the connection is already saved.
+            return self.notice("info", "Saved");
+        }
+        let mut body = json!({ "service": service, "provider": provider });
+        if !key.trim().is_empty() { body["key"] = json!(key.trim()); }
+        if !endpoint.is_empty() { body["endpoint"] = json!(endpoint); }
+        if !mode.is_empty() { body["mode"] = json!(mode); }
+        match self.call(|api, t| { let body = body.clone(); async move { api.save_service_connection(&t, &body).await } }).await {
+            Ok(_) => {
+                self.update(|s| { s.svc_form.remove(&format!("{service}:key")); });
+                self.notice("info", "Saved");
+                self.refresh_services().await;
+            }
+            Err(e) => self.notice("error", service_error_text(&e)),
+        }
+    }
+
+    async fn service_test(&self, id: &str) {
+        let id = id.to_owned();
+        match self.call(|api, t| { let id = id.clone(); async move { api.test_service_connection(&t, &id).await } }).await {
+            Ok(r) => {
+                let ok = r["ok"].as_bool().unwrap_or(false);
+                self.notice(if ok { "info" } else { "error" }, format!("{} {}", if ok { "Test passed." } else { "Test failed." }, r["message"].as_str().unwrap_or_default()));
+                self.refresh_services().await;
+            }
+            Err(e) => self.notice("error", service_error_text(&e)),
+        }
+    }
+
+    async fn service_delete(&self, id: &str) {
+        let id = id.to_owned();
+        match self.call(|api, t| { let id = id.clone(); async move { api.delete_service_connection(&t, &id).await } }).await {
+            Ok(_) => {
+                self.notice("info", "Removed");
+                self.refresh_services().await;
+            }
+            Err(e) => self.notice("error", service_error_text(&e)),
+        }
+    }
+
+    async fn save_credit_settings(&self, body: Value) {
+        match self.call(|api, t| { let body = body.clone(); async move { api.save_credit_settings(&t, &body).await } }).await {
+            Ok(r) => {
+                self.update(|s| {
+                    if let Some(u) = s.usage.as_mut() { u["credits"] = r["credits"].clone(); }
+                });
+                self.notice("info", "Saved");
+            }
+            Err(e) => self.notice("error", service_error_text(&e)),
+        }
+    }
+
+    async fn storage_plan(&self, plan: &str, tier: &str, consent: bool) {
+        if plan != "free" && !consent {
+            let price = {
+                let s = self.state.lock().unwrap();
+                let info = s.storage_info.clone().unwrap_or(Value::Null);
+                if plan == "dynamic" {
+                    "3 MC per GB-month above the free 10 MB, settled on the 1st of each month".to_owned()
+                } else {
+                    info["tiers"].as_array().into_iter().flatten().find(|t| t["code"] == tier)
+                        .map(|t| format!("{} MC per month (this month: only the days left)", mc_text(t["price_mc_month"].as_f64().unwrap_or(0.0))))
+                        .unwrap_or_default()
+                }
+            };
+            return self.confirm(
+                "Use Meo Credits for storage?",
+                &format!("Meo Storage will charge {price}. If credits run low, new uploads pause; your files stay and you can still open and delete them. You can switch back to the free 10 MB at any time."),
+                button("Use credits", "primary", json!({ "type": "storage_plan", "plan": plan, "tier": tier, "consent": true })),
+            );
+        }
+        self.update(|s| s.dialog = None);
+        let body = json!({ "plan": plan, "tier": tier, "consent": consent });
+        match self.call(|api, t| { let body = body.clone(); async move { api.set_storage_plan(&t, &body).await } }).await {
+            Ok(r) => {
+                self.update(|s| s.storage_info = Some(r["storage"].clone()));
+                self.notice("info", "Saved");
+                if let Ok(usage) = self.call(|api, t| async move { api.usage_dashboard(&t, 365).await }).await {
+                    self.update(|s| s.usage = Some(usage));
+                }
+            }
+            Err(e) => self.notice("error", service_error_text(&e)),
+        }
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     async fn refresh_local_usage(&self) {
         let scan = super::usage_import::scan_async().await;
@@ -7391,12 +7594,7 @@ impl AppCore {
 
     /// A search through the Meo API; the model gets titles, links and snippets as data.
     async fn run_web_search(&self, query: &str) -> agent::Outcome {
-        let found = self
-            .call(|api, t| {
-                let query = query.to_owned();
-                async move { api.web_search(&t, &query).await }
-            })
-            .await;
+        let found = self.search_web(&query).await;
         match found {
             Ok(results) if !results.is_empty() => agent::Outcome::done(
                 results
@@ -10936,6 +11134,31 @@ impl AppCore {
     // ---- settings ------------------------------------------------------
 
     async fn set_setting(&self, binding: String, value: Value) {
+        if let Some(rest) = binding.strip_prefix("svc:") {
+            // svc:<service>:<field>. A key saves the moment it is entered; so does My Server's address.
+            if let Some((service, field)) = rest.split_once(':') {
+                let text = value.as_str().unwrap_or_default().trim().to_owned();
+                let (service, field) = (service.to_owned(), field.to_owned());
+                self.update(|s| { s.svc_form.insert(format!("{service}:{field}"), text.clone()); });
+                let save_now = (field == "key" && !text.is_empty())
+                    || (service == "server" && field == "endpoint" && !text.is_empty());
+                if save_now {
+                    Box::pin(self.service_save(&service)).await;
+                }
+            }
+            return;
+        }
+        if binding == "credits.auto_topup" {
+            let on = value.as_bool().unwrap_or(false);
+            return self.save_credit_settings(json!({ "autoTopup": { "enabled": on } })).await;
+        }
+        if binding == "credits.search_budget" {
+            let budget = match value.as_str().unwrap_or("none") {
+                "none" => Value::Null,
+                n => n.parse::<f64>().map(|n| json!(n)).unwrap_or(Value::Null),
+            };
+            return self.save_credit_settings(json!({ "budgets": { "web_search": budget } })).await;
+        }
         if binding == "rh.form.name" {
             self.update(|s| {
                 if let Some(f) = &mut s.rh_form {
@@ -11324,7 +11547,12 @@ impl AppCore {
                             "value": s.prefs.get("chat.auto_consent").cloned().unwrap_or(json!(true)),
                         }));
                     }
-                    "usage" => items.extend(usage_items(s)),
+                    "usage" => {
+                        items.extend(credit_items(s));
+                        items.extend(storage_items(s));
+                        items.extend(usage_items(s));
+                    }
+                    "services" => items.extend(service_items(s)),
                     "shortcuts" => items.extend(shortcut_items(s)),
                     "about" => items.extend(about_items()),
                     "permissions" => items.extend(permission_items(s)),
@@ -11731,6 +11959,11 @@ fn account_block(s: &State) -> Value {
         return Value::Null;
     }
     let name = email.split('@').next().unwrap_or(&email).to_owned();
+    // The balance sits in the account menu too, so credits are never only inside Settings.
+    let credits_label = match s.usage.as_ref().map(|u| &u["credits"]["balance_mc"]) {
+        Some(Value::Number(n)) => format!("Meo Credits · {} MC", mc_text(n.as_f64().unwrap_or(0.0))),
+        _ => "Usage & credits".to_owned(),
+    };
     let initial = name
         .chars()
         .next()
@@ -11741,7 +11974,8 @@ fn account_block(s: &State) -> Value {
         "menu": [
             { "id": "settings", "label": "Settings", "icon": "settings", "shortcut": "Ctrl+,",
               "action": { "type": "navigate", "route": "settings" } },
-            { "id": "usage", "label": "Usage", "icon": "usage", "action": { "type": "open_settings", "section": "usage" } },
+            { "id": "credits", "label": credits_label, "icon": "usage", "action": { "type": "open_settings", "section": "usage" } },
+            { "id": "services", "label": "Services & keys", "icon": "settings", "action": { "type": "open_settings", "section": "services" } },
             { "id": "language", "label": "Language", "icon": "language", "action": { "type": "open_settings", "section": "general" } },
             { "divider": true },
             { "id": "about", "label": "About Meo AI", "icon": "info", "action": { "type": "open_settings", "section": "about" } },
@@ -13254,6 +13488,248 @@ fn usage_items_inner(s: &State) -> Vec<Value> {
     items
 }
 
+// ---- Settings > Usage & credits, Services & keys (Credits plan v1.1) ------------------------
+
+fn mc_text(v: f64) -> String {
+    if (v - v.round()).abs() < 0.0005 { format!("{v:.0}") } else { format!("{v:.1}") }
+}
+
+fn route_action(route: &str) -> Value {
+    match route.strip_prefix("settings/") {
+        Some(section) => json!({ "type": "open_settings", "section": section }),
+        None => json!({ "type": "open_settings", "section": "usage" }),
+    }
+}
+
+fn default_provider(service: &str) -> &'static str {
+    match service {
+        "ai_model" => "openai",
+        "web_search" => "tavily",
+        "translation" => "deepl",
+        "storage" => "r2",
+        _ => "my_server",
+    }
+}
+
+fn provider_label(provider: &str) -> &str {
+    match provider {
+        "openai" => "OpenAI",
+        "gemini" => "Google Gemini",
+        "deepseek" => "DeepSeek",
+        "openrouter" => "OpenRouter",
+        "tavily" => "Tavily",
+        "brave" => "Brave Search",
+        "serper" => "Serper (Google)",
+        "bocha" => "Bocha",
+        "deepl" => "DeepL",
+        "google" => "Google Translate",
+        "r2" => "Cloudflare R2",
+        "s3" => "S3-compatible",
+        "webdav" => "WebDAV",
+        "custom" => "Custom server",
+        "my_server" => "My Server",
+        other => other,
+    }
+}
+
+fn service_error_text(e: &ApiError) -> String {
+    let code = match e {
+        ApiError::Status { code, .. } => code.as_str(),
+        _ => return e.to_string(),
+    };
+    match code {
+        "key_required" => "Paste the key to save this connection.".into(),
+        "endpoint_required" => "Enter the address (https://…).".into(),
+        "endpoint_private_address" | "endpoint_not_permitted" | "endpoint_port_not_permitted" | "invalid_endpoint" =>
+            "Use a public https address. Local, private-network and cloud-metadata addresses are not allowed.".into(),
+        "https_required_for_key" => "A key is only sent over https. Use an https address.".into(),
+        "credits_exhausted" => "Not enough Meo Credits for that. Buying credits is coming soon; your own storage or keys cost 0 MC.".into(),
+        "tier_smaller_than_usage" => "You already store more than that tier. Pick a larger tier or delete files first.".into(),
+        "consent_required" => "Confirm first that Meo may use credits for storage.".into(),
+        "credential_encryption_unavailable" => "Keys cannot be saved right now (server setup). Nothing was stored.".into(),
+        "ai_credential_name_conflict" => "A connection with that name uses another provider.".into(),
+        "invalid_api_key" => "That key looks too short.".into(),
+        "reauth_required" => "Confirm it is you in Meo Account first, then save again.".into(),
+        _ => e.to_string(),
+    }
+}
+
+fn saved_connection<'a>(s: &'a State, service: &str) -> Option<&'a Value> {
+    s.services.as_ref()?["connections"]
+        .as_array()?
+        .iter()
+        .find(|c| c["service"] == service && c["isDefault"] == true)
+        .or_else(|| s.services.as_ref()?["connections"].as_array()?.iter().find(|c| c["service"] == service))
+}
+
+const KEY_NOTICE: &str = "Once saved, nobody can view this key again, Meo included. It saves as soon as you enter it.";
+
+fn credit_items(s: &State) -> Vec<Value> {
+    // Nothing until the account dashboard carries credits (older API, or still loading).
+    let Some(c) = s.usage.as_ref().map(|u| &u["credits"]).filter(|c| c.is_object()) else {
+        return vec![];
+    };
+    let mut items = vec![json!({ "id": "credits_h", "kind": "heading", "label": "Meo Credits" })];
+    let num = |v: &Value| v.as_f64().unwrap_or(0.0);
+    let balance = num(&c["balance_mc"]);
+    let spent = num(&c["month"]["spent_mc"]);
+    let welcome = c["lots"].as_array().into_iter().flatten().find(|l| l["kind"] == "welcome");
+    items.push(json!({ "id": "credits_stats", "kind": "stats", "items": [
+        { "label": "Balance", "value": format!("{} MC", mc_text(balance)), "hint": if c["empty"] == true { "Out of credits".to_owned() } else if c["low"] == true { "Running low".to_owned() } else { String::new() } },
+        { "label": "Spent this month", "value": format!("{} MC", mc_text(spent)), "hint": format!("≈ ${:.2} reference", spent / 100.0) },
+        { "label": "Welcome credits", "value": welcome.map(|w| format!("{} MC", mc_text(num(&w["remaining_mc"])))).unwrap_or_else(|| "—".into()), "hint": "once per account, no expiry" },
+    ] }));
+    if c["empty"] == true || c["low"] == true {
+        items.push(item(
+            "credits_way".into(),
+            if c["empty"] == true { "Out of Meo Credits" } else { "Meo Credits are running low" },
+            "Your own keys cost 0 MC: add a web search key and searching keeps working. Buying credits is coming soon.",
+            vec![button("Add your own search key", "primary", json!({ "type": "open_settings", "section": "services" }))],
+        ));
+    }
+    items.push(item(
+        "credits_buy".into(),
+        "Buy credits",
+        "Coming soon. 100 MC = $1 (a reference for pricing, not cash).",
+        vec![],
+    ));
+    for svc in c["month"]["by_service"].as_array().into_iter().flatten() {
+        let name = match svc["service"].as_str().unwrap_or_default() { "web_search" => "Web search", "storage" => "Meo Storage", other => other };
+        items.push(json!({ "id": format!("credits_svc_{}", svc["service"].as_str().unwrap_or_default()), "kind": "info",
+            "label": name, "value": format!("{} MC this month · {} charges", mc_text(num(&svc["spent_mc"])), svc["charges"]) }));
+    }
+    items.push(json!({ "id": "credits_rates", "kind": "info", "label": "Prices",
+        "value": "Web search 1 MC (advanced 2 MC) · your own keys 0 MC · failed searches are free · storage: 10 MB free, then 3 MC per GB-month" }));
+    items.push(json!({
+        "id": "credits_auto", "kind": "toggle", "binding": "credits.auto_topup",
+        "label": "Top up automatically when the balance is low (works once buying opens)",
+        "value": c["settings"]["auto_topup"]["enabled"].as_bool().unwrap_or(false),
+    }));
+    let budget = c["settings"]["budgets_mc"]["web_search"].as_f64().map(|v| mc_text(v)).unwrap_or_else(|| "none".into());
+    items.push(json!({
+        "id": "credits_budget", "kind": "select", "binding": "credits.search_budget",
+        "label": "Monthly web search budget", "value": budget,
+        "options": [
+            { "value": "none", "label": "No limit" }, { "value": "20", "label": "20 MC" }, { "value": "50", "label": "50 MC" },
+            { "value": "100", "label": "100 MC" }, { "value": "300", "label": "300 MC" },
+        ],
+    }));
+    for (i, t) in c["recent"].as_array().into_iter().flatten().take(5).enumerate() {
+        items.push(json!({ "id": format!("credits_tx_{i}"), "kind": "info",
+            "label": t["description"].as_str().filter(|d| !d.is_empty()).unwrap_or("Credits"),
+            "value": format!("{}{} MC · {}", if num(&t["mc"]) > 0.0 { "+" } else { "" }, mc_text(num(&t["mc"])), t["created_at"].as_str().unwrap_or_default().get(..10).unwrap_or_default()) }));
+    }
+    items
+}
+
+fn bytes_text(b: f64) -> String {
+    if b >= 1024.0 * 1024.0 * 1024.0 { format!("{:.2} GB", b / 1024f64.powi(3)) }
+    else if b >= 1024.0 * 1024.0 { format!("{:.1} MB", b / 1024f64.powi(2)) }
+    else { format!("{:.0} KB", b / 1024.0) }
+}
+
+fn storage_items(s: &State) -> Vec<Value> {
+    let Some(st) = s.storage_info.as_ref().filter(|v| v.is_object()) else {
+        return vec![];
+    };
+    let mut items = vec![json!({ "id": "storage_h", "kind": "heading", "label": "Meo Storage" })];
+    let num = |v: &Value| v.as_f64().unwrap_or(0.0);
+    let plan = st["plan"].as_str().unwrap_or("free");
+    let plan_text = match plan {
+        "tier" => format!("{} · {} MC/month", st["tier"]["label"].as_str().unwrap_or_default(), mc_text(num(&st["tier"]["price_mc_month"]))),
+        "dynamic" => format!("Pay for what you use · about {} MC this month", mc_text(num(&st["projected_month_mc"]))),
+        _ => "Free 10 MB".to_owned(),
+    };
+    items.push(json!({ "id": "storage_use", "kind": "info", "label": "Used",
+        "value": format!("{} of {} · {plan_text}", bytes_text(num(&st["used_bytes"])), bytes_text(num(&st["quota_bytes"]))) }));
+    if st["uploads_paused"] == true {
+        items.push(item("storage_paused".into(), "New uploads are paused",
+            "Your files are safe; you can still open and delete them. Uploads resume when you have credits, switch plan or use your own storage.",
+            vec![button("Use your own storage", "primary", json!({ "type": "open_settings", "section": "services" }))]));
+    }
+    let mut buttons: Vec<Value> = st["tiers"].as_array().into_iter().flatten()
+        .filter(|t| !(plan == "tier" && st["tier"]["code"] == t["code"]))
+        .map(|t| button(&format!("{} · {} MC", t["label"].as_str().unwrap_or_default(), mc_text(num(&t["price_mc_month"]))), "secondary",
+            json!({ "type": "storage_plan", "plan": "tier", "tier": t["code"] })))
+        .collect();
+    items.push(item("storage_tiers".into(), "More storage (per month)", "A fixed size, charged in Meo Credits only after you confirm.", std::mem::take(&mut buttons)));
+    let mut other = vec![];
+    if plan != "dynamic" { other.push(button("Pay for what I use (3 MC/GB-month)", "secondary", json!({ "type": "storage_plan", "plan": "dynamic" }))); }
+    if plan != "free" { other.push(button("Back to free 10 MB", "secondary", json!({ "type": "storage_plan", "plan": "free" }))); }
+    other.push(button("Use my own storage (0 MC)", "secondary", json!({ "type": "open_settings", "section": "services" })));
+    items.push(item("storage_other".into(), "Other options", "Your own R2, S3-compatible bucket or server costs 0 MC.", other));
+    items
+}
+
+fn service_items(s: &State) -> Vec<Value> {
+    let mut items = vec![json!({ "id": "svc_intro", "kind": "info", "label": "Your own services",
+        "value": "Keys and servers you add here cost 0 MC and work in Meo AI, Meo Account and VRC Memories. Once saved, nobody can view a key again, Meo included." })];
+    let field = |service: &str, f: &str| s.svc_form.get(&format!("{service}:{f}")).cloned().unwrap_or_default();
+    let rows: [(&str, &str, &[&str]); 5] = [
+        ("ai_model", "AI model key", &["openai", "gemini", "deepseek", "openrouter"]),
+        ("web_search", "Web search", &["tavily", "brave", "serper", "bocha", "custom"]),
+        ("translation", "Translation", &["deepl", "google", "custom"]),
+        ("storage", "Storage", &["r2", "s3", "webdav", "custom"]),
+        ("server", "My Server", &["my_server"]),
+    ];
+    for (service, title, providers) in rows {
+        items.push(json!({ "id": format!("svc_h_{service}"), "kind": "heading", "label": title }));
+        let saved = if service == "ai_model" { None } else { saved_connection(s, service) };
+        if service == "ai_model" {
+            for c in &s.credentials {
+                items.push(json!({ "id": format!("svc_ai_{}", c.id), "kind": "info", "label": c.display_name, "value": format!("{} · saved", provider_label(&c.provider)) }));
+            }
+        } else if let Some(c) = saved {
+            let test = match &c["lastTest"] {
+                Value::Object(t) if t.get("ok") == Some(&json!(true)) => " · test passed",
+                Value::Object(_) => " · last test failed",
+                _ => "",
+            };
+            items.push(item(
+                format!("svc_saved_{service}"),
+                c["displayName"].as_str().unwrap_or(title),
+                &format!("{}{}{} · 0 MC", provider_label(c["provider"].as_str().unwrap_or_default()),
+                    c["keyHint"].as_str().filter(|h| !h.is_empty()).map(|h| format!(" · key {h}")).unwrap_or_default(), test),
+                vec![
+                    button("Test", "secondary", json!({ "type": "service_test", "id": c["id"] })),
+                    button("Remove", "danger", json!({ "type": "service_delete", "id": c["id"] })),
+                ],
+            ));
+        }
+        let provider = Some(field(service, "provider")).filter(|p| !p.is_empty())
+            .or_else(|| saved.and_then(|c| c["provider"].as_str().map(str::to_owned)))
+            .unwrap_or_else(|| default_provider(service).to_owned());
+        if providers.len() > 1 {
+            items.push(json!({ "id": format!("svc_{service}_provider"), "kind": "select", "binding": format!("svc:{service}:provider"),
+                "label": "Provider", "value": provider,
+                "options": providers.iter().map(|p| json!({ "value": p, "label": provider_label(p) })).collect::<Vec<_>>() }));
+        }
+        let mode = Some(field(service, "mode")).filter(|m| !m.is_empty())
+            .or_else(|| saved.and_then(|c| c["mode"].as_str().map(str::to_owned)))
+            .unwrap_or_else(|| "api".into());
+        if service == "server" {
+            items.push(json!({ "id": "svc_server_mode", "kind": "select", "binding": "svc:server:mode", "label": "How Meo uses it", "value": mode,
+                "options": [{ "value": "url", "label": "Just open its address" }, { "value": "api", "label": "Connect to its API" }] }));
+        }
+        let needs_endpoint = service == "server" || provider == "custom" || matches!(provider.as_str(), "r2" | "s3" | "webdav");
+        if needs_endpoint {
+            items.push(json!({ "id": format!("svc_{service}_endpoint"), "kind": "text", "single_line": true, "binding": format!("svc:{service}:endpoint"),
+                "label": if service == "storage" { "Endpoint (https://…)" } else { "Address (https://…)" },
+                "value": Some(field(service, "endpoint")).filter(|e| !e.is_empty()).or_else(|| saved.and_then(|c| c["endpoint"].as_str().map(str::to_owned))).unwrap_or_default() }));
+        }
+        let needs_key = !(service == "server" && mode == "url") && provider != "webdav";
+        if needs_key {
+            items.push(json!({ "id": format!("svc_{service}_key"), "kind": "text", "single_line": true, "secret": true,
+                "binding": format!("svc:{service}:key"),
+                "label": if provider == "custom" || service == "server" { "Key or token (optional)" } else { "API key" },
+                "description": KEY_NOTICE, "value": "" }));
+        }
+        items.push(json!({ "id": format!("svc_{service}_save"), "kind": "button", "label": "Save", "style": "primary",
+            "action": { "type": "service_save", "service": service } }));
+    }
+    items
+}
+
 fn profile_list(s: &State) -> Vec<Value> {
     s.profiles
         .as_ref()
@@ -13750,7 +14226,7 @@ fn docs_url(page: &str) -> String {
 
 /// The pages a `meo:` link in a reply may open: Settings sections and the app's own pages.
 const SETTINGS_SECTIONS: &[&str] = &[
-    "general", "appearance", "personalization", "models", "permissions", "devices", "connectors", "privacy", "usage", "shortcuts", "account", "about",
+    "general", "appearance", "personalization", "models", "services", "permissions", "devices", "connectors", "privacy", "usage", "shortcuts", "account", "about",
 ];
 
 /// Turns `[label](meo:target)` links into buttons that open that page in the app (every client draws
@@ -16248,6 +16724,36 @@ fn list_page(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn services_page_offers_key_fields_that_save_on_entry_and_never_show_a_key() {
+        let mut s = State::default();
+        s.services = Some(json!({ "connections": [{ "id": "c1", "service": "web_search", "provider": "tavily", "displayName": "Tavily",
+            "isDefault": true, "keyHint": "••••abcd", "lastTest": { "ok": true }, "mode": "api", "endpoint": "" }] }));
+        let items = service_items(&s);
+        let key = items.iter().find(|i| i["binding"] == "svc:web_search:key").unwrap();
+        assert_eq!(key["secret"], true);
+        assert_eq!(key["value"], "");
+        assert!(key["description"].as_str().unwrap().contains("nobody can view"));
+        let saved = items.iter().find(|i| i["id"] == "svc_saved_web_search").unwrap();
+        assert!(saved["value"].as_str().unwrap().contains("••••abcd"));
+        assert!(items.iter().any(|i| i["action"]["type"] == "service_save" && i["action"]["service"] == "server"));
+        assert!(items.iter().any(|i| i["binding"] == "svc:server:mode"));
+    }
+
+    #[test]
+    fn usage_shows_the_credit_balance_and_a_way_forward_when_it_runs_out() {
+        let mut s = State::default();
+        assert!(credit_items(&s).is_empty());
+        s.usage = Some(json!({ "credits": { "balance_mc": 0.0, "empty": true, "low": true, "month": { "spent_mc": 100.0, "by_service": [] },
+            "lots": [{ "kind": "welcome", "remaining_mc": 0.0 }], "settings": { "auto_topup": { "enabled": false }, "budgets_mc": {} }, "recent": [] } }));
+        let items = credit_items(&s);
+        assert_eq!(items[1]["items"][0]["value"], "0 MC");
+        let way = items.iter().find(|i| i["id"] == "credits_way").unwrap();
+        assert_eq!(way["buttons"][0]["action"]["section"], "services");
+        assert!(items.iter().any(|i| i["id"] == "credits_buy" && i["value"].as_str().unwrap().starts_with("Coming soon")));
+        assert_eq!(route_action("settings/services")["section"], "services");
+    }
     #[test]
     fn github_links_become_skill_sources() {
         let a = parse_github_skill("https://github.com/anthropics/skills/tree/main/skills/pdf")

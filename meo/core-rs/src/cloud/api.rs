@@ -635,15 +635,72 @@ impl MeoApi {
 
     /// Web search results (`[{title,url,snippet}]`) for a query; empty when nothing was found.
     pub async fn web_search(&self, token: &str, query: &str) -> Result<Vec<Value>, ApiError> {
-        let body = self
-            .request(
-                token,
-                Method::POST,
-                "/v1/search/web",
-                Some(json!({ "query": query })),
-            )
-            .await?;
+        let body = self.web_search_full(token, query).await?;
         Ok(body["results"].as_array().cloned().unwrap_or_default())
+    }
+
+    /// The whole search answer: `results`, `billing` and `credits {charged_mc, balance_mc, notice}`.
+    pub async fn web_search_full(&self, token: &str, query: &str) -> Result<Value, ApiError> {
+        self.request(
+            token,
+            Method::POST,
+            "/v1/search/web",
+            Some(json!({ "query": query })),
+        )
+        .await
+    }
+
+    /// Adds (or re-saves under the same name) an AI provider key; answers `{saved, credential}`.
+    pub async fn create_credential(&self, token: &str, body: &Value) -> Result<Value, ApiError> {
+        self.request(token, Method::POST, "/v1/ai/credentials", Some(body.clone()))
+            .await
+    }
+
+    /// Meo Credits: balance, lots, this month's spend, recent ledger, auto top-up and budgets.
+    pub async fn credits(&self, token: &str) -> Result<Value, ApiError> {
+        self.request(token, Method::GET, "/v1/credits", None).await
+    }
+
+    pub async fn save_credit_settings(&self, token: &str, body: &Value) -> Result<Value, ApiError> {
+        self.request(token, Method::PATCH, "/v1/credits/settings", Some(body.clone()))
+            .await
+    }
+
+    /// Meo Storage: plan, used/quota bytes, tiers and prices.
+    pub async fn storage(&self, token: &str) -> Result<Value, ApiError> {
+        self.request(token, Method::GET, "/v1/storage", None).await
+    }
+
+    pub async fn set_storage_plan(&self, token: &str, body: &Value) -> Result<Value, ApiError> {
+        self.request(token, Method::PUT, "/v1/storage/plan", Some(body.clone()))
+            .await
+    }
+
+    /// The user's own service connections (web search, translation, storage, My Server).
+    pub async fn service_connections(&self, token: &str) -> Result<Value, ApiError> {
+        self.request(token, Method::GET, "/v1/service-connections", None)
+            .await
+    }
+
+    /// Saves (upserts) a connection; answers `{saved, message, connection}`.
+    pub async fn save_service_connection(&self, token: &str, body: &Value) -> Result<Value, ApiError> {
+        self.request(token, Method::POST, "/v1/service-connections", Some(body.clone()))
+            .await
+    }
+
+    pub async fn test_service_connection(&self, token: &str, id: &str) -> Result<Value, ApiError> {
+        self.request(
+            token,
+            Method::POST,
+            &format!("/v1/service-connections/{id}/test"),
+            Some(json!({})),
+        )
+        .await
+    }
+
+    pub async fn delete_service_connection(&self, token: &str, id: &str) -> Result<Value, ApiError> {
+        self.request(token, Method::DELETE, &format!("/v1/service-connections/{id}"), None)
+            .await
     }
 
     /// Reads one page as text or markdown (`POST /v1/fetch/web`). A non-2xx status of the page itself is part

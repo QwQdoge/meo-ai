@@ -1928,9 +1928,14 @@ ApplicationWindow {
             MeoTextField {
                 visible: !!setting.item.single_line
                 Layout.fillWidth: true
+                isPassword: !!setting.item.secret
                 placeholder: setting.item.placeholder || ""
                 text: setting.item.value || ""
-                onEditingFinished: if (text !== (setting.item.value || "")) window.act({ type: "set_setting", binding: setting.item.binding, value: text })
+                // A key is sent once and the field empties: it is never shown again.
+                onEditingFinished: if (text !== (setting.item.value || "")) {
+                    window.act({ type: "set_setting", binding: setting.item.binding, value: text })
+                    if (setting.item.secret) text = ""
+                }
             }
             MeoTextArea {
                 visible: !setting.item.single_line

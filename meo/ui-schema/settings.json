@@ -210,6 +210,24 @@
       ]
     },
     {
+      "id": "services",
+      "label": "Services & keys",
+      "labelKey": "meo.settings.services",
+      "owner": "account",
+      "group": "AI",
+      "items": [],
+      "keywords": [
+        "web search",
+        "translation",
+        "storage",
+        "my server",
+        "api key",
+        "搜索",
+        "翻译",
+        "服务器"
+      ]
+    },
+    {
       "id": "permissions",
       "label": "Permissions",
       "labelKey": "meo.settings.permissions",
@@ -254,16 +272,20 @@
     },
     {
       "id": "usage",
-      "label": "Usage",
+      "label": "Usage & credits",
       "labelKey": "meo.settings.usage",
       "owner": "api",
       "group": "Account",
       "items": [],
       "keywords": [
         "activity",
-        "diagnostics",
-        "诊断",
-        "用量"
+        "credits",
+        "balance",
+        "storage",
+        "用量",
+        "积分",
+        "余额",
+        "存储"
       ]
     },
     {

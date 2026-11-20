@@ -531,7 +531,12 @@ function KeyCaps({ combo }: { combo: string }) {
 function SettingRow({ item, act }: { item: Spec; act: Act }) {
   const [text, setText] = useState<string>(String(item.value ?? ""));
   useEffect(() => setText(String(item.value ?? "")), [item.value]);
-  const commit = () => text !== String(item.value ?? "") && act(setting(item, text));
+  // A secret (an API key) is sent once and the field empties: the key is never shown again.
+  const commit = () => {
+    if (text === String(item.value ?? "")) return;
+    act(setting(item, text));
+    if (item.secret) setText("");
+  };
   const description: string | undefined = item.keys ? undefined : item.description || (item.kind === "item" ? item.value : undefined);
   const head = (
     <div className="set-text">
@@ -590,7 +595,7 @@ function SettingRow({ item, act }: { item: Spec; act: Act }) {
         <div className="set-row stack">
           {head}
           {item.single_line ? (
-            <input value={text} placeholder={item.placeholder} onChange={(e) => setText(e.target.value)} onBlur={commit}
+            <input type={item.secret ? "password" : "text"} autoComplete={item.secret ? "off" : undefined} value={text} placeholder={item.placeholder} onChange={(e) => setText(e.target.value)} onBlur={commit}
               onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && commit()} />
           ) : (
             <textarea rows={4} value={text} onChange={(e) => setText(e.target.value)} onBlur={commit} />
@@ -609,7 +614,12 @@ function Control({ item, act }: { item: Spec; act: Act }) {
   useEffect(() => {
     setText(String(item.value ?? ""));
   }, [item.value]);
-  const commit = () => text !== String(item.value ?? "") && act(setting(item, text));
+  // A secret (an API key) is sent once and the field empties: the key is never shown again.
+  const commit = () => {
+    if (text === String(item.value ?? "")) return;
+    act(setting(item, text));
+    if (item.secret) setText("");
+  };
   switch (item.kind) {
     case "toggle":
       return (
@@ -645,7 +655,7 @@ function Control({ item, act }: { item: Spec; act: Act }) {
         <label className="core-field">
           <span>{item.label}</span>
           {item.single_line ? (
-            <input value={text} placeholder={item.placeholder} onChange={(e) => setText(e.target.value)} onBlur={commit}
+            <input type={item.secret ? "password" : "text"} autoComplete={item.secret ? "off" : undefined} value={text} placeholder={item.placeholder} onChange={(e) => setText(e.target.value)} onBlur={commit}
               onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && commit()} />
           ) : (
             <textarea rows={4} value={text} onChange={(e) => setText(e.target.value)} onBlur={commit} />
