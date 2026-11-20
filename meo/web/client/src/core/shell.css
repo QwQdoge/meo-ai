@@ -676,7 +676,7 @@
 @media (prefers-reduced-motion: reduce) { .core-app .core-plan, .core-app .core-plan li, .core-app .core-plan .core-task-mark, .core-app .core-plan .core-plan-mark, .core-app .core-plan.live .core-plan-bar i, .core-app .core-chat-row > button strong { animation: none; } }
 :root[data-reduce-motion="true"] .core-app .core-plan, :root[data-reduce-motion="true"] .core-app .core-plan li, :root[data-reduce-motion="true"] .core-app .core-plan .core-task-mark, :root[data-reduce-motion="true"] .core-app .core-plan .core-plan-mark, :root[data-reduce-motion="true"] .core-app .core-plan.live .core-plan-bar i, :root[data-reduce-motion="true"] .core-app .core-chat-row > button strong { animation: none; }
 
-.core-app .core-step-tag { margin-inline-start: 6px; padding: 0 6px; border-radius: 6px; font-size: 10.5px; letter-spacing: .02em; text-transform: uppercase; color: rgb(var(--text-secondary)); background: var(--tonal); }
+.core-app .core-step-tag { flex: none; white-space: nowrap; margin-inline-start: 6px; padding: 0 6px; border-radius: 6px; font-size: 10.5px; letter-spacing: .02em; text-transform: uppercase; color: rgb(var(--text-secondary)); background: var(--tonal); }
 .core-app .core-steps li.step-stage > details > summary > b { font-weight: 400; color: rgb(var(--text-secondary)); }
 
 .core-app .core-voice.listening { color: rgb(var(--accent-primary)); animation: core-halo 1.2s var(--ease) infinite; }
@@ -808,3 +808,8 @@
 :root[data-reduce-motion="true"] .core-app .core-send.launched, :root[data-reduce-motion="true"] .core-app .core-send.launched svg,
 :root[data-reduce-motion="true"] .core-app .core-jump { animation: none; }
 .core-app .core-jump:not(:disabled):active { transform: translateX(-50%) scale(.94); }
+
+/* Short labels are one piece: a tag, badge, timer or chip never breaks inside itself ("TOO" / "L"); the long
+   text next to it wraps instead. */
+.core-app :is(.store-badges span, .core-badge, .core-image-card-badge, .core-live-time, .core-chip-toggle, .core-tune, .core-device, .core-message-actions button) { white-space: nowrap; }
+.core-app .core-steps li > details > summary > b { min-width: 0; }
