@@ -60,7 +60,24 @@ unless the user toggled it. Steps listed today: web search (with result links), 
 
 `start, realtime, sign_in, sign_out, auth_callback{url}, navigate{route}, new_conversation,
 select_conversation{id}, send{text}, stop, approve_consent, deny_consent,
-set_setting{binding,value}, refresh, dismiss_notice`.
+set_setting{binding,value}, refresh, dismiss_notice, service_save{service}, service_test{id},
+service_delete{id}, storage_plan{plan,tier,consent}`.
+
+## Credits, storage and own services (plan v1.1)
+
+- Settings > **Usage & credits** (`usage`) starts with Meo Credits (balance, month spend, welcome lot,
+  prices, Buy "Coming soon", auto top-up toggle `credits.auto_topup`, monthly search budget
+  `credits.search_budget`, recent ledger) and Meo Storage (used/quota, tier buttons, pay-as-you-use,
+  back to free, own storage). They come from `/v1/usage-dashboard` (`credits`) and `/v1/storage`.
+- Settings > **Services & keys** (`services`): AI model key, web search, translation, storage, My Server
+  (mode `url`/`api`). Fields bind to `svc:<service>:<field>` (`provider`, `key`, `endpoint`, `mode`); a key
+  (and My Server's address) saves the moment it is set. Key fields are `secret: true` with an empty value;
+  renderers mask them and empty them after sending.
+- Actions: `service_save{service}` (Save; also answers "Saved" when nothing changed), `service_test{id}`,
+  `service_delete{id}`, `storage_plan{plan,tier,consent}` (without `consent` the core first asks in a
+  confirm dialog).
+- A web search answer may carry `credits.notice` (out of credits, low, budget reached, hosted paused); the
+  core shows it as a notice with a button to the way forward. The account menu shows the balance.
 
 ## Real-time sync
 
