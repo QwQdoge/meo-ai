@@ -1168,6 +1168,12 @@ function usePresence(open: boolean, ms: number) {
   return { mounted: open || mounted, closing: !open && mounted };
 }
 
+/** Something the reader can see: text that is not only whitespace, or a block other than an empty paragraph.
+ *  An answer often opens with an empty Markdown block; that must not hide "Thinking". */
+const hasContent = (m: Spec) =>
+  !!(m.text && String(m.text).trim()) ||
+  (m.blocks ?? []).some((b: Spec) => b.type !== "markdown" || !!String(b.text ?? "").trim());
+
 const MessageView = React.memo(
   function MessageView({ m, strings, act }: { m: Spec; strings: Spec; act: Act }) {
     const [zoom, setZoom] = useState<string | null>(null);
@@ -1231,7 +1237,7 @@ const MessageView = React.memo(
                   </details>
                 )}
                 {(m.blocks ?? []).filter((b: Spec) => b.type === "image_progress").map((b: Spec, k: number) => <ImageProgress key={`ip${k}`} block={b} strings={strings} status={!m.steps} />)}
-                {m.streaming && !m.steps && !m.text && !(m.blocks ?? []).length && <LiveStatus icon="psychology" label={strings.thinking ?? "Thinking"} longLabel="Still waiting for the model, no reply yet" />}
+                {m.streaming && !m.steps && !hasContent(m) && <LiveStatus icon="psychology" label={strings.thinking ?? "Thinking"} longLabel="Still waiting for the model, no reply yet" />}
                 <Blocks
                   blocks={m.blocks?.length ? m.blocks : [{ type: "markdown", text: m.text }]}
                   streaming={!!m.streaming}
@@ -1541,7 +1547,7 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
           {messages.map((m, i) => {
             // While a run is busy the newest answer can be an empty placeholder not yet marked streaming (the
             // request is being prepared): it still shows "Thinking" instead of a blank gap of several seconds.
-            const waiting = composer.busy && i === messages.length - 1 && m.role === "assistant" && !m.streaming && !m.text && !m.steps && !(m.blocks ?? []).length;
+            const waiting = composer.busy && i === messages.length - 1 && m.role === "assistant" && !m.streaming && !m.steps && !hasContent(m);
             return <MessageView key={`${page.id ?? "new"}:${i}`} m={waiting ? { ...m, streaming: true } : m} strings={strings} act={act} />;
           })}
           {composer.busy && messages.length > 0 && messages[messages.length - 1].role === "user" && (
