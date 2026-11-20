@@ -2253,17 +2253,19 @@ impl AppCore {
     /// The model for a role: the active profile's, else the route of that name, else a fallback.
     fn role_model(&self, role: &str) -> Option<Choice> {
         let s = self.state.lock().unwrap();
+        // The answer check is a cheap pass; a profile's Judge model is used for it when one is set.
+        let profile_role = if role == "check" { "judge" } else { role };
         let from_profile = profile_list(&s)
             .into_iter()
             .find(|p| p["active"] == true)
             .and_then(|p| {
                 Some((
-                    p["roles"][role]["credentialId"].as_str()?.to_owned(),
-                    p["roles"][role]["model"].as_str()?.to_owned(),
+                    p["roles"][profile_role]["credentialId"].as_str()?.to_owned(),
+                    p["roles"][profile_role]["model"].as_str()?.to_owned(),
                 ))
             });
         let fallback = match role {
-            "router" | "title" => "fast",
+            "router" | "title" | "check" => "fast",
             "judge" => "thinking",
             other => other,
         };
@@ -7479,7 +7481,7 @@ impl AppCore {
         background: &str,
         place: &str,
     ) -> (agent::Outcome, String) {
-        let Some(choice) = self.role_model("default") else {
+        let Some(choice) = self.role_model("agent") else {
             return (agent::Outcome::fail("no model is set for the sub-agent"), notes);
         };
         let permission = self.agent_permission();
@@ -8480,7 +8482,7 @@ impl AppCore {
         if tools.is_empty() {
             return None;
         }
-        let choice = self.role_model("fast")?;
+        let choice = self.role_model("router")?;
         let prompt = format!(
             "Read the user's request and decide how to handle it. Reply with JSON only.\nRequest: {}\nTools the assistant has: {}\n\nIf it is a plain question or chat that needs no investigation, reply {{\"direct\": true}}.\nOtherwise reply {{\"direct\": false, \"goal\": \"what the user wants achieved, in one sentence\", \"subject\": \"the exact thing it is about (which repository, file, topic, person)\", \"deliverable\": \"what a good answer contains\", \"examine\": [\"the places or sources that must be looked at\"], \"not_wanted\": [\"things the user did not ask for and that would be off topic\"]}}.\nUse the user's own words. Do not invent requirements, and do not assume a kind of task: describe this one.",
             serde_json::to_string(text).unwrap_or_default(),
@@ -8559,7 +8561,7 @@ impl AppCore {
         if reply.chars().count() < 600 || calls.is_empty() {
             return None;
         }
-        let choice = self.role_model("fast")?;
+        let choice = self.role_model("check")?;
         self.update(|s| {
             if let Some(run) = s.agent.native.as_mut() {
                 run.reviewed = true;
@@ -18171,6 +18173,11 @@ mod tests {
             "big",
             "the judge uses the thinking route"
         );
+        assert_eq!(c.role_model("check").unwrap().1, "small", "the answer check stays cheap");
+        c.update(|s| { s.router.slots.insert("default".into(), ("c1".into(), "mid".into())); });
+        assert_eq!(c.role_model("agent").unwrap().1, "mid", "no Sub-agents route: helpers use the everyday model");
+        c.update(|s| { s.router.slots.insert("agent".into(), ("c1".into(), "helper".into())); });
+        assert_eq!(c.role_model("agent").unwrap().1, "helper", "the Sub-agents route runs helpers");
         seed_profiles(&c);
         c.update(|s| {
             if let Some(Ok(doc)) = s.profiles.as_mut() {
@@ -18183,6 +18190,14 @@ mod tests {
             "jev-router",
             "a profile role wins"
         );
+        c.update(|s| {
+            if let Some(Ok(doc)) = s.profiles.as_mut() {
+                doc["profiles"][0]["roles"]["judge"] = json!({ "credentialId": "c9", "model": "jev-judge" });
+                doc["profiles"][0]["roles"]["agent"] = json!({ "credentialId": "c9", "model": "jev-agent" });
+            }
+        });
+        assert_eq!(c.role_model("check").unwrap().1, "jev-judge", "the profile's Judge checks answers");
+        assert_eq!(c.role_model("agent").unwrap().1, "jev-agent", "the profile's Sub-agents role runs helpers");
     }
 
     #[test]
