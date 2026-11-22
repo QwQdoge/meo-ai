@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import React, { useEffect, useState, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 
 // What a paste into the composer becomes. The page decides only what the clipboard holds; the core
@@ -121,18 +121,172 @@ export function htmlToMarkdown(html: string): string {
   return markdownOf(doc.body, 0).replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
-/** A picture shown large; a click anywhere or Escape closes it. It sits in the app root so a message's
- *  own layout (content-visibility) cannot clip it. */
-export function Lightbox({ src, onClose }: { src: string; onClose: () => void }) {
+export type LightboxProps = {
+  src: string;
+  images?: string[];
+  initialIndex?: number;
+  title?: string;
+  onClose: () => void;
+};
+
+/** A picture shown large with interactive zoom, pan and multi-image arrow navigation. */
+export function Lightbox({ src, images, initialIndex = 0, title, onClose }: LightboxProps) {
+  const list = images && images.length > 0 ? images : [src];
+  const [currentIndex, setCurrentIndex] = useState(() => {
+    if (images && images.length > 0) {
+      const found = images.indexOf(src);
+      return found >= 0 ? found : Math.min(initialIndex, images.length - 1);
+    }
+    return 0;
+  });
+
+  const [scale, setScale] = useState(1);
+  const [position, setPosition] = useState({ x: 0, y: 0 });
+  const isDragging = useRef(false);
+  const dragStart = useRef({ x: 0, y: 0 });
+  const moved = useRef(false);
+
+  const currentSrc = list[currentIndex] || src;
+
+  const goTo = useCallback((idx: number) => {
+    const next = (idx + list.length) % list.length;
+    setCurrentIndex(next);
+    setScale(1);
+    setPosition({ x: 0, y: 0 });
+  }, [list.length]);
+
+  const prev = useCallback(() => goTo(currentIndex - 1), [goTo, currentIndex]);
+  const next = useCallback(() => goTo(currentIndex + 1), [goTo, currentIndex]);
+
+  const zoomIn = useCallback(() => setScale((s) => Math.min(s + 0.35, 5)), []);
+  const zoomOut = useCallback(() => setScale((s) => Math.max(s - 0.35, 0.5)), []);
+  const resetZoom = useCallback(() => {
+    setScale(1);
+    setPosition({ x: 0, y: 0 });
+  }, []);
+
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+      else if (e.key === "ArrowLeft" && list.length > 1) prev();
+      else if (e.key === "ArrowRight" && list.length > 1) next();
+      else if (e.key === "+" || e.key === "=") zoomIn();
+      else if (e.key === "-") zoomOut();
+      else if (e.key === "0") resetZoom();
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, list.length, prev, next, zoomIn, zoomOut, resetZoom]);
+
+  const handleWheel = (e: React.WheelEvent) => {
+    e.preventDefault();
+    const delta = e.deltaY * -0.002;
+    setScale((s) => Math.min(Math.max(s + delta, 0.5), 5));
+  };
+
+  const handleDoubleClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (scale > 1.2) {
+      resetZoom();
+    } else {
+      setScale(2);
+    }
+  };
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (scale <= 1) return;
+    isDragging.current = true;
+    dragStart.current = { x: e.clientX - position.x, y: e.clientY - position.y };
+    moved.current = false;
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (!isDragging.current) return;
+    moved.current = true;
+    setPosition({
+      x: e.clientX - dragStart.current.x,
+      y: e.clientY - dragStart.current.y,
+    });
+  };
+
+  const handleMouseUp = () => {
+    isDragging.current = false;
+  };
+
   return createPortal(
-    <div className="core-lightbox" role="dialog" aria-modal="true" aria-label="Picture" onClick={onClose}>
-      <img src={src} alt="" />
-      <button className="core-lightbox-close" aria-label="Close" onClick={onClose}>×</button>
+    <div
+      className="core-lightbox"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Picture preview"
+      onClick={(e) => {
+        if (!moved.current && (e.target === e.currentTarget || (e.target as HTMLElement).classList.contains("core-lightbox-stage"))) {
+          onClose();
+        }
+      }}
+      onWheel={handleWheel}
+      onMouseMove={handleMouseMove}
+      onMouseUp={handleMouseUp}
+    >
+      <div className="core-lightbox-header">
+        {title && <span className="core-lightbox-title">{title}</span>}
+        {list.length > 1 && (
+          <span className="core-lightbox-counter">
+            {currentIndex + 1} / {list.length}
+          </span>
+        )}
+        <button className="core-lightbox-close" aria-label="Close" onClick={onClose}>×</button>
+      </div>
+
+      <div
+        className="core-lightbox-stage"
+        onMouseDown={handleMouseDown}
+        onDoubleClick={handleDoubleClick}
+      >
+        <img
+          src={currentSrc}
+          alt=""
+          style={{
+            transform: `translate(${position.x}px, ${position.y}px) scale(${scale})`,
+            cursor: scale > 1 ? (isDragging.current ? "grabbing" : "grab") : "zoom-in",
+            transition: isDragging.current ? "none" : "transform 0.15s ease-out",
+          }}
+          draggable={false}
+        />
+      </div>
+
+      {list.length > 1 && (
+        <>
+          <button
+            className="core-lightbox-nav prev"
+            aria-label="Previous"
+            onClick={(e) => { e.stopPropagation(); prev(); }}
+          >
+            ‹
+          </button>
+          <button
+            className="core-lightbox-nav next"
+            aria-label="Next"
+            onClick={(e) => { e.stopPropagation(); next(); }}
+          >
+            ›
+          </button>
+        </>
+      )}
+
+      <div className="core-lightbox-toolbar" onClick={(e) => e.stopPropagation()}>
+        <button onClick={zoomOut} title="Zoom out (-)" aria-label="Zoom out">−</button>
+        <button onClick={resetZoom} title="Reset zoom (0)">{Math.round(scale * 100)}%</button>
+        <button onClick={zoomIn} title="Zoom in (+)" aria-label="Zoom in">+</button>
+        <a
+          href={currentSrc}
+          download={`image-${currentIndex + 1}.png`}
+          className="core-lightbox-download"
+          title="Download picture"
+        >
+          ↓
+        </a>
+      </div>
     </div>,
     document.querySelector(".core-app") ?? document.body,
   );

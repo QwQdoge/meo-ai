@@ -1187,30 +1187,64 @@ const hasContent = (m: Spec) =>
 const MessageView = React.memo(
   function MessageView({ m, strings, act }: { m: Spec; strings: Spec; act: Act }) {
     const [zoom, setZoom] = useState<string | null>(null);
+    const [savedMemory, setSavedMemory] = useState(false);
+    const [dismissedMemory, setDismissedMemory] = useState(false);
+
+    const textContent = String(m.text ?? "").trim();
+    // 智能识别偏好/长期要求模式（像 ChatGPT 一样随聊识别）
+    const isPreference = m.role === "user" && textContent.length > 3 && textContent.length < 200 &&
+      /^(我喜欢|我习惯|我偏好|请记住|记住|以后请|请使用|我的要求|项目要求|prefer|remember)/i.test(textContent);
+
+    const pictures: string[] = m.role === "user"
+      ? (m.pictures ?? [])
+      : (m.images ?? []).map((img: Spec) => img.url).filter(Boolean);
+    const uniqueFiles = Array.from(new Map((m.files ?? []).map((f: Spec) => [f.id || f.name, f])).values());
+
+    const saveToMemory = () => {
+      act({ type: "add_memory", text: textContent });
+      setSavedMemory(true);
+    };
+
     return (
           <>
-            {zoom && <Lightbox src={zoom} onClose={() => setZoom(null)} />}
+            {zoom && <Lightbox src={zoom} images={pictures} onClose={() => setZoom(null)} />}
           <div className={`core-message ${m.role === "user" ? "user" : "assistant"}`}>
             {m.role === "user" ? (
-              <div className="core-bubble user">
-                {(m.pictures ?? []).length > 0 && (
-                  <div className="core-sent-pictures">
-                    {m.pictures.map((src: string, k: number) => (
-                      <button key={k} className="core-sent-picture" aria-label="View picture" onClick={() => setZoom(src)}><img src={src} alt="" /></button>
-                    ))}
+              <>
+                <div className="core-bubble user">
+                  {(m.pictures ?? []).length > 0 && (
+                    <div className="core-sent-pictures">
+                      {m.pictures.map((src: string, k: number) => (
+                        <button key={k} className="core-sent-picture" aria-label="View picture" onClick={() => setZoom(src)}><img src={src} alt="" /></button>
+                      ))}
+                    </div>
+                  )}
+                  {uniqueFiles.length > 0 && (
+                    <div className="core-sent-files">
+                      {uniqueFiles.map((f: Spec, k: number) => f.open ? (
+                        <button key={k} className="core-sent-file" title={f.name} onClick={() => act(f.open)}><Icon name="description" size={14} /><span>{f.name}</span></button>
+                      ) : (
+                        <span key={k} className="core-sent-file" title={f.name}><Icon name="description" size={14} /><span>{f.name}</span></span>
+                      ))}
+                    </div>
+                  )}
+                  {m.text}
+                </div>
+                {isPreference && !savedMemory && !dismissedMemory && (
+                  <div className="core-memory-suggestion">
+                    <Icon name="psychology" size={14} />
+                    <span>记住这条偏好到长期记忆？</span>
+                    <button className="core-memory-btn save" onClick={saveToMemory}>记住</button>
+                    <button className="core-memory-btn dismiss" onClick={() => setDismissedMemory(true)}>忽略</button>
                   </div>
                 )}
-                {(m.files ?? []).length > 0 && (
-                  <div className="core-sent-files">
-                    {m.files.map((f: Spec, k: number) => f.open ? (
-                      <button key={k} className="core-sent-file" title={f.name} onClick={() => act(f.open)}><Icon name="description" size={14} /><span>{f.name}</span></button>
-                    ) : (
-                      <span key={k} className="core-sent-file" title={f.name}><Icon name="description" size={14} /><span>{f.name}</span></span>
-                    ))}
+                {savedMemory && (
+                  <div className="core-memory-suggestion saved">
+                    <Icon name="check" size={14} />
+                    <span>已同步至长期记忆</span>
                   </div>
                 )}
-                {m.text}
-              </div>
+              </>
             ) : (
               <div className="core-bubble assistant">
                 {m.steps && (
@@ -1267,6 +1301,13 @@ const MessageView = React.memo(
             {!m.streaming && m.text && (
               <div className="core-message-actions">
                 <CopyButton text={m.text} label={strings.copy ?? "Copy"} done={strings.copied ?? "Copied"} />
+                <button
+                  className="core-action-btn remember"
+                  title="Save preference to memory"
+                  onClick={saveToMemory}
+                >
+                  {savedMemory ? "✓ 已记住" : "🧠 记住"}
+                </button>
                 {(m.actions ?? []).map((a: Spec, j: number) => (
                   <button key={j} onClick={() => act(a.action)}>{a.label}</button>
                 ))}
@@ -1385,6 +1426,8 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
       } else {
         note(`${file.name}: this file type is not supported yet`);
       }
+      // Give the core event loop a brief tick between attachments to prevent race conditions.
+      await new Promise((resolve) => setTimeout(resolve, 50));
     }
   };
   const last = messages[messages.length - 1]?.text?.length ?? 0;
@@ -1454,23 +1497,40 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
   const [launched, setLaunched] = useState(false);
   useLayoutEffect(() => {
     const from = flight.current;
-    if (!from || reduced()) { flight.current = null; return; }
-    const bubbles = list.current?.querySelectorAll<HTMLElement>(".core-message.user .core-bubble");
-    const bubble = bubbles?.[bubbles.length - 1];
-    if (!bubble || !(bubble.textContent ?? "").includes(from.text.slice(0, 40))) return;
-    flight.current = null;
-    const to = bubble.getBoundingClientRect();
-    const dx = from.rect.left + from.rect.width / 2 - (to.left + to.width / 2);
-    const dy = from.rect.top + Math.min(from.rect.height, 60) / 2 - (to.top + to.height / 2);
-    const sx = Math.min(1.6, Math.max(0.6, from.rect.width / Math.max(to.width, 1)));
-    bubble.animate(
-      [
-        { transform: `translate(${dx}px, ${dy}px) scale(${sx}, 0.9)`, opacity: 0.35, filter: "blur(1px)" },
-        { transform: `translate(${dx * 0.15}px, ${dy * 0.08}px) scale(1.02)`, opacity: 1, filter: "none", offset: 0.7 },
-        { transform: "none", opacity: 1 },
-      ],
-      { duration: 420, easing: "cubic-bezier(.2,.8,.2,1)" },
-    );
+    if (!from) return;
+    if (reduced()) {
+      flight.current = null;
+      return;
+    }
+
+    // 先让新消息处于最终滚动位置，避免动画目标位置被输入框遮住。
+    toBottom(false);
+
+    // 等滚动位置和布局更新后，再读取气泡位置并播放动画。
+    const frame = requestAnimationFrame(() => {
+      const current = flight.current;
+      if (!current) return;
+
+      const bubbles = list.current?.querySelectorAll<HTMLElement>(".core-message.user .core-bubble");
+      const bubble = bubbles?.[bubbles.length - 1];
+      if (!bubble || !(bubble.textContent ?? "").includes(current.text.slice(0, 40))) return;
+
+      flight.current = null;
+      const to = bubble.getBoundingClientRect();
+      const dx = current.rect.left + current.rect.width / 2 - (to.left + to.width / 2);
+      const dy = current.rect.top + Math.min(current.rect.height, 60) / 2 - (to.top + to.height / 2);
+      const sx = Math.min(1.6, Math.max(0.6, current.rect.width / Math.max(to.width, 1)));
+      bubble.animate(
+        [
+          { transform: `translate(${dx}px, ${dy}px) scale(${sx}, 0.9)`, opacity: 0.35, filter: "blur(1px)" },
+          { transform: `translate(${dx * 0.15}px, ${dy * 0.08}px) scale(1.02)`, opacity: 1, filter: "none", offset: 0.7 },
+          { transform: "none", opacity: 1 },
+        ],
+        { duration: 420, easing: "cubic-bezier(.2,.8,.2,1)" },
+      );
+    });
+
+    return () => cancelAnimationFrame(frame);
   }, [messages.length]);
   useEffect(() => fadeEdges(list.current), [messages.length, last, page.id]);
   // Steps opening, a step arriving or an image loading change the height without changing the text:
@@ -1600,16 +1660,19 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
               ))}
             </ul>
           )}
-          {(page.files ?? []).length > 0 && (
-            <div className="core-files">
-              {page.files.map((f: Spec) => (
-                <span key={f.id} className="core-chip">
-                  {f.name} <small>{f.subtitle}</small>
-                  <button aria-label={f.remove?.label} onClick={() => act(f.remove?.action)}>×</button>
-                </span>
-              ))}
-            </div>
-          )}
+          {(() => {
+            const pending = Array.from(new Map((page.files ?? []).map((f: Spec) => [f.id || f.name, f])).values());
+            return pending.length > 0 ? (
+              <div className="core-files">
+                {pending.map((f: Spec) => (
+                  <span key={f.id || f.name} className="core-chip">
+                    {f.name} <small>{f.subtitle}</small>
+                    <button aria-label={f.remove?.label} onClick={() => act(f.remove?.action)}>×</button>
+                  </span>
+                ))}
+              </div>
+            ) : null;
+          })()}
           <div className="core-input-box">
             <textarea
               ref={area}

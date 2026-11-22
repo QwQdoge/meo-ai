@@ -32,7 +32,16 @@
 .core-thread { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .core-thread .core-header { padding-inline: 16px; }
 .core-menu { display: none; border: 0; background: none; color: inherit; font-size: 20px; }
-.core-messages { flex: 1; overflow: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.core-messages {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px 16px calc(24px + var(--composer-safe-bottom, 0px));
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  scroll-padding-block-end: 24px;
+}
 .core-empty { margin: auto; text-align: center; }
 .core-bubble.user { align-self: flex-end; max-width: 75%; padding: 10px 16px; border-radius: 18px; background: rgb(var(--surface-tertiary)); white-space: pre-wrap; }
 .core-bubble.assistant { max-width: 100%; overflow-wrap: anywhere; }

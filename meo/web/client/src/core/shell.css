@@ -689,9 +689,22 @@
 .core-app button.core-sent-file { border: 0; cursor: pointer; font: inherit; font-size: 13px; }
 .core-app button.core-sent-file:hover { background: rgb(var(--surface-secondary, var(--surface-primary))); color: rgb(var(--text-primary)); }
 .core-app .core-image.zoomable { cursor: zoom-in; }
-.core-app .core-lightbox { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 24px; background: rgb(0 0 0 / .78); cursor: zoom-out; }
-.core-app .core-lightbox img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 8px; }
-.core-app .core-lightbox-close { position: absolute; top: 14px; right: 18px; width: 36px; height: 36px; border: 0; border-radius: 50%; background: rgb(255 255 255 / .16); color: #fff; font-size: 24px; line-height: 1; cursor: pointer; }
+.core-app .core-lightbox { position: fixed; inset: 0; z-index: 60; display: flex; flex-direction: column; align-items: center; justify-content: center; background: rgb(0 0 0 / .85); backdrop-filter: blur(8px); user-select: none; }
+.core-app .core-lightbox-header { position: absolute; top: 16px; inset-inline: 20px; display: flex; align-items: center; justify-content: space-between; z-index: 62; pointer-events: none; }
+.core-app .core-lightbox-header * { pointer-events: auto; }
+.core-app .core-lightbox-title { color: #fff; font-size: 14px; font-weight: 500; text-shadow: 0 1px 3px rgba(0,0,0,0.6); }
+.core-app .core-lightbox-counter { color: rgba(255, 255, 255, 0.85); font-size: 13px; font-variant-numeric: tabular-nums; background: rgba(0,0,0,0.4); padding: 4px 10px; border-radius: 20px; }
+.core-app .core-lightbox-close { width: 36px; height: 36px; border: 0; border-radius: 50%; background: rgb(255 255 255 / .18); color: #fff; font-size: 22px; line-height: 1; display: grid; place-items: center; cursor: pointer; transition: background .15s ease; }
+.core-app .core-lightbox-close:hover { background: rgb(255 255 255 / .3); }
+.core-app .core-lightbox-stage { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; overflow: hidden; padding: 48px 64px; }
+.core-app .core-lightbox-stage img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 8px; box-shadow: 0 8px 32px rgba(0,0,0,0.5); transform-origin: center center; }
+.core-app .core-lightbox-nav { position: absolute; top: 50%; transform: translateY(-50%); width: 44px; height: 64px; border: 0; border-radius: 8px; background: rgba(255, 255, 255, 0.15); color: #fff; font-size: 32px; display: grid; place-items: center; cursor: pointer; z-index: 62; transition: background .15s ease; }
+.core-app .core-lightbox-nav:hover { background: rgba(255, 255, 255, 0.3); }
+.core-app .core-lightbox-nav.prev { inset-inline-start: 16px; }
+.core-app .core-lightbox-nav.next { inset-inline-end: 16px; }
+.core-app .core-lightbox-toolbar { position: absolute; bottom: 20px; display: flex; align-items: center; gap: 6px; padding: 6px 12px; background: rgba(20, 20, 20, 0.8); border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 24px; z-index: 62; backdrop-filter: blur(12px); box-shadow: 0 4px 16px rgba(0,0,0,0.4); }
+.core-app .core-lightbox-toolbar button, .core-app .core-lightbox-toolbar a { border: 0; background: transparent; color: #fff; font-size: 14px; padding: 4px 8px; border-radius: 12px; cursor: pointer; text-decoration: none; display: flex; align-items: center; justify-content: center; min-width: 28px; height: 28px; transition: background .15s ease; }
+.core-app .core-lightbox-toolbar button:hover, .core-app .core-lightbox-toolbar a:hover { background: rgba(255, 255, 255, 0.2); }
 .core-app .core-reader { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 24px; background: rgb(0 0 0 / .42); }
 .core-app .core-reader-card { display: flex; flex-direction: column; width: min(860px, 100%); max-height: 100%; border-radius: var(--r-xl, 24px); background: rgb(var(--surface-primary)); box-shadow: var(--elev-3); overflow: hidden; }
 .core-app .core-reader-card header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; border-bottom: 1px solid rgb(var(--outline-variant, var(--text-secondary)) / .2); }
@@ -800,6 +813,54 @@
 .core-app .core-messages > .core-message.assistant:last-child { animation: core-reply-in .35s cubic-bezier(.2,.8,.2,1) both; }
 @keyframes core-reply-in { from { opacity: 0; transform: translateY(6px); } }
 .core-app .core-messages { scroll-behavior: auto; overscroll-behavior: contain; }
+
+/* Real-time memory suggestions & remember trigger (ChatGPT style) */
+.core-memory-suggestion {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+  padding: 4px 12px;
+  border-radius: 16px;
+  font-size: 12px;
+  background: rgb(var(--surface-secondary));
+  border: 1px solid rgb(var(--border-light));
+  color: rgb(var(--text-secondary));
+  animation: core-fade-in 0.2s ease both;
+}
+.core-memory-suggestion.saved {
+  color: #10b981;
+  border-color: rgba(16, 185, 129, 0.3);
+  background: rgba(16, 185, 129, 0.08);
+}
+.core-memory-btn {
+  border: 0;
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+.core-memory-btn.save {
+  background: rgb(var(--accent-primary));
+  color: #fff;
+}
+.core-memory-btn.dismiss {
+  background: transparent;
+  color: rgb(var(--text-secondary));
+}
+.core-memory-btn:hover {
+  opacity: 0.85;
+}
+.core-message-actions button.remember {
+  color: rgb(var(--text-secondary));
+  font-size: 12px;
+}
+.core-message-actions button.remember:hover {
+  color: rgb(var(--accent-primary));
+}
 
 @media (prefers-reduced-motion: reduce) {
   .core-app .core-send.launched, .core-app .core-send.launched svg, .core-app .core-jump, .core-app .core-jump.fresh::after,

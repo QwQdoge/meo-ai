@@ -5,7 +5,8 @@
 
 use std::io::{Cursor, Read, Write};
 
-const MAX_TEXT: usize = 400_000;
+// Allow large documents (hundreds of PPT slides or thousands of pages) without premature cutoff.
+const MAX_TEXT: usize = 10_000_000;
 
 /// File extensions [`extract_text`] reads (besides plain text and pictures, which have their own path).
 pub const DOCUMENT_EXTENSIONS: [&str; 5] = ["pdf", "docx", "xlsx", "pptx", "rtf"];
@@ -298,7 +299,13 @@ pub fn extract_text(name: &str, bytes: &[u8]) -> Result<String, String> {
                 })?;
                 pages.push(format!("--- page {n} ---\n{page_text}"));
             }
-            pages.join("\n\n")
+            let total = pages.len();
+            let nav = if total > 1 {
+                format!("[Document Navigation: {name} (Total {total} pages)]\n\n")
+            } else {
+                String::new()
+            };
+            format!("{nav}{}", pages.join("\n\n"))
         }
         "docx" | "xlsx" | "pptx" => {
             let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).map_err(|error| {
@@ -322,7 +329,13 @@ pub fn extract_text(name: &str, bytes: &[u8]) -> Result<String, String> {
                             xml_text(&xml).trim()
                         ));
                     }
-                    slides.join("\n\n")
+                    let total = slides.len();
+                    let nav = if total > 1 {
+                        format!("[Document Navigation: {name} (Total {total} slides)]\n\n")
+                    } else {
+                        String::new()
+                    };
+                    format!("{nav}{}", slides.join("\n\n"))
                 }
                 _ => xlsx_text(&mut archive)?,
             }

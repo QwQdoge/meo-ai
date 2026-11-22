@@ -3435,15 +3435,25 @@ impl AppCore {
         {
             Ok(()) => {
                 self.refresh_files().await;
-                // The new file goes with the next message.
+                // The new file goes with the next message, uniquely deduplicated.
                 self.update(|s| {
-                    let new: Vec<Value> = s
-                        .files
+                    let mut existing: std::collections::HashSet<String> = s
+                        .pending_files
                         .iter()
-                        .filter(|f| f["id"].as_str().is_some_and(|id| !before.contains(id)))
-                        .map(|f| json!({ "id": f["id"], "name": f["name"], "mime": mime, "subtitle": format!("{} KB", f["extracted_text_bytes"].as_u64().unwrap_or(0).div_ceil(1024).max(1)) }))
+                        .filter_map(|f| f["id"].as_str().map(str::to_owned))
                         .collect();
-                    s.pending_files.extend(new);
+                    for f in &s.files {
+                        if let Some(id) = f["id"].as_str() {
+                            if !before.contains(id) && existing.insert(id.to_owned()) {
+                                s.pending_files.push(json!({
+                                    "id": id,
+                                    "name": f["name"],
+                                    "mime": mime,
+                                    "subtitle": format!("{} KB", f["extracted_text_bytes"].as_u64().unwrap_or(0).div_ceil(1024).max(1))
+                                }));
+                            }
+                        }
+                    }
                 });
             }
             Err(ApiError::Status { status: 413, .. }) => self.notice(
@@ -15716,19 +15726,48 @@ fn project_page(s: &State, id: &str) -> Value {
         }
     }
 
-    let mut overview = vec![json!({
-        "id": "start_work", "kind": "button", "label": "Start Work in this project", "style": "primary",
-        "action": { "type": "start_project_work", "id": id },
-    })];
+    let name_str = field("name");
+    let desc_str = field("description");
+    let has_desc = !desc_str.is_empty();
+    let folder_name = env.folder.as_deref().unwrap_or("No local folder linked");
+    let mem_count = s.project_memories.len();
+    let chat_count = s.project_chats.len();
+
+    let nav_summary = format!(
+        "📁 项目空间: {}\n\
+         ├── 📋 项目简介: {}\n\
+         ├── 📜 要求规范: (见下方的 Instructions 文档，支持项目要求1、要求2)\n\
+         ├── 🧠 项目专属记忆: {} 条长期沉淀\n\
+         ├── 📂 关联目录与文件: {}\n\
+         └── 💬 对话记录: {} 个会话",
+        if name_str.is_empty() { "未命名项目" } else { &name_str },
+        if has_desc { &desc_str } else { "暂无简介，可在下方编辑填写" },
+        mem_count,
+        folder_name,
+        chat_count,
+    );
+
+    let mut overview = vec![
+        json!({
+            "id": "start_work", "kind": "button", "label": "Start Work in this project", "style": "primary",
+            "action": { "type": "start_project_work", "id": id },
+        }),
+        json!({
+            "id": "project_nav_card",
+            "kind": "hint",
+            "title": "项目结构全景导航 (Overview & Outline)",
+            "text": nav_summary,
+        }),
+    ];
     overview.extend([
         text("name", "Name", "name", true, ""),
-        text("description", "Description", "description", false, ""),
+        text("description", "Description (简介)", "description", false, "项目背景与简介"),
         text(
             "instructions",
-            "Instructions",
+            "Instructions (项目要求与规范文档)",
             "instructions",
             false,
-            "How Meo should behave in this project",
+            "项目要求1、项目要求2及规范文档...",
         ),
     ]);
     let sections = [
