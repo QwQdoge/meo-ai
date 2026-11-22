@@ -2,6 +2,8 @@
 
 Status: planning baseline, 2026-11-22. This is a design target, not a claim that every item is implemented.
 
+Latest repository findings: [Repository audit — 2026-11-22](repository-audit-2026-11-22.md). The audit records verified implementation gaps; use it together with the ordered [implementation backlog](implementation-backlog.md).
+
 This plan follows the current owner decisions in root AGENTS.md: one cloud-first product core, one shared view contract, thin native renderers, Meo Account as identity/credential authority, and Meo API as the authenticated product API. If a newer explicit owner decision conflicts with this plan, update the plan before implementation.
 
 ## 1. Product rules
