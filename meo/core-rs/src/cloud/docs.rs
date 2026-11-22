@@ -5,8 +5,10 @@
 
 use std::io::{Cursor, Read, Write};
 
-// Allow large documents (hundreds of PPT slides or thousands of pages) without premature cutoff.
-const MAX_TEXT: usize = 10_000_000;
+// Balanced extraction ceiling (2M characters, ~500-1000 pages): provides full readability
+// for large documents and slide decks while preventing client/server OOM and API context blowout.
+const MAX_TEXT: usize = 2_000_000;
+const MAX_PAGES: usize = 500;
 
 /// File extensions [`extract_text`] reads (besides plain text and pictures, which have their own path).
 pub const DOCUMENT_EXTENSIONS: [&str; 5] = ["pdf", "docx", "xlsx", "pptx", "rtf"];
@@ -293,6 +295,10 @@ pub fn extract_text(name: &str, bytes: &[u8]) -> Result<String, String> {
             })?;
             let mut pages = Vec::new();
             for (n, _) in doc.get_pages() {
+                if pages.len() >= MAX_PAGES {
+                    pages.push(format!("[Note: Document has more than {MAX_PAGES} pages; extracted first {MAX_PAGES} pages for readability]"));
+                    break;
+                }
                 let page_text = doc.extract_text(&[n]).map_err(|error| {
                     tracing::warn!(file = %name, page = n, error = %error, "Failed to extract PDF page text");
                     format!("Could not read page {n} of {name}.")
@@ -321,6 +327,10 @@ pub fn extract_text(name: &str, bytes: &[u8]) -> Result<String, String> {
                 "pptx" => {
                     let mut slides = Vec::new();
                     for (i, slide) in numbered(&archive, "ppt/slides/slide")?.into_iter().enumerate() {
+                        if slides.len() >= MAX_PAGES {
+                            slides.push(format!("[Note: Slide deck has more than {MAX_PAGES} slides; extracted first {MAX_PAGES} slides for readability]"));
+                            break;
+                        }
                         let xml = zip_text(&mut archive, &slide)?
                             .ok_or_else(|| format!("Slide part {slide} is missing from {name}."))?;
                         slides.push(format!(

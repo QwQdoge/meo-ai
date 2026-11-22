@@ -30,8 +30,10 @@ export function planPaste(data: DataTransfer, limits: PasteLimits = DEFAULT_LIMI
   const hasText = text.trim() !== "";
   // Real files (a screenshot, a file from the file manager) are attached; text beats its own picture.
   if (files.length > 0 && !(hasText && files.every(renderedPicture))) return { kind: "files", files };
-  if (!hasText || !html.trim()) return { kind: "default" };
-  const markdown = html && STRUCTURE.test(html) ? htmlToMarkdown(html) || text : text;
+  if (!hasText) {
+    return files.length > 0 ? { kind: "files", files } : { kind: "default" };
+  }
+  const markdown = html && html.trim() && STRUCTURE.test(html) ? htmlToMarkdown(html) || text : text;
   const long = markdown.length >= limits.chars || markdown.split("\n").length >= limits.lines;
   return long ? { kind: "text-as-file", markdown } : { kind: "default" };
 }
@@ -193,24 +195,33 @@ export function Lightbox({ src, images, initialIndex = 0, title, onClose }: Ligh
     }
   };
 
-  const handleMouseDown = (e: React.MouseEvent) => {
-    if (scale <= 1) return;
-    isDragging.current = true;
+  const handlePointerDown = (e: React.PointerEvent) => {
     dragStart.current = { x: e.clientX - position.x, y: e.clientY - position.y };
     moved.current = false;
+    if (scale > 1) {
+      isDragging.current = true;
+      (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+    }
   };
 
-  const handleMouseMove = (e: React.MouseEvent) => {
+  const handlePointerMove = (e: React.PointerEvent) => {
     if (!isDragging.current) return;
-    moved.current = true;
+    const dx = Math.abs(e.clientX - (dragStart.current.x + position.x));
+    const dy = Math.abs(e.clientY - (dragStart.current.y + position.y));
+    if (dx > 3 || dy > 3) {
+      moved.current = true;
+    }
     setPosition({
       x: e.clientX - dragStart.current.x,
       y: e.clientY - dragStart.current.y,
     });
   };
 
-  const handleMouseUp = () => {
+  const handlePointerUp = (e: React.PointerEvent) => {
     isDragging.current = false;
+    try {
+      (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId);
+    } catch {}
   };
 
   return createPortal(
@@ -220,13 +231,16 @@ export function Lightbox({ src, images, initialIndex = 0, title, onClose }: Ligh
       aria-modal="true"
       aria-label="Picture preview"
       onClick={(e) => {
-        if (!moved.current && (e.target === e.currentTarget || (e.target as HTMLElement).classList.contains("core-lightbox-stage"))) {
+        const isBackdrop = e.target === e.currentTarget || (e.target as HTMLElement).classList.contains("core-lightbox-stage");
+        if (isBackdrop && !moved.current) {
           onClose();
         }
+        moved.current = false;
       }}
       onWheel={handleWheel}
-      onMouseMove={handleMouseMove}
-      onMouseUp={handleMouseUp}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerUp}
     >
       <div className="core-lightbox-header">
         {title && <span className="core-lightbox-title">{title}</span>}
@@ -240,7 +254,7 @@ export function Lightbox({ src, images, initialIndex = 0, title, onClose }: Ligh
 
       <div
         className="core-lightbox-stage"
-        onMouseDown={handleMouseDown}
+        onPointerDown={handlePointerDown}
         onDoubleClick={handleDoubleClick}
       >
         <img

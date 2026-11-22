@@ -1191,14 +1191,24 @@ const MessageView = React.memo(
     const [dismissedMemory, setDismissedMemory] = useState(false);
 
     const textContent = String(m.text ?? "").trim();
-    // 智能识别偏好/长期要求模式（像 ChatGPT 一样随聊识别）
-    const isPreference = m.role === "user" && textContent.length > 3 && textContent.length < 200 &&
-      /^(我喜欢|我习惯|我偏好|请记住|记住|以后请|请使用|我的要求|项目要求|prefer|remember)/i.test(textContent);
+    // 识别具备长期性、泛化性的偏好与事实，同时排除临时单次要求（如“这次考试”、“今天”、“这道题”等，避免记忆污染）
+    const isEphemeral = /(这次|今天|临时|当前|这篇|这道题|考试|仅限|刚才|暂且|for now|this time|just now|only this)/i.test(textContent);
+    const hasLongTermIntent = /^(我喜欢|我习惯|我偏好|请记住|记住|以后请|请始终|我总是|我的要求|项目要求|prefer|always remember|my preference)/i.test(textContent);
+    const isPreference = m.role === "user" && textContent.length > 3 && textContent.length < 200 && hasLongTermIntent && !isEphemeral;
 
     const pictures: string[] = m.role === "user"
       ? (m.pictures ?? [])
       : (m.images ?? []).map((img: Spec) => img.url).filter(Boolean);
-    const uniqueFiles = Array.from(new Map((m.files ?? []).map((f: Spec) => [f.id || f.name, f])).values());
+    // 基于 ID 去重，没有 ID 的条目按索引保留，避免误删同名的不同文件
+    const seenIds = new Set<string>();
+    const uniqueFiles = (m.files ?? []).filter((f: Spec) => {
+      if (!f) return false;
+      if (f.id) {
+        if (seenIds.has(f.id)) return false;
+        seenIds.add(f.id);
+      }
+      return true;
+    });
 
     const saveToMemory = () => {
       act({ type: "add_memory", text: textContent });
@@ -1661,11 +1671,19 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
             </ul>
           )}
           {(() => {
-            const pending = Array.from(new Map((page.files ?? []).map((f: Spec) => [f.id || f.name, f])).values());
+            const seen = new Set<string>();
+            const pending = (page.files ?? []).filter((f: Spec) => {
+              if (!f) return false;
+              if (f.id) {
+                if (seen.has(f.id)) return false;
+                seen.add(f.id);
+              }
+              return true;
+            });
             return pending.length > 0 ? (
               <div className="core-files">
-                {pending.map((f: Spec) => (
-                  <span key={f.id || f.name} className="core-chip">
+                {pending.map((f: Spec, idx: number) => (
+                  <span key={f.id ? `f_${f.id}` : `f_idx_${idx}`} className="core-chip">
                     {f.name} <small>{f.subtitle}</small>
                     <button aria-label={f.remove?.label} onClick={() => act(f.remove?.action)}>×</button>
                   </span>
