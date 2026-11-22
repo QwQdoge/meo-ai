@@ -38,6 +38,16 @@ the Newelle-derived root tree, compatibility adapters, packaging or the legacy s
   local/remote device Work (`meo/cloud`, `meo/device`) and the Newelle tree. They stay
   in the repository until removed deliberately. Repair moves into the core + QML later.
 
+## Product architecture plan (2026-11-22)
+
+Before changing product boundaries, providers, profiles, plugins, usage/cost, Meo API access or files, read these current planning documents:
+
+- `meo/docs/product-architecture-plan.md` — Core vs plugin boundary, Profile meanings, provider/credential ownership, usage/cost sources, API authorization and file/workspace model.
+- `meo/docs/repository-audit.md` — inspected current state, confirmed gaps, documentation drift and cleanup cautions.
+- `meo/docs/implementation-backlog.md` — ordered task IDs, exact target files, acceptance criteria and one-task-at-a-time workflow.
+
+These documents do not override newer explicit owner decisions or the security rules above. Re-check current code before each task. Do not create duplicate provider-key, Model Profile, usage or file authorities.
+
 ## UI direction (user decision 2026-10-21)
 
 Use the Claude desktop layout instead of designing our own: sidebar with a large Chat | Work
