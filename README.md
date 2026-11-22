@@ -54,12 +54,18 @@ Windows installer and portable build and the Android APK, and attaches them with
 | Shared presentation contract | [Meo Design & UI Schema](meo/ui-schema/README.md) |
 | Shared business capabilities | Meo AI Core + versioned Meo API |
 
-Desktop application and native adapters remain C++; the shared Core is consumed
-through typed IPC/API boundaries. UI Schema owns product navigation placement,
-page structure, feature entry points and semantic token bindings. MeoUI owns
-reusable controls and actual shared design values. Each toolkit renders natively.
-The visual direction is restrained Pixel/Material: function, information and
-readability first, quiet surfaces and limited decorative emphasis.
+The active desktop client is `meo/desktop-rs` (Rust + Qt/QML + MeoUI); the
+shared Rust Core owns product behavior and the client renders its view through the
+shared contract. UI Schema owns product navigation placement, page structure,
+feature entry points and semantic token bindings. MeoUI owns reusable controls
+and actual shared design values. Each toolkit renders natively. The visual
+direction is restrained Pixel/Material: function, information and readability
+first, quiet surfaces and limited decorative emphasis.
+
+For the current product boundary, audit findings and ordered implementation work,
+read [Product Architecture Plan](meo/docs/product-architecture-plan.md),
+[Repository Audit](meo/docs/repository-audit.md) and
+[Implementation Backlog](meo/docs/implementation-backlog.md).
 
 Navigation placement and the eight settings groups now consume shared configuration in the React/QML/Compose source. The approved settings visual has been promoted from its isolated candidate. Local Web/native build checks do not establish Android device parity or account-wide settings sync. See the schema contract
 for build artifacts, capability boundaries and the absence of runtime remote UI
