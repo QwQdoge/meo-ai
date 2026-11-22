@@ -2,6 +2,8 @@
 
 Status: ordered planning list, 2026-11-22. Items are intentionally small. Do not execute the whole backlog in one agent run.
 
+Latest source audit: [repository-audit-2026-11-22.md](repository-audit-2026-11-22.md). Read its verified findings before choosing a task.
+
 ## How the next agent must work
 
 1. Read root AGENTS.md, meo/docs/product-architecture-plan.md, this file and the relevant contract before editing.
@@ -72,6 +74,39 @@ The repository AGENTS.md workflow controls branch/commit behavior. Do not create
   - Do not claim binary upload is implemented until upload, download, quota and deletion all work.
 - Acceptance: owned object-backed files can be deleted without orphaned objects; failed deletion remains visible/retryable; foreign IDs still return not-found.
 - Dependency: storage-provider decision and offline object-store test harness.
+
+### MEO-005 — Remove duplicate storage route ownership
+
+- [ ] Status: planned
+- Repo: QwQdoge/meo-api
+- Files: src/files.ts; src/credit-routes.ts; src/entry.ts; focused route tests; docs/api-reference.md
+- Work:
+  - Keep exactly one owner for GET /v1/storage.
+  - entry.ts currently calls handleCreditRoute before handleFileRoute; verify the effective route and remove the shadowed duplicate implementation.
+  - Keep storage quota, Meo Credits and upload-pause semantics in the Credit/Storage authority; file metadata endpoints must not maintain a second quota view.
+- Acceptance: one route implementation owns /v1/storage; route tests prove the returned schema and authorization; no behavior change to storage billing.
+
+### MEO-006 — Audit and document third-party Meo API client onboarding
+
+- [ ] Status: planned; cross-repository
+- Repos/files: QwQdoge/MeoArch-account OAuth client registration and consent routes; QwQdoge/meo-api src/bearer.ts, src/account-access.ts, docs/api-reference.md; QwQdoge/meo-ai developer documentation.
+- Work:
+  - Verify how a developer registers an OAuth client, allowed redirect URIs, public-client PKCE, scopes, access-token lifetime, refresh/revocation and client ownership.
+  - Document a minimal external-client example using meo:read and a separate opt-in meo:write grant.
+  - Keep browser cookie sessions, native OAuth access tokens and device-pairing credentials distinct.
+  - Do not introduce a permanent universal API key or expose Account/provider secrets.
+- Acceptance: a developer can follow documented steps to obtain and revoke a least-privilege token; scopes are enforced server-side; no secret is stored in a client app bundle.
+
+### MEO-007 — Add cursor pagination to file listing
+
+- [ ] Status: planned
+- Repo: QwQdoge/meo-api
+- Files: src/files.ts; docs/api-reference.md; file route tests.
+- Work:
+  - Replace the fixed 200-row cap with stable cursor pagination ordered by updated_at and id.
+  - Keep project_id and conversation_id filters actor-scoped.
+  - Define bounded page size, next_cursor and invalid/expired cursor behavior.
+- Acceptance: files beyond the first page are reachable without duplicates or omissions; cross-user IDs remain hidden; existing clients can migrate without silently truncating results.
 
 ## Priority 1 — provider and cost correctness
 
