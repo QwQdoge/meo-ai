@@ -85,6 +85,7 @@ The repository AGENTS.md workflow controls branch/commit behavior. Do not create
   - Checks: `npm run typecheck`; `node --import ./test/route-mocks.ts test/rate-limit.test.ts` (unit keys/failure policy plus route proofs: cookie, bearer, two IPs same account, unavailable binding, reads unaffected); `test/credentials.test.ts`, `test/routes.test.ts`, `test/cloud-data-gate.test.ts` for regressions.
   - Deployment precondition, not done here: create the two Cloudflare Rate Limiting bindings and add them to the Worker before relying on the budgets. Without them the existing IP limits, consent budget and credit caps still apply and the admin status shows the gap.
   - Not included: true in-flight concurrency for streamed answers. That needs a lease tied to the SSE stream lifetime (release on stream close/cancel), which is its own testable slice. See MEO-003B.
+  - Not included: device-credential budgets. Device pairing keeps its own bindings, but device relay calls (agent runs, realtime) still have no per-device + owning-account budget; add that with MEO-003B or as its own slice once the device auth path is confirmed.
 - Acceptance: users cannot bypass spend limits by switching IP/device; ordinary reads are not blocked by AI spend limits; tests cover cookie, bearer, multi-device and limiter-unavailable cases.
 
 ### MEO-003B — Stream-scoped concurrency limit
