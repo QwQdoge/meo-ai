@@ -174,15 +174,16 @@ The repository AGENTS.md workflow controls branch/commit behavior. Do not create
 
 ### MEO-011 — Capture actual provider usage for supported adapters
 
-- [ ] Status: planned
+- [x] Status: done 2026-11-23 (meo-api + meo-ai `main`): provider usage captured and persisted server-side
 - Repo: QwQdoge/meo-api
 - Files: src/ai-broker.ts; provider-specific usage normalizers; src/chat.ts; test/ai-endpoints.test.ts; provider fixtures under test/.
-- Work:
-  - Parse OpenAI Responses API, OpenAI Chat Completions, DeepSeek, Gemini and OpenRouter usage according to each provider's current documented response shape.
-  - Do not assume one generic data.usage shape works for all.
-  - Forward normalized usage in the stream completion event.
-  - Persist usage through a server-owned path; do not trust the client to report cost.
-  - When provider usage is omitted, mark estimated/unknown.
+- Result:
+  - `normalizeProviderUsage()` in `src/ai-broker.ts` handles the five shapes separately: OpenAI Responses (`response.usage` + `_details`), OpenAI Chat Completions, DeepSeek (`prompt_cache_hit_tokens`/`prompt_cache_miss_tokens`), OpenRouter, and Gemini (`usageMetadata` with `thoughtsTokenCount`). The cached portion is subtracted from the prompt count so `total_tokens` does not double count, and a category the provider did not report is absent, not 0.
+  - The normalized usage is forwarded in the `done` event and written by the server itself (`recordBrokeredUsage`, one row keyed by the consent request id, `usage_source: "provider_response"`), so a client that never reports cost still gets a truthful ledger row. Cancellation or failure writes nothing; re-sending the same id conflicts with itself.
+  - The client event for the same call uses the same id and carries the provider counts, so it adds conversation/project attribution instead of a duplicate. Ingestion refuses to let an `estimated` event overwrite a `provider_response` row.
+  - Core: `ChatEvent::Done(Option<Value>)` carries the usage; `usage::Usage` reads the contract keys; `chat_event_with_usage` emits `provider_response` when measured and `estimated` otherwise.
+  - Checks: `node --import ./test/route-mocks.ts test/provider-usage.test.ts` (fixtures for all five shapes, idempotent row, no row without usage); `test/routes.test.ts`, `test/rate-limit.test.ts`, `npm run typecheck`; `cargo test --lib usage` (13 passed).
+  - Not covered: provider billing reports (`usage_source` stays request-level) and price calculation (MEO-012). Helper calls still write an estimate from the client because the server row carries no role attribution.
 - Acceptance: fixtures preserve input/output/cache/reasoning counts; cancellation/failure creates no completed event; success creates one idempotent event.
 
 ### MEO-012 — Add versioned model pricing and estimates

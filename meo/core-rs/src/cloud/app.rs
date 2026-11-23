@@ -2972,7 +2972,7 @@ impl AppCore {
         while let Some(event) = events.next().await {
             match event {
                 Ok(ChatEvent::Delta(piece)) => text.push_str(&piece),
-                Ok(ChatEvent::Done) => break,
+                Ok(ChatEvent::Done(_)) => break,
                 Err(e) => {
                     if text.is_empty() {
                         self.note_model(&choice, Some(&e));
@@ -6894,6 +6894,8 @@ impl AppCore {
         let mut native_calls: Vec<NativeCall> = Vec::new();
         let mut truncated = false;
         let mut failure = None;
+        // The provider's own counts for the rounds of this answer, when the server forwarded them.
+        let mut provider_usage: Option<usage::Usage> = None;
         match stream {
             Ok(mut events) => {
                 while let Some(event) = events.next().await {
@@ -6911,7 +6913,10 @@ impl AppCore {
                         }
                         Ok(ChatEvent::ToolCalls(calls)) => native_calls = calls,
                         Ok(ChatEvent::Truncated) => truncated = true,
-                        Ok(ChatEvent::Done) => break,
+                        Ok(ChatEvent::Done(reported)) => {
+                            provider_usage = reported.as_ref().and_then(usage::Usage::from_value);
+                            break;
+                        }
                         Err(e) => {
                             failure = Some(e.to_string());
                             break;
@@ -6999,7 +7004,7 @@ impl AppCore {
         let mut reflect: Option<String> = None;
         if native && (tooling || next.as_ref().is_some_and(|c| !c.stores_reply())) {
             // A round that only leads to a tool call is not stored as a message of its own.
-            self.record_chat_usage(&pending, &reply, started).await;
+            self.record_chat_usage(&pending, &reply, started, provider_usage.as_ref()).await;
         } else if !reply.is_empty() && failure.is_none() {
             self.push_message(&id, "assistant", &reply);
             if failure.is_none() && !resume {
@@ -7030,7 +7035,7 @@ impl AppCore {
                     async move { api.append_answer(&t, &id, &reply, &steps, log.as_ref()).await }
                 })
                 .await;
-            self.record_chat_usage(&pending, &reply, started).await;
+            self.record_chat_usage(&pending, &reply, started, provider_usage.as_ref()).await;
             // Pick up server ids so the new messages can be edited or regenerated.
             self.refresh_messages(&id).await;
         }
@@ -7537,7 +7542,13 @@ impl AppCore {
     }
 
     /// Counts this answer in the account's Usage dashboard. Best effort: a failure never disturbs the chat.
-    async fn record_chat_usage(&self, pending: &PendingSend, reply: &str, started: i64) {
+    async fn record_chat_usage(
+        &self,
+        pending: &PendingSend,
+        reply: &str,
+        started: i64,
+        provider_usage: Option<&usage::Usage>,
+    ) {
         let (event, had_usage) = {
             let s = self.state.lock().unwrap();
             let credential = pending.request["credentialId"].as_str().unwrap_or_default();
@@ -7569,7 +7580,7 @@ impl AppCore {
                 return;
             }
             (
-                usage::chat_event(&usage::ChatTurn {
+                usage::chat_event_with_usage(&usage::ChatTurn {
                     request_id,
                     conversation_id: &pending.conversation_id,
                     project_id: project.as_deref(),
@@ -7580,7 +7591,7 @@ impl AppCore {
                     started,
                     finished: super::now_secs(),
                     role: "chat",
-                }),
+                }, provider_usage),
                 s.usage.is_some(),
             )
         };

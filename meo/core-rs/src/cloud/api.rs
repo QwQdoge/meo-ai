@@ -127,7 +127,8 @@ pub enum ChatEvent {
     ToolCalls(Vec<NativeCall>),
     /// The provider stopped the answer at its output limit: what came is not the whole answer.
     Truncated,
-    Done,
+    /// The call finished; carries the provider-reported usage when the server forwarded one.
+    Done(Option<Value>),
 }
 
 #[derive(Clone)]
@@ -1356,7 +1357,9 @@ impl SseState {
                             .collect(),
                     ))),
                     "truncated" => Some(Ok(ChatEvent::Truncated)),
-                    "done" => Some(Ok(ChatEvent::Done)),
+                    "done" => Some(Ok(ChatEvent::Done(
+                        payload.get("usage").filter(|v| v.is_object()).cloned(),
+                    ))),
                     "error" => Some(Err(ApiError::Stream(
                         payload["message"]
                             .as_str()
@@ -1446,7 +1449,7 @@ mod tests {
             s.next_frame().unwrap().unwrap(),
             ChatEvent::Delta("llo".into())
         );
-        assert_eq!(s.next_frame().unwrap().unwrap(), ChatEvent::Done);
+        assert_eq!(s.next_frame().unwrap().unwrap(), ChatEvent::Done(None));
         let mut e = sse("event: error\ndata: {\"message\":\"boom\"}\n\n");
         assert!(matches!(e.next_frame(), Some(Err(ApiError::Stream(m))) if m == "boom"));
         let mut partial = sse("event: delta\ndata: {\"text\":\"x\"}\n");
@@ -1458,7 +1461,7 @@ mod tests {
         let mut s = sse("event: delta\ndata: {\"text\":\"half\"}\n\nevent: truncated\ndata: {}\n\nevent: done\ndata: {}\n\n");
         assert_eq!(s.next_frame().unwrap().unwrap(), ChatEvent::Delta("half".into()));
         assert_eq!(s.next_frame().unwrap().unwrap(), ChatEvent::Truncated);
-        assert_eq!(s.next_frame().unwrap().unwrap(), ChatEvent::Done);
+        assert_eq!(s.next_frame().unwrap().unwrap(), ChatEvent::Done(None));
     }
 
     #[test]
@@ -1468,7 +1471,7 @@ mod tests {
             s.next_frame().unwrap().unwrap(),
             ChatEvent::ToolCalls(vec![NativeCall { id: "c1".into(), name: "read_file".into(), arguments: "{\"path\":\"a\"}".into() }])
         );
-        assert_eq!(s.next_frame().unwrap().unwrap(), ChatEvent::Done);
+        assert_eq!(s.next_frame().unwrap().unwrap(), ChatEvent::Done(None));
     }
 
     #[test]

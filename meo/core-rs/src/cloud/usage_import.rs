@@ -414,7 +414,10 @@ mod tests {
         assert_eq!(events[0]["output_tokens"], 20);
         assert_eq!(events[0]["reasoning_tokens"], 10);
         assert_eq!(events[0]["usage_source"], "imported");
-        assert!(events[0]["cache_write_tokens"].is_null(), "a category the log never reports must stay unknown");
+        assert!(
+            events[0]["cache_write_tokens"].is_null(),
+            "a category the log never reports must stay unknown"
+        );
         assert_eq!(events[0]["project_name"], "app");
         assert_eq!(events[0]["source_event_id"], "s1:3");
         // First cumulative row is used as is, the next one as a difference.
@@ -441,7 +444,10 @@ mod tests {
         assert_eq!(events[0]["cached_input_tokens"], 20);
         assert_eq!(events[0]["cache_write_tokens"], 7);
         assert_eq!(events[0]["usage_source"], "imported");
-        assert!(events[0]["reasoning_tokens"].is_null(), "Claude logs do not report reasoning separately");
+        assert!(
+            events[0]["reasoning_tokens"].is_null(),
+            "Claude logs do not report reasoning separately"
+        );
         assert_eq!(events[0]["source_event_id"], "c1:m1:r1");
         assert!(!events[0].to_string().contains("secret"));
         let _ = std::fs::remove_dir_all(dir);

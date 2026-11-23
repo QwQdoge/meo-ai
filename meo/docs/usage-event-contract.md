@@ -1,7 +1,7 @@
 # Usage event contract (v2)
 
-Status: contract defined 2026-11-23 (MEO-010). It describes what a usage event *is*; real
-provider-reporting capture is MEO-011 and pricing is MEO-012.
+Status: version 2 contract, 2026-11-23. MEO-010 defined it; MEO-011 landed provider-reported
+capture for the supported vendors. Pricing remains MEO-012.
 
 Authority split:
 
@@ -38,13 +38,15 @@ cost calculation.
 
 | Producer | `usage_source` | Counts it can report |
 | --- | --- | --- |
-| Meo AI answer (`chat_event`) | `estimated` | `input_tokens` and `output_tokens` from text; cache and reasoning are `null`. |
+| Meo API broker (`recordBrokeredUsage`) | `provider_response` | Whatever the provider reported, normalized from the five supported vendor shapes; absent categories stay `null`. |
+| Meo AI answer (`chat_event_with_usage`) | `provider_response` when the `done` event carried usage, else `estimated` | Provider counts when measured; otherwise `input_tokens`/`output_tokens` from text with cache and reasoning `null`. |
 | Codex log import | `imported` | input, cached, output, reasoning from the log; cache writes are `null`. |
 | Claude Code log import | `imported` | input, cache-read, cache-write, output from the log; reasoning is `null`. |
 
-A provider does not report its own counts to the app yet, so no `provider_response` producer
-exists. When MEO-011 adds one, it sets `usage_source: "provider_response"` and fills only the
-categories that adapter actually parsed.
+The broker writes first, keyed by the consent request id; the client's attributed event uses
+the same id, so it updates that row instead of adding a second one. An `estimated` event never
+overwrites a `provider_response` row. Counts sent by a client are counts the server itself
+forwarded in that stream, not an independent cost claim; Meo-paid spend stays in `credits.ts`.
 
 ## Validation and idempotency
 

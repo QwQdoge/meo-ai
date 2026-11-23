@@ -53,12 +53,56 @@ pub struct ChatTurn<'a> {
     pub role: &'a str,
 }
 
+/// Provider-reported counts from the finished call, in the version-2 contract keys.
+/// A category the provider did not report stays `None`; it is never turned into a 0.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Usage {
+    pub input_tokens: Option<u64>,
+    pub cached_input_tokens: Option<u64>,
+    pub cache_write_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
+    pub reasoning_tokens: Option<u64>,
+}
+
+impl Usage {
+    /// Reads the contract keys of a `done` event's `usage` object; `None` when it has no counts.
+    pub fn from_value(v: &Value) -> Option<Self> {
+        let count = |key: &str| v.get(key).and_then(Value::as_u64);
+        let usage = Usage {
+            input_tokens: count("input_tokens"),
+            cached_input_tokens: count("cached_input_tokens"),
+            cache_write_tokens: count("cache_write_tokens"),
+            output_tokens: count("output_tokens"),
+            reasoning_tokens: count("reasoning_tokens"),
+        };
+        usage.any().then_some(usage)
+    }
+
+    pub fn any(&self) -> bool {
+        [
+            self.input_tokens,
+            self.cached_input_tokens,
+            self.cache_write_tokens,
+            self.output_tokens,
+            self.reasoning_tokens,
+        ]
+        .iter()
+        .any(Option::is_some)
+    }
+}
+
 /// The event for one chat turn, in the version-2 usage contract (`meo/docs/usage-event-contract.md`).
 ///
 /// The counts are text estimates and say so (`usage_source: "estimated"`). A category this
 /// estimate cannot know — cached input, cache writes, reasoning — is `null`, never `0`: the
 /// server and dashboards must be able to tell "not measured" from "measured zero".
 pub fn chat_event(t: &ChatTurn) -> Value {
+    chat_event_with_usage(t, None)
+}
+
+/// The event for one chat turn, using the provider's own counts when the call reported them.
+pub fn chat_event_with_usage(t: &ChatTurn, provider: Option<&Usage>) -> Value {
+    let measured = provider.filter(|u| u.any());
     json!({
         "event_version": 2,
         "source": "meo",
@@ -70,16 +114,16 @@ pub fn chat_event(t: &ChatTurn) -> Value {
         "model": if t.model.is_empty() { "unknown" } else { t.model },
         "model_role": t.role,
         "modality": "text",
-        "usage_source": "estimated",
+        "usage_source": if measured.is_some() { "provider_response" } else { "estimated" },
         "occurred_at": iso(t.finished),
-        "input_tokens": estimate_tokens(t.context),
-        "cached_input_tokens": Value::Null,
-        "cache_write_tokens": Value::Null,
-        "output_tokens": estimate_tokens(t.reply),
-        "reasoning_tokens": Value::Null,
+        "input_tokens": measured.map_or_else(|| json!(estimate_tokens(t.context)), |u| json!(u.input_tokens)),
+        "cached_input_tokens": json!(measured.and_then(|u| u.cached_input_tokens)),
+        "cache_write_tokens": json!(measured.and_then(|u| u.cache_write_tokens)),
+        "output_tokens": measured.map_or_else(|| json!(estimate_tokens(t.reply)), |u| json!(u.output_tokens)),
+        "reasoning_tokens": json!(measured.and_then(|u| u.reasoning_tokens)),
         "duration_ms": ((t.finished - t.started).max(0) * 1000),
         "ttft_ms": Value::Null,
-        "metadata": { "estimated": true },
+        "metadata": if measured.is_some() { json!({}) } else { json!({ "estimated": true }) },
     })
 }
 
@@ -99,6 +143,56 @@ mod tests {
         assert_eq!(estimate_tokens(""), 0);
         assert_eq!(estimate_tokens("abcdefgh"), 2);
         assert!(estimate_tokens("你好你好你好") >= 4);
+    }
+
+    #[test]
+    fn provider_reported_counts_win_over_estimates() {
+        let usage = Usage {
+            input_tokens: Some(900),
+            cached_input_tokens: Some(200),
+            cache_write_tokens: None,
+            output_tokens: Some(40),
+            reasoning_tokens: Some(7),
+        };
+        let e = chat_event_with_usage(
+            &ChatTurn {
+                request_id: "r2",
+                conversation_id: "c2",
+                project_id: Some("p2"),
+                provider: "openai",
+                model: "gpt-5",
+                context: "hello",
+                reply: "hi",
+                started: 10,
+                finished: 12,
+                role: "chat",
+            },
+            Some(&usage),
+        );
+        assert_eq!(e["usage_source"], "provider_response");
+        assert_eq!(e["input_tokens"], 900);
+        assert_eq!(e["cached_input_tokens"], 200);
+        assert_eq!(e["output_tokens"], 40);
+        assert_eq!(e["reasoning_tokens"], 7);
+        // Categories the provider did not report stay null, never 0.
+        assert!(e["cache_write_tokens"].is_null());
+        assert!(
+            e["metadata"].as_object().is_some_and(|m| m.is_empty()),
+            "no estimated marker when measured"
+        );
+    }
+
+    #[test]
+    fn usage_reads_only_the_contract_keys_it_got() {
+        let u = Usage::from_value(&json!({ "input_tokens": 12, "output_tokens": 3 })).unwrap();
+        assert_eq!(u.input_tokens, Some(12));
+        assert_eq!(u.output_tokens, Some(3));
+        assert_eq!(u.cached_input_tokens, None);
+        assert!(Usage::from_value(&json!({})).is_none());
+        assert!(
+            Usage::from_value(&json!({ "prompt_tokens": 5 })).is_none(),
+            "legacy aliases are normalized server-side"
+        );
     }
 
     #[test]
@@ -136,8 +230,16 @@ mod tests {
         assert_eq!(e["modality"], "text");
         // Estimated categories carry a number; the ones the estimate cannot know are null, not 0.
         assert!(e["input_tokens"].as_u64().is_some());
-        for key in ["cached_input_tokens", "cache_write_tokens", "reasoning_tokens", "ttft_ms"] {
-            assert!(e[key].is_null(), "{key} must be null when it was not measured");
+        for key in [
+            "cached_input_tokens",
+            "cache_write_tokens",
+            "reasoning_tokens",
+            "ttft_ms",
+        ] {
+            assert!(
+                e[key].is_null(),
+                "{key} must be null when it was not measured"
+            );
         }
     }
 }
