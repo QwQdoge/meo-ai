@@ -74,16 +74,31 @@ The repository AGENTS.md workflow controls branch/commit behavior. Do not create
 
 ### MEO-003 — Add account-level API spend and abuse limits
 
-- [ ] Status: planned
+- [x] Status: done 2026-11-23 (meo-api `main`) for authenticated budgets; stream-scoped concurrency split to MEO-003B
 - Repo: QwQdoge/meo-api
 - Files: src/entry.ts; src/chat.ts; src/ai-broker.ts; src/credits.ts; src/types.ts; test/rate-limit.test.ts; test/ai-endpoints.test.ts; docs/api-reference.md
-- Work:
-  - Keep IP limits, but add authenticated user + OAuth client limits.
-  - Add request concurrency and rolling spend limits for inference, provider tests, uploads and connector calls.
-  - Define limiter-failure policy per route; expensive operations must not silently become unlimited.
-  - Return stable rate-limit/budget error codes with retry guidance.
-  - Keep device credentials separate and rate-limit by device + account.
+- Result:
+  - New `src/actor-limits.ts` owns the per-account budget and nothing else. Keys are `user:<uuid>` plus `client:<id>` when the token proves an OAuth client, so another IP, device or account session does not reset the allowance. The window/count live on the Cloudflare binding (`ACTOR_AI_RATE_LIMIT`, `ACTOR_API_RATE_LIMIT`) rather than a new policy table.
+  - Enforced on the work that spends provider capacity: broker `stream_invoke`/`invoke`/`generate_image`/`generate_icon_material_pack`/`transcribe`/`synthesize` (which also covers `/v1/chat/*` and `/v1/images/*`, as those call the broker), provider connection tests, file uploads, and web search/fetch. Ordinary reads are untouched.
+  - Failure policy: a configured but unavailable expensive binding returns `503 rate_limit_unavailable` with `Retry-After: 30` instead of running unbudgeted; the ordinary binding fails open. Exhausted budgets return `429 actor_rate_limited` with `Retry-After: 60`.
+  - No second spend authority: Meo-paid spend stays in `credits.ts`; the consent budget stays in `ai-broker.ts`. Missing bindings are visible as `not_configured`/`actor_rate_limits` in admin and service status.
+  - Checks: `npm run typecheck`; `node --import ./test/route-mocks.ts test/rate-limit.test.ts` (unit keys/failure policy plus route proofs: cookie, bearer, two IPs same account, unavailable binding, reads unaffected); `test/credentials.test.ts`, `test/routes.test.ts`, `test/cloud-data-gate.test.ts` for regressions.
+  - Deployment precondition, not done here: create the two Cloudflare Rate Limiting bindings and add them to the Worker before relying on the budgets. Without them the existing IP limits, consent budget and credit caps still apply and the admin status shows the gap.
+  - Not included: true in-flight concurrency for streamed answers. That needs a lease tied to the SSE stream lifetime (release on stream close/cancel), which is its own testable slice. See MEO-003B.
 - Acceptance: users cannot bypass spend limits by switching IP/device; ordinary reads are not blocked by AI spend limits; tests cover cookie, bearer, multi-device and limiter-unavailable cases.
+
+### MEO-003B — Stream-scoped concurrency limit
+
+- [ ] Status: planned; the concurrency half of MEO-003
+- Repo: QwQdoge/meo-api
+- Files: src/actor-limits.ts; src/ai-broker.ts; src/chat.ts; test/rate-limit.test.ts; a migration only if a lease table is chosen
+- Work:
+  - Hold one per-account lease for each in-flight streamed answer or provider call and release it when the stream closes, errors or is cancelled.
+  - Refuse over-concurrency before any provider call with a stable code (for example `actor_busy`) plus `Retry-After`.
+  - Reuse the existing `USER_HUB` Durable Object for the counter, or a lease table with expiry; never add a second account database.
+  - Cover disconnect, cancel, timeout and Worker eviction so a crashed request expires its lease instead of blocking the account.
+- Acceptance: N concurrent answers per account are allowed and N+1 is refused; a cancelled or dropped stream frees its slot; no lease outlives its request.
+- Dependency: one decision on DO counter vs lease table.
 
 ### MEO-004 — Make file deletion and object lifecycle safe
 
@@ -308,7 +323,7 @@ Ordering rule: a live security or correctness defect comes before documentation,
 | --- | --- | --- | --- |
 | 0 — live security | MEO-002, then MEO-005 | S, S | Empty allowlist still reaches arbitrary public hosts with the user's key; the shadowed `/v1/storage` route is a same-file pair. Both are contained. |
 | 1 — documentation | MEO-001, MEO-051 (labeling only), MEO-006 | S, S, S | Cheap, unblocks every later task with one consistent map. Pair with labeling `presentation-model-routing.md` as the paused AgentService path, since it is the source of stale routing claims. |
-| 2 — abuse and cost control | MEO-003 | L | One authenticated account must not be able to exhaust provider spend across devices or IPs. |
+| 2 — abuse and cost control | MEO-003, MEO-003B | L | One authenticated account must not be able to exhaust provider spend across devices, IPs or parallel streams. |
 | 3 — usage truth | MEO-010 → MEO-011 (split by provider family) → MEO-012 | L | Contract first, then adapters, then pricing. Do not let `credits.ts` grow a second cost ledger; extend its summary with vendor-estimate fields. |
 | 4 — provider coverage | MEO-014 → MEO-011 (Anthropic usage slice) | M | Anthropic is part of the claimed official set; its usage must land in the same ledger. |
 | 5 — visible product | MEO-020 (corrected scope), MEO-021 | M, M | The only phase a user sees; depends on the truthful router state and the connection contract. |
