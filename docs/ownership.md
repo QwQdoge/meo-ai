@@ -4,6 +4,13 @@
 
 This repository is a migration repository: the Newelle-derived upstream tree and the first Python/C++ Meo-native stack remain present while the product moves to its final architecture. These layers are not equal product authorities.
 
+## Current status (2026-11-23)
+
+Root `AGENTS.md` is the contributor authority; this document explains the ownership boundary behind it.
+
+- **Active:** the cloud-first `AppCore` in `meo/core-rs/src/cloud/`, `meo/ui-schema/`, `meo/desktop-rs/`, `meo/web/client/` and `meo/android/`.
+- **Paused — do not extend:** the Python AgentService and Newelle adapters (`meo/service/`, `meo/runtime/`, `meo/system/`, `meo/adapters/`), the compatibility device/Work implementation (`meo/cloud/`, `meo/device/`) and the Newelle-derived root tree. They stay in the repository until removed deliberately; repair work belongs in the core and the QML renderer.
+
 ## Final product architecture
 
 The authoritative Meo AI product core is Rust under `meo/core-rs/`.
@@ -17,11 +24,11 @@ Rust owns:
 - tool/connector state and typed action IDs;
 - conversation state, persistence/sync contracts and client transport;
 - Account/session/broker and device protocol clients as they migrate;
-- the local AgentService HTTP/SSE implementation and the reusable cloud service core.
+- the active cloud-first AppCore and view contract under `meo/core-rs/src/cloud/` (the local Python AgentService it superseded is paused);
 
 Platform frontends own presentation only:
 
-- Desktop (Linux, Windows and macOS): C++ + Qt/QML + MeoUI. C++ owns the application layer, platform integration and typed IPC/API adapters. The shared Core is accessed through a stable service boundary; replacing the desktop C++ layer with Rust bindings is not a migration objective. Conversation/provider/tool/sync/policy authority remains shared rather than duplicated in the client.
+- Desktop (Linux, Windows and macOS): `meo/desktop-rs` — Rust + QtBridge + QML/MeoUI rendering the shared AppCore view. The renderer owns presentation and platform integration only; product state, provider selection, request lifecycle and tool decisions stay in the core. The C++ client `meo/app` was removed.
 - Android: Kotlin + Jetpack Compose Material 3 Expressive, backed by the same Rust core through JNI/UniFFI-style bindings.
 - Web: React/TypeScript presentation, consuming the same Rust-owned wire protocol and Rust service. Web UI code may adapt blocks to browser components but must not become a second AI engine.
 
@@ -41,7 +48,7 @@ The three frontends consume the same declarative UI configuration under `meo/ui-
 
 ## Migration rule for compatibility business logic
 
-Python and C++ must not become independent copies of shared AI business logic. This does not restrict C++ desktop application/presentation/platform work, which remains the selected desktop technology.
+Python and C++ must not become independent copies of shared AI business logic. This does not restrict platform presentation work in `meo/desktop-rs`, which remains the selected desktop technology.
 
 Changes to duplicated legacy AI business behavior are limited to:
 
@@ -83,17 +90,17 @@ Do not:
 - add new cross-platform AI product logic to the Newelle tree;
 - duplicate System AI Router executors or privileged OS logic here;
 - delete the upstream layer before Rust replacements and packaging gates are complete;
-- describe the Newelle root UI or Python compatibility AgentService as the final Meo AI architecture. The desktop application remains C++/Qt/QML; shared Core services remain a separate authority.
+- describe the Newelle root UI or Python compatibility AgentService as the final Meo AI architecture. The desktop client is `meo/desktop-rs` (Rust + QML); shared core services remain a separate authority.
 
 ## Split/removal gates
 
 The legacy layers can be moved out or deleted when all of the following are true:
 
 1. Rust service/client protocol tests cover conversation, provider, resource, tool, cancellation and replay semantics;
-2. the C++/QML desktop consumes the shared Core through a stable IPC/API contract and contains no duplicate AI business authority;
+2. the `meo/desktop-rs` client renders the shared core view through a stable IPC/API contract and contains no duplicate AI business authority;
 3. Android runs the same Rust protocol/core and native Compose renderer;
 4. web/cloud consumes the Rust-owned protocol/service for supported Meo features;
-5. packaging launches the Rust AgentService by default;
+5. packaging no longer launches the Python AgentService or the Newelle runtime for the supported product path;
 6. Meo Account, memory, provider, tool, skill/MCP/connector and device capabilities needed by the supported release have Rust implementations or explicit external authorities;
 7. Newelle compatibility adapters are narrow enough to package separately or remove.
 

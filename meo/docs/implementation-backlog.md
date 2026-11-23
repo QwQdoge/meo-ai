@@ -36,7 +36,7 @@ The repository AGENTS.md workflow controls branch/commit behavior. Do not create
 
 ### MEO-001 — Reconcile architecture documentation
 
-- [ ] Status: planned
+- [x] Status: done 2026-11-23 (meo-ai `main`): one active/paused map across the docs
 - Files: AGENTS.md; README.md; docs/ownership.md; meo/README.md; meo/docs/architecture.md; meo/docs/product-architecture-plan.md
 - Work:
   - Make root AGENTS.md the contributor authority.
@@ -44,8 +44,12 @@ The repository AGENTS.md workflow controls branch/commit behavior. Do not create
   - Label meo/cloud/, meo/device/, meo/service/, meo/runtime/, meo/system/ and meo/adapters/ as compatibility/paused unless a newer owner decision changes this.
   - Correct the stale C++ desktop description to current meo/desktop-rs Rust + Qt/QML/MeoUI.
   - Keep Newelle provenance and migration gates.
-- Acceptance: no document tells an agent to extend a paused stack as the primary path; one repository map is consistent.
-- Check: documentation link/path check and focused grep for conflicting ownership phrases.
+- Result:
+  - `docs/ownership.md` gained a "Current status (2026-11-23)" block naming active vs paused trees; the C++ desktop, C++ migration-rule and split-gate claims now describe `meo/desktop-rs`; gate 5 no longer asks packaging to launch the paused Python AgentService.
+  - `meo/README.md` states the active cloud-first path and marks "Phase B AgentService" as paused compatibility; `meo/docs/architecture.md` is now an explicit historical document (2026-10-08) with the current facts in a banner and its `meo/app` section labelled historical.
+  - `meo/docs/unified-platform.md` repository map and `meo/docs/unified-platform-roadmap.md` status now match root AGENTS.md; `meo/docs/capabilities.md` no longer credits a removed C++ client; `meo/docs/repository-audit.md` marks its documentation-drift findings reconciled.
+  - AGENTS.md itself already carried the authority, paused list and repository map, so it was left as the source rather than duplicated.
+  - Checks: relative-link/path check across 13 docs (0 broken) and a focused grep for the old C++/`meo/app` and "paused stack as primary" phrases (no remaining live claims).
 
 ### MEO-002 — Harden custom provider endpoint policy
 

@@ -91,10 +91,10 @@ The Rust AgentService exposes:
 Connector authorization and connection-state mutation are intentionally not part
 of that generic state endpoint. They belong to the connector/account broker.
 
-During migration, the original C++ client projects legacy `/v1/skills` and
-`/v1/mcp-servers` metadata into the same `capabilities` shape. Those legacy
-endpoints remain compatibility surfaces and should eventually disappear after the
-Rust service/client path owns the supported release.
+During migration, the legacy `/v1/skills` and `/v1/mcp-servers` metadata is
+projected into the same `capabilities` shape. Those legacy endpoints remain
+compatibility surfaces and should eventually disappear after the Rust
+service/client path owns the supported release.
 
 ## Model-facing resolution
 

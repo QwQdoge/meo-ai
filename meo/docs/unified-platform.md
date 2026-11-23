@@ -12,15 +12,18 @@ The product is not a second implementation of every model, coding agent, browser
 
 ## Repository ownership
 
-All AI product orchestration belongs in this repository under `meo/`:
+All AI product orchestration belongs in this repository under `meo/`. Status follows root
+`AGENTS.md`: `core-rs/src/cloud/`, `ui-schema/`, `desktop-rs/`, `web/client/` and `android/`
+are active; `service/`, `runtime/`, `system/`, `adapters/`, `cloud/` and `device/` are
+paused compatibility code that must not gain new product behavior.
 
-- `meo/app/`: native C++/QML MeoUI client.
-- `meo/service/`: stable local AgentService and request lifecycle.
-- `meo/adapters/`: compatibility adapters for Newelle or external agent backends.
-- `meo/system/`: unprivileged client for the System AI Router.
-- `meo/web/`: browser frontend integration or maintained web frontend fork/subtree boundary.
-- `meo/cloud/`: Meo AI cloud contracts for conversations, messages, agent runs and provider brokering.
-- `meo/device/`: device registration, remote-session protocol and local `meo-agentd` bridge.
+- `meo/desktop-rs/`: native Rust + QML/MeoUI client (the C++ `meo/app` was removed).
+- `meo/web/client/`: React/TypeScript web client; `meo/web/` holds its integration contract.
+- `meo/service/`: paused local AgentService and request lifecycle (compatibility only).
+- `meo/adapters/`: paused compatibility adapters for Newelle or external agent backends.
+- `meo/system/`: paused unprivileged client for the System AI Router.
+- `meo/cloud/`: paused Meo AI cloud contracts (conversations, agent runs, provider brokering); the active cloud core is `meo/core-rs/src/cloud/`.
+- `meo/device/`: paused device registration, remote-session protocol and local `meo-agentd` bridge.
 
 External authorities remain external:
 

@@ -132,14 +132,17 @@ Do not remove these folders until owner-approved migration gates and packaging d
 
 ## 5. Documentation drift to reconcile
 
-The following sources disagree and need a documentation-only task before code changes rely on them:
+**Reconciled 2026-11-23 by MEO-001.** The items below are kept as the audit's original
+finding; the current documents now agree. Re-check before relying on any of them.
+
+The sources disagreed and needed a documentation-only task before code changes relied on them:
 
 - Root AGENTS.md says cloud-first AppCore is authoritative and local AgentService/Python, device Work and Newelle UI are paused/not to be extended.
 - meo/README.md still presents a maintained Phase B AgentService workflow and says the Newelle-derived service is kept for the Linux package.
 - docs/ownership.md says the desktop application remains C++/Qt/QML, while root AGENTS.md and meo/README.md identify desktop-rs (Rust + Qt/QML/MeoUI) as the current desktop client.
 - Root README and meo/README should distinguish the current cloud-first product path from retained compatibility paths.
 
-Root AGENTS.md is the current contributor instruction, but stale docs should be reconciled so a future agent does not accidentally extend a paused stack.
+Root AGENTS.md is the current contributor instruction; stale docs were reconciled in MEO-001 so a future agent does not extend a paused stack.
 
 ## 6. Do not do these cleanups
 

@@ -8,6 +8,13 @@ Rust + QML MeoUI desktop client (`desktop-rs`) over the Rust cloud core, plus th
 Newelle-derived Python AgentService kept for the Linux package. GPL-3.0; upstream
 Newelle attribution and license remain in the repository root.
 
+**Current path (root `AGENTS.md` is the authority):** the cloud-first `AppCore` under
+`meo/core-rs/src/cloud/` is the product core, rendered by `desktop-rs`, `web/client`
+and `android/`. **Paused — do not extend:** the Python AgentService described below
+(`meo/service`, `meo/runtime`, `meo/system`, `meo/adapters`), the device/Work
+compatibility code (`meo/cloud`, `meo/device`) and the Newelle root tree. Repair work
+belongs in the core and the QML renderer.
+
 See [architecture](docs/architecture.md), [AgentService contract](docs/agent-service-contract.md),
 [SystemTool contract](docs/system-tool-contract.md) and [upstream policy](docs/upstream-policy.md).
 What real usage shows and what was fixed: [reliability audit 2026-11-19](docs/reliability-audit-2026-11-19.md).
@@ -30,7 +37,10 @@ python3 -m meo.runtime.main --self-check
 python3 -m unittest discover -s meo/tests -p 'test_*.py' -v
 ```
 
-## Phase B AgentService
+## Phase B AgentService (paused compatibility)
+
+This section documents kept compatibility code, not the current product path. Do not add
+new product behavior here; see the status note above and root `AGENTS.md`.
 
 Phase B now has a maintained loopback transport over `AgentServiceCore`. HTTP/SSE
 is an implementation detail; the stable semantics are conversation IDs,

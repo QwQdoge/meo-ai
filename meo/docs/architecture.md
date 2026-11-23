@@ -2,11 +2,18 @@
 
 # Meo AI 架构与跨仓库实施计划
 
-日期：2026-10-08。本文是当前架构 source of truth，必须区分“仓库已实现”“兼容过渡层”“需要目标机 live acceptance”和“后续阶段”。
+> **状态：历史文档（2026-10-08），不作为当前架构依据。** 当前 contributor authority 是根目录
+> `AGENTS.md`；产品边界见 `docs/product-architecture-plan.md`，任务顺序见
+> `docs/implementation-backlog.md`。与本文冲突时的当前事实：桌面是 `meo/desktop-rs`
+> （Rust + QtBridge + QML/MeoUI，`meo/app` 已删除）；Python AgentService / Newelle 适配层
+> （`meo/service`、`meo/runtime`、`meo/system`、`meo/adapters`）与 `meo/cloud`、`meo/device`
+> 已冻结，不再扩展；活跃产品核心是 `meo/core-rs/src/cloud/` 的云优先 `AppCore`。
+
+日期：2026-10-08。本文记录当时的架构判断，用于理解保留代码的来源。
 
 ## 决策
 
-Fork `qwersyk/Newelle` 到 `QwQdoge/meo-ai`，保留 Newelle Python agent engine、上游历史和 GPL-3.0 义务；Meo 原生应用 UI 使用 C++、Qt Quick/QML 和 `MeoUI 1.0`。不从 Nyarch 的二次定制层起步。
+Fork `qwersyk/Newelle` 到 `QwQdoge/meo-ai`，保留 Newelle Python agent engine、上游历史和 GPL-3.0 义务；Meo 原生应用 UI 使用 Qt Quick/QML 和 `MeoUI 1.0`（当时写作 C++，现为 `meo/desktop-rs`，Rust）。不从 Nyarch 的二次定制层起步。
 
 初始 Newelle 基线：`b9f37f71e2bccaec4986c22897cfa43e4981741a`。产品特定代码优先放在 `meo/`；只有必要 integration seam 才修改 `src/`。
 
@@ -46,9 +53,9 @@ flowchart TD
 1. AgentService 的 Newelle backend 仍通过兼容 adapter 包装 GTK-era `src.controller`；用 import shim 避免构造 UI，但还没有完成真正 UI-free `AgentCore` 抽取。
 2. AgentService 的当前 transport 是 hardened loopback HTTP/SSE。它适合开发和语义验证，但**不是最终 system authorization boundary**。最终本地 IPC/activation 仍需和发行版集成一起确定。
 
-## 当前已实现：原生 UI
+## 当前已实现：原生 UI（历史，当时的 `meo/app` 已删除）
 
-`meo/app/` 已经不是最早的测试聊天框，而是 MeoUI 原生桌面界面：
+`meo/app/` 当时已经不是最早的测试聊天框，而是 MeoUI 原生桌面界面（现由 `meo/desktop-rs` 取代）：
 
 - adaptive sidebar / compact layout；
 - Meo AI branding 与 runtime status；

@@ -2,6 +2,12 @@
 
 # Unified Meo AI implementation roadmap
 
+> **Status: roadmap of the paused AgentService stack (root `AGENTS.md`).** The active
+> product path is the cloud-first `AppCore` in `meo/core-rs/src/cloud/`, rendered by
+> `meo/desktop-rs`, `meo/web/client` and `meo/android`. Do not extend AgentService,
+> Newelle or `meo/app` work from this document; its gates describe retained
+> compatibility verification.
+
 This roadmap extends the current native AgentService work. It does not replace the existing Phase A/B/C acceptance gates.
 
 ## U0 — repository/product boundary
