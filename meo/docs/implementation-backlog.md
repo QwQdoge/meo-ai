@@ -97,14 +97,19 @@ The repository AGENTS.md workflow controls branch/commit behavior. Do not create
 
 ### MEO-005 — Remove duplicate storage route ownership
 
-- [ ] Status: planned
+- [x] Status: done 2026-11-23 (meo-api `main`): the Credit/Storage route is the only owner
 - Repo: QwQdoge/meo-api
 - Files: src/files.ts; src/credit-routes.ts; src/entry.ts; focused route tests; docs/api-reference.md
 - Work:
   - Keep exactly one owner for GET /v1/storage.
   - entry.ts currently calls handleCreditRoute before handleFileRoute; verify the effective route and remove the shadowed duplicate implementation.
   - Keep storage quota, Meo Credits and upload-pause semantics in the Credit/Storage authority; file metadata endpoints must not maintain a second quota view.
-- Acceptance: one route implementation owns /v1/storage; route tests prove the returned schema and authorization; no behavior change to storage billing.
+- Result:
+  - Confirmed `entry.ts` dispatches `handleCreditRoute` first, so `credit-routes.ts` already answered `GET /v1/storage`; the files copy was unreachable.
+  - Removed the `storageStatus` function and the `/v1/storage` branch from `handleFileRoute`; `files.ts` now serves `/v1/files` metadata and content only, with a header comment naming the real owner.
+  - Added three routing checks: the Credit view schema answers (plan/`used_bytes` including other apps/quota/tiers, and no `{storage:{…}}` shape), unauthenticated is 401 with no storage query, and a bearer without `meo:read` is 403.
+  - Checks: `npm run typecheck`; `node --import ./test/route-mocks.ts test/routes.test.ts`; `node --import ./test/route-mocks.ts test/cloud-data-gate.test.ts`.
+  - No change to quota, credits or upload-pause semantics; no migration, deploy or production data touched.
 
 ### MEO-006 — Audit and document third-party Meo API client onboarding
 
