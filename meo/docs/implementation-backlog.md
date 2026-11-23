@@ -157,16 +157,19 @@ The repository AGENTS.md workflow controls branch/commit behavior. Do not create
 
 ### MEO-010 — Define one normalized usage event contract
 
-- [ ] Status: planned
+- [x] Status: done 2026-11-23 (meo-ai + meo-api `main`): the version-2 contract
 - Repos/files:
   - QwQdoge/meo-ai: meo/core-rs/src/cloud/usage.rs; meo/core-rs/src/cloud/usage_import.rs; focused Core tests.
   - QwQdoge/meo-api: migrations/ai/0003_usage.sql; src/chat.ts; src/ai-broker.ts; usage route tests; docs/api-reference.md.
-- Work:
-  - Define one versioned event with request ID, source, connection/provider/model, role, modality, exact token categories, duration and timestamps.
-  - Add usage_source: provider_response, estimated, imported or unknown.
-  - Preserve bounded safe provider usage metadata and source-event idempotency.
-  - Never store prompts, response bodies, API keys or local paths in usage rows.
-  - Keep imported Codex/Claude Code events distinct from Meo-generated events.
+- Result:
+  - Contract written down once in [usage-event-contract.md](usage-event-contract.md) and in `meo-api/docs/api-reference.md` §12.
+  - `migrations/ai/0022_usage_event_contract.sql`: adds `event_version`, `usage_source`, `modality`, `ttft_ms`; token categories become nullable; `total_tokens` is generated and `null` when nothing was reported; existing rows are labelled `estimated` (Meo) or `imported` (importers).
+  - API ingestion (`src/index.ts`): validates provenance and modality; rejects an explicit `unknown` that still asserts counts; rejects content/local-path metadata; legacy events without provenance are stored as `unknown` with their `0` placeholders turned into `null`; the existing unique `(user, source, source_event_id)` upsert remains the idempotency key.
+  - Core producers: `chat_event` sends `usage_source: "estimated"` with cache/reasoning/ttft as `null`; the Codex importer sends `imported` and leaves cache writes `null`; the Claude importer sends `imported` and leaves reasoning `null`.
+  - Dashboard now returns per-event provenance (`usage_source`, `modality`, `event_version`, `ttft_ms`) and refuses to treat an unknown total as a measured one.
+  - Checks: `cargo test --lib usage` (11 passed); `npm run typecheck`; `node --import ./test/route-mocks.ts test/routes.test.ts` (5 new usage cases: declared source stored, unknown+counts rejected, legacy placeholders, metadata smuggling, negative/fractional counts).
+  - Deployment precondition, not done here: migration `ai/0022` must run before the Worker that reads `total_tokens` is deployed.
+  - Not included: provider-reported usage adapters (MEO-011) and pricing (MEO-012); no `provider_response` producer exists yet.
 - Acceptance: every count has a declared source; duplicate ingestion does not double count; unknown counts are not fabricated as zero; fixtures cover supported provider formats.
 
 ### MEO-011 — Capture actual provider usage for supported adapters

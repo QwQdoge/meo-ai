@@ -226,7 +226,7 @@ Never add Meo Credits to a vendor's USD bill. Never call an estimate an actual c
 
 Meo Core chat_event() currently estimates token counts from text and sets metadata.estimated=true. The Meo API usage table has estimated_cost_microusd, but broker streaming usage is not yet a complete normalized and persisted ledger across providers. ai-broker.ts extracts a limited usage shape from streamed provider chunks; provider-specific formats such as nested Responses API usage and Gemini usage need dedicated adapters and tests.
 
-Required path: provider usage → normalized event → Meo API persistence → versioned price snapshot calculation → dashboard. Imported Codex/Claude Code usage remains attributed to its source.
+Required path: provider usage → normalized event → Meo API persistence → versioned price snapshot calculation → dashboard. Imported Codex/Claude Code usage remains attributed to its source. The normalized event shape and its provenance rules are fixed in [usage-event-contract.md](usage-event-contract.md).
 
 ## 6. Meo API access and authorization
 

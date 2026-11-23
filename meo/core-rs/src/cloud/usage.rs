@@ -53,10 +53,14 @@ pub struct ChatTurn<'a> {
     pub role: &'a str,
 }
 
-/// The event for one chat turn. Token counts are estimates (`metadata.estimated`): the API does not
-/// hand the provider's own counts to the app.
+/// The event for one chat turn, in the version-2 usage contract (`meo/docs/usage-event-contract.md`).
+///
+/// The counts are text estimates and say so (`usage_source: "estimated"`). A category this
+/// estimate cannot know — cached input, cache writes, reasoning — is `null`, never `0`: the
+/// server and dashboards must be able to tell "not measured" from "measured zero".
 pub fn chat_event(t: &ChatTurn) -> Value {
     json!({
+        "event_version": 2,
         "source": "meo",
         "source_event_id": t.request_id,
         "session_id": t.conversation_id,
@@ -65,14 +69,16 @@ pub fn chat_event(t: &ChatTurn) -> Value {
         "provider": if t.provider.is_empty() { "unknown" } else { t.provider },
         "model": if t.model.is_empty() { "unknown" } else { t.model },
         "model_role": t.role,
+        "modality": "text",
+        "usage_source": "estimated",
         "occurred_at": iso(t.finished),
         "input_tokens": estimate_tokens(t.context),
-        // The server refuses an event without every count, so the ones this estimate cannot know are zero.
-        "cached_input_tokens": 0,
-        "cache_write_tokens": 0,
+        "cached_input_tokens": Value::Null,
+        "cache_write_tokens": Value::Null,
         "output_tokens": estimate_tokens(t.reply),
-        "reasoning_tokens": 0,
+        "reasoning_tokens": Value::Null,
         "duration_ms": ((t.finished - t.started).max(0) * 1000),
+        "ttft_ms": Value::Null,
         "metadata": { "estimated": true },
     })
 }
@@ -96,7 +102,7 @@ mod tests {
     }
 
     #[test]
-    fn chat_event_has_every_field_the_server_requires() {
+    fn chat_event_declares_estimated_provenance_and_unknown_categories() {
         let e = chat_event(&ChatTurn {
             request_id: "r1",
             conversation_id: "c1",
@@ -125,9 +131,13 @@ mod tests {
         assert_eq!(e["provider"], "unknown");
         assert_eq!(e["duration_ms"], 2000);
         assert!(e["output_tokens"].as_u64().unwrap() >= 1);
-        // The server refuses an event that lacks any of these counts.
-        for key in ["input_tokens", "cached_input_tokens", "cache_write_tokens", "output_tokens", "reasoning_tokens"] {
-            assert!(e[key].as_u64().is_some(), "{key}");
+        assert_eq!(e["event_version"], 2);
+        assert_eq!(e["usage_source"], "estimated");
+        assert_eq!(e["modality"], "text");
+        // Estimated categories carry a number; the ones the estimate cannot know are null, not 0.
+        assert!(e["input_tokens"].as_u64().is_some());
+        for key in ["cached_input_tokens", "cache_write_tokens", "reasoning_tokens", "ttft_ms"] {
+            assert!(e[key].is_null(), "{key} must be null when it was not measured");
         }
     }
 }

@@ -139,10 +139,11 @@ fn event(
     provider: &str,
     model: &str,
     at: String,
-    tokens: [u64; 5],
+    tokens: [Option<u64>; 5],
     file: &Path,
 ) -> Value {
     json!({
+        "event_version": 2,
         "source": source,
         "source_event_id": cut(id, 240),
         "session_id": cut(session, 240),
@@ -151,6 +152,9 @@ fn event(
         "provider": cut(provider, 120),
         "model": cut(model, 180),
         "model_role": "execution",
+        "modality": "text",
+        // These counts come from the tool's own token log, not from a Meo answer.
+        "usage_source": "imported",
         "occurred_at": at,
         "input_tokens": tokens[0],
         "cached_input_tokens": tokens[1],
@@ -235,13 +239,14 @@ fn codex_file(path: &Path) -> Vec<Value> {
             continue;
         };
         let tokens = [
-            raw_input.saturating_sub(cached),
-            cached,
-            0,
-            raw_output.saturating_sub(reasoning),
-            reasoning,
+            Some(raw_input.saturating_sub(cached)),
+            Some(cached),
+            // A Codex token log has no cache-write category; recording 0 would invent a measurement.
+            None,
+            Some(raw_output.saturating_sub(reasoning)),
+            Some(reasoning),
         ];
-        if tokens.iter().sum::<u64>() == 0 {
+        if tokens.iter().flatten().sum::<u64>() == 0 {
             continue;
         }
         out.push(event(
@@ -293,13 +298,14 @@ fn claude_file(path: &Path) -> Vec<Value> {
         ])
         .to_owned();
         let tokens = [
-            uint(&usage["input_tokens"]),
-            uint(&usage["cache_read_input_tokens"]),
-            uint(&usage["cache_creation_input_tokens"]),
-            uint(&usage["output_tokens"]),
-            0,
+            Some(uint(&usage["input_tokens"])),
+            Some(uint(&usage["cache_read_input_tokens"])),
+            Some(uint(&usage["cache_creation_input_tokens"])),
+            Some(uint(&usage["output_tokens"])),
+            // Claude Code's log does not separate reasoning tokens from output.
+            None,
         ];
-        let total: u64 = tokens.iter().sum();
+        let total: u64 = tokens.iter().flatten().sum();
         let id = format!("{session}:{key}");
         let e = event(
             "claude_code",
@@ -407,6 +413,8 @@ mod tests {
         assert_eq!(events[0]["cached_input_tokens"], 40);
         assert_eq!(events[0]["output_tokens"], 20);
         assert_eq!(events[0]["reasoning_tokens"], 10);
+        assert_eq!(events[0]["usage_source"], "imported");
+        assert!(events[0]["cache_write_tokens"].is_null(), "a category the log never reports must stay unknown");
         assert_eq!(events[0]["project_name"], "app");
         assert_eq!(events[0]["source_event_id"], "s1:3");
         // First cumulative row is used as is, the next one as a difference.
@@ -432,6 +440,8 @@ mod tests {
         assert_eq!(events[0]["output_tokens"], 42);
         assert_eq!(events[0]["cached_input_tokens"], 20);
         assert_eq!(events[0]["cache_write_tokens"], 7);
+        assert_eq!(events[0]["usage_source"], "imported");
+        assert!(events[0]["reasoning_tokens"].is_null(), "Claude logs do not report reasoning separately");
         assert_eq!(events[0]["source_event_id"], "c1:m1:r1");
         assert!(!events[0].to_string().contains("secret"));
         let _ = std::fs::remove_dir_all(dir);
