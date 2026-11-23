@@ -244,13 +244,16 @@ The repository AGENTS.md workflow controls branch/commit behavior. Do not create
 
 ### MEO-021 — Design connection and model catalogue UX
 
-- [ ] Status: planned
+- [x] Status: done 2026-11-23 (meo-ai + meo-api `main`): every connection has a status card and actions
 - Repo/files: QwQdoge/meo-ai meo/ui-schema/settings.json, pages.json, navigation.json, meo/core-rs/src/cloud/app.rs and desktop/web/Android renderers. API contract remains in QwQdoge/meo-api.
-- Work:
-  - Settings → Models lists connections, status, masked hint, endpoint hostname, default model, last test and selected profiles.
-  - Add/test/refresh/rename/replace/disable/delete actions use existing Account/API endpoints.
-  - Catalogue shows context window, modalities, tool support and price-source freshness.
-  - Billing-admin credentials remain separate from inference credentials.
+- Result:
+  - `meo-api` credential metadata now carries `lastValidatedAt` and `lastErrorCode` (non-secret only); `/v1/ai/credentials` and the broker's `list_credentials` select them.
+  - Settings > Models renders one card per connection: friendly provider label, endpoint host, masked key hint, default model, `Works · last verified <date>` / `Last test failed (<code>)` / `Not tested yet`, `Disabled: not used for any call`, which profiles use it, and a catalogue summary (model count, how many read pictures, largest context window).
+  - Actions use the existing Account/API endpoints: Test, Reload models, Disable/Enable, Delete, Save name and Replace key. A disabled connection stays visible with its repair state (the client no longer drops it from the list) and is never used for a call.
+  - All clients keep rendering the same generic item/action contract; no renderer gained a private connection view. The replace-key field is always empty in the view and the saved key is never echoed; only the masked hint is shown. Edits that need a fresh reauthentication surface an actionable message.
+  - `ui-schema/settings.json` already labels the section "Models & connections"; no new page or duplicate settings entry was added.
+  - Checks: `cargo test --lib cloud::app::tests` (197 passed; the two failing app tests also fail on the base commit); `test/credentials.test.ts` for the metadata; `npm run typecheck`.
+  - Not included: tool-support and price-source freshness per model (`tools` is not declared by providers and pricing is MEO-012), so the card shows only what is known instead of inventing it. Billing-admin credentials remain a separate connection type and are not offered here.
 - Acceptance: all clients render the same state/action contract; no client receives plaintext saved keys; errors and reconnect states are actionable.
 
 ## Priority 3 — plugin system

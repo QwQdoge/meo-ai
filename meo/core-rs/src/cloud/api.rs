@@ -83,6 +83,38 @@ pub struct Credential {
     pub provider: String,
     pub display_name: String,
     pub default_model: String,
+    /// A disabled connection stays visible with a repair state; it must not be used for calls.
+    #[serde(default = "enabled_by_default")]
+    pub enabled: bool,
+    /// Masked key hint only; the key itself never leaves the server.
+    #[serde(default)]
+    pub secret_hint: String,
+    #[serde(default)]
+    pub endpoint: String,
+    #[serde(default)]
+    pub last_validated_at: Option<String>,
+    #[serde(default)]
+    pub last_error_code: Option<String>,
+}
+
+fn enabled_by_default() -> bool {
+    true
+}
+
+impl Default for Credential {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            provider: String::new(),
+            display_name: String::new(),
+            default_model: String::new(),
+            enabled: true,
+            secret_hint: String::new(),
+            endpoint: String::new(),
+            last_validated_at: None,
+            last_error_code: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -484,7 +516,6 @@ impl MeoApi {
         let rows = body["credentials"].as_array().cloned().unwrap_or_default();
         Ok(rows
             .iter()
-            .filter(|row| row["enabled"].as_bool().unwrap_or(true))
             .filter_map(|row| {
                 let id = row["id"].as_str().filter(|s| !s.is_empty())?.to_owned();
                 let provider = row["provider"].as_str().unwrap_or_default().to_owned();
@@ -498,6 +529,12 @@ impl MeoApi {
                     provider,
                     display_name,
                     default_model: row["defaultModel"].as_str().unwrap_or_default().to_owned(),
+                    // A disabled connection is kept, so Settings can show why it is not usable.
+                    enabled: row["enabled"].as_bool().unwrap_or(true),
+                    secret_hint: row["secretHint"].as_str().unwrap_or_default().to_owned(),
+                    endpoint: row["endpoint"].as_str().unwrap_or_default().to_owned(),
+                    last_validated_at: row["lastValidatedAt"].as_str().map(str::to_owned),
+                    last_error_code: row["lastErrorCode"].as_str().map(str::to_owned),
                 })
             })
             .collect())
@@ -655,6 +692,52 @@ impl MeoApi {
     pub async fn create_credential(&self, token: &str, body: &Value) -> Result<Value, ApiError> {
         self.request(token, Method::POST, "/v1/ai/credentials", Some(body.clone()))
             .await
+    }
+
+    /// Changes a connection: display name, default model, enabled state or a replacement key.
+    pub async fn update_credential(
+        &self,
+        token: &str,
+        credential_id: &str,
+        body: &Value,
+    ) -> Result<Value, ApiError> {
+        self.request(
+            token,
+            Method::PATCH,
+            &format!("/v1/ai/credentials/{credential_id}"),
+            Some(body.clone()),
+        )
+        .await
+    }
+
+    pub async fn delete_credential(
+        &self,
+        token: &str,
+        credential_id: &str,
+    ) -> Result<Value, ApiError> {
+        self.request(
+            token,
+            Method::DELETE,
+            &format!("/v1/ai/credentials/{credential_id}"),
+            None,
+        )
+        .await
+    }
+
+    /// Asks the provider one tiny request so the account can record that the key works.
+    pub async fn test_credential(
+        &self,
+        token: &str,
+        credential_id: &str,
+        model: &str,
+    ) -> Result<Value, ApiError> {
+        self.request(
+            token,
+            Method::POST,
+            &format!("/v1/ai/credentials/{credential_id}/test"),
+            Some(json!({ "model": model })),
+        )
+        .await
     }
 
     /// Meo Credits: balance, lots, this month's spend, recent ledger, auto top-up and budgets.

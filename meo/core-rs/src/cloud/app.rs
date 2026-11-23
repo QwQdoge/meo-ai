@@ -355,6 +355,30 @@ pub enum Action {
     ServiceDelete {
         id: String,
     },
+    /// Asks the provider one tiny request for a saved AI connection, so the account records it works.
+    CredentialTest {
+        id: String,
+    },
+    /// Re-reads one connection's model catalogue.
+    CredentialReload {
+        id: String,
+    },
+    /// Enables or disables an AI connection. A disabled one stays listed with a repair state.
+    CredentialToggle {
+        id: String,
+        enabled: bool,
+    },
+    CredentialDelete {
+        id: String,
+    },
+    /// Saves the name typed into Settings > Models for this connection.
+    CredentialRename {
+        id: String,
+    },
+    /// Replaces the stored key with the one typed into Settings > Models.
+    CredentialReplaceKey {
+        id: String,
+    },
     /// Chooses a Meo Storage plan (`free`, `tier` + `tier` code, `dynamic`). Paid plans ask first.
     StoragePlan {
         plan: String,
@@ -982,6 +1006,8 @@ struct State {
     services: Option<Value>,
     /// Unsaved Services fields, keyed "service:field". A key leaves this map once it is saved.
     svc_form: HashMap<String, String>,
+    /// Unsaved Settings > Models fields, keyed "credentialId:name|key".
+    conn_form: HashMap<String, String>,
     /// Codex and Claude Code records found on this computer: (codex, claude). Desktop only.
     local_usage: Option<(usize, usize)>,
     /// How many local records the user added to the account in this session.
@@ -1687,6 +1713,12 @@ impl AppCore {
             Action::ServiceSave { service } => Box::pin(self.service_save(&service)).await,
             Action::ServiceTest { id } => self.service_test(&id).await,
             Action::ServiceDelete { id } => self.service_delete(&id).await,
+            Action::CredentialTest { id } => self.credential_test(&id).await,
+            Action::CredentialReload { id } => self.credential_reload(&id).await,
+            Action::CredentialToggle { id, enabled } => self.credential_toggle(&id, enabled).await,
+            Action::CredentialDelete { id } => self.credential_delete(&id).await,
+            Action::CredentialRename { id } => self.credential_rename(&id).await,
+            Action::CredentialReplaceKey { id } => self.credential_replace_key(&id).await,
             Action::StoragePlan { plan, tier, consent } => self.storage_plan(&plan, &tier, consent).await,
             Action::ConnectAccount { provider, grant } => {
                 let (message, url) = if grant {
@@ -7354,6 +7386,210 @@ impl AppCore {
         }
     }
 
+    // ---- AI connections (Settings > Models) ---------------------------------
+
+    /// Re-reads the account's connections (disabled ones included, so they can be repaired)
+    /// and keeps the local copy and selection consistent.
+    async fn refresh_credentials(&self) {
+        if let Ok(credentials) = self
+            .call(|api, t| async move { api.list_credentials(&t).await })
+            .await
+        {
+            self.save_json(KEY_CREDENTIALS, &credentials);
+            let chosen = self.state.lock().unwrap().selected.clone();
+            let selected = chosen
+                .filter(|(id, _)| credentials.iter().any(|c| &c.id == id))
+                .or_else(|| {
+                    credentials
+                        .iter()
+                        .find(|c| c.enabled)
+                        .map(|c| (c.id.clone(), c.default_model.clone()))
+                });
+            self.update(|s| {
+                s.credentials = credentials;
+                s.selected = selected;
+            });
+        }
+    }
+
+    fn connection(&self, id: &str) -> Option<Credential> {
+        self.state
+            .lock()
+            .unwrap()
+            .credentials
+            .iter()
+            .find(|c| c.id == id)
+            .cloned()
+    }
+
+    /// One tiny provider request, so the account can record that this key works.
+    async fn credential_test(&self, id: &str) {
+        let Some(connection) = self.connection(id) else {
+            return self.notice("error", "That connection is gone. Reload the list.");
+        };
+        let model = connection.default_model.clone();
+        let id = id.to_owned();
+        match self
+            .call(|api, t| {
+                let id = id.clone();
+                let model = model.clone();
+                async move { api.test_credential(&t, &id, &model).await }
+            })
+            .await
+        {
+            Ok(_) => {
+                self.notice("info", "Connection works.");
+                self.refresh_credentials().await;
+            }
+            Err(e) => self.notice("error", connection_error_text(&e)),
+        }
+    }
+
+    async fn credential_reload(&self, id: &str) {
+        let id = id.to_owned();
+        match self
+            .call(|api, t| {
+                let id = id.clone();
+                async move { api.list_models(&t, &id).await }
+            })
+            .await
+        {
+            Ok(models) => {
+                let count = models.len();
+                self.update(|s| {
+                    s.catalogue.insert(id.clone(), models);
+                });
+                let text = if count == 0 {
+                    "The provider returned no model list; pick a model by hand.".to_owned()
+                } else {
+                    format!("{count} models loaded.")
+                };
+                self.notice("info", text);
+            }
+            Err(e) => self.notice("error", connection_error_text(&e)),
+        }
+    }
+
+    async fn credential_toggle(&self, id: &str, enabled: bool) {
+        let id = id.to_owned();
+        match self
+            .call(|api, t| {
+                let id = id.clone();
+                async move {
+                    api.update_credential(&t, &id, &json!({ "enabled": enabled }))
+                        .await
+                }
+            })
+            .await
+        {
+            Ok(_) => {
+                self.notice(
+                    "info",
+                    if enabled {
+                        "Enabled."
+                    } else {
+                        "Disabled. It is not used for any call until you enable it again."
+                    },
+                );
+                self.refresh_credentials().await;
+            }
+            Err(e) => self.notice("error", connection_error_text(&e)),
+        }
+    }
+
+    async fn credential_delete(&self, id: &str) {
+        let id = id.to_owned();
+        match self
+            .call(|api, t| {
+                let id = id.clone();
+                async move { api.delete_credential(&t, &id).await }
+            })
+            .await
+        {
+            Ok(_) => {
+                self.update(|s| {
+                    s.conn_form
+                        .retain(|key, _| !key.starts_with(&format!("{id}:")));
+                    s.catalogue.remove(&id);
+                });
+                self.notice("info", "Connection removed.");
+                self.refresh_credentials().await;
+            }
+            Err(e) => self.notice("error", connection_error_text(&e)),
+        }
+    }
+
+    async fn credential_rename(&self, id: &str) {
+        let name = self
+            .state
+            .lock()
+            .unwrap()
+            .conn_form
+            .get(&format!("{id}:name"))
+            .cloned()
+            .unwrap_or_default();
+        let name = name.trim().to_owned();
+        if name.is_empty() {
+            return self.notice("error", "Type a name first.");
+        }
+        let id = id.to_owned();
+        match self
+            .call(|api, t| {
+                let id = id.clone();
+                let name = name.clone();
+                async move {
+                    api.update_credential(&t, &id, &json!({ "displayName": name }))
+                        .await
+                }
+            })
+            .await
+        {
+            Ok(_) => {
+                self.update(|s| {
+                    s.conn_form.remove(&format!("{id}:name"));
+                });
+                self.notice("info", "Name saved.");
+                self.refresh_credentials().await;
+            }
+            Err(e) => self.notice("error", connection_error_text(&e)),
+        }
+    }
+
+    async fn credential_replace_key(&self, id: &str) {
+        let key = self
+            .state
+            .lock()
+            .unwrap()
+            .conn_form
+            .get(&format!("{id}:key"))
+            .cloned()
+            .unwrap_or_default();
+        if key.trim().len() < 8 {
+            return self.notice("error", "That key looks too short.");
+        }
+        let id = id.to_owned();
+        match self
+            .call(|api, t| {
+                let id = id.clone();
+                let key = key.clone();
+                async move {
+                    api.update_credential(&t, &id, &json!({ "apiKey": key }))
+                        .await
+                }
+            })
+            .await
+        {
+            Ok(_) => {
+                self.update(|s| {
+                    s.conn_form.remove(&format!("{id}:key"));
+                });
+                self.notice("info", "Key replaced. The old key no longer works.");
+                self.refresh_credentials().await;
+            }
+            Err(e) => self.notice("error", connection_error_text(&e)),
+        }
+    }
+
     async fn save_credit_settings(&self, body: Value) {
         match self.call(|api, t| { let body = body.clone(); async move { api.save_credit_settings(&t, &body).await } }).await {
             Ok(r) => {
@@ -11159,6 +11395,18 @@ impl AppCore {
     // ---- settings ------------------------------------------------------
 
     async fn set_setting(&self, binding: String, value: Value) {
+        if let Some(rest) = binding.strip_prefix("conn:") {
+            // conn:<credentialId>:<field>. The typed value stays local until its Save button runs,
+            // so a half-typed name or key never reaches the server on its own.
+            if let Some((id, field)) = rest.split_once(':') {
+                let text = value.as_str().unwrap_or_default().to_owned();
+                let key = format!("{id}:{field}");
+                self.update(|s| {
+                    s.conn_form.insert(key, text);
+                });
+            }
+            return;
+        }
         if let Some(rest) = binding.strip_prefix("svc:") {
             // svc:<service>:<field>. A key saves the moment it is entered; so does My Server's address.
             if let Some((service, field)) = rest.split_once(':') {
@@ -11540,19 +11788,7 @@ impl AppCore {
                         }
                     }
                     "models" => {
-                        if s.credentials.is_empty() {
-                            items.push(json!({
-                                "id": "conn_none", "kind": "info", "label": "No connections",
-                                "value": "Add an AI provider in Meo Account to use Meo AI.",
-                            }));
-                        }
-                        for c in &s.credentials {
-                            let count = s.catalogue.get(&c.id).map_or(0, Vec::len);
-                            items.push(json!({
-                                "id": format!("conn_{}", c.id), "kind": "info", "label": c.display_name,
-                                "value": format!("{} · {count} models", c.provider),
-                            }));
-                        }
+                        items.extend(connection_items(s));
                         items.extend(router_controls(s));
                         items.push(json!({
                             "id": "auto_title", "label": "Write chat titles with the model",
@@ -13543,6 +13779,7 @@ fn provider_label(provider: &str) -> &str {
         "deepseek" => "DeepSeek",
         "openrouter" => "OpenRouter",
         "anthropic" => "Anthropic",
+        "openai_compatible" => "OpenAI-compatible",
         "tavily" => "Tavily",
         "brave" => "Brave Search",
         "serper" => "Serper (Google)",
@@ -13577,6 +13814,26 @@ fn service_error_text(e: &ApiError) -> String {
         "invalid_api_key" => "That key looks too short.".into(),
         "reauth_required" => "Confirm it is you in Meo Account first, then save again.".into(),
         _ => e.to_string(),
+    }
+}
+
+/// A connection edit's failure, worded so the user knows the next action.
+fn connection_error_text(e: &ApiError) -> String {
+    let code = match e {
+        ApiError::Status { code, .. } => code.as_str(),
+        _ => return e.to_string(),
+    };
+    match code {
+        "reauth_required" => {
+            "Confirm it is you in Meo Account, then try again. Changing a connection needs that extra check."
+                .into()
+        }
+        "ai_credential_not_found" => "That connection no longer exists. Reload the list.".into(),
+        "invalid_api_key" => "That key looks too short.".into(),
+        "ai_provider_rate_limited" | "ai_provider_unreachable" | "ai_provider_timeout" => {
+            "The provider did not answer properly. Check the address and try again.".into()
+        }
+        _ => service_error_text(e),
     }
 }
 
@@ -13981,6 +14238,157 @@ fn profile_items(s: &State) -> Vec<Value> {
                     json!({ "type": "use_profile", "id": id }),
                 ),
             ],
+        ));
+    }
+    items
+}
+
+/// Settings > Models: every AI connection with what it is, whether it works, which profiles use
+/// it and the actions that change it. Keys are never shown, only the masked hint the server keeps.
+fn connection_items(s: &State) -> Vec<Value> {
+    let mut items = Vec::new();
+    if s.credentials.is_empty() {
+        items.push(json!({
+            "id": "conn_none", "kind": "info", "label": "No connections",
+            "value": "Add an AI provider in Meo Account to use Meo AI.",
+        }));
+        return items;
+    }
+    let profiles = profile_list(s);
+    for c in &s.credentials {
+        let host = c
+            .endpoint
+            .split("//")
+            .nth(1)
+            .unwrap_or(&c.endpoint)
+            .split('/')
+            .next()
+            .unwrap_or_default()
+            .to_owned();
+        let mut detail = format!(
+            "{} · {}",
+            provider_label(&c.provider),
+            if host.is_empty() { "—" } else { host.as_str() }
+        );
+        if !c.secret_hint.is_empty() {
+            detail.push_str(&format!(" · {}", c.secret_hint));
+        }
+        detail.push_str(&format!(
+            " · {}",
+            if c.default_model.is_empty() {
+                "no default model".to_owned()
+            } else {
+                c.default_model.clone()
+            }
+        ));
+        items.push(json!({
+            "id": format!("conn_{}", c.id), "kind": "info", "label": c.display_name, "value": detail,
+        }));
+
+        let status = if !c.enabled {
+            "Disabled: not used for any call.".to_owned()
+        } else if let Some(code) = &c.last_error_code {
+            format!("Last test failed ({code}).")
+        } else if let Some(at) = &c.last_validated_at {
+            format!("Works · last verified {}", at.get(0..10).unwrap_or(at))
+        } else {
+            "Not tested yet.".to_owned()
+        };
+        let used_by: Vec<String> = profiles
+            .iter()
+            .filter(|p| {
+                p["roles"].as_object().is_some_and(|roles| {
+                    roles
+                        .values()
+                        .any(|r| r["credentialId"].as_str() == Some(c.id.as_str()))
+                })
+            })
+            .filter_map(|p| p["name"].as_str().map(str::to_owned))
+            .collect();
+        let used = if used_by.is_empty() {
+            "No profile uses this connection.".to_owned()
+        } else {
+            format!("Used by: {}", used_by.join(", "))
+        };
+        items.push(json!({
+            "id": format!("conn_status_{}", c.id), "kind": "hint", "text": format!("{status} {used}"),
+        }));
+
+        if let Some(models) = s.catalogue.get(&c.id).filter(|models| !models.is_empty()) {
+            let pictures = models
+                .iter()
+                .filter(|m| m.input.iter().any(|i| i == "image"))
+                .count();
+            let mut summary = format!("{} models · {pictures} read pictures", models.len());
+            if let Some(context) = models.iter().filter_map(|m| m.context_window).max() {
+                summary.push_str(&format!(" · context up to {context} tokens"));
+            }
+            // Price provenance is not available yet (MEO-012), so nothing is claimed here.
+            items.push(json!({
+                "id": format!("conn_catalogue_{}", c.id), "kind": "hint", "text": summary,
+            }));
+        }
+
+        items.push(item(
+            format!("conn_actions_{}", c.id),
+            "",
+            "",
+            vec![
+                button(
+                    "Test",
+                    "secondary",
+                    json!({ "type": "credential_test", "id": c.id }),
+                ),
+                button(
+                    "Reload models",
+                    "secondary",
+                    json!({ "type": "credential_reload", "id": c.id }),
+                ),
+                button(
+                    if c.enabled { "Disable" } else { "Enable" },
+                    "secondary",
+                    json!({ "type": "credential_toggle", "id": c.id, "enabled": !c.enabled }),
+                ),
+                button(
+                    "Delete",
+                    "danger",
+                    json!({ "type": "credential_delete", "id": c.id }),
+                ),
+            ],
+        ));
+        let form = |field: &str| {
+            s.conn_form
+                .get(&format!("{}:{field}", c.id))
+                .cloned()
+                .unwrap_or_default()
+        };
+        items.push(json!({
+            "id": format!("conn_name_{}", c.id), "label": "Name", "kind": "text",
+            "single_line": true, "binding": format!("conn:{}:name", c.id), "value": form("name"),
+        }));
+        items.push(item(
+            format!("conn_name_save_{}", c.id),
+            "",
+            "",
+            vec![button(
+                "Save name",
+                "secondary",
+                json!({ "type": "credential_rename", "id": c.id }),
+            )],
+        ));
+        items.push(json!({
+            "id": format!("conn_key_{}", c.id), "label": "Replace key", "kind": "text",
+            "single_line": true, "binding": format!("conn:{}:key", c.id), "value": "",
+        }));
+        items.push(item(
+            format!("conn_key_save_{}", c.id),
+            "",
+            "",
+            vec![button(
+                "Save key",
+                "secondary",
+                json!({ "type": "credential_replace_key", "id": c.id }),
+            )],
         ));
     }
     items
@@ -18810,6 +19218,7 @@ mod tests {
                 provider: "openai_compatible".into(),
                 display_name: "Judge gateway".into(),
                 default_model: String::new(),
+                ..Credential::default()
             });
         });
         let env = c.environment("thinking", "high", true, false);
@@ -19771,6 +20180,72 @@ mod tests {
     }
 
     #[test]
+    fn a_connection_shows_its_status_profiles_and_actions_without_its_key() {
+        let c = signed_in_core();
+        seed_models(&c);
+        seed_profiles(&c);
+        c.update(|s| {
+            s.credentials[0].secret_hint = "••••abcd".into();
+            s.credentials[0].endpoint = "https://api.openai.com/v1".into();
+            s.credentials[0].default_model = "gpt-5.1".into();
+            s.credentials[0].last_validated_at = Some("2026-11-20T09:30:00.000Z".into());
+            s.credentials[1].enabled = false;
+            s.credentials[1].last_error_code = Some("ai_provider_rejected_request".into());
+            s.route = "settings".into();
+            s.settings_section = "models".into();
+        });
+        let items = c.view()["page"]["sections"]
+            .as_array()
+            .and_then(|s| s.iter().find(|x| x["id"] == "models"))
+            .and_then(|s| s["items"].as_array())
+            .cloned()
+            .unwrap_or_default();
+        let find = |id: &str| items.iter().find(|i| i["id"] == id).cloned();
+        let good = find("conn_c1").expect("the connection card");
+        let value = good["value"].as_str().unwrap_or_default();
+        assert!(value.contains("OpenAI"), "{value}");
+        assert!(value.contains("api.openai.com"), "{value}");
+        assert!(value.contains("••••abcd"), "{value}");
+        assert!(value.contains("gpt-5.1"), "{value}");
+        assert!(value.contains("OpenAI"), "provider label is friendly");
+        let status = find("conn_status_c1").unwrap()["text"].as_str().unwrap_or_default().to_owned();
+        assert!(status.contains("last verified 2026-11-20"), "{status}");
+        assert!(status.contains("Used by: Balanced"), "{status}");
+        assert!(find("conn_catalogue_c1").is_some(), "the catalogue summary is shown");
+        // A disabled connection stays visible with its own repair state and an Enable action.
+        let disabled = find("conn_status_c2").unwrap()["text"].as_str().unwrap_or_default().to_owned();
+        assert!(disabled.starts_with("Disabled"), "{disabled}");
+        let actions = find("conn_actions_c2").unwrap();
+        let types: Vec<&str> = actions["buttons"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|b| b["action"]["type"].as_str().unwrap())
+            .collect();
+        assert!(types.contains(&"credential_test") && types.contains(&"credential_delete"), "{types:?}");
+        assert_eq!(actions["buttons"][2]["label"], "Enable");
+        // The replace-key field is empty: no saved secret is echoed back to any renderer.
+        let key = find("conn_key_c1").unwrap();
+        assert_eq!((key["binding"].as_str(), key["value"].as_str()), (Some("conn:c1:key"), Some("")));
+        let name = find("conn_name_c1").unwrap();
+        assert_eq!(name["binding"], "conn:c1:name");
+    }
+
+    #[test]
+    fn typing_a_connection_name_stays_local_until_saved() {
+        let c = signed_in_core();
+        seed_models(&c);
+        futures_executor::block_on(c.set_setting("conn:c1:name".into(), json!("Work OpenAI")));
+        let saved = c.state.lock().unwrap().conn_form.get("c1:name").cloned();
+        assert_eq!(saved.as_deref(), Some("Work OpenAI"));
+        // A key is kept only in this local form map; it is never part of the rendered value.
+        futures_executor::block_on(c.set_setting("conn:c1:key".into(), json!("sk-new-key-12345")));
+        let s = c.state.lock().unwrap();
+        assert_eq!(s.conn_form.get("c1:key").map(String::as_str), Some("sk-new-key-12345"));
+        assert!(s.credentials.iter().all(|x| !x.secret_hint.contains("sk-new-key")));
+    }
+
+    #[test]
     fn a_profile_flags_models_the_provider_does_not_offer() {
         let c = signed_in_core();
         c.update(|s| {
@@ -19780,6 +20255,7 @@ mod tests {
                 provider: "openai_compatible".into(),
                 display_name: "Gateway".into(),
                 default_model: String::new(),
+                ..Credential::default()
             }];
             s.catalogue.insert("c1".into(), vec![serde_json::from_value(json!({ "id": "claude-sonnet-5-5", "name": "Sonnet" })).unwrap()]);
             s.profiles = Some(Ok(json!({
@@ -20219,12 +20695,14 @@ mod tests {
                     provider: "openai_compatible".into(),
                     display_name: "Gateway".into(),
                     default_model: String::new(),
+                    ..Credential::default()
                 },
                 Credential {
                     id: "c2".into(),
                     provider: "gemini".into(),
                     display_name: "Gemini".into(),
                     default_model: String::new(),
+                    ..Credential::default()
                 },
             ];
             s.catalogue.insert(
