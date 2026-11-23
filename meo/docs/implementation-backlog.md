@@ -49,9 +49,16 @@ The repository AGENTS.md workflow controls branch/commit behavior. Do not create
 
 ### MEO-002 — Harden custom provider endpoint policy
 
-- [ ] Status: planned, security-sensitive
+- [x] Status: done 2026-11-23 (meo-api `main`): custom endpoints now fail closed
 - Repo: QwQdoge/meo-api
 - Files: src/ai-providers.ts; src/ai-broker.ts; src/types.ts; test/credentials.test.ts; test/ai-endpoints.test.ts; docs/api-reference.md
+- Result:
+  - One policy, `src/ai-endpoints.ts::providerEndpoint`, shared by save/edit/discovery (`ai-providers.ts`) and inference/images/speech (`ai-broker.ts`); the two older duplicate host checks are gone.
+  - `AI_CUSTOM_ENDPOINT_HOSTS` now fails closed: empty or missing denies every `openai_compatible` endpoint. Saved connections are re-checked on every use, so removing a host disables them.
+  - Host rules reuse `src/ssrf.ts::forbiddenHost` (loopback, private, link-local, CGNAT, multicast, metadata, blocked suffixes); still HTTPS-only, port 443, no userinfo/query/fragment. Provider fetches keep `redirect: 'manual'`.
+  - Error: `403 custom_ai_endpoint_not_enabled`; `400 ai_endpoint_not_permitted` / `400 invalid_ai_endpoint` for a malformed destination.
+  - Checks: `npm run typecheck` and `node --import ./test/route-mocks.ts test/credentials.test.ts` (5 new cases: empty allowlist, unlisted host, listed host saved case-insensitively, model discovery, edit re-check).
+  - Deployment precondition, not done here: `AI_CUSTOM_ENDPOINT_HOSTS` must list every approved host in the Worker before this Worker is deployed, or existing custom connections will be refused.
 - Work:
   - Make custom endpoint allowlisting fail closed when no approved hosts are configured.
   - Apply the same policy during save, edit, test, model discovery and inference.
