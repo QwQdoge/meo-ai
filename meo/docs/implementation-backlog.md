@@ -231,14 +231,15 @@ The repository AGENTS.md workflow controls branch/commit behavior. Do not create
 
 ### MEO-020 — Make Model Profile routing status truthful
 
-- [ ] Status: planned
+- [x] Status: done 2026-11-23 (meo-ai `main`): the editor states what actually routes
 - Repos/files: QwQdoge/meo-api src/model-roles.mjs, src/ai-providers.ts and profile tests; QwQdoge/meo-ai meo/core-rs/src/cloud/app.rs, meo/docs/presentation-model-routing.md and view fixtures.
-- Work:
-  - Keep existing Account-owned ai_model_profiles schema and role catalogue.
-  - Distinguish saved preference, active profile and runtime-supported routing **per role**.
-  - Verified 2026-11-23: `role_model()` in `meo/core-rs/src/cloud/app.rs` already routes `router`, `title`, `check` (profile role `judge`), `judge`, `agent` and `summary` from the active profile with model-health fallback; the answer path sends a per-request route. This is not a single-global-model runtime.
-  - Remaining work is the honest surface plus the unrouted roles: `vision`, `image`, `image_edit`, `video`, `speech`, `transcription`, `embedding`, and explicit profile `default`/`fast`/`thinking`. Route a role only after the surface can name which roles are wired.
-  - Validate connection ownership, enabled state and model capability at save and use time.
+- Result:
+  - Core has one definition of what routes (`role_routed`): `default`, `fast`, `thinking`, `agent`, `router`, `judge`, `title`, `summary`. `vision`, `image`, `image_edit`, `video`, `speech`, `transcription`, `embedding` are labelled `Saved only: this app does not use this job yet.` in the editor.
+  - Per-role hint is now truthful: `Routes now.` only when `role_model` resolves a chosen model; `Not set: this job uses your other models.` when it is wired but empty; a fallback warning when the connection is gone or the provider no longer offers the model. The profile list shows `N route now`.
+  - `role_model` refuses a choice whose connection was removed/disabled or whose model is empty and falls back, so a stale profile never sends a call to a credential the account no longer offers. Routing stays per call; nothing mutates a global model to route one request.
+  - API side already validated ownership and enabled state at save (`enabledCredentials`); no second profile store or roles table was added.
+  - Checks: `cargo test --locked --all-features --lib cloud::app::tests` (195 passed; the two failures `a_project_page_edits_through_generic_controls` and `settings_devices_page_names_this_device_and_lists_the_others` also fail on the base commit).
+  - Not included: wiring the saved-only roles (vision/image/speech/transcription/embedding) to their existing image/audio paths; that is separate feature work. Model-capability warnings at save time remain client-side filtering (`models_for_role`) because some provider catalogues are missing.
 - Acceptance: the UI marks a role as actively routed only when `role_model` resolves it; unrouted roles say so; concurrent requests cannot race by mutating global model selection; disabled connections show repair state, not silent substitution.
 
 ### MEO-021 — Design connection and model catalogue UX

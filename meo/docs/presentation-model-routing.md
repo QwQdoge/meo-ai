@@ -6,6 +6,20 @@ Status: first repo-side contract for the **paused** AgentService/Newelle path (s
 
 > Current active path differs. `meo/core-rs/src/cloud/app.rs` `role_model()` already routes `router`, `title`, `check` (profile role `judge`), `judge`, `agent` and `summary` from the active Model Profile with model-health fallback. Do not cite this document's "one global model" boundary as the current state; see [product-architecture-plan.md](product-architecture-plan.md) §3.
 
+## Which roles route today (2026-11-23)
+
+The active core (`meo/core-rs/src/cloud/app.rs`) resolves these catalogue roles from the
+active profile on every call: `default`, `fast`, `thinking`, `agent` (Sub-agents), `router`,
+`judge` (also the answer check), `title` and `summary`.
+
+These are saved preferences only — this app does not use them yet: `vision`, `image`,
+`image_edit`, `video`, `speech`, `transcription`, `embedding`.
+
+The profile editor states that per role (`Routes now`, `Not set: this job uses your other
+models`, `Saved only`, or a fallback warning). A choice whose connection was removed or
+disabled is never used silently: the role falls back and the editor shows a repair state.
+No per-call code mutates a global model to route a request.
+
 ## Native presentation blocks
 
 Meo AI may return normal assistant text plus zero or more small native cards. The model does not generate QML, HTML, JavaScript, commands, URLs, or arbitrary action payloads. It emits bounded structured data and the installed native client chooses a registered MeoUI component.

@@ -2293,10 +2293,14 @@ impl AppCore {
             .into_iter()
             .find(|p| p["active"] == true)
             .and_then(|p| {
-                Some((
-                    p["roles"][profile_role]["credentialId"].as_str()?.to_owned(),
-                    p["roles"][profile_role]["model"].as_str()?.to_owned(),
-                ))
+                let credential = p["roles"][profile_role]["credentialId"].as_str()?;
+                let model = p["roles"][profile_role]["model"].as_str()?;
+                // A removed or disabled connection cannot serve the role: fall back instead of
+                // sending the call to a credential the account no longer offers.
+                if model.is_empty() || connection_missing(&s, credential) {
+                    return None;
+                }
+                Some((credential.to_owned(), model.to_owned()))
             });
         let fallback = match role {
             "router" | "title" | "check" => "fast",
@@ -13752,6 +13756,22 @@ fn service_items(s: &State) -> Vec<Value> {
     items
 }
 
+/// The jobs whose model this app resolves from the active profile on every call.
+/// Everything else in the catalogue is a saved preference only; the editor must say so instead of
+/// implying that choosing a model there changes behaviour.
+fn role_routed(role: &str) -> bool {
+    matches!(
+        role,
+        "default" | "fast" | "thinking" | "agent" | "router" | "judge" | "title" | "summary"
+    )
+}
+
+/// A connection that is no longer offered to this client: removed, or disabled at the account.
+/// Its saved model choices cannot run, so the role falls back and the editor shows a repair state.
+fn connection_missing(s: &State, credential: &str) -> bool {
+    !s.credentials.iter().any(|c| c.id == credential)
+}
+
 fn profile_list(s: &State) -> Vec<Value> {
     s.profiles
         .as_ref()
@@ -13873,6 +13893,9 @@ fn profile_items(s: &State) -> Vec<Value> {
             // A saved model the provider no longer lists stays selectable.
             let missing = matches!((current["credentialId"].as_str(), current["model"].as_str()),
                 (Some(c), Some(m)) if model_missing(s, c, m));
+            let gone = current["credentialId"]
+                .as_str()
+                .is_some_and(|c| connection_missing(s, c));
             if !value.is_empty() && !options.iter().any(|o| o["value"] == value.as_str()) {
                 let name = current["model"].as_str().unwrap_or_default();
                 options.push(json!({ "value": value, "label": if missing { format!("{name} (not offered by the provider)") } else { name.to_owned() } }));
@@ -13881,13 +13904,22 @@ fn profile_items(s: &State) -> Vec<Value> {
                 "id": format!("pf_role_{rid}"), "label": role["label"], "kind": "select",
                 "binding": format!("pr:{id}:{rid}"), "value": value, "options": options,
             }));
+            // Say what actually happens: routed now, saved only, or falling back because its
+            // connection is gone or the provider no longer offers the model.
+            let status = if !role_routed(rid) {
+                "Saved only: this app does not use this job yet."
+            } else if gone {
+                "Connection gone: this job falls back to your other models until you pick another one."
+            } else if missing {
+                "The provider does not offer this model, so this job falls back to your other models."
+            } else if value.is_empty() {
+                "Not set: this job uses your other models."
+            } else {
+                "Routes now."
+            };
             items.push(json!({
                 "id": format!("pf_hint_{rid}"), "kind": "hint",
-                "text": if missing {
-                    format!("This model is not in your provider's list, so this job will fail with \"model not found\". Pick another one. {}", role["description"].as_str().unwrap_or_default())
-                } else {
-                    format!("{} {}", role["description"].as_str().unwrap_or_default(), role_weight(&role))
-                },
+                "text": format!("{status} {} {}", role["description"].as_str().unwrap_or_default(), role_weight(&role)),
             }));
         }
         let active = profile["active"] == true;
@@ -13918,12 +13950,15 @@ fn profile_items(s: &State) -> Vec<Value> {
     for p in &profiles {
         let id = p["id"].as_str().unwrap_or_default();
         let set = p["roles"].as_object().map_or(0, |r| r.len());
+        let routed = p["roles"].as_object().map_or(0, |r| {
+            r.keys().filter(|role| role_routed(role)).count()
+        });
         let active = p["active"] == true;
         items.push(item(
             format!("pf_{id}"),
             p["name"].as_str().unwrap_or_default(),
             &format!(
-                "{set} jobs set{}{}",
+                "{set} jobs set · {routed} route now{}{}",
                 match profile_missing_jobs(s, p) {
                     0 => String::new(),
                     n => format!(" · {n} with a model the provider does not offer"),
@@ -18702,7 +18737,7 @@ mod tests {
         // Each role explains itself and how much it matters.
         assert_eq!(
             find("pf_hint_title")["text"],
-            "Titles. Accuracy low · Impact low · Speed critical · runs often"
+            "Not set: this job uses your other models. Titles. Accuracy low · Impact low · Speed critical · runs often"
         );
         assert_eq!(find("pf_use")["label"], "In use");
 
@@ -18767,6 +18802,16 @@ mod tests {
     #[test]
     fn the_model_is_told_where_it_runs_and_roles_fall_back_sensibly() {
         let c = signed_in_core();
+        // A profile role is only usable while its connection exists.
+        seed_models(&c);
+        c.update(|s| {
+            s.credentials.push(Credential {
+                id: "c9".into(),
+                provider: "openai_compatible".into(),
+                display_name: "Judge gateway".into(),
+                default_model: String::new(),
+            });
+        });
         let env = c.environment("thinking", "high", true, false);
         assert_eq!(env["client"], "desktop");
         assert_eq!(env["role"], "thinking");
@@ -18818,6 +18863,64 @@ mod tests {
         });
         assert_eq!(c.role_model("check").unwrap().1, "jev-judge", "the profile's Judge checks answers");
         assert_eq!(c.role_model("agent").unwrap().1, "jev-agent", "the profile's Sub-agents role runs helpers");
+    }
+
+    #[test]
+    fn only_wired_jobs_count_as_routing() {
+        for role in ["default", "fast", "thinking", "agent", "router", "judge", "title", "summary"] {
+            assert!(role_routed(role), "{role} is resolved by role_model");
+        }
+        for role in ["vision", "image", "image_edit", "video", "speech", "transcription", "embedding"] {
+            assert!(!role_routed(role), "{role} is a saved preference only");
+        }
+    }
+
+    #[test]
+    fn a_role_whose_connection_is_gone_falls_back_instead_of_using_it() {
+        let c = signed_in_core();
+        seed_models(&c);
+        seed_profiles(&c);
+        c.update(|s| {
+            s.router
+                .slots
+                .insert("default".into(), ("c2".into(), "fallback".into()));
+        });
+        assert_eq!(
+            c.role_model("default"),
+            Some(("c1".to_owned(), "gpt-5.1".to_owned())),
+            "the profile role is used while its connection exists"
+        );
+        c.update(|s| s.credentials.retain(|x| x.id != "c1"));
+        assert_eq!(
+            c.role_model("default"),
+            Some(("c2".to_owned(), "fallback".to_owned())),
+            "a removed or disabled connection is not used silently"
+        );
+    }
+
+    #[test]
+    fn every_role_says_whether_it_routes_now_or_is_saved_only() {
+        let c = signed_in_core();
+        seed_models(&c);
+        seed_profiles(&c);
+        c.update(|s| {
+            s.route = "settings".into();
+            s.settings_section = "models".into();
+            s.editing_profile = Some("p1".into());
+        });
+        let text = |id: &str| {
+            c.view()["page"]["sections"]
+                .as_array()
+                .and_then(|sections| sections.iter().find(|x| x["id"] == "models"))
+                .and_then(|section| section["items"].as_array())
+                .and_then(|items| items.iter().find(|i| i["id"] == format!("pf_hint_{id}")))
+                .and_then(|i| i["text"].as_str())
+                .unwrap_or_default()
+                .to_owned()
+        };
+        assert!(text("default").starts_with("Routes now"), "{}", text("default"));
+        assert!(text("vision").starts_with("Saved only"), "{}", text("vision"));
+        assert!(text("title").starts_with("Not set"), "{}", text("title"));
     }
 
     #[test]
@@ -19671,6 +19774,13 @@ mod tests {
     fn a_profile_flags_models_the_provider_does_not_offer() {
         let c = signed_in_core();
         c.update(|s| {
+            // The connection still exists; only the model it offered is gone.
+            s.credentials = vec![Credential {
+                id: "c1".into(),
+                provider: "openai_compatible".into(),
+                display_name: "Gateway".into(),
+                default_model: String::new(),
+            }];
             s.catalogue.insert("c1".into(), vec![serde_json::from_value(json!({ "id": "claude-sonnet-5-5", "name": "Sonnet" })).unwrap()]);
             s.profiles = Some(Ok(json!({
                 "roles": [
@@ -19689,9 +19799,9 @@ mod tests {
         let fast = editor.iter().find(|i| i["id"] == "pf_role_fast").unwrap();
         assert!(fast["options"].to_string().contains("not offered by the provider"), "{fast}");
         let hint = editor.iter().find(|i| i["id"] == "pf_hint_fast").unwrap();
-        assert!(hint["text"].as_str().unwrap().contains("model not found"), "{hint}");
+        assert!(hint["text"].as_str().unwrap().contains("does not offer this model"), "{hint}");
         let fine = editor.iter().find(|i| i["id"] == "pf_hint_default").unwrap();
-        assert!(!fine["text"].as_str().unwrap().contains("model not found"));
+        assert!(!fine["text"].as_str().unwrap().contains("does not offer this model"));
     }
 
     #[test]
