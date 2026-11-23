@@ -129,7 +129,7 @@ Provider keys belong to Meo Account, not the Meo AI client. Existing Meo API rou
 
 The Account database stores encrypted credentials. API responses contain metadata and a masked hint, not plaintext keys. Current code supports up to 20 named connections per account; Model Profiles reference connection IDs.
 
-The provider map in meo-api/src/ai-providers.ts currently includes OpenAI, Gemini, DeepSeek, OpenRouter and OpenAI-compatible endpoints. Direct Anthropic/Claude support is not present in that map. This is a real adapter gap, not a UI-only toggle.
+Verified 2026-11-23: meo-api/src/ai-providers.ts includes OpenAI (Responses), Anthropic (Messages), Gemini, DeepSeek, OpenRouter and OpenAI-compatible endpoints. Direct Anthropic support was added as its own adapter (MEO-014), not routed through a fake OpenAI-compatible shape.
 
 ### Provider connection screen
 

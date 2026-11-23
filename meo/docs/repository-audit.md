@@ -10,7 +10,7 @@ Meo AI already has a substantial architecture. Replacing it with a new generic g
 Highest-priority findings:
 
 1. Usage is not yet a trustworthy cost ledger. Rust Core estimates tokens from text; provider stream usage is only partly normalized and is not automatically persisted as one complete per-request ledger.
-2. Provider support is incomplete. The current Meo API provider map includes OpenAI, Gemini, DeepSeek, OpenRouter and OpenAI-compatible endpoints, but not a direct Anthropic adapter.
+2. Provider support was incomplete at audit time. OpenAI, Gemini, DeepSeek, OpenRouter and OpenAI-compatible were present; the direct Anthropic adapter was added on 2026-11-23 (MEO-014).
 3. Custom endpoint policy needs hardening. The host allowlist is enforced only when AI_CUSTOM_ENDPOINT_HOSTS is non-empty. An empty value can permit otherwise-valid public HTTPS hosts. Review before expanding custom endpoint support.
 4. File storage is incomplete. Upload is text-only and object deletion is not implemented for records with object_key.
 5. The repository contains deliberate migration layers and conflicting documentation. Cleanup must be staged, not mass deletion.
@@ -66,7 +66,7 @@ Evidence:
 - Model Profiles already store per-role {credentialId, model} choices and can be activated.
 - Credentials are encrypted in the Account database and returned as non-secret metadata.
 
-Impact: Do not add second providers, provider_keys or model_profiles tables in Meo AI. Direct Anthropic support and provider-specific usage coverage are missing.
+Impact: Do not add second providers, provider_keys or model_profiles tables in Meo AI. Direct Anthropic support landed in MEO-014; provider-specific usage capture landed in MEO-011.
 
 ### C. Custom endpoint policy
 

@@ -214,14 +214,17 @@ The repository AGENTS.md workflow controls branch/commit behavior. Do not create
 
 ### MEO-014 — Add direct Anthropic provider support
 
-- [ ] Status: planned
+- [x] Status: done 2026-11-23 (meo-api + meo-ai `main`): a real Anthropic Messages adapter
 - Repo: QwQdoge/meo-api
 - Files: src/ai-providers.ts; src/ai-broker.ts; provider request/response adapters; src/model-capabilities.mjs; test/credentials.test.ts; test/ai-endpoints.test.ts; docs/api-reference.md.
-- Work:
-  - Add Anthropic Messages endpoint, headers, payload and streaming event parser.
-  - Normalize model catalogue, tool calling, vision and usage only where supported.
-  - Preserve Account credential encryption and consent flow.
-  - Do not route Anthropic through a fake OpenAI-compatible adapter.
+- Result:
+  - `provider: "anthropic"` → `api_style: "anthropic_messages"`, endpoint `https://api.anthropic.com/v1`, `x-api-key` + `anthropic-version: 2023-06-01`, destination `/messages`, catalogue via `/models?limit=1000` with `display_name`.
+  - Request: top-level `system`, required `max_tokens`, base64 image source blocks, tools with `input_schema` and `tool_choice: {type: "auto"}`; finished turns replay as `tool_use`/`tool_result` (images allowed inside a tool result).
+  - Stream: `content_block_delta` text, `input_json_delta` tool arguments collected into declared calls only, `stop_reason: "max_tokens"` mapped to the truncated signal, non-stream text from `content` blocks.
+  - Usage: Anthropic reports `input_tokens` already excluding cached tokens, so no subtraction; `message_start` (input/cache) and `message_delta` (cumulative output) are merged across chunks.
+  - Core: the AI connection picker offers Anthropic and labels it.
+  - Checks: `test/anthropic.test.ts` (stored style, request shape, tools, stream/stop, text, split usage); `test/provider-usage.test.ts`, `test/routes.test.ts`, `test/rate-limit.test.ts`, `npm run typecheck`; `cargo test --lib usage`, `cargo test --lib services`.
+  - Not covered: live provider calls (`test/ai-endpoints.test.ts` is integration-only, needs a real key); image generation through Anthropic is not offered because the image path only accepts OpenAI-compatible credentials.
 - Acceptance: save/test, discovery, consent, stream, cancellation, tool support and usage have fixtures; unsupported features are reported honestly.
 
 ## Priority 2 — model profiles and provider UX

@@ -13538,6 +13538,7 @@ fn provider_label(provider: &str) -> &str {
         "gemini" => "Google Gemini",
         "deepseek" => "DeepSeek",
         "openrouter" => "OpenRouter",
+        "anthropic" => "Anthropic",
         "tavily" => "Tavily",
         "brave" => "Brave Search",
         "serper" => "Serper (Google)",
@@ -13687,7 +13688,7 @@ fn service_items(s: &State) -> Vec<Value> {
         "value": "Keys and servers you add here cost 0 MC and work in Meo AI, Meo Account and VRC Memories. Once saved, nobody can view a key again, Meo included." })];
     let field = |service: &str, f: &str| s.svc_form.get(&format!("{service}:{f}")).cloned().unwrap_or_default();
     let rows: [(&str, &str, &[&str]); 5] = [
-        ("ai_model", "AI model key", &["openai", "gemini", "deepseek", "openrouter"]),
+        ("ai_model", "AI model key", &["openai", "gemini", "deepseek", "openrouter", "anthropic"]),
         ("web_search", "Web search", &["tavily", "brave", "serper", "bocha", "custom"]),
         ("translation", "Translation", &["deepl", "google", "custom"]),
         ("storage", "Storage", &["r2", "s3", "webdav", "custom"]),
