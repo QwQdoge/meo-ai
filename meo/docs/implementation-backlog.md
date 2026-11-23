@@ -260,13 +260,16 @@ The repository AGENTS.md workflow controls branch/commit behavior. Do not create
 
 ### MEO-030 — Define plugin manifest and lifecycle v1
 
-- [ ] Status: planned
+- [x] Status: done 2026-11-23 (meo-ai `main`): a typed, fail-closed manifest v1
 - Files: QwQdoge/meo-ai meo/core-rs/src/cloud/plugin_store.json, new manifest/schema module, Core tests and meo/docs/plugins-and-connectors.md; QwQdoge/meo-api existing plugin/Skill endpoints remain persistence source.
-- Work:
-  - Define typed kinds: provider adapter, connector, Skill, bundle and built-in capability.
-  - Add versioned manifest validation, compatibility, publisher/integrity, permissions, network origins, settings and lifecycle.
-  - Keep built-in catalogue, installed account records and runtime connection status separate.
-  - Do not execute downloaded code in v1.
+- Result:
+  - New `core-rs/src/cloud/plugin_manifest.rs`: typed kinds (`provider_adapter`, `connector`, `skill`, `bundle`, `builtin`), manifest version 1, publisher, compatibility, capabilities with schema versions, permissions (data categories + effects), exact https network origins, bounded typed settings, UI slots with registered renderer ids, dependencies, integrity, optional signature and update channel.
+  - `validate_manifest()` fails closed: unknown fields/enum values are errors; Skill may declare no capability/permission/origin/setting/UI/entrypoint/dependency; Bundle needs dependencies and no capability; Connector needs a hosted origin; bundled kinds may not have a remote entrypoint; non-hosted or odd origins are rejected; integrity is required for distributed kinds; v1 rejects script/archive/local-path entrypoints.
+  - `Lifecycle` with legal transitions: only `enabled`/`connected` accept calls, `disabled`/`removed` stop calls, `removed` is terminal and reinstall creates a new record.
+  - Built-in catalogue (`plugin_store.json`), installed account records (Meo API) and runtime lifecycle stay separate; no new persistence, no executable code.
+  - Docs: `meo/docs/plugins-and-connectors.md` gained the manifest v1 fields, rules and lifecycle.
+  - Checks: `cargo test --lib plugin_manifest` (9 passed).
+  - Not included: wiring the validator into the store/import UI (the existing catalogue and import paths keep working unchanged) and MEO-031's unified permission presentation.
 - Acceptance: invalid/unknown manifest fields fail closed; Skills cannot grant tools/permissions; disabled/removed plugins stop calls and revoke grants.
 
 ### MEO-031 — Unify plugin permission presentation

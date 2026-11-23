@@ -24,6 +24,7 @@ pub mod mathtext;
 pub mod mcp_local;
 pub mod orchestration;
 pub mod plotdata;
+pub mod plugin_manifest;
 pub mod project_env;
 pub mod prompt;
 pub mod limits;

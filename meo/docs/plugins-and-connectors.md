@@ -16,6 +16,41 @@ the web, desktop and Android clients only draw the page the core describes (see
 
 OneDrive is listed as "Coming soon": Microsoft has no hosted MCP server to connect yet.
 
+## Manifest v1 and lifecycle (MEO-030)
+
+A manifest is a declarative description of one optional capability. It is defined and validated in
+`core-rs/src/cloud/plugin_manifest.rs`; the built-in catalogue (`plugin_store.json`), the account's
+installed-plugin records (Meo API) and the runtime lifecycle state stay three separate records.
+
+Typed kinds: `provider_adapter`, `connector`, `skill`, `bundle`, `builtin`.
+
+Fields: `manifest_version` (1), `id`, `version`, `name`, `description`, `publisher`
+(`id`/`name`/`url`), `kind`, optional `compatibility` (`meo_core`, `meo_api` ranges), optional
+`entrypoint`, `capabilities` (`id`, `input_schema`, `output_schema`, `surfaces`), `permissions`
+(`data_categories`, `effects`), `network.origins`, `settings` (typed `text`/`number`/`boolean`/
+`secret` fields with bounds), `ui` (`slot` + registered `renderer` id), `dependencies`,
+`integrity` (`sha256:<64 hex>`), optional `signature`, optional `update_channel` (`stable`/`beta`).
+
+Rules the validator enforces (unknown fields are errors, never ignored):
+
+- A **Skill** is text: it may declare no capability, permission, origin, setting, UI contribution,
+  entrypoint or dependency. Skill text is untrusted context, never policy or executable code.
+- A **Bundle** exists to install others: it needs dependencies and has no capability or entrypoint.
+- A **Connector** is a hosted service: it needs a hosted https entrypoint or declared https origin.
+- A **Provider adapter** or **Builtin** is bundled in v1 and may not declare a remote entrypoint.
+- Network origins are exact https origins (no path, query, fragment, userinfo or wildcard).
+- **v1 loads no downloaded code.** There is no field for a script, archive or local path; an
+  entrypoint that is not a hosted https service is rejected.
+- `integrity` is required for distributed kinds; signatures are validated when present.
+
+Lifecycle: `discovered → installed → connected/enabled`, with `unavailable`, `failed`, `disabled`
+and terminal `removed`. Only `enabled` and `connected` accept calls; `disabled` and `removed` stop
+new calls, and removing must not silently delete user data. Illegal transitions are rejected.
+
+The manifest says what a plugin offers and asks for. It never grants anything: permission checks
+happen per call, plugin enabled state is not authorization, and a manifest cannot approve its own
+actions or bypass Account consent.
+
 ## The store page
 
 Tabs: **Discover** (Essentials, Connect your services, built-in entries, MCP registry results, with
