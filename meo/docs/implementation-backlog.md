@@ -2,7 +2,20 @@
 
 Status: ordered planning list, 2026-11-22. Items are intentionally small. Do not execute the whole backlog in one agent run.
 
-Latest source audit: [repository-audit-2026-11-22.md](repository-audit-2026-11-22.md). Read its verified findings before choosing a task.
+Latest source audit: [repository-audit.md](repository-audit.md) (canonical). Read its verified findings before choosing a task.
+
+## Checks per repository (verified 2026-11-23)
+
+Run the narrowest line for the task's repo; report which one ran.
+
+| Repo | Focused check |
+| --- | --- |
+| `QwQdoge/meo-api` | `npm run typecheck`; offline route/provider tests: `npm run test:offline`; live provider calls: `npm run test:integration` (separate, needs real keys). |
+| `QwQdoge/meo-ai` Rust core | in `meo/core-rs`: `cargo fmt --check`; `cargo test --locked --all-features` |
+| `QwQdoge/meo-ai` docs-only | Path/link check plus a focused grep for the conflicting phrase. |
+| `QwQdoge/meo-ai` UI schema | `node meo/ui-schema/generate.mjs --check` |
+
+Cross-repo tasks (most of Priority 0/1) change `meo-api` first, then the `meo-ai` contract and client view. Record the API contract change in `meo-api` docs in the same task; never ship a client that assumes an unmerged API shape.
 
 ## How the next agent must work
 
@@ -183,10 +196,11 @@ The repository AGENTS.md workflow controls branch/commit behavior. Do not create
 - Repos/files: QwQdoge/meo-api src/model-roles.mjs, src/ai-providers.ts and profile tests; QwQdoge/meo-ai meo/core-rs/src/cloud/app.rs, meo/docs/presentation-model-routing.md and view fixtures.
 - Work:
   - Keep existing Account-owned ai_model_profiles schema and role catalogue.
-  - Distinguish saved preference, active profile and runtime-supported routing.
-  - Implement per-call role routing only when Core can invoke different models without mutating one global model setting.
+  - Distinguish saved preference, active profile and runtime-supported routing **per role**.
+  - Verified 2026-11-23: `role_model()` in `meo/core-rs/src/cloud/app.rs` already routes `router`, `title`, `check` (profile role `judge`), `judge`, `agent` and `summary` from the active profile with model-health fallback; the answer path sends a per-request route. This is not a single-global-model runtime.
+  - Remaining work is the honest surface plus the unrouted roles: `vision`, `image`, `image_edit`, `video`, `speech`, `transcription`, `embedding`, and explicit profile `default`/`fast`/`thinking`. Route a role only after the surface can name which roles are wired.
   - Validate connection ownership, enabled state and model capability at save and use time.
-- Acceptance: no role is shown as active routing if preference-only; concurrent requests cannot race by mutating global model selection; disabled connections show repair state, not silent substitution.
+- Acceptance: the UI marks a role as actively routed only when `role_model` resolves it; unrouted roles say so; concurrent requests cannot race by mutating global model selection; disabled connections show repair state, not silent substitution.
 
 ### MEO-021 — Design connection and model catalogue UX
 
@@ -272,20 +286,24 @@ The repository AGENTS.md workflow controls branch/commit behavior. Do not create
 
 ## Suggested execution order
 
-1. MEO-001 documentation reconciliation.
-2. MEO-002 custom endpoint policy.
-3. MEO-003 account-level rate/spend limits.
-4. MEO-004 file object deletion lifecycle.
-5. MEO-010 normalized usage contract.
-6. MEO-011 real provider usage capture.
-7. MEO-012 versioned price estimates.
-8. MEO-014 Anthropic adapter.
-9. MEO-013 optional provider billing reconciliation.
-10. MEO-020 model profile runtime truthfulness.
-11. MEO-021 provider settings UX.
-12. MEO-030/031 plugin manifest and permission UX.
-13. MEO-040/041/042 file manager.
-14. MEO-050/051 cleanup and refactor.
+Ordering rule: a live security or correctness defect comes before documentation, a small duplicate-ownership fix comes before a feature, and a contract comes before any client UI. Size is relative (S ≈ under an hour, M ≈ a day, L ≈ multi-day), not a promise.
+
+| Phase | Tasks | Size | Why here |
+| --- | --- | --- | --- |
+| 0 — live security | MEO-002, then MEO-005 | S, S | Empty allowlist still reaches arbitrary public hosts with the user's key; the shadowed `/v1/storage` route is a same-file pair. Both are contained. |
+| 1 — documentation | MEO-001, MEO-051 (labeling only), MEO-006 | S, S, S | Cheap, unblocks every later task with one consistent map. Pair with labeling `presentation-model-routing.md` as the paused AgentService path, since it is the source of stale routing claims. |
+| 2 — abuse and cost control | MEO-003 | L | One authenticated account must not be able to exhaust provider spend across devices or IPs. |
+| 3 — usage truth | MEO-010 → MEO-011 (split by provider family) → MEO-012 | L | Contract first, then adapters, then pricing. Do not let `credits.ts` grow a second cost ledger; extend its summary with vendor-estimate fields. |
+| 4 — provider coverage | MEO-014 → MEO-011 (Anthropic usage slice) | M | Anthropic is part of the claimed official set; its usage must land in the same ledger. |
+| 5 — visible product | MEO-020 (corrected scope), MEO-021 | M, M | The only phase a user sees; depends on the truthful router state and the connection contract. |
+| 6 — files | MEO-004 → MEO-041 → MEO-007 → MEO-040 → MEO-042 | L | Lifecycle and deletion before any file-manager surface, so no screen claims what the API cannot do. |
+| 7 — plugins | MEO-030, MEO-031 | M | Manifest and permission model before third-party code, which stays out of v1. |
+| 8 — cleanup | MEO-050, MEO-051 remainder | L | Only after contract tests or view snapshots exist; never one giant rewrite. |
+
+Not on the critical path:
+
+- MEO-013 (provider billing reconciliation) is research-first and depends on optional vendor admin credentials. Timebox it as a spike; Meo must work without it.
+- MEO-050 must not start until a characterization baseline exists. Capture golden view snapshots as its own small task first; `app.rs` is 23k lines, so a split without snapshots cannot prove behavior preservation.
 
 This order fixes safety and correctness before adding more plugin features or polishing settings.
 

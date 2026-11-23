@@ -2,7 +2,9 @@
 
 # Meo AI presentation blocks and model roles
 
-Status: first repo-side contract. The native UI and AgentService expose these concepts, while true multi-model execution remains gated on the UI-free AgentCore/provider-broker work.
+Status: first repo-side contract for the **paused** AgentService/Newelle path (see root AGENTS.md). The native UI and AgentService expose these concepts, while true multi-model execution remains gated on the UI-free AgentCore/provider-broker work.
+
+> Current active path differs. `meo/core-rs/src/cloud/app.rs` `role_model()` already routes `router`, `title`, `check` (profile role `judge`), `judge`, `agent` and `summary` from the active Model Profile with model-health fallback. Do not cite this document's "one global model" boundary as the current state; see [product-architecture-plan.md](product-architecture-plan.md) §3.
 
 ## Native presentation blocks
 

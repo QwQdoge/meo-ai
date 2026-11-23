@@ -1,5 +1,7 @@
 # Meo AI Repository Audit — 2026-11-22
 
+> Superseded for maintenance by [repository-audit.md](repository-audit.md), the canonical audit that root AGENTS.md links. Keep this file only for its profile and product-structure notes and update the canonical file, not this one. The verified code findings below still held on 2026-11-23.
+
 Status: read-only audit of the current default branches. This records verified code/documentation gaps; it does not claim that planned behavior is implemented.
 
 Repositories reviewed:
@@ -52,7 +54,7 @@ Personalization profile (Meo API/Core-owned):
 Model Profile (existing Meo Account-owned data):
 - Name, description, active state and role-to-connection/model mapping.
 - Existing roles include default, fast, thinking, vision, image, image_edit, video, speech, transcription, agent, router, judge, title, summary and embedding.
-- UI must distinguish saved mapping from runtime-confirmed routing. Never show a role as actively routed if the runtime still uses one global model.
+- UI must distinguish saved mapping from runtime-confirmed routing per role. A saved preference must not be labelled active routing. (Corrected 2026-11-23: the active Core already routes six roles through `role_model()`; the runtime is not a single global model. See [product-architecture-plan.md](product-architecture-plan.md) §3.)
 - Show missing/disabled connection and unsupported capability as repair states; do not silently substitute another provider.
 
 Work task profile (Meo Core-owned behavior):

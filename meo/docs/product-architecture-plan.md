@@ -2,7 +2,7 @@
 
 Status: planning baseline, 2026-11-22. This is a design target, not a claim that every item is implemented.
 
-Latest repository findings: [Repository audit — 2026-11-22](repository-audit-2026-11-22.md). The audit records verified implementation gaps; use it together with the ordered [implementation backlog](implementation-backlog.md).
+Latest repository findings: [Repository audit](repository-audit.md) (canonical; `repository-audit-2026-11-22.md` is the older dated copy kept for its profile and product-structure notes). The audit records verified implementation gaps; use it together with the ordered [implementation backlog](implementation-backlog.md).
 
 This plan follows the current owner decisions in root AGENTS.md: one cloud-first product core, one shared view contract, thin native renderers, Meo Account as identity/credential authority, and Meo API as the authenticated product API. If a newer explicit owner decision conflicts with this plan, update the plan before implementation.
 
@@ -92,7 +92,7 @@ A named set of model choices for the roles already defined by meo-api/src/model-
 - Existing implementation: up to 20 profiles per account; each role maps to { credentialId, model }; one profile can be active.
 - Existing roles: default, fast, thinking, vision, image, image_edit, video, speech, transcription, agent, router, judge, title, summary and embedding.
 - Do not create a competing roles table or local profile JSON store.
-- Show whether a role is actually routed at runtime. A saved preference must not be labelled active routing when runtime only supports one global model.
+- Show, per role, whether it is actually routed at runtime. Verified 2026-11-23: the active Core's `role_model()` (`meo/core-rs/src/cloud/app.rs`) already resolves `router`, `title`, `check` (via profile role `judge`), `judge`, `agent` (Sub-agents) and `summary` from the active profile, with model-health fallback, and the answer path sends a per-request route. Not yet routed by role: `vision`, `image`, `image_edit`, `video`, `speech`, `transcription`, `embedding`, and explicit profile `default`/`fast`/`thinking`. Do not claim either full routing or "one global model"; show the real split per role.
 - Profiles can be named Cheapest, Best quality, OpenAI, Claude, etc. These are user configurations, not hard-coded modes.
 - Validate connection ownership, enabled state, model availability and required modalities. If a model disappears, keep the profile and show a repair state rather than silently substituting another provider.
 
