@@ -13806,6 +13806,12 @@ fn service_error_text(e: &ApiError) -> String {
         "endpoint_private_address" | "endpoint_not_permitted" | "endpoint_port_not_permitted" | "invalid_endpoint" =>
             "Use a public https address. Local, private-network and cloud-metadata addresses are not allowed.".into(),
         "https_required_for_key" => "A key is only sent over https. Use an https address.".into(),
+        // The server refuses a custom endpoint whose host it was not told to trust. Say so
+        // instead of showing the raw code: this connection cannot be used until the host is approved.
+        "custom_ai_endpoint_not_enabled" =>
+            "This custom endpoint is not on the approved list, so Meo will not send your key there. Use an official provider, or ask for the host to be approved.".into(),
+        "ai_endpoint_not_permitted" | "invalid_ai_endpoint" =>
+            "That address is not allowed. Use a public https address on port 443, without a path, query or credentials.".into(),
         "credits_exhausted" => "Not enough Meo Credits for that. Buying credits is coming soon; your own storage or keys cost 0 MC.".into(),
         "tier_smaller_than_usage" => "You already store more than that tier. Pick a larger tier or delete files first.".into(),
         "consent_required" => "Confirm first that Meo may use credits for storage.".into(),
@@ -20229,6 +20235,22 @@ mod tests {
         assert_eq!((key["binding"].as_str(), key["value"].as_str()), (Some("conn:c1:key"), Some("")));
         let name = find("conn_name_c1").unwrap();
         assert_eq!(name["binding"], "conn:c1:name");
+    }
+
+    #[test]
+    fn a_refused_custom_endpoint_explains_itself_instead_of_showing_a_code() {
+        let refused = ApiError::Status {
+            status: 403,
+            code: "custom_ai_endpoint_not_enabled".into(),
+        };
+        let text = connection_error_text(&refused);
+        assert!(text.contains("not on the approved list"), "{text}");
+        assert!(!text.contains("custom_ai_endpoint_not_enabled"), "no raw code reaches the user");
+        let bad = ApiError::Status {
+            status: 400,
+            code: "ai_endpoint_not_permitted".into(),
+        };
+        assert!(connection_error_text(&bad).contains("port 443"));
     }
 
     #[test]
