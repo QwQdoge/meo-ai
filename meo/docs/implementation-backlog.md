@@ -310,6 +310,20 @@ The repository AGENTS.md workflow controls branch/commit behavior. Do not create
 - Work: Project files, Chat attachments and Work artifacts views with distinct actions; show origin, size, type, storage location, scope and permission; provide preview/download/delete/export states.
 - Acceptance: local workspace files are never mixed with cloud files; unsupported actions are visibly unavailable instead of dead buttons.
 
+### MEO-043 — Add Goal + Plan to Work runs
+
+- [ ] Status: planned; contract and renderer slice
+- Repo: QwQdoge/meo-ai
+- Files: meo/core-rs/src/cloud/app.rs; meo/ui-schema/pages.json; meo/ui-schema/features.json only if required; shared view-contract docs; Web, Desktop and Android renderers only where the generic renderer lacks support.
+- Work:
+  - Reuse the existing Work `target` as the current task Goal; do not add a second goal store or persistent goal entity.
+  - Add an optional typed Plan to a Work run: ordered steps with stable IDs, title and pending/active/completed/skipped/blocked state.
+  - Generate plans only for multi-step tasks; keep simple requests plan-free.
+  - Show current step and progress compactly, with an expandable checklist; preserve plan state on completion, cancellation and failure.
+  - Keep plan state informational: it must never grant tool permission or bypass approval.
+  - Render from the shared Core view contract on Web, Desktop and Android.
+- Acceptance: a multi-step Work run shows one editable/inspectable Goal and a live Plan; a simple request has no unnecessary plan; step state survives terminal run states; all clients use the same Core-owned data and no duplicate goal/task authority is introduced.
+
 ## Priority 5 — architecture and repository cleanup
 
 ### MEO-050 — Split AppCore monolith by domain

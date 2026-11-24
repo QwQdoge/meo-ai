@@ -104,6 +104,18 @@ General and Code are task profiles inside Work, not account profiles or separate
 - A task profile selects guidance, Skills, suggested tools and safe defaults. It does not grant permission.
 - Target device and active workspace remain visible and explicitly selected.
 
+### Work goal and plan
+
+Work should expose a lightweight **Goal + Plan** for substantial tasks, without adding a second task system.
+
+- **Goal** is the user's intended outcome for the current Work task. Reuse the existing Work `target` concept as the goal; do not create a separate persistent goal entity or duplicate the task title. Keep it visible while the task is active and allow the user to revise or stop it.
+- **Plan** is an optional, ordered checklist generated after the agent understands the request. Each step has a concise title and one state: pending, active, completed, skipped or blocked. The agent updates steps as work progresses; users can inspect the plan without reading every tool event.
+- Do not force a plan for simple questions or one-step actions. Create one for multi-step research, coding, file operations or workflows where progress visibility helps.
+- Keep the plan compact and collapsible. Show the current step and overall progress by default; expand to inspect all steps. A plan is guidance, not permission: approvals and tool authorization remain separate and authoritative.
+- If the task changes materially, revise the remaining steps and make that change visible. Never mark a step complete merely because the model claims success; use the relevant tool/result state.
+- On completion, retain the goal and final plan with the run summary, alongside artifacts and file changes. On failure or cancellation, preserve completed steps and identify the blocked or unfinished step.
+- The same typed Goal/Plan view data must come from Core and render consistently on Web, Desktop and Android. Do not implement this only in the Web renderer.
+
 ### Profile UX
 
 - Settings → Models: connections, model catalogue and model details.
