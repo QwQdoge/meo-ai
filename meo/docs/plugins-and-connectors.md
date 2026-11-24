@@ -105,6 +105,46 @@ This is deliberately separate from manifest v1: a hosted connector declares an h
 a local server is a process on the user's machine with a different trust model. Local servers are
 not downloaded from the catalogue and cannot be installed by a manifest.
 
+## Your own plugin indexes
+
+The store ships a built-in catalogue and searches the public MCP registry. A user can also point
+Meo AI at **their own index**: an https JSON document of data only, so a team or a community can
+publish its own set without a Meo release.
+
+Add it in **Plugins > Discover > Your sources**. Format (`version` must be `1`):
+
+```json
+{ "version": 1, "name": "My team",
+  "entries": [
+    { "id": "gh", "name": "GitHub", "description": "Repos", "kind": "mcp",
+      "url": "https://api.githubcopilot.com/mcp/", "publisher": "meo" },
+    { "id": "notes", "name": "How we write", "description": "Style", "kind": "skill",
+      "skillUrl": "https://github.com/o/r/tree/main/skills/notes", "publisher": "me" }
+  ] }
+```
+
+An entry is one of exactly two kinds:
+
+- `mcp` with a public https `url` — installed like any hosted MCP server.
+- `skill` with a `skillUrl` to a GitHub `SKILL.md` or its folder — read as text, never executed.
+
+Rules:
+
+- The index is fetched by **Meo API**, not the client, so its origin goes through the same SSRF
+  guard as other user-supplied endpoints (public https only, no redirects, bounded body).
+- The body is size-capped (512 KB, 200 entries) and validated. A bad entry is **reported, not
+  trusted**: it is skipped with a reason and the rest of the index still loads.
+- Nothing in an index is executable code. There is no field for a script, archive or local path;
+  a `kind` other than `mcp`/`skill` is refused. This is why an index cannot install a DSH/Cordis
+  plugin — those are code, and manifest v1 does not load downloaded code.
+- One failing source is shown as failed and does not hide the others.
+- The list of sources is a local, per-device preference (`~/.config/meo/plugin-indexes.json`),
+  like the local MCP server list; the browser build has no file and shows none.
+
+DSH's plugin ecosystem is Cordis packages that run inside DSH's own Node host; they cannot run in
+Meo AI's Rust core. What both share is the MCP layer: an MCP server that DSH can connect to, Meo AI
+can connect to as well (hosted or local stdio), and a Skill is plain text either way.
+
 ## Where it is managed
 
 Everything about apps, skills and MCP servers lives on the **Plugins** page (Discover, Installed,

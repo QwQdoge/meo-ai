@@ -1143,6 +1143,22 @@ impl MeoApi {
         Ok(body["servers"].as_array().cloned().unwrap_or_default())
     }
 
+    /// Loads one user-chosen plugin index through Meo API, which vets the origin (SSRF) and the
+    /// shape. The index is data: MCP addresses and Skill links only.
+    pub async fn plugin_index(&self, token: &str, url: &str) -> Result<Value, ApiError> {
+        let encoded: String = url
+            .bytes()
+            .map(|b| match b {
+                b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b':' | b'/' => {
+                    (b as char).to_string()
+                }
+                _ => format!("%{b:02X}"),
+            })
+            .collect();
+        let path = format!("/v1/ai/catalog/index?url={encoded}");
+        self.request(token, Method::GET, &path, None).await
+    }
+
     /// Stores (or with `None` clears) the API token a hosted MCP server needs; Meo API keeps it encrypted.
     pub async fn set_plugin_token(
         &self,

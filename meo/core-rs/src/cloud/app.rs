@@ -395,6 +395,20 @@ pub enum Action {
     LocalServerPreset {
         preset: String,
     },
+    /// Adds one plugin index URL (a JSON document of MCP addresses and Skill links).
+    AddPluginIndex {
+        text: String,
+    },
+    /// Installs one entry from a user's index: an MCP address or a GitHub Skill.
+    InstallIndexEntry {
+        url: String,
+        kind: String,
+    },
+    RemovePluginIndex {
+        url: String,
+    },
+    /// Loads every saved index through Meo API, which vets the origin and the shape.
+    LoadPluginIndexes,
     /// Chooses a Meo Storage plan (`free`, `tier` + `tier` code, `dynamic`). Paid plans ask first.
     StoragePlan {
         plan: String,
@@ -968,6 +982,8 @@ struct StoreUi {
     category: String,
     query: String,
     registry: Option<Result<Vec<Value>, String>>,
+    /// Entries gathered from the user's own indexes: (source url, entries) or why one failed.
+    own_indexes: Option<Vec<(String, Result<Vec<Value>, String>)>>,
     loading: bool,
 }
 
@@ -1741,6 +1757,16 @@ impl AppCore {
             Action::LocalServerCommand { text } => self.local_server_command(&text).await,
             Action::LocalServerRemove { name } => self.local_server_remove(&name).await,
             Action::LocalServerPreset { preset } => self.local_server_preset(&preset).await,
+            Action::AddPluginIndex { text } => self.add_plugin_index(&text).await,
+            Action::InstallIndexEntry { url, kind } => {
+                if kind == "skill" {
+                    Box::pin(self.import_skill(url)).await
+                } else {
+                    Box::pin(self.import_mcp(url)).await
+                }
+            }
+            Action::RemovePluginIndex { url } => self.remove_plugin_index(&url).await,
+            Action::LoadPluginIndexes => self.load_plugin_indexes().await,
             Action::StoragePlan { plan, tier, consent } => self.storage_plan(&plan, &tier, consent).await,
             Action::ConnectAccount { provider, grant } => {
                 let (message, url) = if grant {
@@ -7791,6 +7817,71 @@ impl AppCore {
             }
             Err(e) => self.notice("error", e),
         }
+    }
+
+    // ---- the user's own plugin indexes ---------------------------------------
+
+    async fn add_plugin_index(&self, text: &str) {
+        let url = text.trim().to_owned();
+        if !super::plugin_index::valid_index_url(&url) {
+            return self.notice("error", "Enter the https address of a JSON index.");
+        }
+        match super::plugin_index::add(&url) {
+            Ok(()) => {
+                self.notice("info", "Index added. Loading it…");
+                self.load_plugin_indexes().await;
+            }
+            Err(e) => self.notice("error", e),
+        }
+    }
+
+    async fn remove_plugin_index(&self, url: &str) {
+        match super::plugin_index::remove(url) {
+            Ok(()) => {
+                self.update(|s| {
+                    if let Some(rows) = s.store.own_indexes.as_mut() {
+                        rows.retain(|(u, _)| u != url);
+                    }
+                });
+                self.notice("info", "Index removed.");
+            }
+            Err(e) => self.notice("error", e),
+        }
+    }
+
+    /// Loads every saved index through Meo API. One failing index does not hide the others, and a
+    /// bad entry the server skipped is shown as a reason rather than silently dropped.
+    async fn load_plugin_indexes(&self) {
+        let urls = super::plugin_index::indexes();
+        if urls.is_empty() {
+            self.update(|s| s.store.own_indexes = Some(Vec::new()));
+            return;
+        }
+        self.update(|s| s.store.loading = true);
+        let mut rows: Vec<(String, Result<Vec<Value>, String>)> = Vec::new();
+        for url in urls {
+            let result = self
+                .call(|api, t| {
+                    let url = url.clone();
+                    async move { api.plugin_index(&t, &url).await }
+                })
+                .await;
+            let entry = match result {
+                Ok(body) => {
+                    let mut entries: Vec<Value> = body["entries"].as_array().cloned().unwrap_or_default();
+                    for entry in entries.iter_mut() {
+                        entry["indexUrl"] = json!(url);
+                    }
+                    Ok(entries)
+                }
+                Err(e) => Err(e.to_string()),
+            };
+            rows.push((url, entry));
+        }
+        self.update(|s| {
+            s.store.loading = false;
+            s.store.own_indexes = Some(rows);
+        });
     }
 
     async fn save_credit_settings(&self, body: Value) {
@@ -17392,6 +17483,9 @@ fn store_page(s: &State) -> Value {
                 }
             };
             sections.push(registry);
+            let have_set: std::collections::HashSet<String> =
+                have.iter().map(|n| (*n).to_owned()).collect();
+            sections.push(own_indexes_section(s, &have_set));
         }
     }
     // Servers that run on this computer belong here with the hosted ones: same page, same rule
@@ -17494,6 +17588,95 @@ fn local_servers_section(
         }],
         "empty": "",
     }))
+}
+
+/// The user's own plugin indexes: what each source offers, plus the form to add one and the
+/// state of each saved source. Entries are data only; installing one reuses the existing import
+/// paths (an MCP address, or a Skill read from its GitHub link).
+fn own_indexes_section(s: &State, have: &std::collections::HashSet<String>) -> Value {
+    let urls = super::plugin_index::indexes();
+    let mut cards: Vec<Value> = Vec::new();
+    let mut empty = if urls.is_empty() {
+        "No sources yet. Add the https address of an index: a JSON list of MCP servers and Skills.".to_owned()
+    } else if s.store.own_indexes.is_none() {
+        "Loading your sources…".to_owned()
+    } else {
+        String::new()
+    };
+    if let Some(rows) = &s.store.own_indexes {
+        for (url, result) in rows {
+            match result {
+                Ok(entries) => {
+                    for entry in entries {
+                        let id = entry["id"].as_str().unwrap_or_default();
+                        let kind = entry["kind"].as_str().unwrap_or("mcp");
+                        let name = entry["name"].as_str().unwrap_or(id);
+                        let installed = have.contains(name);
+                        let mut actions = Vec::new();
+                        if !installed {
+                            actions.push(button(
+                                "Install",
+                                "primary",
+                                json!({
+                                    "type": "install_index_entry",
+                                    "url": if kind == "skill" { entry["skillUrl"].clone() } else { entry["url"].clone() },
+                                    "kind": kind,
+                                }),
+                            ));
+                        }
+                        actions.push(button(
+                            "Remove source",
+                            "secondary",
+                            json!({ "type": "remove_plugin_index", "url": url }),
+                        ));
+                        cards.push(store_card(
+                            format!("own:{url}:{id}"),
+                            name,
+                            entry["description"].as_str().unwrap_or_default(),
+                            &Value::Null,
+                            entry["publisher"].as_str().unwrap_or_default(),
+                            vec![if kind == "skill" { "Skill" } else { "MCP" }, "Your source"],
+                            if installed { "installed" } else { "available" },
+                            actions,
+                        ));
+                    }
+                }
+                Err(e) => {
+                    empty = format!("{url} could not be loaded: {e}");
+                    cards.push(store_card(
+                        format!("own-failed:{url}"),
+                        url,
+                        &format!("Could not be loaded: {e}"),
+                        &Value::Null,
+                        "",
+                        vec!["Your source"],
+                        "off",
+                        vec![button(
+                            "Remove source",
+                            "secondary",
+                            json!({ "type": "remove_plugin_index", "url": url }),
+                        )],
+                    ));
+                }
+            }
+        }
+    }
+    json!({
+        "id": "own-indexes",
+        "title": "Your sources",
+        "cards": cards,
+        "empty": empty,
+        "forms": [{
+            "id": "own-index-form",
+            "title": "Add a source",
+            "text": "An https JSON index that lists MCP servers and Skills. Meo checks the address and reads only data: an MCP URL or a GitHub SKILL.md, never code.",
+            "placeholder": "https://example.com/plugins.json",
+            "field": "text",
+            "button": "Add and load",
+            "icon": { "glyph": "link" },
+            "action": { "type": "add_plugin_index" },
+        }],
+    })
 }
 
 fn list_page(
@@ -20580,6 +20763,49 @@ mod tests {
         let form = &section["forms"][0];
         assert_eq!(form["action"]["type"], "local_server_command");
         assert_eq!(form["field"], "text");
+    }
+
+    #[test]
+    fn a_users_index_lists_entries_and_installs_each_by_its_kind() {
+        let mut s = State::default();
+        s.store.own_indexes = Some(vec![(
+            "https://example.com/plugins.json".to_owned(),
+            Ok(vec![
+                json!({ "id": "gh", "name": "GitHub", "description": "Repos", "kind": "mcp",
+                        "url": "https://api.githubcopilot.com/mcp/", "skillUrl": null, "publisher": "meo" }),
+                json!({ "id": "notes", "name": "Notes", "description": "How we write", "kind": "skill",
+                        "url": null, "skillUrl": "https://github.com/o/r/tree/main/skills/notes", "publisher": "me" }),
+            ]),
+        )]);
+        let have = std::collections::HashSet::from(["GitHub".to_owned()]);
+        let section = own_indexes_section(&s, &have);
+        assert_eq!(section["id"], "own-indexes");
+        let cards = section["cards"].as_array().unwrap();
+        // The installed MCP entry is not offered again; the Skill is.
+        let gh = cards.iter().find(|c| c["id"] == "own:https://example.com/plugins.json:gh").unwrap();
+        assert_eq!(gh["state"], "installed");
+        let notes = cards.iter().find(|c| c["id"] == "own:https://example.com/plugins.json:notes").unwrap();
+        let install = notes["actions"].as_array().unwrap().iter()
+            .find(|a| a["action"]["type"] == "install_index_entry")
+            .expect("an install action");
+        assert_eq!(install["action"]["kind"], "skill");
+        assert_eq!(install["action"]["url"], "https://github.com/o/r/tree/main/skills/notes");
+        // The add form uses the store's existing contract.
+        assert_eq!(section["forms"][0]["action"]["type"], "add_plugin_index");
+        assert_eq!(section["forms"][0]["field"], "text");
+    }
+
+    #[test]
+    fn a_failed_index_says_so_instead_of_hiding_the_others() {
+        let mut s = State::default();
+        s.store.own_indexes = Some(vec![
+            ("https://good.example/i.json".to_owned(), Ok(vec![json!({ "id": "a", "name": "A", "kind": "mcp", "url": "https://a.example/mcp" })])),
+            ("https://bad.example/i.json".to_owned(), Err("index_unavailable".to_owned())),
+        ]);
+        let section = own_indexes_section(&s, &std::collections::HashSet::new());
+        let cards = section["cards"].as_array().unwrap();
+        assert!(cards.iter().any(|c| c["id"] == "own-failed:https://bad.example/i.json"), "the failed source is visible");
+        assert!(cards.iter().any(|c| c["id"] == "own:https://good.example/i.json:a"), "the good source still loads");
     }
 
     #[test]
