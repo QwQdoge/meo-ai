@@ -195,6 +195,21 @@
       ]
     },
     {
+      "id": "ai",
+      "label": "Overview",
+      "labelKey": "meo.settings.aiOverview",
+      "owner": "client",
+      "group": "AI",
+      "items": [],
+      "keywords": [
+        "overview",
+        "summary",
+        "模型",
+        "总览",
+        "汇总"
+      ]
+    },
+    {
       "id": "models",
       "label": "Models & connections",
       "labelKey": "meo.settings.models",
@@ -207,6 +222,21 @@
         "byok",
         "模型",
         "密钥"
+      ]
+    },
+    {
+      "id": "profiles",
+      "label": "Model profiles",
+      "labelKey": "meo.settings.profiles",
+      "owner": "client",
+      "group": "AI",
+      "items": [],
+      "keywords": [
+        "profile",
+        "roles",
+        "model profile",
+        "配置档",
+        "角色"
       ]
     },
     {

@@ -355,6 +355,14 @@ pub enum Action {
     ServiceDelete {
         id: String,
     },
+    /// Opens the form for one service; the others stay collapsed to a single row.
+    ServiceEdit {
+        service: String,
+    },
+    /// Closes the form without saving.
+    ServiceCancel {
+        service: String,
+    },
     /// Asks the provider one tiny request for a saved AI connection, so the account records it works.
     CredentialTest {
         id: String,
@@ -1038,6 +1046,13 @@ struct State {
     services: Option<Value>,
     /// Unsaved Services fields, keyed "service:field". A key leaves this map once it is saved.
     svc_form: HashMap<String, String>,
+    /// Which service's form is open. Only one at a time, so the page is a list of rows by default
+    /// instead of a wall of inputs.
+    svc_edit: Option<String>,
+    /// Local MCP servers, read once per refresh instead of on every view rebuild (which used to
+    /// hit the filesystem), and the saved plugin index URLs cached the same way.
+    local_servers: Option<std::collections::BTreeMap<String, super::mcp_local::ServerConfig>>,
+    plugin_index_urls: Option<Vec<String>>,
     /// Unsaved Settings > Models fields, keyed "credentialId:name|key".
     conn_form: HashMap<String, String>,
     /// The last probe of a local server: the tools it reported, or why it did not start.
@@ -1631,6 +1646,7 @@ impl AppCore {
                     s.settings_section = id;
                     s.settings_query.clear();
                 });
+                self.refresh_local_caches();
                 self.load_section_data().await;
             }
             Action::CloseSettings => self.close_settings().await,
@@ -1747,6 +1763,16 @@ impl AppCore {
             Action::ServiceSave { service } => Box::pin(self.service_save(&service)).await,
             Action::ServiceTest { id } => self.service_test(&id).await,
             Action::ServiceDelete { id } => self.service_delete(&id).await,
+            Action::ServiceEdit { service } => {
+                self.update(|s| s.svc_edit = Some(service));
+            }
+            Action::ServiceCancel { service } => {
+                self.update(|s| {
+                    if s.svc_edit.as_deref() == Some(service.as_str()) {
+                        s.svc_edit = None;
+                    }
+                });
+            }
             Action::CredentialTest { id } => self.credential_test(&id).await,
             Action::CredentialReload { id } => self.credential_reload(&id).await,
             Action::CredentialToggle { id, enabled } => self.credential_toggle(&id, enabled).await,
@@ -2243,6 +2269,7 @@ impl AppCore {
 
     async fn load_all(&self) {
         self.update(|s| s.loading_models = true);
+        self.refresh_local_caches();
         // Independent requests run side by side; only what needs the credential list waits for it.
         let (conversations, credentials) = futures_util::join!(
             self.call(|api, t| async move { api.list_conversations(&t).await }),
@@ -7710,6 +7737,7 @@ impl AppCore {
         let shown = config.command_line();
         match super::mcp_local::upsert_user_server(&name, config) {
             Ok(()) => {
+                self.refresh_local_caches();
                 if let Some(host) = self.state.lock().unwrap().agent.host.clone() {
                     host.reload_mcp();
                 }
@@ -7775,6 +7803,7 @@ impl AppCore {
     async fn local_server_remove(&self, name: &str) {
         match super::mcp_local::remove_user_server(name) {
             Ok(()) => {
+                self.refresh_local_caches();
                 if let Some(host) = self.state.lock().unwrap().agent.host.clone() {
                     host.reload_mcp();
                 }
@@ -7807,6 +7836,7 @@ impl AppCore {
         let shown = config.command_line();
         match super::mcp_local::upsert_user_server(&name, config) {
             Ok(()) => {
+                self.refresh_local_caches();
                 if let Some(host) = self.state.lock().unwrap().agent.host.clone() {
                     host.reload_mcp();
                 }
@@ -7819,6 +7849,18 @@ impl AppCore {
         }
     }
 
+    /// Reads the on-disk settings the view shows (local MCP servers, plugin index URLs) once, so a
+    /// view rebuild never touches the filesystem. Called on startup, when a settings page opens,
+    /// and after any action that changes them.
+    fn refresh_local_caches(&self) {
+        let servers = super::mcp_local::user_servers();
+        let urls = super::plugin_index::indexes();
+        self.update(|s| {
+            s.local_servers = Some(servers);
+            s.plugin_index_urls = Some(urls);
+        });
+    }
+
     // ---- the user's own plugin indexes ---------------------------------------
 
     async fn add_plugin_index(&self, text: &str) {
@@ -7828,6 +7870,7 @@ impl AppCore {
         }
         match super::plugin_index::add(&url) {
             Ok(()) => {
+                self.refresh_local_caches();
                 self.notice("info", "Index added. Loading it…");
                 self.load_plugin_indexes().await;
             }
@@ -7838,6 +7881,7 @@ impl AppCore {
     async fn remove_plugin_index(&self, url: &str) {
         match super::plugin_index::remove(url) {
             Ok(()) => {
+                self.refresh_local_caches();
                 self.update(|s| {
                     if let Some(rows) = s.store.own_indexes.as_mut() {
                         rows.retain(|(u, _)| u != url);
@@ -12081,26 +12125,27 @@ impl AppCore {
                             ));
                         }
                     }
+                    "ai" => items.extend(ai_overview_items(s)),
                     "models" => {
+                        // Connections only. Which model each job uses is decided by the profile, so
+                        // it is shown here read-only with a link to Profiles — there is no second
+                        // place to change models.
                         items.extend(connection_items(s));
-                        items.extend(router_controls(s));
-                        items.push(json!({
-                            "id": "auto_title", "label": "Write chat titles with the model",
-                            "kind": "toggle", "binding": "chat.auto_title",
-                            "value": s.prefs.get("chat.auto_title").cloned().unwrap_or(json!(true)),
-                        }));
-                        let round_options: Vec<Value> =
-                            ["1", "2", "3", "5", "8", "10"].iter().map(|n| json!({ "value": n, "label": n })).collect();
-                        items.push(json!({
-                            "id": "goal_rounds", "label": "Continuation rounds for a goal", "kind": "select",
-                            "binding": "chat.goal_rounds", "value": goal_rounds_pref(s).to_string(),
-                            "options": round_options,
-                        }));
-                        items.push(json!({
-                            "id": "auto_consent", "label": "Send to the provider without asking each time",
-                            "kind": "toggle", "binding": "chat.auto_consent",
-                            "value": s.prefs.get("chat.auto_consent").cloned().unwrap_or(json!(true)),
-                        }));
+                        items.push(json!({ "id": "models_h_in_use", "kind": "heading", "label": "Models in use" }));
+                        items.extend(models_in_use(s));
+                        items.push(item(
+                            "models_edit_profiles".into(),
+                            "Which model does what",
+                            "Choose a profile to set every job at once.",
+                            vec![button(
+                                "Open Profiles",
+                                "primary",
+                                json!({ "type": "select_settings_section", "id": "profiles" }),
+                            )],
+                        ));
+                    }
+                    "profiles" => {
+                        items.extend(profile_items(s));
                     }
                     "usage" => {
                         items.extend(credit_items(s));
@@ -12149,31 +12194,6 @@ impl AppCore {
                 (!items.is_empty()).then(|| json!({ "id": section.id, "label": section.label, "items": items }))
             })
             .collect();
-        let mut sections = sections;
-        // One Models page: the connections and automatic choice, then the routes in use, then the
-        // profiles that set them. The routes are the working set; a profile fills them in.
-        if let Some(pos) = sections.iter().position(|x| x["id"] == "models") {
-            let all = sections[pos]["items"]
-                .as_array()
-                .cloned()
-                .unwrap_or_default();
-            let (mut routes, mut items) = (vec![], vec![]);
-            for it in all {
-                let id = it["id"].as_str().unwrap_or_default().to_owned();
-                if id.starts_with("route_") || id == "router_add" || id.starts_with("custom") {
-                    routes.push(it);
-                } else {
-                    items.push(it);
-                }
-            }
-            if !routes.is_empty() {
-                items.push(json!({ "id": "models_h_routes", "kind": "heading", "label": "Routes" }));
-                items.extend(routes);
-            }
-            items.push(json!({ "id": "models_h_profiles", "kind": "heading", "label": "Profiles" }));
-            items.extend(profile_items(s));
-            sections[pos]["items"] = Value::Array(items);
-        }
         // Groups come from settings.json.
         let group_of = |id: &str| {
             self.manifest
@@ -14256,11 +14276,15 @@ fn service_items(s: &State) -> Vec<Value> {
         ("server", "My Server", &["my_server"]),
     ];
     for (service, title, providers) in rows {
-        items.push(json!({ "id": format!("svc_h_{service}"), "kind": "heading", "label": title }));
         let saved = if service == "ai_model" { None } else { saved_connection(s, service) };
-        if service == "ai_model" {
-            for c in &s.credentials {
-                items.push(json!({ "id": format!("svc_ai_{}", c.id), "kind": "info", "label": c.display_name, "value": format!("{} · saved", provider_label(&c.provider)) }));
+        // One summary row per service; the form opens only for the one the user is editing, so the
+        // page never greets them with every input at once. AI model connections live on Models.
+        let summary = if service == "ai_model" {
+            if s.credentials.is_empty() {
+                "No key yet".to_owned()
+            } else {
+                let names: Vec<&str> = s.credentials.iter().map(|c| c.display_name.as_str()).collect();
+                format!("{} connection(s) · {}", s.credentials.len(), names.join(", "))
             }
         } else if let Some(c) = saved {
             let test = match &c["lastTest"] {
@@ -14268,17 +14292,41 @@ fn service_items(s: &State) -> Vec<Value> {
                 Value::Object(_) => " · last test failed",
                 _ => "",
             };
-            items.push(item(
-                format!("svc_saved_{service}"),
-                c["displayName"].as_str().unwrap_or(title),
-                &format!("{}{}{} · 0 MC", provider_label(c["provider"].as_str().unwrap_or_default()),
-                    c["keyHint"].as_str().filter(|h| !h.is_empty()).map(|h| format!(" · key {h}")).unwrap_or_default(), test),
-                vec![
-                    button("Test", "secondary", json!({ "type": "service_test", "id": c["id"] })),
-                    button("Remove", "danger", json!({ "type": "service_delete", "id": c["id"] })),
-                ],
+            format!("{}{}{} · 0 MC",
+                provider_label(c["provider"].as_str().unwrap_or_default()),
+                c["keyHint"].as_str().filter(|h| !h.is_empty()).map(|h| format!(" · key {h}")).unwrap_or_default(),
+                test)
+        } else {
+            "Not set · 0 MC".to_owned()
+        };
+        let editing = s.svc_edit.as_deref() == Some(service);
+        let mut buttons = Vec::new();
+        if service != "ai_model" {
+            if let Some(c) = saved {
+                buttons.push(button("Test", "secondary", json!({ "type": "service_test", "id": c["id"] })));
+                buttons.push(button("Remove", "danger", json!({ "type": "service_delete", "id": c["id"] })));
+            }
+            buttons.push(button(
+                if editing { "Close" } else if saved.is_some() { "Change" } else { "Add key" },
+                "primary",
+                if editing {
+                    json!({ "type": "service_cancel", "service": service })
+                } else {
+                    json!({ "type": "service_edit", "service": service })
+                },
+            ));
+        } else {
+            buttons.push(button(
+                "Manage on Models",
+                "secondary",
+                json!({ "type": "navigate", "route": "settings" }),
             ));
         }
+        items.push(item(format!("svc_saved_{service}"), title, &summary, buttons));
+        if !editing {
+            continue;
+        }
+        // The form for this service only.
         let provider = Some(field(service, "provider")).filter(|p| !p.is_empty())
             .or_else(|| saved.and_then(|c| c["provider"].as_str().map(str::to_owned)))
             .unwrap_or_else(|| default_provider(service).to_owned());
@@ -14327,6 +14375,77 @@ fn role_routed(role: &str) -> bool {
 /// Its saved model choices cannot run, so the role falls back and the editor shows a repair state.
 fn connection_missing(s: &State, credential: &str) -> bool {
     !s.credentials.iter().any(|c| c.id == credential)
+}
+
+/// The models the active profile sets for the jobs this app routes, read-only. This is the one
+/// place a user sees "which model does what"; changing it happens in Profiles, never here.
+fn models_in_use(s: &State) -> Vec<Value> {
+    let active = profile_list(s).into_iter().find(|p| p["active"] == true);
+    let mut rows = Vec::new();
+    // The app's fixed jobs, whether or not a profile has been loaded yet.
+    for slot in &super::router::SLOTS {
+        let id = slot.id;
+        let label = slot.label;
+        // What the active profile sets, when its connection still exists.
+        let from_profile = active.as_ref().and_then(|p| {
+            let credential = p["roles"][id]["credentialId"].as_str()?;
+            let model = p["roles"][id]["model"].as_str()?;
+            if model.is_empty() || connection_missing(s, credential) {
+                return None;
+            }
+            Some(format!("{} · {model}", connection_name(s, credential)))
+        });
+        // Otherwise the route slot this app falls back to, shown as such.
+        let value = match from_profile {
+            Some(text) => text,
+            None => match super::router::resolve(&s.router, id, s.selected.as_ref()) {
+                Some((credential, model)) if !model.is_empty() => {
+                    format!("{} · {model} (fallback)", connection_name(s, credential))
+                }
+                _ => "Follows your other models".to_owned(),
+            },
+        };
+        rows.push(item(format!("miu_{id}"), label, &value, vec![]));
+        // A model that keeps failing is shown here too, with the fix, because this is where a
+        // user looks to see which model a job uses.
+        let choice = active.as_ref().and_then(|p| {
+            let credential = p["roles"][id]["credentialId"].as_str()?.to_owned();
+            let model = p["roles"][id]["model"].as_str()?.to_owned();
+            Some((credential, model))
+        }).or_else(|| super::router::resolve(&s.router, id, s.selected.as_ref()).cloned());
+        let Some(choice) = choice.filter(|(_, m)| !m.is_empty()) else { continue };
+        let Some(h) = s.model_health.get(&health_key(&choice)) else { continue };
+        if h.until <= super::now_secs() {
+            continue;
+        }
+        let why = match h.code.as_str() {
+            "ai_provider_rate_limited" => "it is busy (rate limited)",
+            "ai_provider_unavailable" => "the provider says it is unavailable",
+            "ai_provider_request_timeout" => "it takes too long",
+            _ => "it failed",
+        };
+        rows.push(json!({
+            "id": format!("miu_{id}_health"), "kind": "hint",
+            "model": choice.1, "fails": h.fails, "reason": h.code, "missing": h.missing,
+            "text": if h.missing {
+                format!("Your provider does not offer {} for this, so every request to it fails. Pick another model.", choice.1)
+            } else {
+                format!("{} has not answered the last {} tries: {why}. Meo uses another model meanwhile; pick a different one to stop the wait.", choice.1, h.fails)
+            },
+        }));
+        rows.push(json!({
+            "id": format!("miu_{id}_fix"), "kind": "button", "style": "primary",
+            "label": "Choose another model",
+            "action": { "type": "select_settings_section", "id": "profiles" },
+        }));
+    }
+    if rows.is_empty() {
+        rows.push(json!({
+            "id": "miu_none", "kind": "info", "label": "No profiles yet",
+            "value": "Create one in Profiles to set which model does what.",
+        }));
+    }
+    rows
 }
 
 fn profile_list(s: &State) -> Vec<Value> {
@@ -14545,6 +14664,62 @@ fn profile_items(s: &State) -> Vec<Value> {
 
 /// Settings > Models: every AI connection with what it is, whether it works, which profiles use
 /// it and the actions that change it. Keys are never shown, only the masked hint the server keeps.
+/// Settings > Overview: the one screen that says, at a glance, what is connected, which profile
+/// drives the models and how many credits are left, with a jump to the page that changes each.
+fn ai_overview_items(s: &State) -> Vec<Value> {
+    let active = profile_list(s).into_iter().find(|p| p["active"] == true);
+    let profile_name = active
+        .as_ref()
+        .and_then(|p| p["name"].as_str())
+        .filter(|n| !n.is_empty())
+        .unwrap_or("No profile yet")
+        .to_owned();
+    let models = active.as_ref().map_or(0, |p| p["roles"].as_object().map_or(0, |r| r.len()));
+    let balance = s
+        .usage
+        .as_ref()
+        .and_then(|u| u["credits"]["balance_mc"].as_f64());
+    let mut stats = vec![
+        json!({ "label": "Connections", "value": s.credentials.len().to_string(),
+                "hint": if s.credentials.is_empty() { "None yet".to_owned() } else { format!("{} provider(s)", s.credentials.len()) } }),
+        json!({ "label": "Model profile", "value": profile_name,
+                "hint": if models == 0 { "Nothing set".to_owned() } else { format!("{models} job(s) set") } }),
+    ];
+    if let Some(balance) = balance {
+        stats.push(json!({ "label": "Credits", "value": format!("{} MC", mc_text(balance)) }));
+    }
+    vec![
+        json!({ "id": "ai_overview_stats", "kind": "stats", "items": stats }),
+        json!({
+            "id": "ai_overview_h", "kind": "heading", "label": "What do you want to change?",
+        }),
+        item(
+            "ai_ov_models".into(),
+            "Models & connections",
+            "Add a provider, test it, and see which model each job uses.",
+            vec![button("Open", "secondary", json!({ "type": "select_settings_section", "id": "models" }))],
+        ),
+        item(
+            "ai_ov_profiles".into(),
+            "Model profiles",
+            "One profile decides every job's model. Switch it, or make another for a different trade-off.",
+            vec![button("Open", "secondary", json!({ "type": "select_settings_section", "id": "profiles" }))],
+        ),
+        item(
+            "ai_ov_services".into(),
+            "Services & keys",
+            "Your own search, translation, storage and server keys. 0 MC with your own keys.",
+            vec![button("Open", "secondary", json!({ "type": "select_settings_section", "id": "services" }))],
+        ),
+        item(
+            "ai_ov_usage".into(),
+            "Usage & credits",
+            "What you have used, what it cost, and how much is left.",
+            vec![button("Open", "secondary", json!({ "type": "select_settings_section", "id": "usage" }))],
+        ),
+    ]
+}
+
 fn connection_items(s: &State) -> Vec<Value> {
     let mut items = Vec::new();
     if s.credentials.is_empty() {
@@ -14694,123 +14869,6 @@ fn connection_items(s: &State) -> Vec<Value> {
     items
 }
 
-/// Settings > Models: automatic choice, one model per route, custom routes.
-fn router_controls(s: &State) -> Vec<Value> {
-    let models = all_models(s);
-    let options_for = |task: &str, needs_image: bool| -> Vec<Value> {
-        let mut rows: Vec<(String, String, String)> = models
-            .iter()
-            .filter(|(_, m)| {
-                (m.task == task || m.tasks.iter().any(|t| t == task))
-                    && (!needs_image || m.input.iter().any(|i| i == "image"))
-            })
-            .map(|(c, m)| {
-                (
-                    format!("{} · {}", connection_name(s, c), m.name),
-                    c.clone(),
-                    m.id.clone(),
-                )
-            })
-            .collect();
-        rows.sort_by_key(|(label, _, _)| label.to_lowercase());
-        rows.into_iter()
-            .map(|(label, c, m)| json!({ "value": format!("{c}|{m}"), "label": label }))
-            .collect()
-    };
-    let select = |id: String,
-                  label: &str,
-                  binding: String,
-                  current: Option<&Choice>,
-                  mut options: Vec<Value>,
-                  optional: bool| {
-        if optional {
-            options.insert(0, json!({ "value": "", "label": "Not set" }));
-        }
-        let value = current.map(|(c, m)| format!("{c}|{m}")).unwrap_or_default();
-        // A saved model the provider no longer lists stays selectable.
-        if !value.is_empty() && !options.iter().any(|o| o["value"] == value.as_str()) {
-            options.push(json!({ "value": value, "label": current.map(|(_, m)| m.clone()).unwrap_or_default() }));
-        }
-        json!({ "id": id, "label": label, "kind": "select", "binding": binding, "value": value, "options": options })
-    };
-    let mut items: Vec<Value> = Vec::new();
-    items.extend([
-        json!({ "id": "router_auto", "label": "Choose the model automatically", "kind": "toggle", "binding": "models.auto", "value": s.router.auto }),
-        json!({ "id": "router_setup", "label": "Set up automatically", "kind": "button", "style": "secondary", "action": { "type": "auto_configure_router" } }),
-    ]);
-    // A model this device has seen failing: marked in the lists, and under its route a note and a fix.
-    let health = |choice: &Choice| s.model_health.get(&health_key(choice)).filter(|h| h.fails > 0 || h.missing);
-    let mark = |mut options: Vec<Value>| -> Vec<Value> {
-        for o in options.iter_mut() {
-            let Some((c, m)) = o["value"].as_str().and_then(|v| v.split_once('|')).map(|(c, m)| (c.to_owned(), m.to_owned())) else { continue };
-            if let Some(h) = health(&(c, m)) {
-                let label = o["label"].as_str().unwrap_or_default().to_owned();
-                o["label"] = json!(format!("{label} · {}", if h.missing { "not available" } else { "not answering" }));
-            }
-        }
-        options
-    };
-    for slot in &router::SLOTS {
-        let needs_image = slot.id == "vision";
-        items.push(select(
-            format!("route_{}", slot.id),
-            slot.label,
-            format!("route:{}", slot.id),
-            s.router.choice(slot.id),
-            mark(options_for(slot.task, needs_image)),
-            slot.id != "default",
-        ));
-        let Some(current) = s.router.choice(slot.id) else { continue };
-        let Some(h) = health(current) else { continue };
-        let why = match h.code.as_str() {
-            "ai_provider_rate_limited" => "it is busy (rate limited)",
-            "ai_provider_unavailable" => "the provider says it is unavailable",
-            "ai_provider_request_timeout" => "it takes too long",
-            _ => "it failed",
-        };
-        items.push(json!({
-            "id": format!("route_{}_health", slot.id), "kind": "hint",
-            "model": current.1, "fails": h.fails, "reason": h.code, "missing": h.missing,
-            "text": if h.missing {
-                format!("Your provider does not offer {} for this, so every request to it fails. Pick another model.", current.1)
-            } else {
-                format!("{} has not answered the last {} tries: {why}. Meo uses another model meanwhile; pick a different one to stop the wait.", current.1, h.fails)
-            },
-        }));
-        // One tap: the everyday model takes this route over (when it is a different, working one).
-        if slot.id != "default" {
-            if let Some(default) = s.router.choice("default").filter(|d| *d != current && health(d).is_none()) {
-                items.push(json!({
-                    "id": format!("route_{}_fix", slot.id), "kind": "button", "style": "primary",
-                    "label": format!("Use {} instead", model_name(s, default)), "modelName": model_name(s, default),
-                    "action": { "type": "set_setting", "binding": format!("route:{}", slot.id), "value": format!("{}|{}", default.0, default.1) },
-                }));
-            }
-        }
-    }
-    for custom in &s.router.custom {
-        items.push(json!({
-            "id": format!("{}_name", custom.id), "label": "Custom route name", "kind": "text", "single_line": true,
-            "binding": format!("route_label:{}", custom.id), "value": custom.label,
-        }));
-        items.push(select(
-            format!("route_{}", custom.id),
-            "Custom route model",
-            format!("route:{}", custom.id),
-            custom.choice.as_ref(),
-            options_for("chat", false),
-            true,
-        ));
-        items.push(json!({
-            "id": format!("{}_delete", custom.id), "label": "Delete custom route", "kind": "button", "style": "danger",
-            "action": { "type": "delete_custom_route", "id": custom.id },
-        }));
-    }
-    if s.router.custom.len() < router::MAX_CUSTOM {
-        items.push(json!({ "id": "router_add", "label": "Add custom route", "kind": "button", "style": "secondary", "action": { "type": "add_custom_route" } }));
-    }
-    items
-}
 
 /// The Scheduled page: scheduled tasks and (in Work) background jobs, each row with its own buttons.
 fn schedule_page(s: &State) -> Value {
@@ -17491,7 +17549,7 @@ fn store_page(s: &State) -> Value {
     // Servers that run on this computer belong here with the hosted ones: same page, same rule
     // that "installed" never reads as "working".
     if tab == "installed" {
-        if let Some(local) = local_servers_section(s, &super::mcp_local::user_servers()) {
+        if let Some(local) = local_servers_section(s, &s.local_servers.clone().unwrap_or_default()) {
             sections.insert(0, local);
         }
     }
@@ -17594,7 +17652,7 @@ fn local_servers_section(
 /// state of each saved source. Entries are data only; installing one reuses the existing import
 /// paths (an MCP address, or a Skill read from its GitHub link).
 fn own_indexes_section(s: &State, have: &std::collections::HashSet<String>) -> Value {
-    let urls = super::plugin_index::indexes();
+    let urls = s.plugin_index_urls.clone().unwrap_or_default();
     let mut cards: Vec<Value> = Vec::new();
     let mut empty = if urls.is_empty() {
         "No sources yet. Add the https address of an index: a JSON list of MCP servers and Skills.".to_owned()
@@ -17709,20 +17767,33 @@ fn list_page(
 #[cfg(test)]
 mod tests {
 
-    #[test]
-    fn services_page_offers_key_fields_that_save_on_entry_and_never_show_a_key() {
+    fn services_page_is_a_list_of_rows_and_opens_one_form_at_a_time() {
         let mut s = State::default();
         s.services = Some(json!({ "connections": [{ "id": "c1", "service": "web_search", "provider": "tavily", "displayName": "Tavily",
             "isDefault": true, "keyHint": "••••abcd", "lastTest": { "ok": true }, "mode": "api", "endpoint": "" }] }));
+        // Collapsed by default: a row for each service and NO input fields.
         let items = service_items(&s);
-        let key = items.iter().find(|i| i["binding"] == "svc:web_search:key").unwrap();
-        assert_eq!(key["secret"], true);
-        assert_eq!(key["value"], "");
-        assert!(key["description"].as_str().unwrap().contains("nobody can view"));
+        assert!(items.iter().all(|i| i["kind"] != "text"), "no inputs before a form is opened");
         let saved = items.iter().find(|i| i["id"] == "svc_saved_web_search").unwrap();
-        assert!(saved["value"].as_str().unwrap().contains("••••abcd"));
-        assert!(items.iter().any(|i| i["action"]["type"] == "service_save" && i["action"]["service"] == "server"));
-        assert!(items.iter().any(|i| i["binding"] == "svc:server:mode"));
+        assert!(saved["value"].as_str().unwrap().contains("••••abcd"), "the saved key hint shows on the row");
+        assert!(saved["buttons"].as_array().unwrap().iter()
+            .any(|b| b["action"]["type"] == "service_edit" && b["action"]["service"] == "web_search"));
+        // Opening one form shows that service's fields, and only that service's.
+        s.svc_edit = Some("web_search".into());
+        let items = service_items(&s);
+        let key = items.iter().find(|i| i["id"] == "svc_web_search_key").expect("the web search key field");
+        assert_eq!(key["secret"], true);
+        assert_eq!(key["value"], "", "a saved key is never shown again");
+        assert!(key["description"].as_str().unwrap().contains("nobody can view"));
+        assert!(
+            !items.iter().any(|i| i["id"] == "svc_translation_key"),
+            "another service's form stays closed"
+        );
+        assert!(items.iter().any(|i| i["action"]["type"] == "service_save" && i["action"]["service"] == "web_search"));
+        // The AI model key is not duplicated here; it lives on Models.
+        let ai = items.iter().find(|i| i["id"] == "svc_saved_ai_model").unwrap();
+        assert!(ai["value"].as_str().unwrap().contains("No key yet"));
+        assert!(!items.iter().any(|i| i["id"] == "svc_ai_model_key"));
     }
 
     #[test]
@@ -18916,7 +18987,7 @@ mod tests {
         // Settings marks it and offers the fix.
         futures_executor::block_on(c.dispatch(Action::OpenSettings { section: "models".into() }));
         let text = c.view().to_string();
-        assert!(text.contains("route_fast_health") && text.contains("has not answered the last 2 tries") && text.contains("route_fast_fix"), "{}", &text[..text.len().min(300)]);
+        assert!(text.contains("miu_fast_health") && text.contains("has not answered the last 2 tries") && text.contains("miu_fast_fix"), "{}", &text[..text.len().min(300)]);
         // A success clears it.
         c.note_model(&fast, None);
         assert_eq!(c.role_model("router"), Some(fast));
@@ -19527,7 +19598,8 @@ mod tests {
             .iter()
             .map(|x| x["id"].as_str().unwrap())
             .collect();
-        assert!(ids.contains(&"models") && !ids.contains(&"routes") && !ids.contains(&"profiles"));
+        // Profiles is its own page again; there is no separate "routes" page (models follow the profile).
+        assert!(ids.contains(&"models") && ids.contains(&"profiles") && !ids.contains(&"routes"));
         futures_executor::block_on(c.dispatch(Action::SelectSettingsSection {
             id: "models".into(),
         }));
@@ -19544,7 +19616,7 @@ mod tests {
             .as_array()
             .unwrap()
             .iter()
-            .any(|i| i["id"] == "route_default"));
+            .any(|i| i["id"] == "miu_default"));
     }
 
     fn seed_profiles(c: &AppCore) {
@@ -19572,7 +19644,7 @@ mod tests {
         seed_profiles(&c);
         c.update(|s| {
             s.route = "settings".into();
-            s.settings_section = "models".into();
+            s.settings_section = "profiles".into();
         });
         let page = c.view()["page"].clone();
         let items = |c: &AppCore| -> Vec<Value> {
@@ -19580,13 +19652,13 @@ mod tests {
                 .as_array()
                 .unwrap()
                 .iter()
-                .find(|x| x["id"] == "models")
+                .find(|x| x["id"] == "profiles")
                 .unwrap()["items"]
                 .as_array()
                 .unwrap()
                 .clone()
         };
-        assert_eq!(page["selected"], "models");
+        assert_eq!(page["selected"], "profiles");
         let list = items(&c);
         let ids: Vec<&str> = list.iter().map(|i| i["id"].as_str().unwrap()).collect();
         for expected in ["pf_generate", "pf_new", "pf_p1", "pf_p2"] {
@@ -19804,13 +19876,13 @@ mod tests {
         seed_profiles(&c);
         c.update(|s| {
             s.route = "settings".into();
-            s.settings_section = "models".into();
+            s.settings_section = "profiles".into();
             s.editing_profile = Some("p1".into());
         });
         let text = |id: &str| {
             c.view()["page"]["sections"]
                 .as_array()
-                .and_then(|sections| sections.iter().find(|x| x["id"] == "models"))
+                .and_then(|sections| sections.iter().find(|x| x["id"] == "profiles"))
                 .and_then(|section| section["items"].as_array())
                 .and_then(|items| items.iter().find(|i| i["id"] == format!("pf_hint_{id}")))
                 .and_then(|i| i["text"].as_str())
@@ -21392,53 +21464,71 @@ mod tests {
     }
 
     #[test]
-    fn settings_list_every_route_with_models_of_the_right_kind() {
+    fn the_overview_page_summarises_connections_profile_and_links_somewhere_useful() {
         let c = signed_in_core();
         seed_models(&c);
+        seed_profiles(&c);
         c.update(|s| {
             s.route = "settings".into();
-            s.router.auto = true;
-            s.router
-                .set("default", Some(("c1".into(), "gpt-5.1".into())));
+            s.settings_section = "ai".into();
+            s.usage = Some(json!({ "credits": { "balance_mc": 88.0 } }));
         });
-        let view = c.view();
-        let items: Vec<Value> = view["page"]["sections"]
+        let items = c.view()["page"]["sections"]
             .as_array()
             .unwrap()
             .iter()
-            .filter(|s| ["models", "routes"].contains(&s["id"].as_str().unwrap()))
-            .flat_map(|s| s["items"].as_array().unwrap().clone())
-            .collect();
-        let control = |id: &str| {
-            items
-                .iter()
-                .find(|i| i["id"] == id)
-                .unwrap_or_else(|| panic!("{id}"))
-        };
-        let values = |id: &str| -> Vec<String> {
-            control(id)["options"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|o| o["value"].as_str().unwrap().to_owned())
-                .collect()
-        };
-        assert_eq!(control("router_auto")["value"], true);
-        assert_eq!(control("route_default")["value"], "c1|gpt-5.1");
+            .find(|x| x["id"] == "ai")
+            .unwrap()["items"]
+            .as_array()
+            .unwrap()
+            .clone();
+        let find = |id: &str| items.iter().find(|i| i["id"] == id).cloned();
+        let stats = &find("ai_overview_stats").unwrap()["items"];
+        assert_eq!(stats[0]["value"], "2", "two connections");
+        assert_eq!(stats[1]["value"], "Balanced", "the active profile is named");
+        assert!(stats[2]["value"].as_str().unwrap().contains("88"), "the balance shows");
+        // Each row opens the page that changes that thing.
+        for (row, section) in [
+            ("ai_ov_models", "models"),
+            ("ai_ov_profiles", "profiles"),
+            ("ai_ov_services", "services"),
+            ("ai_ov_usage", "usage"),
+        ] {
+            assert_eq!(
+                find(row).unwrap()["buttons"][0]["action"]["id"], section,
+                "{row} should open {section}"
+            );
+        }
+    }
+
+    #[test]
+    fn models_show_what_the_profile_sets_and_are_not_edited_here() {
+        let c = signed_in_core();
+        seed_models(&c);
+        seed_profiles(&c);
+        c.update(|s| {
+            s.route = "settings".into();
+            s.settings_section = "models".into();
+        });
+        let items = c.view()["page"]["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["id"] == "models")
+            .unwrap()["items"]
+            .as_array()
+            .unwrap()
+            .clone();
+        let find = |id: &str| items.iter().find(|i| i["id"] == id).cloned();
+        // The everyday job shows the model the active profile set, read-only.
+        assert_eq!(find("miu_default").unwrap()["value"], "Gateway · gpt-5.1");
+        // There is no route selector and no model picker on this page any more.
         assert!(
-            !values("route_default").contains(&String::new()),
-            "everyday chat cannot be left unset"
+            !items.iter().any(|i| i["id"].as_str().is_some_and(|id| id.starts_with("route_"))),
+            "models are set by the profile, not edited here"
         );
-        assert_eq!(values("route_fast")[0], "", "other routes can be unset");
-        assert!(values("route_fast").contains(&"c2|gemini-3.5-flash".to_owned()));
-        assert!(
-            values("route_vision").contains(&"c1|gpt-5.1".to_owned())
-                && !values("route_vision").contains(&"c1|llama-3-70b".to_owned())
-        );
-        assert_eq!(values("route_image"), ["", "c1|flux-1.1-pro"]);
-        assert!(!values("route_image").contains(&"c1|gpt-5.1".to_owned()));
-        assert_eq!(values("route_transcription"), ["", "c1|whisper-1"]);
-        assert_eq!(control("route_default")["binding"], "route:default");
+        // Editing happens in Profiles, and this page points there.
+        assert_eq!(find("models_edit_profiles").unwrap()["buttons"][0]["action"]["id"], "profiles");
     }
 
     #[test]

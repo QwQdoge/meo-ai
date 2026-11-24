@@ -20,6 +20,26 @@ The user approved the eight settings groups and restrained Pixel candidate on
 2026-10-18. The maintained client source now adopts that structure. The deployed
 web service and installed packages have not been switched by this integration.
 
+## AI settings layout (2026-11-24)
+
+The AI group is four pages, so no page is a wall of inputs and models live in one place:
+
+| Page | Holds | Why |
+| --- | --- | --- |
+| **Overview** (`ai`) | Connections count, the active profile, the credit balance; a link to each page below. | The one screen that answers "what is set up, what is it using". |
+| **Models & connections** (`models`) | The connections (test, reload, enable, rename, replace key) and a **read-only** "Models in use" list; a failing model shows its repair hint here. | Models are decided by the profile, so they are shown, not edited, here. |
+| **Model profiles** (`profiles`) | The profile list (one default plus custom/AI-generated) and the editor with one picker per job. | The single place a model is chosen. |
+| **Services & keys** (`services`) | One row per service; only the row you open shows its fields. | No pile of inputs on open. |
+
+Rules:
+
+- A model is chosen **only** in a profile. There is no separate per-route editor any more; the
+  app resolves each job from the active profile and falls back to its other models.
+- Chat behaviour toggles (titles, continuation rounds, auto-consent) stay with their own section.
+- The local MCP server list and the plugin index URLs are read from disk **once** and cached in
+  state, refreshed on startup, when a settings page opens, and after any change. A view rebuild
+  never touches the filesystem.
+
 ## Routes
 
 | Method | Core route | Behavior |
