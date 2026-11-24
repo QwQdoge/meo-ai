@@ -13416,12 +13416,26 @@ fn composer_controls(s: &State) -> Vec<Value> {
             .find(|p| p["active"] == true)
             .and_then(|p| p["id"].as_str())
             .unwrap_or_default();
+        // Each option names the model it puts on the everyday job, so the choice is not just a
+        // name: the reader sees what it will actually run.
         let mut options: Vec<Value> = list
             .iter()
-            .map(|p| json!({ "value": p["id"], "label": p["name"] }))
+            .map(|p| {
+                let name = p["name"].as_str().unwrap_or("Profile");
+                let label = match (
+                    p["roles"]["default"]["credentialId"].as_str(),
+                    p["roles"]["default"]["model"].as_str(),
+                ) {
+                    (Some(credential), Some(model)) if !model.is_empty() => {
+                        format!("{name} · {}", model_label(s, credential, model))
+                    }
+                    _ => format!("{name} · not set"),
+                };
+                json!({ "value": p["id"], "label": label })
+            })
             .collect();
         if active.is_empty() {
-            options.insert(0, json!({ "value": "", "label": "Profile" }));
+            options.insert(0, json!({ "value": "", "label": "No profile — pick one to set the models" }));
         }
         controls.push(json!({
             "id": "profile", "label": "Profile", "kind": "select", "binding": "models.profile",
@@ -14432,6 +14446,16 @@ fn local_server_rows() -> Vec<LocalServerRow> {
 
 /// The models the active profile sets for the jobs this app routes, read-only. This is the one
 /// place a user sees "which model does what"; changing it happens in Profiles, never here.
+/// A model id as "Connection · model", for a picker label; the raw id when the connection is gone.
+fn model_label(s: &State, credential: &str, model: &str) -> String {
+    let connection = connection_name(s, credential);
+    if connection.is_empty() {
+        model.to_owned()
+    } else {
+        format!("{connection} · {model}")
+    }
+}
+
 fn models_in_use(s: &State) -> Vec<Value> {
     let active = profile_list(s).into_iter().find(|p| p["active"] == true);
     let mut rows = Vec::new();

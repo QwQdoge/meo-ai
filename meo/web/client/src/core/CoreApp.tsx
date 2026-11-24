@@ -827,6 +827,14 @@ function InspectorSection({ sec, act }: { sec: Spec; act: Act }) {
                 {sec.bar.segments.map((x: Spec, i: number) => <i key={i} className={`seg${i}`} style={{ flexGrow: x.value / total }} title={`${x.label}: ${x.value}`} />)}
               </div>
               <div className="core-muted core-bar-label">{sec.bar.label}</div>
+              {/* The numbers behind the bar, so a reader sees Input / Cached / Output rather than a shape. */}
+              {(sec.bar.segments ?? []).length > 0 && (
+                <div className="core-bar-legend">
+                  {sec.bar.segments.map((x: Spec, i: number) => (
+                    <span key={i}><i className={`core-swatch seg${i}`} aria-hidden />{x.label} <b>{Number(x.value).toLocaleString()}</b></span>
+                  ))}
+                </div>
+              )}
             </>
           )}
           {(sec.rows ?? []).filter((r: Spec) => r.label).map((r: Spec, i: number) => (
@@ -1331,6 +1339,16 @@ const MessageView = React.memo(
   (a, b) => sameMessage(a.m, b.m) && a.strings.copy === b.strings.copy && a.strings.copied === b.strings.copied,
 );
 
+/** Index of the user message whose bubble is the last one at or above the top of the thread. */
+function currentMessage(el: HTMLElement | null): number {
+  if (!el) return 0;
+  const bubbles = el.querySelectorAll<HTMLElement>(".core-message.user");
+  const top = el.getBoundingClientRect().top + 12;
+  let index = 0;
+  bubbles.forEach((b, i) => { if (b.getBoundingClientRect().top <= top) index = i; });
+  return index;
+}
+
 /** The edge of a scrolling area fades only while there is more to scroll in that direction (see shell.css). */
 function fadeEdges(el: HTMLElement | null) {
   if (!el) return;
@@ -1484,6 +1502,8 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
   }, []);
   // Something new arrived below while the reader was up the page: the jump button says so.
   const [fresh, setFresh] = useState(false);
+  // The message rail: one dot per user message, and which one the reader is looking at.
+  const [activeMsg, setActiveMsg] = useState(0);
   const seen = useRef({ count: messages.length, last });
   useEffect(() => {
     const grew = messages.length > seen.current.count || last > seen.current.last;
@@ -1578,6 +1598,25 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
   const matches: Spec[] = /^\/\S*$/.test(input)
     ? (composer.commands ?? []).filter((c: Spec) => c.name.startsWith(input.toLowerCase()))
     : [];
+  // One entry per user message, for the navigation rail.
+  const userMessages = messages.filter((m: Spec) => m.role === "user");
+  const railLabel = (m: Spec, k: number) => {
+    const text = String(m.text ?? "").replace(/\s+/g, " ").trim();
+    return text ? `#${k + 1} · ${text.slice(0, 60)}` : `#${k + 1}`;
+  };
+  /** Scrolls the k-th user message to the top of the thread (instant when motion is reduced). */
+  const jumpToMessage = (k: number) => {
+    const el = list.current;
+    const target = el?.querySelectorAll<HTMLElement>(".core-message.user")[k];
+    if (!el || !target) return;
+    const smooth = !reduced();
+    // Taking over the glide means the reader decides where to be: stop following the bottom.
+    stick.current = false;
+    setActiveMsg(k);
+    const delta = target.getBoundingClientRect().top - el.getBoundingClientRect().top - 12;
+    el.scrollTo({ top: el.scrollTop + delta, behavior: smooth ? "smooth" : "auto" });
+  };
+
   const pick = (c: Spec) => {
     if (c.hint) setInput(c.name + " ");
     else if (!composer.busy) {
@@ -1604,6 +1643,7 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
           setAtEnd(near || (programmatic.current && stick.current));
           if (near) setFresh(false);
           fadeEdges(el);
+          setActiveMsg(currentMessage(el));
         }}>
           {page.loading && (
             <div className="core-skeleton" role="status" aria-label="Loading">
@@ -1636,6 +1676,19 @@ function Conversation({ page, prefs, strings, act, work }: { page: Spec; prefs: 
           )}
           <div ref={end} />
         </div>
+        {userMessages.length > 1 && (
+          <nav className="core-rail" aria-label={strings.messages ?? "Messages"}>
+            {userMessages.map((m, k) => (
+              <button
+                key={k}
+                className={`core-rail-dot${k === activeMsg ? " on" : ""}`}
+                aria-label={railLabel(m, k)}
+                title={railLabel(m, k)}
+                onClick={() => jumpToMessage(k)}
+              />
+            ))}
+          </nav>
+        )}
         {!atEnd && messages.length > 0 && (
           <button className={`core-jump${fresh ? " fresh" : ""}`} aria-label={strings.jump ?? "Jump to the latest message"} title={strings.jump ?? "Jump to the latest message"}
             onClick={() => { stick.current = true; setFresh(false); toBottom(true); }}>
