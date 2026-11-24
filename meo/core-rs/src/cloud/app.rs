@@ -7716,11 +7716,24 @@ impl AppCore {
                     .map(|p| p.display().to_string())
             })
             .unwrap_or_else(|| ".".to_owned());
-        let outcome = tokio::task::spawn_blocking(move || {
-            super::mcp_local::probe(&config, std::path::Path::new(&root))
-        })
-        .await
-        .unwrap_or_else(|e| Err(format!("could not run the check: {e}")));
+        // A server start blocks, so it runs on its own thread and this loop polls for the result.
+        // `futures_timer` is used rather than a tokio primitive because the cloud core is built
+        // without tokio (the browser build has neither).
+        let slot: std::sync::Arc<std::sync::Mutex<Option<Result<Vec<super::mcp_local::ToolInfo>, String>>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(None));
+        let out = slot.clone();
+        std::thread::spawn(move || {
+            let result = super::mcp_local::probe(&config, std::path::Path::new(&root));
+            if let Ok(mut slot) = out.lock() {
+                *slot = Some(result);
+            }
+        });
+        let outcome = loop {
+            if let Some(result) = slot.lock().ok().and_then(|mut s| s.take()) {
+                break result;
+            }
+            futures_timer::Delay::new(std::time::Duration::from_millis(25)).await;
+        };
         match &outcome {
             Ok(tools) => self.notice(
                 "info",
