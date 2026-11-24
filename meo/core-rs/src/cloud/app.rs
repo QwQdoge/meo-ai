@@ -1058,6 +1058,9 @@ struct State {
     /// Which service's form is open. Only one at a time, so the page is a list of rows by default
     /// instead of a wall of inputs.
     svc_edit: Option<String>,
+    /// Filters the model lists in the profile editor. Not persisted: a search is a way to find a
+    /// model now, not a preference.
+    model_search: String,
     /// Local MCP servers, read once per refresh instead of on every view rebuild (which used to
     /// hit the filesystem), and the saved plugin index URLs cached the same way.
     local_servers: Option<Vec<LocalServerRow>>,
@@ -11767,6 +11770,10 @@ impl AppCore {
     // ---- settings ------------------------------------------------------
 
     async fn set_setting(&self, binding: String, value: Value) {
+        if binding == "model_search" {
+            self.update(|s| s.model_search = value.as_str().unwrap_or_default().to_owned());
+            return;
+        }
         if let Some(rest) = binding.strip_prefix("conn:") {
             // conn:<credentialId>:<field>. The typed value stays local until its Save button runs,
             // so a half-typed name or key never reaches the server on its own.
@@ -14726,6 +14733,11 @@ fn profile_items(s: &State) -> Vec<Value> {
                     "binding": format!("profile_name:{id}"), "value": profile["name"] }),
             json!({ "id": "pf_desc", "label": "Description", "kind": "text", "single_line": true,
                     "binding": format!("profile_desc:{id}"), "value": profile["description"] }),
+            // One filter for every job below, so a long provider catalogue is navigable without a
+            // new control type: it narrows each list in place.
+            json!({ "id": "pf_search", "label": "Find a model", "kind": "text", "single_line": true,
+                    "binding": "model_search", "value": s.model_search,
+                    "description": "Filters the model lists below. The current choice always stays." }),
         ];
         for role in role_list(s) {
             let rid = role["id"].as_str().unwrap_or_default();
@@ -14735,6 +14747,16 @@ fn profile_items(s: &State) -> Vec<Value> {
                 _ => String::new(),
             };
             let mut options = models_for_role(s, &role);
+            // Narrow the list by the filter, but never hide what is currently chosen.
+            let query = s.model_search.trim().to_lowercase();
+            if !query.is_empty() {
+                options.retain(|o| {
+                    o["value"].as_str() == Some(value.as_str())
+                        || o["label"]
+                            .as_str()
+                            .is_some_and(|l| l.to_lowercase().contains(&query))
+                });
+            }
             options.insert(0, json!({ "value": "", "label": "Not set" }));
             // A saved model the provider no longer lists stays selectable.
             let missing = matches!((current["credentialId"].as_str(), current["model"].as_str()),
@@ -21648,6 +21670,40 @@ mod tests {
                 "{row} should open {section}"
             );
         }
+    }
+
+    #[test]
+    fn the_model_search_narrows_every_role_list_but_keeps_the_current_choice() {
+        let c = signed_in_core();
+        seed_models(&c);
+        seed_profiles(&c);
+        c.update(|s| {
+            s.route = "settings".into();
+            s.settings_section = "profiles".into();
+            s.editing_profile = Some("p1".into());
+            s.model_search = "gemini".into();
+        });
+        let items = c.view()["page"]["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|x| x["id"] == "profiles")
+            .unwrap()["items"]
+            .as_array()
+            .unwrap()
+            .clone();
+        assert_eq!(items.iter().find(|i| i["id"] == "pf_search").unwrap()["value"], "gemini");
+        let default = items.iter().find(|i| i["id"] == "pf_role_default").unwrap();
+        let values: Vec<&str> = default["options"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|o| o["value"].as_str().unwrap())
+            .collect();
+        // "Not set" and the current choice stay; only matching models remain.
+        assert_eq!(values[0], "");
+        assert!(values.contains(&"c1|gpt-5.1"), "the current choice is never hidden: {values:?}");
+        assert!(values.iter().all(|v| !v.contains("llama")), "non-matching models are filtered out: {values:?}");
     }
 
     #[test]
