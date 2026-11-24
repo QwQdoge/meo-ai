@@ -59,6 +59,52 @@ Remove), **Import** (a GitHub link to a `SKILL.md` or its folder, or the https a
 MCP server). First-party entries carry an `icon`: a brand mark (`svg` path from simple-icons) or a
 named glyph; entries without one get a letter tile.
 
+## Servers on this computer (local MCP)
+
+Not every service has a hosted MCP server. A local MCP server runs on the user's own computer as
+their own user, and Meo reaches it over stdio. It is the only way to reach a service whose API is
+local — a QQ bot (NapCat, LLOneBot, Lagrange expose OneBot on `127.0.0.1`), a home-automation hub,
+a database.
+
+Where it is configured: **Plugins > Installed > Servers on this computer**, next to the hosted
+apps. Two ways to add one:
+
+- **Add QQ (OneBot bridge)** adds the community bridge command with its address filled in; the
+  access token goes in `ONEBOT_ACCESS_TOKEN` in the user's own file.
+- **Add any server by its command** takes one command line, for example
+  `uvx mcp-server-onebot`.
+
+The file stays the source of truth (`$XDG_CONFIG_HOME/meo/mcp.json`, else
+`~/.config/meo/mcp.json`), in the same shape Claude Desktop and [CC] use:
+
+```json
+{ "mcpServers": { "qq": { "command": "uvx", "args": ["mcp-server-onebot"],
+                          "env": { "ONEBOT_HTTP_URL": "http://127.0.0.1:3000",
+                                   "ONEBOT_ACCESS_TOKEN": "…" } } } }
+```
+
+A work folder's `.mcp.json` still overrides the user file by name. Editing through the app keeps
+every other key in the file intact and writes beside the file, then renames, so a crash cannot
+leave a half-written list.
+
+Rules:
+
+- **Nothing runs until Work calls it**, and only where a folder is open (desktop and the headless
+  runner). The browser build has no local processes and does not show this section.
+- A server runs as the user, so every call is a **command-level action** for the approval level:
+  looking is free, acting follows the level. Its output is data, never instructions.
+- A saved environment value may be a bot token. The card shows only the **fact** that a token is
+  needed and the variable names — never a value — and the value is never rendered back to any
+  client.
+- **Check** starts the server once, lists the tools it reports and stops it, so "added" never
+  reads as "working".
+- Removing a server deletes only its entry in the user file; a folder file that defines the same
+  name is left alone.
+
+This is deliberately separate from manifest v1: a hosted connector declares an https origin, while
+a local server is a process on the user's machine with a different trust model. Local servers are
+not downloaded from the catalogue and cannot be installed by a manifest.
+
 ## Where it is managed
 
 Everything about apps, skills and MCP servers lives on the **Plugins** page (Discover, Installed,

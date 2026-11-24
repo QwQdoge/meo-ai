@@ -25,11 +25,228 @@ const MAX_RESULT: usize = 16_000;
 const MAX_IMAGES: usize = 2;
 const MAX_IMAGE_CHARS: usize = 1_400_000;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ServerConfig {
     command: String,
     args: Vec<String>,
     env: BTreeMap<String, String>,
+}
+
+impl ServerConfig {
+    pub fn new(
+        command: impl Into<String>,
+        args: Vec<String>,
+        env: BTreeMap<String, String>,
+    ) -> Self {
+        Self {
+            command: command.into(),
+            args,
+            env,
+        }
+    }
+
+    pub fn command(&self) -> &str {
+        &self.command
+    }
+
+    pub fn args(&self) -> &[String] {
+        &self.args
+    }
+
+    /// Environment **keys** only. Values may be secrets (a bot token), so they are never listed.
+    pub fn env_keys(&self) -> Vec<String> {
+        self.env.keys().cloned().collect()
+    }
+
+    /// The command line as it will run, for the user to read before they trust it.
+    pub fn command_line(&self) -> String {
+        std::iter::once(self.command.clone())
+            .chain(self.args.iter().cloned())
+            .map(|part| {
+                if part.chars().any(|c| c.is_whitespace() || c == '"') {
+                    format!("\"{}\"", part.replace('"', "\\\""))
+                } else {
+                    part
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+}
+
+/// One tool a server reports, as the settings page shows it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ToolInfo {
+    pub name: String,
+    pub description: String,
+    pub fields: Vec<String>,
+}
+
+/// Reads `tools/list` into the shape both the prompt and the settings page use.
+fn tools_of(result: &Value) -> Vec<ToolInfo> {
+    result["tools"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|tool| {
+            let name = tool["name"].as_str()?.to_owned();
+            Some(ToolInfo {
+                name,
+                description: tool["description"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .chars()
+                    .take(160)
+                    .collect(),
+                fields: tool["inputSchema"]["properties"]
+                    .as_object()
+                    .map(|p| p.keys().cloned().collect())
+                    .unwrap_or_default(),
+            })
+        })
+        .collect()
+}
+
+/// Where the user-level server list lives (`$XDG_CONFIG_HOME/meo/mcp.json` or `~/.config/meo/mcp.json`).
+pub fn user_config_path() -> Option<PathBuf> {
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
+    Some(base.join("meo").join("mcp.json"))
+}
+
+/// The servers the user configured for every folder (the file `~/.config/meo/mcp.json`).
+pub fn user_servers() -> BTreeMap<String, ServerConfig> {
+    user_config_path()
+        .map(|path| servers_in(&path))
+        .unwrap_or_default()
+}
+
+fn servers_in(path: &Path) -> BTreeMap<String, ServerConfig> {
+    let Some(map) = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+        .and_then(|value| value["mcpServers"].as_object().cloned())
+    else {
+        return BTreeMap::new();
+    };
+    map.into_iter()
+        .filter_map(|(name, entry)| Some((name, config_of(&entry)?)))
+        .collect()
+}
+
+fn config_of(entry: &Value) -> Option<ServerConfig> {
+    let command = entry["command"].as_str()?.to_owned();
+    let args = entry["args"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default();
+    let env = entry["env"]
+        .as_object()
+        .map(|o| {
+            o.iter()
+                .filter_map(|(k, v)| v.as_str().map(|v| (k.clone(), v.to_owned())))
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(ServerConfig { command, args, env })
+}
+
+/// Reads, changes and rewrites one servers file without losing anything else in it.
+/// The path is explicit so the edit can be tested without touching the real file.
+fn edit_servers_file(
+    path: &Path,
+    change: impl FnOnce(&mut serde_json::Map<String, Value>),
+) -> Result<(), String> {
+    let mut root: Value = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_else(|| json!({}));
+    if !root.is_object() {
+        root = json!({});
+    }
+    let servers = root
+        .as_object_mut()
+        .expect("just made it an object")
+        .entry("mcpServers")
+        .or_insert_with(|| json!({}));
+    if !servers.is_object() {
+        *servers = json!({});
+    }
+    change(servers.as_object_mut().expect("just made it an object"));
+    let text = serde_json::to_string_pretty(&root).map_err(|e| e.to_string())?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
+    }
+    // Write beside the real file and rename, so a crash never leaves a half-written list.
+    let temporary = path.with_extension("json.tmp");
+    std::fs::write(&temporary, text)
+        .map_err(|e| format!("cannot write {}: {e}", temporary.display()))?;
+    std::fs::rename(&temporary, path).map_err(|e| format!("cannot replace {}: {e}", path.display()))
+}
+
+/// Adds or replaces one user-level server.
+pub fn upsert_user_server(name: &str, config: ServerConfig) -> Result<(), String> {
+    let path =
+        user_config_path().ok_or("no home folder, so there is nowhere to save local servers")?;
+    upsert_server_at(&path, name, config)
+}
+
+/// Removes one user-level server. A folder file that defines the same name is left alone.
+pub fn remove_user_server(name: &str) -> Result<(), String> {
+    let path =
+        user_config_path().ok_or("no home folder, so there is nowhere to save local servers")?;
+    remove_server_at(&path, name)
+}
+
+fn upsert_server_at(path: &Path, name: &str, config: ServerConfig) -> Result<(), String> {
+    let entry = json!({
+        "command": config.command,
+        "args": config.args,
+        "env": config.env,
+    });
+    edit_servers_file(path, |servers| {
+        servers.insert(name.to_owned(), entry);
+    })
+}
+
+fn remove_server_at(path: &Path, name: &str) -> Result<(), String> {
+    edit_servers_file(path, |servers| {
+        servers.remove(name);
+    })
+}
+
+/// A ready-to-edit local server the settings page can offer, so the user does not write JSON.
+/// Returns `(server name, command, args, env lines)`; `None` for an unknown preset.
+///
+/// QQ is the reason this exists: a QQ bot is a local process (NapCat, LLOneBot, Lagrange), not a
+/// hosted service, so it can only be reached over a local MCP bridge. The preset points at a
+/// community OneBot bridge and leaves the address for the user to confirm; nothing is installed or
+/// started until they press Save.
+pub fn preset(id: &str) -> Option<(String, String, Vec<String>, String)> {
+    match id {
+        "qq" => Some((
+            "qq".to_owned(),
+            "uvx".to_owned(),
+            vec!["mcp-server-onebot".to_owned()],
+            "ONEBOT_HTTP_URL=http://127.0.0.1:3000\nONEBOT_ACCESS_TOKEN=".to_owned(),
+        )),
+        _ => None,
+    }
+}
+
+/// Starts a server on its own and asks what it offers, then stops it. Used to check a new one
+/// before the user relies on it.
+pub fn probe(config: &ServerConfig, cwd: &Path) -> Result<Vec<ToolInfo>, String> {
+    let mut server = Server::start(config, cwd)?;
+    let result = server.request("tools/list", json!({}))?;
+    Ok(tools_of(&result))
 }
 
 /// The servers configured for a work folder; the folder's file overrides the user's by name.
@@ -184,7 +401,11 @@ fn browser_preset(mode: &str, profile_dir: &Path) -> Option<ServerConfig> {
         "chrome" => args.push("--extension".to_owned()),
         _ => return None,
     }
-    Some(ServerConfig { command: "npx".to_owned(), args, env: BTreeMap::new() })
+    Some(ServerConfig {
+        command: "npx".to_owned(),
+        args,
+        env: BTreeMap::new(),
+    })
 }
 
 /// Where the persistent browser profile of Meo lives.
@@ -218,6 +439,20 @@ impl Manager {
             tools: None,
             browser: "off".to_owned(),
         }
+    }
+
+    /// Re-reads the configuration files after the user added or removed a server, so the change
+    /// applies without restarting the app. Servers still running keep their process; the tool list
+    /// is rebuilt from what is configured now.
+    pub fn reload(&mut self) {
+        self.files = load_config(&self.root);
+        self.config = self.files.clone();
+        if let Some(preset) = browser_preset(&self.browser, &browser_profile_dir()) {
+            self.config.insert(BROWSER.to_owned(), preset);
+        }
+        self.running
+            .retain(|name, _| self.config.contains_key(name));
+        self.tools = None;
     }
 
     /// Switches "Browser control" (`off`, `isolated`, `profile`, `chrome`). A change stops the old browser
@@ -260,25 +495,13 @@ impl Manager {
                 .and_then(|s| s.request("tools/list", json!({})))
             {
                 Ok(result) => {
-                    for tool in result["tools"]
-                        .as_array()
-                        .cloned()
-                        .unwrap_or_default()
-                        .into_iter()
-                        .take(40)
-                    {
-                        let tool_name = tool["name"].as_str().unwrap_or_default();
-                        let about: String = tool["description"]
-                            .as_str()
-                            .unwrap_or_default()
-                            .chars()
-                            .take(160)
-                            .collect();
-                        let schema: String = tool["inputSchema"]["properties"]
-                            .as_object()
-                            .map(|p| p.keys().cloned().collect::<Vec<_>>().join(","))
-                            .unwrap_or_default();
-                        lines.push(format!("- {name} / {tool_name} {{{schema}}}: {about}"));
+                    for tool in tools_of(&result).into_iter().take(40) {
+                        lines.push(format!(
+                            "- {name} / {} {{{}}}: {}",
+                            tool.name,
+                            tool.fields.join(","),
+                            tool.description
+                        ));
                     }
                 }
                 Err(e) => lines.push(format!("- {name}: unavailable ({e})")),
@@ -294,6 +517,14 @@ impl Manager {
         };
         self.tools = Some(text.clone());
         text
+    }
+
+    /// What one configured server offers, starting it if it is not running yet.
+    pub fn probe(&mut self, name: &str) -> Result<Vec<ToolInfo>, String> {
+        let result = self
+            .server(name)
+            .and_then(|s| s.request("tools/list", json!({})))?;
+        Ok(tools_of(&result))
     }
 
     pub fn call(&mut self, server: &str, tool: &str, args: &Value) -> Outcome {
@@ -329,20 +560,33 @@ impl Manager {
                 continue;
             }
             match (part["mimeType"].as_str(), part["data"].as_str()) {
-                (Some(mime), Some(data)) if images.len() < MAX_IMAGES && data.len() <= MAX_IMAGE_CHARS
-                    && matches!(mime, "image/png" | "image/jpeg" | "image/webp" | "image/gif") => {
+                (Some(mime), Some(data))
+                    if images.len() < MAX_IMAGES
+                        && data.len() <= MAX_IMAGE_CHARS
+                        && matches!(
+                            mime,
+                            "image/png" | "image/jpeg" | "image/webp" | "image/gif"
+                        ) =>
+                {
                     images.push((mime.to_owned(), data.to_owned()));
                 }
                 _ => left_out += 1,
             }
         }
         if !images.is_empty() {
-            text.push_str(&format!("\n({} picture(s) from this call are attached to this message)", images.len()));
+            text.push_str(&format!(
+                "\n({} picture(s) from this call are attached to this message)",
+                images.len()
+            ));
         }
         if left_out > 0 {
             text.push_str(&format!("\n({left_out} picture(s) were left out: too large, too many or not an image the model can read)"));
         }
-        let outcome = if result["isError"] == true { Outcome::fail(text) } else { Outcome::done(text) };
+        let outcome = if result["isError"] == true {
+            Outcome::fail(text)
+        } else {
+            Outcome::done(text)
+        };
         outcome.with_images(images)
     }
 }
@@ -372,6 +616,76 @@ for line in sys.stdin:
 "#;
 
     #[test]
+    fn a_saved_server_round_trips_and_keeps_the_rest_of_the_file() {
+        let dir = std::env::temp_dir().join(format!("meo-mcp-save-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("mcp.json");
+        // A hand-written file with an unrelated key must survive our edit.
+        std::fs::write(
+            &path,
+            r#"{"mcpServers":{"keep":{"command":"x"}},"other":{"a":1}}"#,
+        )
+        .unwrap();
+
+        let env = BTreeMap::from([("TOKEN".to_owned(), "secret-value".to_owned())]);
+        upsert_server_at(
+            &path,
+            "qq",
+            ServerConfig::new("uvx", vec!["bridge".to_owned()], env),
+        )
+        .unwrap();
+
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            text.contains("\"other\""),
+            "an unrelated key is preserved: {text}"
+        );
+        assert!(
+            text.contains("\"keep\""),
+            "another server is preserved: {text}"
+        );
+        let saved = servers_in(&path);
+        assert_eq!(saved["qq"].command(), "uvx");
+        assert_eq!(saved["qq"].args(), ["bridge".to_owned()]);
+        // The value is stored, but a listing never shows it.
+        assert_eq!(saved["qq"].env_keys(), vec!["TOKEN".to_owned()]);
+
+        remove_server_at(&path, "qq").unwrap();
+        let after = servers_in(&path);
+        assert!(!after.contains_key("qq"));
+        assert!(after.contains_key("keep"), "removing one leaves the others");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_server_row_shows_the_command_and_never_an_environment_value() {
+        let env = BTreeMap::from([("ONEBOT_ACCESS_TOKEN".to_owned(), "top-secret".to_owned())]);
+        let config = ServerConfig::new(
+            "uvx",
+            vec!["mcp-server-onebot".to_owned(), "--flag value".to_owned()],
+            env,
+        );
+        assert_eq!(
+            config.command_line(),
+            "uvx mcp-server-onebot \"--flag value\""
+        );
+        assert_eq!(config.env_keys(), vec!["ONEBOT_ACCESS_TOKEN".to_owned()]);
+        assert!(!format!("{:?}", config.env_keys()).contains("top-secret"));
+    }
+
+    #[test]
+    fn the_qq_preset_offers_a_local_bridge_to_confirm() {
+        let (name, command, args, env) = preset("qq").expect("a QQ preset");
+        assert_eq!(name, "qq");
+        assert!(!command.is_empty());
+        assert!(args.iter().any(|a| a.contains("onebot")), "{args:?}");
+        assert!(env.contains("ONEBOT_HTTP_URL"), "{env}");
+        // Nothing secret is prefilled: the token stays empty for the user to paste.
+        assert!(env.contains("ONEBOT_ACCESS_TOKEN="), "{env}");
+        assert!(preset("nope").is_none());
+    }
+
+    #[test]
     fn a_configured_stdio_server_is_listed_and_called() {
         let dir = std::env::temp_dir().join(format!("meo-mcp-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -391,8 +705,17 @@ for line in sys.stdin:
         let shot = manager.call("fake", "shot", &json!({}));
         assert!(shot.ok);
         assert_eq!(shot.images.len(), 2, "{:?}", shot.images);
-        assert_eq!(shot.images[0], ("image/png".to_owned(), "iVBORw0KGgo=".to_owned()));
-        assert!(shot.text.contains("2 picture(s) from this call are attached") && shot.text.contains("left out"), "{}", shot.text);
+        assert_eq!(
+            shot.images[0],
+            ("image/png".to_owned(), "iVBORw0KGgo=".to_owned())
+        );
+        assert!(
+            shot.text
+                .contains("2 picture(s) from this call are attached")
+                && shot.text.contains("left out"),
+            "{}",
+            shot.text
+        );
         assert!(out.images.is_empty());
         let _ = std::fs::remove_dir_all(dir);
     }
@@ -401,17 +724,30 @@ for line in sys.stdin:
     fn browser_control_adds_playwright_in_the_chosen_way_and_leaves_the_users_own_servers() {
         let dir = std::env::temp_dir().join(format!("meo-mcp-browser-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join(".mcp.json"), r#"{"mcpServers":{"fetch":{"command":"uvx","args":["mcp-server-fetch"]}}}"#).unwrap();
+        std::fs::write(
+            dir.join(".mcp.json"),
+            r#"{"mcpServers":{"fetch":{"command":"uvx","args":["mcp-server-fetch"]}}}"#,
+        )
+        .unwrap();
         let mut m = Manager::new(&dir);
         let profile = dir.join("profile");
         assert!(!m.config.contains_key(BROWSER), "off by default");
         m.set_browser("isolated", &profile);
         assert_eq!(m.config[BROWSER].command, "npx");
-        assert_eq!(m.config[BROWSER].args, ["-y", "@playwright/mcp@latest", "--isolated"]);
+        assert_eq!(
+            m.config[BROWSER].args,
+            ["-y", "@playwright/mcp@latest", "--isolated"]
+        );
         m.set_browser("profile", &profile);
-        assert!(m.config[BROWSER].args.ends_with(&["--user-data-dir".to_owned(), profile.display().to_string()]));
+        assert!(m.config[BROWSER]
+            .args
+            .ends_with(&["--user-data-dir".to_owned(), profile.display().to_string()]));
         m.set_browser("chrome", &profile);
-        assert_eq!(m.config[BROWSER].args.last().unwrap(), "--extension", "the user's own Chrome through the bridge extension");
+        assert_eq!(
+            m.config[BROWSER].args.last().unwrap(),
+            "--extension",
+            "the user's own Chrome through the bridge extension"
+        );
         assert!(m.config.contains_key("fetch"), "the user's servers stay");
         m.set_browser("off", &profile);
         assert!(!m.config.contains_key(BROWSER) && m.config.contains_key("fetch"));
@@ -423,11 +759,40 @@ for line in sys.stdin:
     #[test]
     fn looking_at_a_page_asks_nothing_but_acting_on_it_asks_like_a_command() {
         use super::super::agent::{gate, Gate, Permission, Tool};
-        let call = |tool: &str| Tool::Mcp { server: "browser".into(), tool: tool.into(), args: json!({}) };
-        assert_eq!(gate(Permission::Low, &call("browser_snapshot")), Gate::Allow);
-        assert_eq!(gate(Permission::Low, &call("browser_take_screenshot")), Gate::Allow);
-        assert!(matches!(gate(Permission::Low, &call("browser_click")), Gate::Ask(_)));
-        assert!(matches!(gate(Permission::Low, &call("browser_navigate")), Gate::Ask(_)));
-        assert!(matches!(gate(Permission::Low, &Tool::Mcp { server: "other".into(), tool: "browser_snapshot".into(), args: json!({}) }), Gate::Ask(_)), "only the built-in browser server");
+        let call = |tool: &str| Tool::Mcp {
+            server: "browser".into(),
+            tool: tool.into(),
+            args: json!({}),
+        };
+        assert_eq!(
+            gate(Permission::Low, &call("browser_snapshot")),
+            Gate::Allow
+        );
+        assert_eq!(
+            gate(Permission::Low, &call("browser_take_screenshot")),
+            Gate::Allow
+        );
+        assert!(matches!(
+            gate(Permission::Low, &call("browser_click")),
+            Gate::Ask(_)
+        ));
+        assert!(matches!(
+            gate(Permission::Low, &call("browser_navigate")),
+            Gate::Ask(_)
+        ));
+        assert!(
+            matches!(
+                gate(
+                    Permission::Low,
+                    &Tool::Mcp {
+                        server: "other".into(),
+                        tool: "browser_snapshot".into(),
+                        args: json!({})
+                    }
+                ),
+                Gate::Ask(_)
+            ),
+            "only the built-in browser server"
+        );
     }
 }

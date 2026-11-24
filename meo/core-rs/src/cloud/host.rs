@@ -280,6 +280,13 @@ mod native {
             }
         }
 
+        /// Re-reads the local MCP configuration (the user added or removed a server).
+        pub fn reload_mcp(&self) {
+            if let Ok(mut m) = self.mcp.lock() {
+                m.reload();
+            }
+        }
+
         /// Background jobs that settled since the last call (each once), for the model's next result.
         pub fn settled_jobs(&self) -> Vec<String> {
             self.jobs.settled_notices()
@@ -604,6 +611,9 @@ impl Host {
     }
 
     pub fn set_browser(&self, _mode: &str) {}
+
+    /// Local MCP servers need a computer; the browser build has none.
+    pub fn reload_mcp(&self) {}
 
     pub fn settled_jobs(&self) -> Vec<String> {
         Vec::new()

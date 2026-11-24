@@ -379,6 +379,22 @@ pub enum Action {
     CredentialReplaceKey {
         id: String,
     },
+    /// Starts a local MCP server once to see what it offers (Settings > Permissions).
+    LocalServerProbe {
+        name: String,
+    },
+    /// Adds a local MCP server from one command line the user typed or confirmed.
+    LocalServerCommand {
+        text: String,
+    },
+    /// Removes a local MCP server from the user-level list.
+    LocalServerRemove {
+        name: String,
+    },
+    /// Fills the form with a ready-to-edit command for a known local service (QQ, ...).
+    LocalServerPreset {
+        preset: String,
+    },
     /// Chooses a Meo Storage plan (`free`, `tier` + `tier` code, `dynamic`). Paid plans ask first.
     StoragePlan {
         plan: String,
@@ -1008,6 +1024,8 @@ struct State {
     svc_form: HashMap<String, String>,
     /// Unsaved Settings > Models fields, keyed "credentialId:name|key".
     conn_form: HashMap<String, String>,
+    /// The last probe of a local server: the tools it reported, or why it did not start.
+    local_probe: HashMap<String, Result<Vec<super::mcp_local::ToolInfo>, String>>,
     /// Codex and Claude Code records found on this computer: (codex, claude). Desktop only.
     local_usage: Option<(usize, usize)>,
     /// How many local records the user added to the account in this session.
@@ -1719,6 +1737,10 @@ impl AppCore {
             Action::CredentialDelete { id } => self.credential_delete(&id).await,
             Action::CredentialRename { id } => self.credential_rename(&id).await,
             Action::CredentialReplaceKey { id } => self.credential_replace_key(&id).await,
+            Action::LocalServerProbe { name } => self.local_server_probe(&name).await,
+            Action::LocalServerCommand { text } => self.local_server_command(&text).await,
+            Action::LocalServerRemove { name } => self.local_server_remove(&name).await,
+            Action::LocalServerPreset { preset } => self.local_server_preset(&preset).await,
             Action::StoragePlan { plan, tier, consent } => self.storage_plan(&plan, &tier, consent).await,
             Action::ConnectAccount { provider, grant } => {
                 let (message, url) = if grant {
@@ -7252,7 +7274,6 @@ impl AppCore {
         }
     }
 
-    /// Looks for Codex and Claude Code logs on this computer (desktop only; the browser has no files).
     // ---- credits, storage, services (Credits plan v1.1) -----------------
 
     /// Data the open Settings section needs beyond the usage dashboard.
@@ -7587,6 +7608,175 @@ impl AppCore {
                 self.refresh_credentials().await;
             }
             Err(e) => self.notice("error", connection_error_text(&e)),
+        }
+    }
+
+    // ---- local MCP servers (Settings > Permissions) -------------------------
+
+    /// Splits one command line into a program and its arguments, honouring double quotes.
+    fn parse_command_line(text: &str) -> Option<(String, Vec<String>)> {
+        let mut parts: Vec<String> = Vec::new();
+        let mut current = String::new();
+        let mut quoted = false;
+        let mut started = false;
+        for c in text.chars() {
+            match c {
+                '"' => {
+                    quoted = !quoted;
+                    started = true;
+                }
+                c if c.is_whitespace() && !quoted => {
+                    if started {
+                        parts.push(std::mem::take(&mut current));
+                        started = false;
+                    }
+                }
+                c if (c as u32) < 0x20 => return None,
+                c => {
+                    current.push(c);
+                    started = true;
+                }
+            }
+        }
+        if quoted {
+            return None;
+        }
+        if started {
+            parts.push(current);
+        }
+        let mut parts = parts.into_iter();
+        let program = parts.next()?;
+        if program.is_empty() {
+            return None;
+        }
+        Some((program, parts.collect()))
+    }
+
+    /// Adds a local server from a command line such as `uvx mcp-server-onebot`. Nothing runs now:
+    /// the entry is written to the user's own file and starts when Work first calls it.
+    async fn local_server_command(&self, text: &str) {
+        let Some((program, args)) = Self::parse_command_line(text.trim()) else {
+            return self.notice(
+                "error",
+                "Type the command to run, for example: uvx mcp-server-onebot",
+            );
+        };
+        if program.len() > 500 || args.iter().any(|a| a.len() > 2000) {
+            return self.notice("error", "That command is too long to save.");
+        }
+        // The name is the program, made unique: two bridges of the same kind get suffixes.
+        let base: String = program
+            .rsplit(['/', '\\'])
+            .next()
+            .unwrap_or("local")
+            .chars()
+            .take(32)
+            .collect();
+        let existing = super::mcp_local::user_servers();
+        let mut name = base.clone();
+        let mut n = 2;
+        while existing.contains_key(&name) {
+            name = format!("{base}-{n}");
+            n += 1;
+        }
+        let config =
+            super::mcp_local::ServerConfig::new(program, args, std::collections::BTreeMap::new());
+        let shown = config.command_line();
+        match super::mcp_local::upsert_user_server(&name, config) {
+            Ok(()) => {
+                if let Some(host) = self.state.lock().unwrap().agent.host.clone() {
+                    host.reload_mcp();
+                }
+                self.notice(
+                    "info",
+                    format!("Saved {name}: {shown}. Press Check to see its tools; environment values (a token) go in ~/.config/meo/mcp.json."),
+                );
+            }
+            Err(e) => self.notice("error", e),
+        }
+    }
+
+    /// Starts a server once and records what it offers, so the user sees it works before using it.
+    async fn local_server_probe(&self, name: &str) {
+        let name = name.to_owned();
+        let Some(config) = super::mcp_local::user_servers().remove(&name) else {
+            return self.notice("error", "That server is no longer saved. Add it again.");
+        };
+        let root = self
+            .state
+            .lock()
+            .unwrap()
+            .agent
+            .host
+            .as_ref()
+            .map(|h| h.root().to_owned())
+            .or_else(|| {
+                std::env::current_dir()
+                    .ok()
+                    .map(|p| p.display().to_string())
+            })
+            .unwrap_or_else(|| ".".to_owned());
+        let outcome = tokio::task::spawn_blocking(move || {
+            super::mcp_local::probe(&config, std::path::Path::new(&root))
+        })
+        .await
+        .unwrap_or_else(|e| Err(format!("could not run the check: {e}")));
+        match &outcome {
+            Ok(tools) => self.notice(
+                "info",
+                format!("It works: {} tool(s) available.", tools.len()),
+            ),
+            Err(e) => self.notice("error", format!("It did not start: {e}")),
+        }
+        self.update(|s| {
+            s.local_probe.insert(name, outcome);
+        });
+    }
+
+    async fn local_server_remove(&self, name: &str) {
+        match super::mcp_local::remove_user_server(name) {
+            Ok(()) => {
+                if let Some(host) = self.state.lock().unwrap().agent.host.clone() {
+                    host.reload_mcp();
+                }
+                self.update(|s| {
+                    s.local_probe.remove(name);
+                });
+                self.notice("info", format!("Removed {name}."));
+            }
+            Err(e) => self.notice("error", e),
+        }
+    }
+
+    /// Adds a known local service (QQ) with its bridge command, so the user only has to fill in the
+    /// token in their own file. Nothing runs until Work first calls it.
+    async fn local_server_preset(&self, preset: &str) {
+        let Some((name, command, args, env)) = super::mcp_local::preset(preset) else {
+            return self.notice("error", "That preset is not available.");
+        };
+        if super::mcp_local::user_servers().contains_key(&name) {
+            return self.notice("info", format!("{name} is already in your local servers."));
+        }
+        let env = env
+            .lines()
+            .filter_map(|line| {
+                let (key, value) = line.split_once('=')?;
+                Some((key.trim().to_owned(), value.trim().to_owned()))
+            })
+            .collect();
+        let config = super::mcp_local::ServerConfig::new(command, args, env);
+        let shown = config.command_line();
+        match super::mcp_local::upsert_user_server(&name, config) {
+            Ok(()) => {
+                if let Some(host) = self.state.lock().unwrap().agent.host.clone() {
+                    host.reload_mcp();
+                }
+                self.notice(
+                    "info",
+                    format!("Added {name}: {shown}. If your bridge needs a token, put it in ONEBOT_ACCESS_TOKEN in ~/.config/meo/mcp.json, then press Check."),
+                );
+            }
+            Err(e) => self.notice("error", e),
         }
     }
 
@@ -16907,8 +17097,8 @@ fn permission_items(s: &State) -> Vec<Value> {
         }),
         own_item(
             "perm_plugins".into(),
-            "Apps, skills and MCP servers",
-            "Turn them on or off, sign in again, and see what each one may do on the Plugins page.",
+            "Apps, skills, MCP servers and local servers",
+            "Turn them on or off, sign in again, add a server that runs on this computer (for example QQ through a OneBot bridge) and see what each one may do on the Plugins page.",
             vec![button(
                 "Open Plugins",
                 "primary",
@@ -17191,8 +17381,106 @@ fn store_page(s: &State) -> Value {
             sections.push(registry);
         }
     }
+    // Servers that run on this computer belong here with the hosted ones: same page, same rule
+    // that "installed" never reads as "working".
+    if tab == "installed" {
+        if let Some(local) = local_servers_section(s, &super::mcp_local::user_servers()) {
+            sections.insert(0, local);
+        }
+    }
     page["sections"] = json!(sections);
     page
+}
+
+/// The local MCP servers of this computer as cards, plus the two ways to add one.
+/// `None` where local processes cannot run (the browser build).
+fn local_servers_section(
+    s: &State,
+    configured: &std::collections::BTreeMap<String, super::mcp_local::ServerConfig>,
+) -> Option<Value> {
+    if !super::remote::can_host() {
+        return None;
+    }
+    let mut cards: Vec<Value> = configured
+        .iter()
+        .map(|(name, config)| {
+            let checked = match s.local_probe.get(name) {
+                Some(Ok(tools)) => {
+                    let listed = tools
+                        .iter()
+                        .take(6)
+                        .map(|tool| tool.name.clone())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    format!("{} tool(s): {listed}", tools.len())
+                }
+                Some(Err(e)) => format!("Did not start: {e}"),
+                None => "Not checked yet".to_owned(),
+            };
+            let mut badges = vec!["Local"];
+            if !config.env_keys().is_empty() {
+                // Which variables it needs, never their values.
+                badges.push("Needs a token");
+            }
+            store_card(
+                format!("local:{name}"),
+                name,
+                &format!("{} · {checked}", config.command_line()),
+                &json!({ "glyph": "terminal" }),
+                "This computer",
+                badges,
+                if matches!(s.local_probe.get(name), Some(Ok(_))) {
+                    "on"
+                } else {
+                    "off"
+                },
+                vec![
+                    button(
+                        "Check",
+                        "secondary",
+                        json!({ "type": "local_server_probe", "name": name }),
+                    ),
+                    button(
+                        "Remove",
+                        "danger",
+                        json!({ "type": "local_server_remove", "name": name }),
+                    ),
+                ],
+            )
+        })
+        .collect();
+    // Two ways to add one: the QQ bridge with its command filled in, or any command line. The
+    // command line uses the store's existing `forms` contract, so every renderer already draws it.
+    cards.push(store_card(
+        "local:add-qq".to_owned(),
+        "Add QQ (OneBot bridge)",
+        "A QQ bot is a local process (NapCat, LLOneBot, Lagrange). This adds a bridge to it; put your token in ~/.config/meo/mcp.json, then press Check.",
+        &json!({ "glyph": "chat" }),
+        "This computer",
+        vec!["Local", "Preset"],
+        "off",
+        vec![button(
+            "Add QQ bridge",
+            "primary",
+            json!({ "type": "local_server_preset", "preset": "qq" }),
+        )],
+    ));
+    Some(json!({
+        "id": "local-servers",
+        "title": "Servers on this computer",
+        "cards": cards,
+        "forms": [{
+            "id": "local-add-form",
+            "title": "Add any server by its command",
+            "text": "The command that starts its MCP server, for example uvx mcp-server-onebot. It runs as your own user and starts only when Work calls it.",
+            "placeholder": "command arg1 arg2",
+            "field": "text",
+            "button": "Add",
+            "icon": { "glyph": "terminal" },
+            "action": { "type": "local_server_command" },
+        }],
+        "empty": "",
+    }))
 }
 
 fn list_page(
@@ -20235,6 +20523,66 @@ mod tests {
         assert_eq!((key["binding"].as_str(), key["value"].as_str()), (Some("conn:c1:key"), Some("")));
         let name = find("conn_name_c1").unwrap();
         assert_eq!(name["binding"], "conn:c1:name");
+    }
+
+    #[test]
+    fn the_plugins_page_lists_local_servers_without_their_saved_secrets() {
+        let c = signed_in_core();
+        c.update(|s| {
+            s.route = "skills".into();
+            s.store.tab = "installed".into();
+            s.plugins = Some(Ok(Vec::new()));
+            s.local_probe.insert(
+                "qq".into(),
+                Ok(vec![crate::cloud::mcp_local::ToolInfo {
+                    name: "send_message".into(),
+                    description: "Send a message".into(),
+                    fields: vec!["group".into(), "text".into()],
+                }]),
+            );
+        });
+        let saved = std::collections::BTreeMap::from([(
+            "qq".to_owned(),
+            crate::cloud::mcp_local::ServerConfig::new(
+                "uvx",
+                vec!["mcp-server-onebot".to_owned()],
+                std::collections::BTreeMap::from([(
+                    "ONEBOT_ACCESS_TOKEN".to_owned(),
+                    "super-secret-token".to_owned(),
+                )]),
+            ),
+        )]);
+        let section = local_servers_section(&c.state.lock().unwrap(), &saved).expect("a local section");
+        assert_eq!(section["id"], "local-servers");
+        let cards = section["cards"].as_array().unwrap();
+        // The server itself, then the QQ preset card.
+        let server = cards.iter().find(|c| c["id"] == "local:qq").expect("the server card");
+        assert!(server["subtitle"].as_str().unwrap().contains("uvx mcp-server-onebot"), "{server}");
+        assert!(server["subtitle"].as_str().unwrap().contains("send_message"), "the check result shows");
+        assert!(server["badges"].to_string().contains("Needs a token"), "a token requirement is visible");
+        // The token itself is never rendered, only the fact that one is needed.
+        assert!(!section.to_string().contains("super-secret-token"));
+        assert!(cards.iter().any(|c| c["id"] == "local:add-qq"));
+        // The free-form add uses the store's existing form contract.
+        let form = &section["forms"][0];
+        assert_eq!(form["action"]["type"], "local_server_command");
+        assert_eq!(form["field"], "text");
+    }
+
+    #[test]
+    fn a_command_line_is_split_into_a_program_and_its_arguments() {
+        assert_eq!(
+            AppCore::parse_command_line("uvx mcp-server-onebot"),
+            Some(("uvx".to_owned(), vec!["mcp-server-onebot".to_owned()]))
+        );
+        assert_eq!(
+            AppCore::parse_command_line(r#"/opt/my tools/run --flag "a b""#),
+            Some(("/opt/my".to_owned(), vec!["tools/run".to_owned(), "--flag".to_owned(), "a b".to_owned()]))
+        );
+        assert_eq!(AppCore::parse_command_line("   "), None);
+        assert_eq!(AppCore::parse_command_line("\"unclosed"), None);
+        // Control characters are refused rather than written to a config file.
+        assert_eq!(AppCore::parse_command_line("run\u{0}bad"), None);
     }
 
     #[test]
