@@ -12,6 +12,8 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.expressiveLightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 
@@ -22,6 +24,9 @@ import androidx.compose.ui.unit.dp
  * intentionally uses Material Expressive's own light scheme instead of a
  * hand-authored palette so the app tracks the platform design language.
  */
+/** Whether the system/user asked for reduced motion; read by screens that animate. */
+val LocalReduceMotion = staticCompositionLocalOf { false }
+
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun MeoExpressiveTheme(themeMode: String = "system", reduceMotion: Boolean = false, content: @Composable () -> Unit) {
@@ -45,10 +50,12 @@ fun MeoExpressiveTheme(themeMode: String = "system", reduceMotion: Boolean = fal
         extraLargeIncreased = RoundedCornerShape(40.dp),
     )
 
-    MaterialExpressiveTheme(
-        colorScheme = colors,
-        motionScheme = if (reduceMotion) MotionScheme.standard() else MotionScheme.expressive(),
-        shapes = shapes,
-        content = content,
-    )
+    CompositionLocalProvider(LocalReduceMotion provides reduceMotion) {
+        MaterialExpressiveTheme(
+            colorScheme = colors,
+            motionScheme = if (reduceMotion) MotionScheme.standard() else MotionScheme.expressive(),
+            shapes = shapes,
+            content = content,
+        )
+    }
 }

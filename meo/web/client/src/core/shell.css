@@ -416,6 +416,10 @@
 .core-app .core-settings-body > .core-header { max-width: 640px; margin: 0 0 4px; }
 .core-app .core-settings-body > .core-header h1 { font-size: 22px; font-weight: 600; }
 .core-app .set-groups { max-width: 640px; display: flex; flex-direction: column; gap: 22px; margin-top: 14px; }
+/* A short fade when the settings section changes: opacity only, so nothing relayouts. */
+.core-app .set-groups-fade { animation: core-set-fade var(--motion-fast, 120ms) ease-out; }
+@keyframes core-set-fade { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .core-app .set-groups-fade { animation: none; } }
 .core-app .set-group { display: flex; flex-direction: column; gap: 8px; }
 .core-app .set-group > h3 { margin: 0 4px; font-size: 13px; font-weight: 600; color: rgb(var(--text-secondary)); }
 .core-app .set-card { border: var(--hair) solid rgb(var(--border-light)); border-radius: 16px; background: var(--tonal); overflow: hidden; }

@@ -699,12 +699,20 @@ private fun SettingsPage(page: JSONObject, act: Act) {
                 FilterChip(selected = e.optBoolean("selected"), onClick = { act.send(e.obj("action")) }, label = { Text(e.str("label")) })
             }
         }
-        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(current?.str("label") ?: page.str("title"), style = MaterialTheme.typography.headlineSmall)
+        // A short crossfade when the section changes: opacity only, skipped for reduced motion.
+        androidx.compose.animation.Crossfade(
+            targetState = current?.str("id") ?: "",
+            modifier = Modifier.weight(1f),
+            animationSpec = androidx.compose.animation.core.tween(if (LocalReduceMotion.current) 0 else 120),
+            label = "settings-section",
+        ) { shownId ->
+            val shown = sections.firstOrNull { it.str("id") == shownId } ?: current
+            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(shown?.str("label") ?: page.str("title"), style = MaterialTheme.typography.headlineSmall)
             // A heading starts a group: its rows sit in one rounded card, hints are notes under it.
             val groups = mutableListOf<Triple<String, MutableList<JSONObject>, MutableList<JSONObject>>>()
             var g = Triple("", mutableListOf<JSONObject>(), mutableListOf<JSONObject>())
-            current?.list("items")?.forEach { it0 ->
+            shown?.list("items")?.forEach { it0 ->
                 when (it0.str("kind")) {
                     "heading" -> { if (g.second.isNotEmpty() || g.third.isNotEmpty() || g.first.isNotEmpty()) groups.add(g); g = Triple(it0.str("label"), mutableListOf(), mutableListOf()) }
                     "hint" -> g.third.add(it0)
@@ -723,6 +731,7 @@ private fun SettingsPage(page: JSONObject, act: Act) {
                     }
                 }
                 notes.forEach { Text(it.str("text"), Modifier.padding(horizontal = 4.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            }
             }
         }
     }

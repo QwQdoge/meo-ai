@@ -466,7 +466,8 @@ function SettingsPage({ page, act }: { page: Spec; act: Act }) {
           <header className="core-header">
             <h1>{current?.label ?? page.title}</h1>
           </header>
-          <div className="set-groups">
+          {/* Keyed on the section so switching pages replays the short fade (opacity only). */}
+          <div className="set-groups set-groups-fade" key={current?.id ?? ""}>
             {settingGroups(current?.items ?? []).map((g, i) => (
               <section key={i} className="set-group">
                 {g.title && <h3>{g.title}</h3>}

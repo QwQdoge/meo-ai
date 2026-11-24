@@ -995,6 +995,15 @@ struct StoreUi {
     loading: bool,
 }
 
+/// One local MCP server as the settings page shows it. Pure data, so the browser build (which has
+/// no local processes) still compiles without the `mcp_local` module.
+#[derive(Clone, Default)]
+struct LocalServerRow {
+    name: String,
+    command: String,
+    env_keys: Vec<String>,
+}
+
 #[derive(Default)]
 struct State {
     /// Scheduled tasks (see `schedule.rs`), delivered by `Action::Tick` while the app runs.
@@ -1051,12 +1060,12 @@ struct State {
     svc_edit: Option<String>,
     /// Local MCP servers, read once per refresh instead of on every view rebuild (which used to
     /// hit the filesystem), and the saved plugin index URLs cached the same way.
-    local_servers: Option<std::collections::BTreeMap<String, super::mcp_local::ServerConfig>>,
+    local_servers: Option<Vec<LocalServerRow>>,
     plugin_index_urls: Option<Vec<String>>,
     /// Unsaved Settings > Models fields, keyed "credentialId:name|key".
     conn_form: HashMap<String, String>,
     /// The last probe of a local server: the tools it reported, or why it did not start.
-    local_probe: HashMap<String, Result<Vec<super::mcp_local::ToolInfo>, String>>,
+    local_probe: HashMap<String, Result<String, String>>,
     /// Codex and Claude Code records found on this computer: (codex, claude). Desktop only.
     local_usage: Option<(usize, usize)>,
     /// How many local records the user added to the account in this session.
@@ -1779,10 +1788,22 @@ impl AppCore {
             Action::CredentialDelete { id } => self.credential_delete(&id).await,
             Action::CredentialRename { id } => self.credential_rename(&id).await,
             Action::CredentialReplaceKey { id } => self.credential_replace_key(&id).await,
+            #[cfg(not(target_arch = "wasm32"))]
             Action::LocalServerProbe { name } => self.local_server_probe(&name).await,
+            #[cfg(not(target_arch = "wasm32"))]
             Action::LocalServerCommand { text } => self.local_server_command(&text).await,
+            #[cfg(not(target_arch = "wasm32"))]
             Action::LocalServerRemove { name } => self.local_server_remove(&name).await,
+            #[cfg(not(target_arch = "wasm32"))]
             Action::LocalServerPreset { preset } => self.local_server_preset(&preset).await,
+            // The browser build has no local processes: these actions exist but do nothing.
+            #[cfg(target_arch = "wasm32")]
+            Action::LocalServerProbe { .. }
+            | Action::LocalServerCommand { .. }
+            | Action::LocalServerRemove { .. }
+            | Action::LocalServerPreset { .. } => {
+                self.notice("info", "Local servers need the desktop app.");
+            }
             Action::AddPluginIndex { text } => self.add_plugin_index(&text).await,
             Action::InstallIndexEntry { url, kind } => {
                 if kind == "skill" {
@@ -7707,6 +7728,7 @@ impl AppCore {
 
     /// Adds a local server from a command line such as `uvx mcp-server-onebot`. Nothing runs now:
     /// the entry is written to the user's own file and starts when Work first calls it.
+    #[cfg(not(target_arch = "wasm32"))]
     async fn local_server_command(&self, text: &str) {
         let Some((program, args)) = Self::parse_command_line(text.trim()) else {
             return self.notice(
@@ -7751,6 +7773,7 @@ impl AppCore {
     }
 
     /// Starts a server once and records what it offers, so the user sees it works before using it.
+    #[cfg(not(target_arch = "wasm32"))]
     async fn local_server_probe(&self, name: &str) {
         let name = name.to_owned();
         let Some(config) = super::mcp_local::user_servers().remove(&name) else {
@@ -7788,18 +7811,28 @@ impl AppCore {
             }
             futures_timer::Delay::new(std::time::Duration::from_millis(25)).await;
         };
-        match &outcome {
-            Ok(tools) => self.notice(
-                "info",
-                format!("It works: {} tool(s) available.", tools.len()),
-            ),
-            Err(e) => self.notice("error", format!("It did not start: {e}")),
-        }
+        let stored = match &outcome {
+            Ok(tools) => {
+                self.notice("info", format!("It works: {} tool(s) available.", tools.len()));
+                let listed = tools
+                    .iter()
+                    .take(6)
+                    .map(|tool| tool.name.clone())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                Ok(format!("{} tool(s): {listed}", tools.len()))
+            }
+            Err(e) => {
+                self.notice("error", format!("It did not start: {e}"));
+                Err(e.clone())
+            }
+        };
         self.update(|s| {
-            s.local_probe.insert(name, outcome);
+            s.local_probe.insert(name, stored);
         });
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     async fn local_server_remove(&self, name: &str) {
         match super::mcp_local::remove_user_server(name) {
             Ok(()) => {
@@ -7818,6 +7851,7 @@ impl AppCore {
 
     /// Adds a known local service (QQ) with its bridge command, so the user only has to fill in the
     /// token in their own file. Nothing runs until Work first calls it.
+    #[cfg(not(target_arch = "wasm32"))]
     async fn local_server_preset(&self, preset: &str) {
         let Some((name, command, args, env)) = super::mcp_local::preset(preset) else {
             return self.notice("error", "That preset is not available.");
@@ -7853,7 +7887,7 @@ impl AppCore {
     /// view rebuild never touches the filesystem. Called on startup, when a settings page opens,
     /// and after any action that changes them.
     fn refresh_local_caches(&self) {
-        let servers = super::mcp_local::user_servers();
+        let servers = local_server_rows();
         let urls = super::plugin_index::indexes();
         self.update(|s| {
             s.local_servers = Some(servers);
@@ -14377,6 +14411,25 @@ fn connection_missing(s: &State, credential: &str) -> bool {
     !s.credentials.iter().any(|c| c.id == credential)
 }
 
+/// The local MCP servers as plain rows. On the browser build there are none, because it has no
+/// local processes, so the module is compiled out.
+#[cfg(not(target_arch = "wasm32"))]
+fn local_server_rows() -> Vec<LocalServerRow> {
+    super::mcp_local::user_servers()
+        .into_iter()
+        .map(|(name, config)| LocalServerRow {
+            name,
+            command: config.command_line(),
+            env_keys: config.env_keys(),
+        })
+        .collect()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn local_server_rows() -> Vec<LocalServerRow> {
+    Vec::new()
+}
+
 /// The models the active profile sets for the jobs this app routes, read-only. This is the one
 /// place a user sees "which model does what"; changing it happens in Profiles, never here.
 fn models_in_use(s: &State) -> Vec<Value> {
@@ -17559,38 +17612,28 @@ fn store_page(s: &State) -> Value {
 
 /// The local MCP servers of this computer as cards, plus the two ways to add one.
 /// `None` where local processes cannot run (the browser build).
-fn local_servers_section(
-    s: &State,
-    configured: &std::collections::BTreeMap<String, super::mcp_local::ServerConfig>,
-) -> Option<Value> {
+fn local_servers_section(s: &State, configured: &[LocalServerRow]) -> Option<Value> {
     if !super::remote::can_host() {
         return None;
     }
     let mut cards: Vec<Value> = configured
         .iter()
-        .map(|(name, config)| {
+        .map(|row| {
+            let name = &row.name;
             let checked = match s.local_probe.get(name) {
-                Some(Ok(tools)) => {
-                    let listed = tools
-                        .iter()
-                        .take(6)
-                        .map(|tool| tool.name.clone())
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    format!("{} tool(s): {listed}", tools.len())
-                }
+                Some(Ok(listed)) => listed.clone(),
                 Some(Err(e)) => format!("Did not start: {e}"),
                 None => "Not checked yet".to_owned(),
             };
             let mut badges = vec!["Local"];
-            if !config.env_keys().is_empty() {
+            if !row.env_keys.is_empty() {
                 // Which variables it needs, never their values.
                 badges.push("Needs a token");
             }
             store_card(
                 format!("local:{name}"),
                 name,
-                &format!("{} · {checked}", config.command_line()),
+                &format!("{} · {checked}", row.command),
                 &json!({ "glyph": "terminal" }),
                 "This computer",
                 badges,
@@ -20800,26 +20843,15 @@ mod tests {
             s.route = "skills".into();
             s.store.tab = "installed".into();
             s.plugins = Some(Ok(Vec::new()));
-            s.local_probe.insert(
-                "qq".into(),
-                Ok(vec![crate::cloud::mcp_local::ToolInfo {
-                    name: "send_message".into(),
-                    description: "Send a message".into(),
-                    fields: vec!["group".into(), "text".into()],
-                }]),
-            );
+            // The probe result is stored as already-formatted text, and a server as plain rows:
+            // neither carries a `mcp_local` type, so the browser build compiles too.
+            s.local_probe.insert("qq".into(), Ok("1 tool(s): send_message".to_owned()));
         });
-        let saved = std::collections::BTreeMap::from([(
-            "qq".to_owned(),
-            crate::cloud::mcp_local::ServerConfig::new(
-                "uvx",
-                vec!["mcp-server-onebot".to_owned()],
-                std::collections::BTreeMap::from([(
-                    "ONEBOT_ACCESS_TOKEN".to_owned(),
-                    "super-secret-token".to_owned(),
-                )]),
-            ),
-        )]);
+        let saved = vec![LocalServerRow {
+            name: "qq".to_owned(),
+            command: "uvx mcp-server-onebot".to_owned(),
+            env_keys: vec!["ONEBOT_ACCESS_TOKEN".to_owned()],
+        }];
         let section = local_servers_section(&c.state.lock().unwrap(), &saved).expect("a local section");
         assert_eq!(section["id"], "local-servers");
         let cards = section["cards"].as_array().unwrap();
@@ -20829,7 +20861,7 @@ mod tests {
         assert!(server["subtitle"].as_str().unwrap().contains("send_message"), "the check result shows");
         assert!(server["badges"].to_string().contains("Needs a token"), "a token requirement is visible");
         // The token itself is never rendered, only the fact that one is needed.
-        assert!(!section.to_string().contains("super-secret-token"));
+        assert!(!section.to_string().contains("ONEBOT_ACCESS_TOKEN="), "no value is rendered");
         assert!(cards.iter().any(|c| c["id"] == "local:add-qq"));
         // The free-form add uses the store's existing form contract.
         let form = &section["forms"][0];
