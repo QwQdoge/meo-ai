@@ -810,6 +810,9 @@ function RowMenu({ menu, act, label }: { menu: Spec[]; act: Act; label: string }
   );
 }
 
+/** How a changed file is described in the result list. */
+const CHANGE_STATE: Record<string, string> = { added: "Added", edited: "Edited", deleted: "Deleted" };
+
 /** One collapsible part of the details card: icon rows, a usage bar, step rows, links. */
 function InspectorSection({ sec, act }: { sec: Spec; act: Act }) {
   const [open, setOpen] = useState(sec.open !== false);
@@ -854,7 +857,7 @@ function InspectorSection({ sec, act }: { sec: Spec; act: Act }) {
                 <Icon name="description" size={14} />
                 <span className="label">{f.path}</span>
                 <span className="core-change-stat"><b className="add">+{f.added}</b> <b className="del">−{f.removed}</b></span>
-                <em className={`core-change-state ${f.state}`}>{f.state}</em>
+                <em className={`core-change-state ${f.state}`}>{CHANGE_STATE[f.state] ?? f.state}</em>
               </summary>
               <pre className="core-diff">
                 {String(f.diff).split("\n").map((line, i) => (

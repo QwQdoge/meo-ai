@@ -13673,9 +13673,31 @@ fn inspector(s: &State, messages: &[Value], active: Option<&String>) -> Value {
         context_section,
     ];
     if !s.agent.changes.is_empty() {
+        // A finished run leads with one line the reader can act on: how many files changed and how,
+        // then the per-file rows with their diffs underneath.
+        let (mut added, mut edited, mut deleted, mut plus, mut minus) = (0, 0, 0, 0, 0);
+        for change in &s.agent.changes {
+            match change["state"].as_str().unwrap_or_default() {
+                "added" => added += 1,
+                "deleted" => deleted += 1,
+                _ => edited += 1,
+            }
+            plus += change["added"].as_u64().unwrap_or(0);
+            minus += change["removed"].as_u64().unwrap_or(0);
+        }
+        let mut parts = Vec::new();
+        if added > 0 { parts.push(format!("{added} added")); }
+        if edited > 0 { parts.push(format!("{edited} edited")); }
+        if deleted > 0 { parts.push(format!("{deleted} deleted")); }
+        let summary = format!(
+            "{} file{} changed ({}) · +{plus} −{minus}",
+            s.agent.changes.len(),
+            if s.agent.changes.len() == 1 { "" } else { "s" },
+            parts.join(", ")
+        );
         sections.insert(
             0,
-            json!({ "id": "changes", "title": format!("Files changed · {}", s.agent.changes.len()), "open": true,
+            json!({ "id": "changes", "title": summary, "open": true,
                 "files": s.agent.changes }),
         );
     }
@@ -14058,6 +14080,12 @@ fn usage_items_inner(s: &State) -> Vec<Value> {
     .collect();
     let parts_total: f64 = parts.iter().map(|p| p.1).sum();
     if !parts.is_empty() {
+        // One bar of the split first, then the exact counts: a shape for the eye, numbers for the
+        // reader. Only categories with a value appear, so an absent one never reads as zero.
+        items.push(json!({
+            "id": "usage_split", "kind": "bars", "label": "Share of tokens by type",
+            "items": parts.iter().map(|(label, v)| json!({ "label": label, "value": v })).collect::<Vec<_>>(),
+        }));
         items.push(json!({ "id": "usage_h_tokens", "kind": "heading", "label": "Tokens by type" }));
         for (i, (label, v)) in parts.iter().enumerate() {
             items.push(json!({
