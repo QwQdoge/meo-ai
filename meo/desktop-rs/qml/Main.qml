@@ -1590,6 +1590,24 @@ ApplicationWindow {
                             y: 24
                             width: Math.min(settingsFlick.width - 64, 640)
                             spacing: 20
+                            // A short crossfade when the chosen section changes, so switching pages
+                            // is not a hard cut. Only opacity is animated (cheap: no relayout), and
+                            // it is skipped entirely when the system asks for reduced motion. A view
+                            // rebuild that keeps the same section does not re-run it.
+                            readonly property string shownSection: window.page.selected || ""
+                            onShownSectionChanged: {
+                                if (MeoTheme.reduceMotion) { settingsColumn.opacity = 1; return }
+                                sectionFade.restart()
+                            }
+                            NumberAnimation {
+                                id: sectionFade
+                                target: settingsColumn
+                                property: "opacity"
+                                from: 0
+                                to: 1
+                                duration: window.tFast
+                                easing.type: Easing.OutCubic
+                            }
                             RowLayout {
                                 Layout.fillWidth: true
                                 Txt { text: current.label || window.page.title || ""; typeRole: "title"; typeSize: "medium"; Layout.fillWidth: true }
