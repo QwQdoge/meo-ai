@@ -14581,6 +14581,21 @@ fn role_list(s: &State) -> Vec<Value> {
 }
 
 /// Models that can do a role's job (its task, and image input when it needs pictures).
+/// The model choices the user pinned (`chat.favorite_models`), as `connection|model` values.
+fn favorite_models(s: &State) -> Vec<String> {
+    s.prefs
+        .get("chat.favorite_models")
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(Value::as_str)
+                .filter(|v| v.contains('|'))
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 fn models_for_role(s: &State, role: &Value) -> Vec<Value> {
     let task = role["task"].as_str().unwrap_or("chat");
     let needs_image = role["input"]
@@ -14596,9 +14611,20 @@ fn models_for_role(s: &State, role: &Value) -> Vec<Value> {
         .map(|(c, m)| (format!("{} · {}", connection_name(s, &c), m.name), c, m.id))
         .collect();
     rows.sort_by_key(|(label, ..)| label.to_lowercase());
-    rows.into_iter()
-        .map(|(label, c, m)| json!({ "value": format!("{c}|{m}"), "label": label }))
-        .collect()
+    let favorites = favorite_models(s);
+    let mut pinned: Vec<Value> = Vec::new();
+    let mut rest: Vec<Value> = Vec::new();
+    for (label, c, m) in rows {
+        let value = format!("{c}|{m}");
+        if favorites.contains(&value) {
+            // A pinned model stays at the top of every role's list, so a long catalogue is usable.
+            pinned.push(json!({ "value": value, "label": format!("★ {label}"), "favorite": true }));
+        } else {
+            rest.push(json!({ "value": value, "label": label }));
+        }
+    }
+    pinned.extend(rest);
+    pinned
 }
 
 /// How much a role matters, in one line: "Accuracy high · Impact high · Speed critical · Runs often".
@@ -21594,6 +21620,44 @@ mod tests {
                 "{row} should open {section}"
             );
         }
+    }
+
+    #[test]
+    fn a_pinned_model_is_listed_first_for_every_role() {
+        let c = signed_in_core();
+        seed_models(&c);
+        seed_profiles(&c);
+        c.update(|s| {
+            s.route = "settings".into();
+            s.settings_section = "profiles".into();
+            s.editing_profile = Some("p1".into());
+            s.prefs.insert(
+                "chat.favorite_models".into(),
+                json!(["c2|gemini-3.5-flash"]),
+            );
+        });
+        let items = c.view()["page"]["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|x| x["id"] == "profiles")
+            .unwrap()["items"]
+            .as_array()
+            .unwrap()
+            .clone();
+        let options = items
+            .iter()
+            .find(|i| i["id"] == "pf_role_default")
+            .unwrap()["options"]
+            .as_array()
+            .unwrap()
+            .clone();
+        // "Not set" stays first, then the pinned model, then the rest alphabetically.
+        assert_eq!(options[0]["value"], "");
+        assert_eq!(options[1]["value"], "c2|gemini-3.5-flash");
+        assert_eq!(options[1]["favorite"], true);
+        assert!(options[1]["label"].as_str().unwrap().starts_with('★'));
+        assert!(options[2]["favorite"].is_null(), "the others are not marked");
     }
 
     #[test]
