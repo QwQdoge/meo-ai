@@ -13035,7 +13035,18 @@ fn mode_control(s: &State) -> Option<Value> {
     }
     for id in ["default", "fast", "thinking", "image"] {
         if let (Some(choice), Some(slot)) = (s.router.choice(id), router::slot(id)) {
-            options.push(json!({ "value": id, "label": format!("{} · {}", slot.label, model_name(s, choice)) }));
+            // The capability tag tells the reader why a route exists (a model that reads pictures,
+            // one made for long thinking), so the list is not four unexplained names.
+            let tag = match id {
+                "fast" => " · quick",
+                "thinking" => " · reasoning",
+                "image" => " · creates images",
+                _ => "",
+            };
+            options.push(json!({
+                "value": id,
+                "label": format!("{} · {}{tag}", slot.label, model_name(s, choice)),
+            }));
         }
     }
     for custom in &s.router.custom {
@@ -21541,7 +21552,7 @@ mod tests {
             [
                 "Auto",
                 "Everyday chat · gpt-5.1",
-                "Lightweight · gemini-3.5-flash"
+                "Lightweight · gemini-3.5-flash · quick"
             ]
         );
         assert_eq!(c.view()["page"]["empty"]["text"], "Using Auto · gpt-5.1");
