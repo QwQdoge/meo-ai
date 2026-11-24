@@ -14137,6 +14137,34 @@ fn usage_items_inner(s: &State) -> Vec<Value> {
             ));
         }
     }
+    // How much of these numbers was measured vs estimated. A dashboard that hides this makes a
+    // guess look like a bill, which is exactly what the usage contract forbids.
+    let provenance: Vec<&Value> = usage["provenance"].as_array().into_iter().flatten().collect();
+    if !provenance.is_empty() {
+        let label = |s: &str| match s {
+            "provider_response" => "Reported by the provider",
+            "estimated" => "Estimated from text",
+            "imported" => "Imported from a token log",
+            _ => "Unknown source",
+        };
+        let total: f64 = provenance.iter().map(|p| num(&p["tokens"])).sum();
+        items.push(json!({ "id": "usage_h_provenance", "kind": "heading", "label": "How these numbers were counted" }));
+        items.push(json!({
+            "id": "usage_provenance_bar", "kind": "bars", "label": "Share of tokens by source",
+            "items": provenance.iter().map(|p| json!({
+                "label": label(p["usage_source"].as_str().unwrap_or_default()),
+                "value": num(&p["tokens"]),
+            })).collect::<Vec<_>>(),
+        }));
+        for (i, p) in provenance.iter().enumerate() {
+            let share = if total > 0.0 { num(&p["tokens"]) / total * 100.0 } else { 0.0 };
+            items.push(json!({
+                "id": format!("usage_provenance_{i}"), "kind": "info",
+                "label": label(p["usage_source"].as_str().unwrap_or_default()),
+                "value": format!("{} tokens · {share:.0}% · {} event(s)", compact(num(&p["tokens"])), num(&p["events"])),
+            }));
+        }
+    }
     let sources: Vec<&Value> = usage["sources"].as_array().into_iter().flatten().collect();
     if !sources.is_empty() {
         items.push(json!({ "id": "usage_h_sources", "kind": "heading", "label": "Sources" }));
