@@ -919,3 +919,32 @@
 .core-app .core-bar-legend span { display: inline-flex; align-items: center; gap: 5px; }
 .core-app .core-bar-legend b { color: rgb(var(--text-primary)); font-weight: 600; font-variant-numeric: tabular-nums; }
 .core-app .core-bar-legend .core-swatch { width: 8px; height: 8px; border-radius: 3px; }
+
+/* ---------- Result and statistics polish (Pixel / M3 Expressive) ---------- */
+
+/* A section header in the details card is a quiet row, not a divider-heavy block: one hairline per
+   section, generous tap height, and the chevron aligned with the text. */
+.core-app .core-isec:first-child { border-top: 0; }
+.core-app .core-isec-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%;
+  padding: 10px 4px; border: 0; background: none; color: inherit; font: inherit; font-weight: 600; cursor: pointer; text-align: start; }
+.core-app .core-isec-head:hover { color: rgb(var(--accent-primary)); }
+.core-app .core-isec-body { padding: 0 4px 10px; }
+
+/* A changed file reads as a result row: path, its line counts, its state, and the diff on demand. */
+.core-app .core-change { border-radius: 12px; }
+.core-app .core-change[open] { background: var(--tonal-2); }
+.core-app .core-change > summary { padding: 8px 12px; }
+.core-app .core-change-state.added { background: color-mix(in srgb, #1a7f37 18%, transparent); color: #1a7f37; }
+.core-app .core-change-state.edited { background: color-mix(in srgb, rgb(var(--accent-primary)) 18%, transparent); color: rgb(var(--accent-primary)); }
+.core-app .core-change-state.deleted { background: color-mix(in srgb, #cf222e 18%, transparent); color: #cf222e; }
+.core-app .core-diff { margin: 0; padding: 8px 12px 12px; font-size: 12px; line-height: 1.55; overflow-x: auto; }
+.core-app .core-diff .hunk { color: rgb(var(--text-secondary)); }
+
+/* The token split bar keeps the existing --seg0..4 tokens (no new palette here). */
+
+/* Statistics: a titled block with room to breathe, so the page scans as sections not a list. */
+.core-app .core-settings-body .core-subhead { margin: 18px 4px 6px; font-size: 13px; font-weight: 600; color: rgb(var(--text-secondary)); }
+.core-app .core-settings-body .core-bars-wrap { padding: 4px 0 8px; }
+.core-app .core-settings-body .core-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin: 4px 0 10px; }
+.core-app .core-settings-body .core-stats > div { display: flex; flex-direction: column; gap: 2px; padding: 12px 14px; border-radius: 16px; background: var(--tonal); }
+.core-app .core-settings-body .core-stats > div strong { font-size: 20px; font-weight: 600; letter-spacing: -.01em; }
